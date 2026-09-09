@@ -4,9 +4,9 @@ import { connectDb } from "../core/db.js";
 import { register, login, refresh, logout, AuthError } from "../core/auth.js";
 import {
   createProject, listMyProjects, addMember, updateMemberRole, removeMember,
-  listMembers, findUserByIdentifier, ROLES, type Role,
+  listMembers, findUserByIdentifier, findProjectsByRepoUrl, ROLES, type Role,
 } from "../core/projects.js";
-import { ensureProjectCheckout, commitAsAndPush } from "../core/workspace.js";
+import { ensureProjectCheckout, commitAsAndPush, projectDir } from "../core/workspace.js";
 import { authenticate, requireProjectRole, withProjectRoot, type AuthedRequest } from "../middleware/auth.js";
 
 import {
@@ -16,6 +16,7 @@ import { createDoc } from "@claude-native-workflow/tier2-backend/dist/core/creat
 import { answerPending } from "@claude-native-workflow/tier2-backend/dist/core/reply.js";
 import { transitionDone } from "@claude-native-workflow/tier2-backend/dist/core/transition.js";
 import { pull as gitPull, push as gitPush } from "@claude-native-workflow/tier2-backend/dist/core/git.js";
+import { runWithProjectRoot } from "@claude-native-workflow/tier2-backend/dist/core/paths.js";
 import { DESIGN_TYPES, TYPE_NAMES } from "@claude-native-workflow/tier2-backend/dist/core/types.js";
 
 // SP-00002 4절: SP-00001의 로컬 API를 프로젝트 네임스페이스 + 인증으로
@@ -51,11 +52,30 @@ export function createApp() {
     if (given.length !== wanted.length || !crypto.timingSafeEqual(given, wanted)) {
       res.status(401).json({ error: "invalid signature" }); return;
     }
-    // 서명 검증만 이번 범위 - 실제로 어느 프로젝트의 무엇이 바뀌었는지
-    // 캐시를 최신화하는 처리(SP-00002 5절 "서버 측 캐시를 최신화")는
-    // git_repo_url로 프로젝트를 역매핑해야 하는데, 이번 마일스톤엔 아직
-    // 없음(다음에 이어감).
-    res.json({ ok: true });
+    // SP-00002 5절: "다른 설계자가 로컬에서 직접 push한 경우... 서버 측
+    // 캐시를 최신화" - repository.{clone,html,ssh}_url 중 매칭되는 걸로
+    // 프로젝트를 찾아 그 체크아웃에서 git pull한다. 이게 곧 캐시 최신화다:
+    // pull이 로컬 파일을 최신 커밋으로 맞추고, 그 다음 어떤 조회든(다음
+    // API 호출이든 대시보드 새로고침이든) 읽기 게이트가 알아서 diff를
+    // 감지해 변경 큐에 올린다(PL-00001 2단계 7번에서 이미 구현한 경로 -
+    // 여기서 다시 구현하지 않는다).
+    let payload: { repository?: { clone_url?: string; html_url?: string; ssh_url?: string } };
+    try {
+      payload = JSON.parse((req.body as Buffer).toString("utf-8"));
+    } catch {
+      res.status(400).json({ error: "invalid JSON payload" }); return;
+    }
+    const candidateUrls = [
+      payload.repository?.clone_url, payload.repository?.html_url, payload.repository?.ssh_url,
+    ].filter((u): u is string => !!u);
+    const matches = candidateUrls.length ? await findProjectsByRepoUrl(candidateUrls) : [];
+    const pullResults = await Promise.all(
+      matches.map(async (project) => {
+        const result = await runWithProjectRoot(projectDir(project.id), () => gitPull());
+        return { project_id: project.id, ...result };
+      }),
+    );
+    res.json({ ok: true, matched_projects: matches.length, pulls: pullResults });
   }));
 
   app.use(express.json());

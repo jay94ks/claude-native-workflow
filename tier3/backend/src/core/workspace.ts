@@ -29,13 +29,16 @@ export async function ensureProjectCheckout(projectId: string, gitRepoUrl: strin
   // tier2-backend의 core 쓰기 경로(createDoc/answerPending/transitionDone)는
   // 성공 직후 자기 나름대로 자동 commit+push한다(SP-00001 5절, 저장소에
   // 설정된 git user로만 커밋). Tier 3는 "커밋 작성자를 실제 요청한 설계자로
-  // 남긴다"(SP-00002 5절)는 별도 요구가 있어서, tier2의 그 자동 커밋을
-  // 꺼두고(docs/.config.json git.enabled=false) 매 요청 끝에서 tier3가
-  // 직접 올바른 작성자로 커밋한다(commitAsAndPush, 아래) - core 자체를
-  // 고치는 대신 이미 있는 토글로 끈 것.
+  // 남긴다"(SP-00002 5절)는 별도 요구가 있어서, 그 자동 커밋만 끄고
+  // (docs/.config.json git.auto_commit=false) 매 요청 끝에서 tier3가
+  // 직접 올바른 작성자로 커밋한다(commitAsAndPush, 아래). `git.enabled`
+  // 는 그대로 true로 둔다 - 처음엔 이것도 껐다가, 웹훅으로 받은 pull이
+  // "git 자동화가 꺼져 있습니다"로 막히는 걸 보고서야 `enabled`(pull/push
+  // 자체를 막는 스위치)와 `auto_commit`(쓰기 후 자동 커밋만 막는 스위치)
+  // 이 다른 걸 tier2에 추가해 분리했다.
   runWithProjectRoot(dir, () => {
     const config = loadConfig();
-    config.git.enabled = false;
+    config.git.auto_commit = false;
     saveConfig(config);
   });
 }

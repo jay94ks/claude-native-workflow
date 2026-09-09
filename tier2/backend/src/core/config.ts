@@ -16,6 +16,15 @@ export interface FeaturesConfig {
 export interface GitConfig {
   enabled: boolean;
   push_mode: "immediate" | "manual";
+  // docs new/reply/transition-done 성공 직후의 자동 commit(+push)만 끄는
+  // 스위치 - `enabled: false`(git 저장소 자체가 아닌 경우)와는 다르다.
+  // pull()/push()/commitDocsChange() 같은 명시적 git 명령은 `enabled`만
+  // 보고 그대로 동작한다. Tier 3(tier3/backend/core/workspace.ts)가
+  // "커밋 작성자는 요청한 설계자로"(SP-00002 5절)를 지키려고 이 자동
+  // 커밋만 끄고 pull/push는 그대로 쓰려다가, 기존 `enabled: false`
+  // 하나로는 그 둘을 분리할 수 없다는 걸 실제로 웹훅 핸들러에서 pull이
+  // "git 자동화가 꺼져 있습니다"로 막히는 걸 보고서야 발견해서 추가함.
+  auto_commit: boolean;
 }
 
 export interface DbConfig {
@@ -32,7 +41,7 @@ export interface WorkflowConfig {
 
 const DEFAULTS: WorkflowConfig = {
   features: { git_log_ui: true, comments: true, db: false, auth: false },
-  git: { enabled: true, push_mode: "immediate" },
+  git: { enabled: true, push_mode: "immediate", auto_commit: true },
   db: { enabled: false, driver: "mysql" },
 };
 

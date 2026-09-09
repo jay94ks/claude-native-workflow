@@ -79,3 +79,26 @@ export async function findUserByIdentifier(identifier: string) {
   const db = getDb();
   return db.user.findFirst({ where: { OR: [{ id: identifier }, { email: identifier }, { username: identifier }] } });
 }
+
+/** `https://github.com/o/r.git`, `https://github.com/o/r`, `git@github.com:o/r.git`
+ * 전부 같은 저장소를 가리키지만 문자열로는 다르다 - 웹훅 페이로드의
+ * `repository.*_url` 값과 우리가 저장해둔 `git_repo_url`이 어느 쪽
+ * 표기든 매칭되게, "owner/repo" 부분만 뽑아 비교한다. */
+function normalizeRepoUrl(url: string): string {
+  return url
+    .trim()
+    .toLowerCase()
+    .replace(/^git@([^:]+):/, "https://$1/")
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "");
+}
+
+/** SP-00002 5절: 웹훅으로 받은 push 이벤트가 어느 프로젝트를 가리키는지
+ * 찾는다 - `repository.clone_url`/`html_url`/`ssh_url` 중 아무거나 넘기면
+ * 된다(위 normalizeRepoUrl로 다 같은 형태가 됨). */
+export async function findProjectsByRepoUrl(candidateUrls: string[]) {
+  const db = getDb();
+  const normalizedCandidates = candidateUrls.map(normalizeRepoUrl);
+  const all = await db.project.findMany();
+  return all.filter((p) => normalizedCandidates.includes(normalizeRepoUrl(p.gitRepoUrl)));
+}

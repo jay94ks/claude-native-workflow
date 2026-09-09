@@ -130,11 +130,17 @@ export async function push(): Promise<PushResult> {
 /** SP-00001 5절: docs new/reply/transition-done 성공 직후 자동 commit,
  * push_mode가 immediate(기본)면 이어서 push까지. 실패해도 던지지 않는다 -
  * 문서 쓰기 자체는 이미 끝난 뒤라, git 실패로 API 응답 전체를 실패시키지
- * 않고 결과에 같이 실어 보낸다. */
-export async function afterWrite(message: string): Promise<{ commit: CommitResult; push?: PushResult }> {
+ * 않고 결과에 같이 실어 보낸다. `git.auto_commit: false`면 아무것도 안
+ * 한다 - `git.enabled: false`(git 저장소 자체가 아님)와 달리 pull/push/
+ * 수동 commit은 그대로 쓸 수 있는 채로 이 자동 커밋만 끈다(Tier 3가
+ * 요청자 이름으로 직접 커밋하려고 이 자동 커밋만 끄되 pull/push는 계속
+ * 써야 해서 필요해진 구분 - 원래는 `enabled` 하나였다가, 웹훅 핸들러의
+ * pull이 덩달아 막히는 걸 보고 나눔). */
+export async function afterWrite(message: string): Promise<{ commit?: CommitResult; push?: PushResult }> {
+  const cfg = loadConfig();
+  if (!cfg.git.auto_commit) return {};
   const commit = await commitDocsChange(message);
   if (!commit.committed) return { commit };
-  const cfg = loadConfig();
   if (cfg.git.push_mode !== "immediate") return { commit };
   const pushResult = await push();
   return { commit, push: pushResult };
