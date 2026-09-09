@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { setProjectRoot } from "../core/paths.js";
-import { buildTree, listPending, listByTypes, getDoc, extractSection } from "../core/docstore.js";
+import { buildTree, listPending, listByTypes, getDoc, extractSection, saveDocBody } from "../core/docstore.js";
 import { answerPending } from "../core/reply.js";
 import { createDoc } from "../core/create.js";
 import { transitionDone } from "../core/transition.js";
@@ -78,6 +78,25 @@ async function main() {
       if (kind === "design") return textResult(listByTypes(DESIGN_TYPES));
       if (kind === "logs") return textResult(listByTypes(new Set(["LG"])));
       return textResult(listByTypes(new Set(Object.keys(TYPE_NAMES).filter((t) => t !== "IX"))));
+    },
+  );
+
+  server.registerTool(
+    "docs_save",
+    {
+      title: "문서 본문 갱신",
+      description:
+        "기존 문서의 본문 전체를 새 내용으로 덮어쓴다(git 자동 커밋 없음 - " +
+        "필요하면 git_sync를 이어서 호출). 덮어쓰기 전에 docs_get으로 현재 " +
+        "내용을 먼저 확인할 것.",
+      inputSchema: { path: z.string(), body: z.string() },
+    },
+    async ({ path, body }) => {
+      try {
+        return textResult(saveDocBody(path, body));
+      } catch (err) {
+        return errorResult(err);
+      }
     },
   );
 

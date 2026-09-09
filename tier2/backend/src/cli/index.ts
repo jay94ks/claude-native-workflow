@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import fs from "node:fs";
 import { setProjectRoot } from "../core/paths.js";
-import { buildTree, listPending, listByTypes, getDoc } from "../core/docstore.js";
+import { buildTree, listPending, listByTypes, getDoc, saveDocBody } from "../core/docstore.js";
 import { validateAll } from "../core/validate.js";
 import { answerPending } from "../core/reply.js";
 import { createDoc } from "../core/create.js";
@@ -71,6 +72,14 @@ program
       return;
     }
     printJson(doc);
+  });
+
+program
+  .command("save <path> <file>")
+  .description("문서 본문을 로컬 마크다운 파일 내용으로 갱신(git 자동 커밋 없음 - 필요하면 docs git commit/sync를 따로 실행)")
+  .action((path: string, file: string) => {
+    const body = fs.readFileSync(file, "utf-8");
+    printJson(saveDocBody(path, body));
   });
 
 program

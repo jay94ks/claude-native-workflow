@@ -46,9 +46,12 @@ docker compose up -d --build
 
 `http://localhost:9200`에 대시보드가 뜬다(백엔드는 `:8766`). Claude가
 Bash로 직접 부르는 경로는 CLI(`docs` — [tier2/backend](tier2/backend)의
-`bin`)이고, MCP 서버가 붙어있는 환경이면 그쪽을 우선한다. 상세는
+`bin`)이고, MCP 서버가 붙어있는 환경이면 그쪽을 우선한다 — 이 우선순위를
+Claude에게 안내하는 Skill이
+[tier2/skill/.claude/skills/docs-cli/SKILL.md](tier2/skill/.claude/skills/docs-cli/SKILL.md)에
+있다(설치는 [tier2/skill/README.md](tier2/skill/README.md)). 상세는
 [SP-00001](docs/spec/SP-00001.md), 구현 노트는
-[docs/plan/PL-00001.md](docs/plan/PL-00001.md) 2단계 참고.
+[docs/done/DN-00001.md](docs/done/DN-00001.md) 2단계 참고.
 
 ## 고급 (Tier 3) — 클라우드, 다중 설계자
 
@@ -70,7 +73,7 @@ docker compose up -d --build
 [tier3/skill/.claude/skills/docs3-cli/SKILL.md](tier3/skill/.claude/skills/docs3-cli/SKILL.md)에
 있다(설치는 [tier3/skill/README.md](tier3/skill/README.md)). 상세는
 [SP-00002](docs/spec/SP-00002.md), 구현 노트는
-[docs/plan/PL-00001.md](docs/plan/PL-00001.md) 3단계 참고.
+[docs/done/DN-00001.md](docs/done/DN-00001.md) 3단계 참고.
 
 ## 이 저장소의 구성
 
