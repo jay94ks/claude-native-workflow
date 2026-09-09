@@ -1,0 +1,26 @@
+{
+  "name": "@claude-native-workflow/tier3-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/api/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/api/server.ts",
+    "start": "node dist/api/server.js"
+  },
+  "dependencies": {
+    "@claude-native-workflow/tier2-backend": "file:../../tier2/backend",
+    "argon2": "^0.45.1",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.3",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
