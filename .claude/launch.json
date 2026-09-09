@@ -12,6 +12,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["tier1/tools/docs/server.py", "--port", "8757"],
       "port": 8757
+    },
+    {
+      "name": "tier2-dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "tier2/dashboard", "run", "dev"],
+      "port": 9200
     }
   ]
 }

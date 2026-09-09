@@ -4,7 +4,7 @@ import { docsDir, resolveInDocs } from "./paths.js";
 import { readDocSync } from "./fsdocs.js";
 import { dumpFrontmatter } from "./frontmatter.js";
 import { nextSeq, today } from "./tracking.js";
-import { NotFoundError } from "./docstore.js";
+import { NotFoundError, invalidateCache } from "./docstore.js";
 import { validateDoc } from "./validate.js";
 import { afterWrite } from "./git.js";
 
@@ -73,6 +73,7 @@ export async function transitionDone(planId: string, report: string): Promise<Tr
     throw new Error("검증 실패(PL 스텁): " + stubViolations.map((v) => v.message).join("; "));
   }
   fs.writeFileSync(planPath, dumpFrontmatter(stubMeta, stubBody), "utf-8");
+  invalidateCache(planPath);
 
   removeFromPlanIndex(planId);
 
@@ -86,4 +87,5 @@ function removeFromPlanIndex(planId: string): void {
   const text = fs.readFileSync(indexPath, "utf-8");
   const lines = text.split("\n").filter((line) => !(line.startsWith("|") && line.includes(`[${planId}]`)));
   fs.writeFileSync(indexPath, lines.join("\n"), "utf-8");
+  invalidateCache(indexPath);
 }

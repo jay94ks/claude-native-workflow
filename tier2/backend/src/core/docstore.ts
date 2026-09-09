@@ -49,7 +49,15 @@ export function scanMeta(absPath: string, source = "scan"): { meta: DocMeta; pen
   return { meta, pending };
 }
 
-function invalidateCache(absPath: string): void {
+/** Drops the cached entry (not "refresh to new content") so the next
+ * scanMeta() sees a cold start rather than a diff - the write path already
+ * knows what it just wrote, so there's nothing to compare against. This is
+ * what stops a designer's own docs new/reply/transition-done from showing
+ * up as a change_notice about itself the moment the dashboard re-reads it
+ * (SP-00003 5절 "자기 알림 스팸 방지") - found missing (create/reply/
+ * transition never called this) by actually clicking through the dashboard
+ * and watching notices pile up on the doc being answered. */
+export function invalidateCache(absPath: string): void {
   metaCache.delete(rel(absPath));
 }
 
@@ -240,6 +248,9 @@ function rebuildTable(indexPath: string, rows: string[], header: [string, string
     (_match, pre: string, _body: string, post: string) => pre + tableMd + post,
   );
   fs.writeFileSync(indexPath, newText, "utf-8");
+  invalidateCache(indexPath); // this index.md was likely already cached from
+  // an earlier tree/list read - drop it so our own regen doesn't show up as
+  // a change_notice about itself on the next read (SP-00003 5절 self-spam).
 }
 
 export function rebuildReplyIndex(): void {

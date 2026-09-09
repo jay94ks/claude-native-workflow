@@ -4,6 +4,7 @@ import { docsDir } from "./paths.js";
 import { dumpFrontmatter } from "./frontmatter.js";
 import { nextSeq, today } from "./tracking.js";
 import { validateDoc } from "./validate.js";
+import { invalidateCache } from "./docstore.js";
 import { afterWrite } from "./git.js";
 import type { DocMeta } from "./types.js";
 
@@ -89,4 +90,7 @@ function appendIndexRow(folder: string, id: string, title: string, status: strin
     newText = text.trimEnd() + "\n" + row + "\n";
   }
   fs.writeFileSync(indexPath, newText, "utf-8");
+  invalidateCache(indexPath); // scanMeta already cached this from an earlier
+  // tree/list read - without this, the next read sees a stale-vs-real diff
+  // and logs a change_notice about our own write (SP-00003 5절 self-spam).
 }

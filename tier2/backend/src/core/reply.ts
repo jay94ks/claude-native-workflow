@@ -3,7 +3,7 @@ import { resolveInDocs, isInsideDocs } from "./paths.js";
 import { readDocSync } from "./fsdocs.js";
 import { dumpFrontmatter } from "./frontmatter.js";
 import { nextSeq, today } from "./tracking.js";
-import { findLgByTarget, rebuildLogsIndex, rebuildReplyIndex, NotFoundError } from "./docstore.js";
+import { findLgByTarget, rebuildLogsIndex, rebuildReplyIndex, invalidateCache, NotFoundError } from "./docstore.js";
 import { afterWrite } from "./git.js";
 import type { DocMeta } from "./types.js";
 
@@ -69,6 +69,7 @@ export async function answerPending(docPathRel: string, questionId: string, answ
     meta.status = "answered";
   }
   fs.writeFileSync(docPath, dumpFrontmatter(meta, newBody), "utf-8");
+  invalidateCache(docPath);
 
   const found = findLgByTarget(docId);
   let lgPath: string;
@@ -98,6 +99,7 @@ export async function answerPending(docPathRel: string, questionId: string, answ
     `- 처리 내용: \`${docPathRel}\`의 (${qTag}) 항목에 답변 반영 → ` +
     `[${rpId}](../${docPathRel}#${rpAnchor}), 상태 갱신.\n`;
   fs.writeFileSync(lgPath, dumpFrontmatter(lgMeta, lgBody), "utf-8");
+  invalidateCache(lgPath);
 
   rebuildReplyIndex();
   rebuildLogsIndex();
