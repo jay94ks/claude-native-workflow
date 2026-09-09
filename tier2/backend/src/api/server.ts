@@ -13,6 +13,7 @@ import { DESIGN_TYPES, TYPE_NAMES } from "../core/types.js";
 import { pull as gitPull, push as gitPush, commitDocsChange, sync as gitSync } from "../core/git.js";
 import { gitLog, gitCommitDetail, gitDiff, gitBlame } from "../core/gitlog.js";
 import { listComments, addComment, resolveComment } from "../core/comments.js";
+import { listChangeNotices, ackChangeNotice } from "../core/changes.js";
 
 // Express 4 only forwards synchronous throws to the error middleware on its
 // own - an async handler's rejected promise needs an explicit catch, or a
@@ -160,6 +161,15 @@ export function createApp() {
 
   app.post(/^\/api\/docs\/(.+)\/comments\/(\d+)\/resolve$/, (req, res) => {
     resolveComment(req.params[0], Number(req.params[1]));
+    res.json({ ok: true });
+  });
+
+  app.get("/api/changes", (_req, res) => {
+    res.json(listChangeNotices());
+  });
+
+  app.post("/api/changes/:id/ack", (req, res) => {
+    ackChangeNotice(Number(req.params.id));
     res.json({ ok: true });
   });
 

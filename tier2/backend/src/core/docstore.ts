@@ -8,16 +8,20 @@ import { dumpFrontmatter } from "./frontmatter.js";
 import { today } from "./tracking.js";
 import { iterDocFiles, readDocSync } from "./fsdocs.js";
 import { validateDoc } from "./validate.js";
+import { createChangeNotice, diffSummarySync } from "./changes.js";
 
 export { iterDocFiles, readDocSync };
 
 // ---------------------------------------------------------------- read gate (SP-00003 6.2)
 //
 // mtime+size checked in-memory cache: an unchanged file costs one stat()
-// call, never a read+parse. This is the caching half of the read gate;
-// change_notices/trace_events (the notification half, SP-00003 5절/6절) land
-// with git automation + the change queue (PL-00001 2단계 5~7번) - not yet
-// wired here.
+// call, never a read+parse. On a real (non-cold-start) change it also files
+// a change_notice (5절) - this is the single point where that happens, so
+// every caller (tree/list/search today; git-pull/webhook handlers once they
+// exist) gets it for free, mirroring tier1/tools/docs/server.py's scan_meta.
+// Kept synchronous (execFileSync in changes.ts, not the async simple-git
+// used elsewhere) so callers like buildTree's recursive walk don't need to
+// become async just for this side effect.
 
 interface CacheEntry {
   mtimeMs: number;
@@ -28,16 +32,20 @@ interface CacheEntry {
 
 const metaCache = new Map<string, CacheEntry>();
 
-export function scanMeta(absPath: string): { meta: DocMeta; pending: PendingQuestion[] } {
+export function scanMeta(absPath: string, source = "scan"): { meta: DocMeta; pending: PendingQuestion[] } {
   const relPath = rel(absPath);
   const st = fs.statSync(absPath);
   const cached = metaCache.get(relPath);
   if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
     return { meta: cached.meta, pending: cached.pending };
   }
+  const wasCached = cached !== undefined;
   const { body, meta } = readDocSync(absPath);
   const pending = scanPendingInText(body);
   metaCache.set(relPath, { mtimeMs: st.mtimeMs, size: st.size, meta, pending });
+  if (wasCached) {
+    createChangeNotice(relPath, source, diffSummarySync(relPath));
+  }
   return { meta, pending };
 }
 

@@ -10,6 +10,7 @@ import { DESIGN_TYPES, TYPE_NAMES } from "../core/types.js";
 import { pull as gitPull, push as gitPush, commitDocsChange, sync as gitSync } from "../core/git.js";
 import { gitLog, gitCommitDetail, gitDiff, gitBlame } from "../core/gitlog.js";
 import { listComments, addComment, resolveComment } from "../core/comments.js";
+import { listChangeNotices, ackChangeNotice } from "../core/changes.js";
 
 // SP-00001 4절의 CLI. api/server.ts와 마찬가지로 core/를 직접 호출한다
 // (SP-00001 1절: "MCP 서버, CLI, 로컬 API가 전부 같은 core/ 함수를 직접
@@ -168,6 +169,19 @@ commentCmd
   .description("코멘트 해결 처리")
   .action((path: string, commentId: string) => {
     resolveComment(path, Number(commentId));
+    printJson({ ok: true });
+  });
+
+const changesCmd = program
+  .command("changes")
+  .description("미확인 변경 목록 조회(SP-00003 5절)")
+  .action(() => printJson(listChangeNotices()));
+
+changesCmd
+  .command("ack <id>")
+  .description("변경 항목을 확인 처리(큐에서 제거)")
+  .action((id: string) => {
+    ackChangeNotice(Number(id));
     printJson({ ok: true });
   });
 

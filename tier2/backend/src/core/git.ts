@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
-import { getProjectRoot, docsDir } from "./paths.js";
+import { getProjectRoot, docsDir, resolveInDocs } from "./paths.js";
 import { loadConfig } from "./config.js";
+import { scanMeta } from "./docstore.js";
 
 // SP-00001 5절 git 자동화. `docs/.config.json`의 `git.enabled`(로컬 docs/가
 // 애초에 git 저장소가 아니면 자동으로 꺼짐)/`git.push_mode`를 따른다.
@@ -36,13 +37,24 @@ export interface PullResult {
 }
 
 /** Explicit `docs git pull` (also used at backend/MCP startup - SP-00001 5절
- * "세션/백엔드 기동 시"). Never auto-merges a conflict; reports it instead. */
+ * "세션/백엔드 기동 시"). Never auto-merges a conflict; reports it instead.
+ * On success, immediately scans whatever changed under docs/ so the change
+ * queue (5절) gets a `source: git_pull` notice right away, rather than
+ * waiting for the next incidental tree/list read to notice via `scan`. */
 export async function pull(): Promise<PullResult> {
   if (!gitAutomationEnabled()) {
     return { attempted: false, ok: false, conflict: false, message: "git 자동화가 꺼져 있습니다" };
   }
+  const g = git();
+  let beforeSha: string | null = null;
   try {
-    const summary = await git().pull();
+    beforeSha = (await g.revparse(["HEAD"])).trim();
+  } catch {
+    beforeSha = null; // e.g. no commits yet - fine, just skip the post-pull scan
+  }
+  try {
+    const summary = await g.pull();
+    if (beforeSha) await scanChangedDocsSince(g, beforeSha);
     return {
       attempted: true, ok: true, conflict: false,
       message: `pull 완료 (${summary.summary.changes} changes, ${summary.summary.insertions} insertions, ${summary.summary.deletions} deletions)`,
@@ -53,6 +65,19 @@ export async function pull(): Promise<PullResult> {
     // and a dirty working tree) - other pull failures (no upstream, no
     // remote, network) fail the same way but aren't conflicts to resolve.
     return { attempted: true, ok: false, conflict: message.includes("CONFLICT"), message };
+  }
+}
+
+async function scanChangedDocsSince(g: SimpleGit, beforeSha: string): Promise<void> {
+  const diffOut = await g.diff(["--name-only", beforeSha, "HEAD", "--", docsDir()]);
+  const changedRel = diffOut.split("\n").map((l) => l.trim()).filter((l) => l.endsWith(".md"));
+  for (const gitRelPath of changedRel) {
+    // gitRelPath is repo-root-relative (e.g. "docs/decision/DC-00001.md");
+    // scanMeta wants an absolute path so it can compute a docs/-relative one.
+    const absPath = path.join(getProjectRoot(), gitRelPath);
+    if (fs.existsSync(absPath)) {
+      scanMeta(absPath, "git_pull");
+    }
   }
 }
 

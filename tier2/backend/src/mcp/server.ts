@@ -11,6 +11,7 @@ import { DESIGN_TYPES, TYPE_NAMES } from "../core/types.js";
 import { pull as gitPull, sync as gitSync } from "../core/git.js";
 import { gitLog, gitCommitDetail, gitDiff, gitBlame } from "../core/gitlog.js";
 import { listComments, addComment, resolveComment } from "../core/comments.js";
+import { listChangeNotices, ackChangeNotice } from "../core/changes.js";
 
 // SP-00001 3절의 MCP 도구. api/server.ts, cli/index.ts와 마찬가지로 core/를
 // 직접 호출한다(1절: "MCP 서버, CLI, 로컬 API가 전부 같은 core/ 함수를
@@ -208,6 +209,24 @@ async function main() {
       } catch (err) {
         return errorResult(err);
       }
+    },
+  );
+
+  server.registerTool(
+    "docs_changes",
+    {
+      title: "변경 추적 큐 조회/확인(SP-00003 5절)",
+      description:
+        "SP-00001 3절 표엔 없지만, 5절이 설명하는 '설계자가 없는 사이 뭐가 바뀌었는지' " +
+        "확인 흐름의 실제 소비자가 Claude라서 추가한 도구. action=list(미확인 변경 " +
+        "목록) · ack(id로 확인 처리, 큐에서 제거).",
+      inputSchema: { action: z.enum(["list", "ack"]), id: z.number().optional() },
+    },
+    async ({ action, id }) => {
+      if (action === "list") return textResult(listChangeNotices());
+      if (id === undefined) return errorResult(new Error("ack는 id가 필요합니다"));
+      ackChangeNotice(id);
+      return textResult({ ok: true });
     },
   );
 
