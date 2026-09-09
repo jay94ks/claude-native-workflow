@@ -4,8 +4,14 @@
     {
       "name": "docs-dashboard",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["tools/docs/server.py", "--port", "8756"],
+      "runtimeArgs": ["tier1/tools/docs/server.py", "--port", "8756", "--root", "."],
       "port": 8756
+    },
+    {
+      "name": "tier1-template-dashboard",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["tier1/tools/docs/server.py", "--port", "8757"],
+      "port": 8757
     }
   ]
 }

@@ -1,0 +1,10 @@
+# Derived cache for tools/docs - rebuildable from docs/*.md, never commit.
+docs/.workflow/
+tier1/docs/.workflow/
+
+# Node (future Tier 2/3 work)
+node_modules/
+dist/
+.env
+.env.*
+!.env.example

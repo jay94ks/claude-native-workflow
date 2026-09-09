@@ -12,6 +12,7 @@ import argparse
 import datetime
 import json
 import re
+import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -140,6 +141,37 @@ def read_doc(path: Path):
     return text, meta, body
 
 
+# ---------------------------------------------------------------- meta cache
+#
+# Every list/tree endpoint used to open + parse every *.md file on every
+# request. That's fine for a handful of docs but gets visibly slow as a
+# project accumulates hundreds of them (each is a full file read + regex
+# parse on every request, even when nothing changed since the last one).
+# The server is a long-running process (ThreadingHTTPServer), so a plain
+# in-memory dict keyed by mtime is enough - no need for a cache file on
+# disk. A file is only re-read/re-parsed when its mtime no longer matches
+# what we last saw; everything here is derived from docs/*.md, so losing
+# the cache on restart just costs one full (still fast) rescan.
+
+_META_CACHE_LOCK = threading.Lock()
+_META_CACHE = {}  # rel_path -> (mtime, meta, pending_list)
+
+
+def get_doc_meta(path: Path):
+    """(meta, pending_list) for path, via the mtime-checked in-memory cache."""
+    rel_path = rel(path)
+    mtime = path.stat().st_mtime
+    with _META_CACHE_LOCK:
+        cached = _META_CACHE.get(rel_path)
+        if cached and cached[0] == mtime:
+            return cached[1], cached[2]
+    _, meta, body = read_doc(path)
+    pending = scan_pending_in_text(body)
+    with _META_CACHE_LOCK:
+        _META_CACHE[rel_path] = (mtime, meta, pending)
+    return meta, pending
+
+
 def build_tree():
     d = docs_dir()
 
@@ -155,8 +187,7 @@ def build_tree():
             if entry.is_dir():
                 node["children"].append(walk(entry))
             elif entry.suffix == ".md":
-                text = entry.read_text(encoding="utf-8")
-                meta, _ = parse_frontmatter(text)
+                meta, _ = get_doc_meta(entry)
                 node["children"].append({
                     "name": entry.name,
                     "type": "file",
@@ -178,8 +209,8 @@ def scan_pending_in_text(body):
 def list_pending():
     items = []
     for p in iter_doc_files():
-        _, meta, body = read_doc(p)
-        for qid, question in scan_pending_in_text(body):
+        meta, pending = get_doc_meta(p)
+        for qid, question in pending:
             items.append({
                 "doc_path": rel(p),
                 "doc_id": meta.get("id", p.stem),
@@ -194,7 +225,7 @@ def list_pending():
 def list_by_types(types):
     out = []
     for p in iter_doc_files():
-        _, meta, _ = read_doc(p)
+        meta, _ = get_doc_meta(p)
         t = meta.get("type", "")
         if t in types:
             out.append({
@@ -255,17 +286,41 @@ def rebuild_logs_index():
     if logs_dir.exists():
         for p in sorted(logs_dir.glob("LG-*.md")):
             _, meta, _ = read_doc(p)
+            qids = ", ".join(meta.get("question_ids", []) or [])
             rows.append(
                 f"| [{meta.get('id', p.stem)}]({p.name}) | {meta.get('target', '')} | "
-                f"{meta.get('rp', '')} | {meta.get('created', '')} |"
+                f"{qids} | {meta.get('updated', meta.get('created', ''))} |"
             )
     rebuild_table(
         docs_dir() / "logs" / "index.md", rows,
-        ("| 번호 | 대상 문서 | RP | 처리일 |", "|---|---|---|---|"),
+        ("| 번호 | 대상 문서 | 답변된 질문 | 최근 처리일 |", "|---|---|---|---|"),
     )
 
 
+def find_lg_by_target(doc_id):
+    """Find the LG file (one per target document) whose `target` matches
+    doc_id, if any exists yet."""
+    folder = docs_dir() / "logs"
+    if not folder.exists():
+        return None, None, None
+    for p in sorted(folder.glob("LG-*.md")):
+        text, meta, body = read_doc(p)
+        if meta.get("target") == doc_id:
+            return p, meta, body
+    return None, None, None
+
+
 def answer_pending(doc_path_rel, question_id, answer_text):
+    """Answer one (Qn) item of a DC/RV/FX document.
+
+    RP is not a separate file: the answer is recorded as a `### RP-XXXXX`
+    entry inside the target document's own "## 답변 기록" section, so
+    answering N questions on one document never creates more than that one
+    file (avoids the RP-per-question / RP-per-document file pile-up).
+    RP-XXXXX itself becomes an in-page anchor (`#rp-00001`) rather than a
+    filename. LG stays one file per target document (a log entry per answer),
+    linking to that anchor instead of a separate RP file.
+    """
     doc_path = (docs_dir() / doc_path_rel).resolve()
     if not str(doc_path).startswith(str(docs_dir().resolve())) or not doc_path.exists():
         raise FileNotFoundError(doc_path_rel)
@@ -277,45 +332,57 @@ def answer_pending(doc_path_rel, question_id, answer_text):
         raise ValueError("질문을 찾을 수 없거나 이미 답변되었습니다")
     question_text = m.group(1)
 
+    doc_id = meta.get("id", doc_path.stem)
+    q_tag = f"Q{question_id}"
+
     rp_id = next_seq("RP")
-    new_line = f"- [x] (Q{question_id}) {question_text} → {rp_id}"
+    rp_anchor = rp_id.lower()  # "RP-00001" -> "rp-00001", matches the GitHub-style slug the dashboard's renderer gives the "### RP-00001" heading below.
+
+    new_line = f"- [x] (Q{question_id}) {question_text} → [{rp_id}](#{rp_anchor})"
     new_body = body[:m.start()] + new_line + body[m.end():]
 
     remaining = bool(PENDING_RE.search(new_body))
+
+    record = (
+        f"\n### {rp_id}\n\n"
+        f"- 질문 ID: {q_tag}\n"
+        f"- 답변일: {today()}\n\n"
+        f"**질문**\n\n{question_text}\n\n"
+        f"**답변**\n\n{answer_text}\n"
+    )
+    if "## 답변 기록" not in new_body:
+        new_body = new_body.rstrip("\n") + "\n\n## 답변 기록\n" + record
+    else:
+        new_body = new_body.rstrip("\n") + "\n" + record
+
     meta["reply_pending"] = remaining
     meta["updated"] = today()
     if not remaining and meta.get("status") == "open":
         meta["status"] = "answered"
     doc_path.write_text(dump_frontmatter(meta, new_body), encoding="utf-8")
 
-    doc_id = meta.get("id", doc_path.stem)
+    # one LG file per target document: find it, or mint a new number.
+    lg_path, lg_meta, lg_body = find_lg_by_target(doc_id)
+    if lg_path is None:
+        lg_id = next_seq("LG")
+        lg_path = docs_dir() / "logs" / f"{lg_id}.md"
+        lg_meta = {
+            "id": lg_id, "type": "LG", "target": doc_id,
+            "question_ids": [], "created": today(), "updated": today(),
+        }
+        lg_body = f"# {lg_id}\n\n- 대상 문서: [{doc_id}](../{doc_path_rel})\n"
+    else:
+        lg_id = lg_meta["id"]
+        lg_meta.setdefault("question_ids", [])
 
-    rp_meta = {
-        "id": rp_id, "type": "RP", "target": doc_id,
-        "question_id": f"Q{question_id}", "created": today(), "updated": today(),
-    }
-    rp_body = (
-        f"# {rp_id}\n\n"
-        f"- 대상 문서: [{doc_id}](../{doc_path_rel})\n\n"
-        f"## 질문\n\n{question_text}\n\n"
-        f"## 답변\n\n{answer_text}\n"
+    if q_tag not in lg_meta["question_ids"]:
+        lg_meta["question_ids"].append(q_tag)
+    lg_meta["updated"] = today()
+    lg_body += (
+        f"- 처리 내용: `{doc_path_rel}`의 ({q_tag}) 항목에 답변 반영 → "
+        f"[{rp_id}](../{doc_path_rel}#{rp_anchor}), 상태 갱신.\n"
     )
-    (docs_dir() / "reply" / f"{rp_id}.md").write_text(
-        dump_frontmatter(rp_meta, rp_body), encoding="utf-8")
-
-    lg_id = next_seq("LG")
-    lg_meta = {
-        "id": lg_id, "type": "LG", "target": doc_id,
-        "rp": rp_id, "created": today(), "updated": today(),
-    }
-    lg_body = (
-        f"# {lg_id}\n\n"
-        f"- 대상 문서: [{doc_id}](../{doc_path_rel})\n"
-        f"- 답변: [{rp_id}]({rp_id}.md)\n"
-        f"- 처리 내용: `{doc_path_rel}`의 (Q{question_id}) 항목에 답변 반영, 상태 갱신.\n"
-    )
-    (docs_dir() / "logs" / f"{lg_id}.md").write_text(
-        dump_frontmatter(lg_meta, lg_body), encoding="utf-8")
+    lg_path.write_text(dump_frontmatter(lg_meta, lg_body), encoding="utf-8")
 
     rebuild_reply_index()
     rebuild_logs_index()

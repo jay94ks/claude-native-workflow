@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""Assemble bootstrap-prompt.md from the template/ reference files.
+"""Assemble bootstrap-prompt.md from the tier1/ reference files.
 
 Not part of the deliverable prompt itself - a dev-time helper so the prompt
-is always byte-identical to the tested template files instead of being
-hand-transcribed.
+is always byte-identical to the tested tier1/ template files instead of being
+hand-transcribed. tier1/ is a pristine, unpopulated copy of the docs/
+workflow + dashboard, kept separate from this repo's own live docs/ (which
+tracks claude-native-workflow's own design work and must never leak into the
+prompt). Source paths below are read from tier1/<path>; the generated prompt
+tells Claude to create each file at <path> (tier1/ stripped) in the new
+project.
 """
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = ROOT / "tier1"
 
 FILES = [
     "CLAUDE.md",
@@ -73,7 +79,7 @@ FOOTER = """
 def main():
     parts = [HEADER]
     for rel in FILES:
-        path = ROOT / rel
+        path = SOURCE_ROOT / rel
         text = path.read_text(encoding="utf-8")
         ext = path.suffix
         lang = LANG.get(ext, "")
