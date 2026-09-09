@@ -16,6 +16,10 @@ datasource db {
 
 model DocComment {
   id         Int     @id @default(autoincrement())
+  // Tier 2는 프로젝트 개념이 없어 항상 null. Tier 3(SP-00002 8절)는 모든
+  // 프로젝트가 이 하나의 서비스 DB를 공유하고 project_id로 데이터를
+  // 나눈다 - 프로젝트별 DB 커넥션을 따로 두는 게 아니다.
+  projectId  String? @map("project_id")
   docPath    String  @map("doc_path")
   body       String  @db.Text
   createdAt  String  @map("created_at")
@@ -35,4 +39,57 @@ model DocsIndexEntry {
   replyPending Boolean @map("reply_pending")
 
   @@map("docs_index")
+}
+
+// ---------------------------------------------------------------- SP-00002 (Tier 3)
+// 계정/토큰/프로젝트/멤버십. role은 Prisma enum 대신 평문 String으로 뒀다 -
+// sqlite 변형(schema.sqlite.prisma)엔 네이티브 enum이 아예 없어서, 세
+// provider 모두에서 통하는 표현이 이거뿐이다(값 검증은 애플리케이션 코드가
+// 한다 - tier3/backend/src/core/auth.ts).
+
+model User {
+  id            String          @id @default(uuid())
+  username      String          @unique
+  email         String          @unique
+  passwordHash  String          @map("password_hash")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  refreshTokens RefreshToken[]
+  memberships   ProjectMember[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @map("token_hash")
+  issuedAt  DateTime  @default(now()) @map("issued_at")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  @@map("refresh_tokens")
+}
+
+model Project {
+  id         String          @id @default(uuid())
+  name       String
+  gitRepoUrl String          @map("git_repo_url")
+  createdAt  DateTime        @default(now()) @map("created_at")
+  members    ProjectMember[]
+
+  @@map("projects")
+}
+
+model ProjectMember {
+  projectId String   @map("project_id")
+  project   Project  @relation(fields: [projectId], references: [id])
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id])
+  role      String   // owner | editor | viewer (SP-00002 3절)
+  joinedAt  DateTime @default(now()) @map("joined_at")
+
+  @@id([projectId, userId])
+  @@map("project_members")
 }

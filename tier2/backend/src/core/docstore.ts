@@ -30,21 +30,28 @@ interface CacheEntry {
   pending: PendingQuestion[];
 }
 
+// Keyed by absolute path, not the docs/-relative one - Tier 3 (PL-00001
+// 3단계) runs one process serving many projects concurrently, and two
+// different projects can easily both have e.g. "spec/SP-00001.md". A
+// relative-path key would let them collide and show each other's cached
+// content; an absolute path never does, with no other code needing to
+// change (found by reasoning through Tier 3's concurrency model before
+// building on top of it, not by hitting the collision live).
 const metaCache = new Map<string, CacheEntry>();
 
 export function scanMeta(absPath: string, source = "scan"): { meta: DocMeta; pending: PendingQuestion[] } {
-  const relPath = rel(absPath);
+  const key = path.resolve(absPath);
   const st = fs.statSync(absPath);
-  const cached = metaCache.get(relPath);
+  const cached = metaCache.get(key);
   if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
     return { meta: cached.meta, pending: cached.pending };
   }
   const wasCached = cached !== undefined;
   const { body, meta } = readDocSync(absPath);
   const pending = scanPendingInText(body);
-  metaCache.set(relPath, { mtimeMs: st.mtimeMs, size: st.size, meta, pending });
+  metaCache.set(key, { mtimeMs: st.mtimeMs, size: st.size, meta, pending });
   if (wasCached) {
-    createChangeNotice(relPath, source, diffSummarySync(relPath));
+    createChangeNotice(rel(absPath), source, diffSummarySync(rel(absPath)));
   }
   return { meta, pending };
 }
@@ -58,7 +65,7 @@ export function scanMeta(absPath: string, source = "scan"): { meta: DocMeta; pen
  * transition never called this) by actually clicking through the dashboard
  * and watching notices pile up on the doc being answered. */
 export function invalidateCache(absPath: string): void {
-  metaCache.delete(rel(absPath));
+  metaCache.delete(path.resolve(absPath));
 }
 
 // ---------------------------------------------------------------- pending questions
