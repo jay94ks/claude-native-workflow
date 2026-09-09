@@ -1,0 +1,38 @@
+// SP-00001 6절 선택적 서비스 DB - mysql/mariadb 변형(마리아DB는 mysql
+// 커넥터로 호환, DC-00001 RP-00004). Prisma는 한 스키마당 provider가
+// 고정이라(런타임에 provider 자체를 바꿀 수 없음), driver별로 스키마
+// 파일을 나눠 각자 별도 output 경로에 클라이언트를 생성한다 - 모델
+// 정의는 세 스키마 모두 동일하고, datasource/output만 다르다.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/mysql"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model DocComment {
+  id         Int     @id @default(autoincrement())
+  docPath    String  @map("doc_path")
+  body       String  @db.Text
+  createdAt  String  @map("created_at")
+  resolvedAt String? @map("resolved_at")
+
+  @@map("doc_comments")
+}
+
+model DocsIndexEntry {
+  id           String  @id
+  type         String
+  path         String
+  title        String
+  status       String
+  updatedAt    String  @map("updated_at")
+  linksJson    String  @map("links_json") @db.Text
+  replyPending Boolean @map("reply_pending")
+
+  @@map("docs_index")
+}

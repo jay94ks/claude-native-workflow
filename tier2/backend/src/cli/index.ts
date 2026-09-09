@@ -11,6 +11,8 @@ import { pull as gitPull, push as gitPush, commitDocsChange, sync as gitSync } f
 import { gitLog, gitCommitDetail, gitDiff, gitBlame } from "../core/gitlog.js";
 import { listComments, addComment, resolveComment } from "../core/comments.js";
 import { listChangeNotices, ackChangeNotice } from "../core/changes.js";
+import { enableServiceDb, disableServiceDb } from "../core/dbmigrate.js";
+import type { DbConfig } from "../core/config.js";
 
 // SP-00001 4절의 CLI. api/server.ts와 마찬가지로 core/를 직접 호출한다
 // (SP-00001 1절: "MCP 서버, CLI, 로컬 API가 전부 같은 core/ 함수를 직접
@@ -157,18 +159,18 @@ const commentCmd = program.command("comment").description("문서 코멘트(SP-0
 commentCmd
   .command("list <path>")
   .description("문서의 코멘트 목록 조회")
-  .action((path: string) => printJson(listComments(path)));
+  .action(async (path: string) => printJson(await listComments(path)));
 
 commentCmd
   .command("add <path> <text...>")
   .description("코멘트 작성")
-  .action((path: string, textParts: string[]) => printJson({ id: addComment(path, textParts.join(" ")) }));
+  .action(async (path: string, textParts: string[]) => printJson({ id: await addComment(path, textParts.join(" ")) }));
 
 commentCmd
   .command("resolve <path> <commentId>")
   .description("코멘트 해결 처리")
-  .action((path: string, commentId: string) => {
-    resolveComment(path, Number(commentId));
+  .action(async (path: string, commentId: string) => {
+    await resolveComment(path, Number(commentId));
     printJson({ ok: true });
   });
 
@@ -184,6 +186,24 @@ changesCmd
     ackChangeNotice(Number(id));
     printJson({ ok: true });
   });
+
+const dbCmd = program.command("db").description("선택적 서비스 DB 전환(SP-00001 6절, 양방향 무손실)");
+
+dbCmd
+  .command("enable")
+  .description("서비스 DB로 이관하며 켜기 - 검증 실패 시 설정 파일은 건드리지 않음")
+  .requiredOption("--driver <driver>", "mysql|mariadb|postgres|sqlite")
+  .requiredOption("--connection <json>", "접속 정보 JSON, 예: '{\"host\":\"...\",\"port\":3306,\"user\":\"...\",\"password\":\"...\",\"database\":\"...\"}' (sqlite는 '{\"file\":\"./service.db\"}')")
+  .action(async (opts: { driver: string; connection: string }) => {
+    const connection = JSON.parse(opts.connection) as Record<string, unknown>;
+    printJson(await enableServiceDb(opts.driver as DbConfig["driver"], connection));
+  });
+
+dbCmd
+  .command("disable")
+  .description("로컬 SQLite로 되돌리며 끄기 - 검증 실패 시 설정 파일은 건드리지 않음")
+  .option("--drop", "서비스 DB 쪽 데이터도 삭제(기본은 보존)", false)
+  .action(async (opts: { drop: boolean }) => printJson(await disableServiceDb(opts.drop)));
 
 program
   .command("validate")

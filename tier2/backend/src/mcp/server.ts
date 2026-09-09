@@ -198,13 +198,13 @@ async function main() {
     },
     async ({ action, path, text, comment_id }) => {
       try {
-        if (action === "list") return textResult(listComments(path));
+        if (action === "list") return textResult(await listComments(path));
         if (action === "add") {
           if (!text) return errorResult(new Error("add는 text가 필요합니다"));
-          return textResult({ id: addComment(path, text) });
+          return textResult({ id: await addComment(path, text) });
         }
         if (comment_id === undefined) return errorResult(new Error("resolve는 comment_id가 필요합니다"));
-        resolveComment(path, comment_id);
+        await resolveComment(path, comment_id);
         return textResult({ ok: true });
       } catch (err) {
         return errorResult(err);

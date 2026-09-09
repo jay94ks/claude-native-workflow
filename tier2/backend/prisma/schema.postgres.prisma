@@ -1,0 +1,35 @@
+// SP-00001 6절 선택적 서비스 DB - postgres 변형. schema.mysql.prisma와
+// 모델은 동일, datasource/output만 다르다.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/postgres"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model DocComment {
+  id         Int     @id @default(autoincrement())
+  docPath    String  @map("doc_path")
+  body       String  @db.Text
+  createdAt  String  @map("created_at")
+  resolvedAt String? @map("resolved_at")
+
+  @@map("doc_comments")
+}
+
+model DocsIndexEntry {
+  id           String  @id
+  type         String
+  path         String
+  title        String
+  status       String
+  updatedAt    String  @map("updated_at")
+  linksJson    String  @map("links_json")
+  replyPending Boolean @map("reply_pending")
+
+  @@map("docs_index")
+}

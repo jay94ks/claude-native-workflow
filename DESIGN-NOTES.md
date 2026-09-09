@@ -561,3 +561,55 @@ Tier 2에서도 막혀 있음을 확인). MCP `docs_changes` 도구도 등록/li
 스모크테스트로 확인.
 
 남은 8~10번(선택적 서비스 DB, Quasar 대시보드, Docker)은 이어서 진행한다.
+
+### 2026-09-09 (계속 8) — PL-00001 2단계 8번: 선택적 서비스 DB
+
+"계속 진행해줘"로 8번(SP-00001 6절, `docs db enable`/`disable`)을
+구현했다. DC-00001에서 ORM으로 이미 Prisma를 확정해뒀는데, 실제로 붙여보니
+예상 밖의 구조적 문제부터 풀어야 했다.
+
+- **Prisma가 스키마 하나당 provider를 고정한다는 걸 실제로 붙이면서 알게
+  됨** — "설정으로 mysql/postgres/sqlite 중 고른다"는 요구사항과 정면으로
+  부딪힘. `prisma/schema.{mysql,postgres,sqlite}.prisma` 세 개를 각자 다른
+  `generated/<driver>/`로 생성해두고 런타임에 `driver` 값 보고 동적
+  `import()`하는 방식으로 우회. `generated/`는 빌드 산출물이라 커밋 안 함,
+  `npm run build`가 `db:generate`를 먼저 돌리게 연결.
+- **Prisma 7이 아키텍처를 크게 바꿔서 다운그레이드함** — 처음에 최신
+  (7.10.0)을 깔았더니 스키마 안의 `datasource { url = env(...) }` 자체가
+  더 이상 지원 안 되고(`prisma.config.ts` + driver adapter 방식으로
+  전환됐음), 그러면 DB별 어댑터 패키지 설치에 config.ts 셋업까지 범위가
+  확 늘어난다. 이 프로젝트가 필요한 건 "런타임에 URL만 바꿔 연결"하는
+  단순한 요구라 안정된 6.x(6.19.3)로 고정 — 오래된 방식을 붙잡은 게 아니라
+  실제 요구사항에 맞는 더 단순한 버전을 고른 것.
+- 코멘트 CRUD(`core/comments.ts`)가 `db.enabled`를 매번 확인해 로컬
+  SQLite/서비스 DB 중 어디로 갈지 라우팅하도록 재작성 — Prisma 호출이
+  비동기라 세 함수가 전부 `Promise`가 됐고, 5번(git 자동화) 때와 같은
+  패턴으로 `api`/`cli`/`mcp` 세 진입점을 다시 `await`로 맞춤.
+- **설정 파일 안에서 스스로 모순되는 걸 발견** — `docs/.config.json`에
+  같은 스위치가 두 자리에 다르게 적혀 있었다: SP-00003 3절은
+  `features.db`(boolean), SP-00001 6절은 `db.enabled`(중첩 객체 안).
+  구현하다 보니 하나만 갱신하면 나머지가 거짓말하는 상태가 되길래,
+  `docs db enable`/`disable`이 항상 둘 다 같이 쓰도록 함.
+- **테스트 중 실제 버그 두 개**: (1) `execFileSync("npx", ...)`가 Windows
+  에서 즉시 `spawnSync npx ENOENT`로 죽음 — `npx`가 셸 래퍼(`.cmd`)라
+  셸 없이 spawn하는 `execFileSync`가 못 찾는다. `node`로 prisma CLI의 JS
+  진입점(`node_modules/prisma/build/index.js`)을 직접 실행하도록 고쳐서
+  플랫폼 무관하게 만듦. (2) sqlite 서비스 DB 테스트에서 "Unique constraint
+  failed" — 원인을 좇다 보니 테스트에 쓴 Git Bash 스타일 절대경로
+  (`/c/Users/...`)가 `file:` URL로 그대로 들어가면 POSIX 경로도 Windows
+  경로도 아닌 애매한 문자열이 돼서 Prisma가 엉뚱한 곳에 db를 만들고 있었던
+  것 — `buildConnectionUrl`을 `path.resolve()`로 정규화하도록 고침(이번
+  세션에서 반복해서 마주친 "Git Bash POSIX 경로가 도구마다 다르게
+  해석된다"는 패턴의 또 다른 사례).
+- **`docs_index` 캐시 테이블은 이번엔 만들지 않음** — SP-00001 6절이
+  설명하는 용도(여러 백엔드 인스턴스가 캐시를 DB로 공유)는 지금 단계(단일
+  인스턴스 검증)엔 필요 없고, 6번에서 이미 만든 프로세스 메모리 캐시로
+  충분해서 의도적으로 범위 밖으로 남김(PL-00001 8번에 명시).
+- 실제 검증은 별도 DB 서버 설치 없이 **Prisma의 sqlite provider를 진짜
+  "서비스 DB"처럼 써서** 전체 파이프라인(로컬 코멘트 작성 → enable →
+  행 개수 검증 → 켜진 상태에서 작성/해결 → disable → 행 개수 검증 →
+  로컬로 복귀, 해결 상태까지 보존)을 끝까지 재현 — MySQL/PostgreSQL 실서버
+  연결 자체는 이 환경에서 검증 못 함(별도 후속 확인 필요, `buildConnectionUrl`
+  의 URL 조합 로직만 정적으로 맞음을 확인).
+
+남은 9~10번(Quasar 대시보드, Docker)은 이어서 진행한다.

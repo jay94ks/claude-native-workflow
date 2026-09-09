@@ -149,20 +149,20 @@ export function createApp() {
   }));
 
   // :path contains slashes (e.g. decision/DC-00001.md), same as the reply route.
-  app.get(/^\/api\/docs\/(.+)\/comments$/, (req, res) => {
-    res.json(listComments(req.params[0]));
-  });
+  app.get(/^\/api\/docs\/(.+)\/comments$/, asyncRoute(async (req, res) => {
+    res.json(await listComments(req.params[0]));
+  }));
 
-  app.post(/^\/api\/docs\/(.+)\/comments$/, (req, res) => {
+  app.post(/^\/api\/docs\/(.+)\/comments$/, asyncRoute(async (req, res) => {
     const { body } = req.body as { body?: string };
-    if (!body) return res.status(400).json({ error: "body required" });
-    res.json({ id: addComment(req.params[0], body) });
-  });
+    if (!body) { res.status(400).json({ error: "body required" }); return; }
+    res.json({ id: await addComment(req.params[0], body) });
+  }));
 
-  app.post(/^\/api\/docs\/(.+)\/comments\/(\d+)\/resolve$/, (req, res) => {
-    resolveComment(req.params[0], Number(req.params[1]));
+  app.post(/^\/api\/docs\/(.+)\/comments\/(\d+)\/resolve$/, asyncRoute(async (req, res) => {
+    await resolveComment(req.params[0], Number(req.params[1]));
     res.json({ ok: true });
-  });
+  }));
 
   app.get("/api/changes", (_req, res) => {
     res.json(listChangeNotices());

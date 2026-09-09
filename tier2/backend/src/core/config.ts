@@ -48,3 +48,12 @@ export function loadConfig(): WorkflowConfig {
     db: { ...DEFAULTS.db, ...raw.db },
   };
 }
+
+/** Only `db.enable`/`disable` (dbmigrate.ts) should call this - every other
+ * setting is safe to hand-edit in docs/.config.json directly (SP-00003 3절),
+ * but `db.enabled` is the one field that must only flip after a verified
+ * data migration, never a bare file edit. */
+export function saveConfig(config: WorkflowConfig): void {
+  const p = path.join(docsDir(), ".config.json");
+  fs.writeFileSync(p, JSON.stringify(config, null, 2) + "\n", "utf-8");
+}
