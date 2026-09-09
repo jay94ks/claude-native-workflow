@@ -4,14 +4,19 @@
   "private": true,
   "type": "module",
   "main": "dist/api/server.js",
+  "bin": {
+    "docs3": "dist/cli/index.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/api/server.ts",
-    "start": "node dist/api/server.js"
+    "start": "node dist/api/server.js",
+    "cli": "tsx src/cli/index.ts"
   },
   "dependencies": {
     "@claude-native-workflow/tier2-backend": "file:../../tier2/backend",
     "argon2": "^0.45.1",
+    "commander": "^12.1.0",
     "express": "^4.21.1",
     "jsonwebtoken": "^9.0.3",
     "simple-git": "^3.27.0"

@@ -843,3 +843,33 @@ log`/파일 내용으로) 확인 — 이걸 새 프로젝트를 만들어 처음
 config 수정이 실제로 적용된 상태로 검증.
 
 남은 건 5번(클라이언트 토큰 보관), 6번(대시보드 UI 확장), 7번(배포)이다.
+
+### 2026-09-09 (계속 14) — 5번: `docs3` CLI로 클라이언트 토큰 보관 구현
+
+"계속 진행하자"로 5번(SP-00002 2절)을 구현했다. 스펙 문구가 "Skill이
+안내하는 얇은 REST 클라이언트"라 처음엔 이걸 Skill 문서(안내 절차서)
+작성 작업으로만 봤는데, 다시 생각해보니 그 문서가 안내할 실제 CLI가
+없으면 문서만 있어봐야 소용이 없다는 걸 깨닫고, 문서보다 `tier3/backend`
+에 `docs3` CLI를 먼저 구현하는 쪽으로 순서를 바꿨다(Skill 문서 자체는
+아직 안 씀).
+
+`core/credentials.ts`(`~/.claude-native-workflow/credentials.json`,
+권한 600)와 `core/apiclient.ts`(401 받으면 refresh token으로 자동 갱신 -
+회전된 새 refresh token도 다시 저장해둬야 다음 401 때 안 막힌다는 걸
+설계 단계에서 미리 챙김) 위에, tier2의 CLI와는 성격이 다른 CLI를 짰다 -
+tier2 CLI는 core를 직접 호출하지만, `docs3`는 REST 클라이언트라 로컬
+파일이 아예 없고 전부 HTTP로 tier3 서버를 부른다(login/logout/whoami/
+projects/project-create/members/invite/tree/doc/pending/new/reply/
+transition-done/git commit·push·pull).
+
+검증하면서 신경 쓴 부분: `os.homedir()`가 실제 내(Claude 세션이 도는 이
+Windows 머신) 홈 디렉터리를 가리키므로, 테스트를 실제 홈에 자격 증명
+파일을 쓰면서 할 수는 없었다 - `USERPROFILE`/`HOME` 환경변수를 스캐치
+디렉터리로 덮어써서 전체 시나리오(로그인 → 자격 증명 파일 생성 확인 →
+프로젝트 생성 → 문서 생성(한글 제목) → 답변 대기 조회 → 답변(한글 인자)
+→ 로그아웃 → 자격 증명 파일이 실제로 지워지는 것)를 재현했고, 끝난 뒤
+실제 홈 디렉터리(`~/.claude-native-workflow/`)가 안 생겼는지도 따로
+확인했다.
+
+남은 건 6번(대시보드 프로젝트 전환/멤버 관리 UI), 7번(배포), Skill 문서
+작성이다.
