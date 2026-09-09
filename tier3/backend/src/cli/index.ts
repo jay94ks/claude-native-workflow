@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import { Command } from "commander";
 import { saveCredentials, loadCredentials, clearCredentials, credentialsPath } from "../core/credentials.js";
 import { apiCall } from "../core/apiclient.js";
@@ -109,6 +110,16 @@ program
   .command("doc <projectId> <path>")
   .description("문서 1건 조회")
   .action(async (projectId: string, path: string) => printJson(await apiCall(`/api/projects/${projectId}/doc?path=${encodeURIComponent(path)}`)));
+
+program
+  .command("save <projectId> <path> <file>")
+  .description("문서 본문을 로컬 마크다운 파일 내용으로 갱신(POST doc/save)")
+  .action(async (projectId: string, path: string, file: string) => {
+    const body = fs.readFileSync(file, "utf-8");
+    printJson(await apiCall(`/api/projects/${projectId}/doc/save`, {
+      method: "POST", body: JSON.stringify({ path, body }),
+    }));
+  });
 
 program
   .command("pending <projectId>")
