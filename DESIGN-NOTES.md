@@ -1173,3 +1173,22 @@ blame·커밋 파일 목록은 자동으로 같이 적용된다 - 검색/전체 
 서버를 띄워 브라우저로 4개 기능 전부 클릭 검증, 콘솔 에러 없음까지
 확인. 상세는 [DN-00001](docs/done/DN-00001.md) "QA 확대: tier2/dashboard
 (Quasar)도 같은 준동문 패턴 발견" 참고.
+
+### 2026-09-10 (계속 24) — QA 단위 이어서: tier3/dashboard도 동일 적용
+
+예고한 다음 단위 - tier3는 `App.vue`를 안 쓰고 자기 `DashboardView.vue`
+를 따로 갖고 있어서 tier2 쪽 수정만으론 검색/전체 답변 대기/검증이
+안 딸려왔다. 같은 3가지를 그대로 옮겨 붙였다 - `DocViewer.vue` 재사용
+덕에 blame·커밋 파일 목록은 이미 공짜로 따라와 있었으니 이걸로 tier3도
+tier2와 완전히 같은 기능 집합.
+
+실제 Tier 3 스택(스크래치 bare 저장소+SQLite 서비스 DB로 backend, dev
+서버로 dashboard)에서 검증 - `docs3` CLI로 계정/프로젝트/pending 질문을
+미리 만들어두고 브라우저로 로그인→검색→답변 대기 탭(문서+다이얼로그
+동시 오픈, 커밋 이력에 실제 요청자 이름 확인)→검증 버튼까지 전부 확인,
+콘솔 에러 없음, `vue-tsc -b` 통과.
+
+이걸로 tier1/tier2/tier3 세 대시보드 전부 같은 QA 방식(백엔드 기능인데
+화면에 안 뚫려 있는 것 찾기)을 한 바퀴 돌았다 - 상세는
+[DN-00001](docs/done/DN-00001.md) "QA 단위 이어서: tier3/dashboard의
+DashboardView.vue에도 동일 적용" 참고.
