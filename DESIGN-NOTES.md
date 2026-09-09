@@ -1192,3 +1192,25 @@ tier2와 완전히 같은 기능 집합.
 화면에 안 뚫려 있는 것 찾기)을 한 바퀴 돌았다 - 상세는
 [DN-00001](docs/done/DN-00001.md) "QA 단위 이어서: tier3/dashboard의
 DashboardView.vue에도 동일 적용" 참고.
+
+### 2026-09-10 (계속 25) — QA: validator 정합성 재확인 + 서비스 DB 진짜 postgres로 검증, 진짜 버그 발견
+
+두 가지를 더 봤다. 하나는 확인만 - `docs/PROTOCOL.md` 3절 검증 규칙이
+Tier1(Python) `validate_doc`과 Tier2(TypeScript) `validateDoc`에서
+여전히 완전히 일치하는지(SP-00003 7.4절 정합성 원칙) 줄 단위로 대조,
+드리프트 없음. `--validate` 플래그도 정상/깨진 문서 양쪽 실제 실행해
+exit code까지 확인.
+
+다른 하나는 진짜 버그를 찾았다 - 선택적 서비스 DB(`docs db enable/
+disable`)를 이 세션 내내 SQLite로만 "서비스 DB"를 흉내 내며 테스트해
+왔었는데, Docker로 실제 `postgres:16-alpine`을 띄워 처음 제대로
+검증해봤다. 첫 enable은 됐는데, `disable`(기본값 `--drop` 없음) 후
+다시 `enable`하니 `Unique constraint failed`로 실패했다 - 이전
+사이클에 서비스 DB에 남아있던 행 위에 로컬 상태를 그대로 `create()`
+하려다 기본키가 충돌한 것. `disable`은 로컬 쪽을 지우고 다시 채우는데
+`enable`은 서비스 DB 쪽을 안 지우고 무조건 create만 해서 생긴 비대칭
+버그 - "enable→disable(--drop 없이)을 한 번이라도 거치면 그다음
+enable은 항상 실패한다"는 뜻이었다. `enableServiceDb`에 `deleteMany()`
+로 먼저 비우는 처리를 대칭으로 추가해서 고쳤고, enable→disable(기본)→
+enable→disable(--drop)→enable 5단계 전체를 실제 postgres로 다시
+돌려 `psql`로 직접 확인까지 통과.

@@ -71,6 +71,16 @@ export async function enableServiceDb(driver: DbConfig["driver"], connection: Re
 
   const client = await connectServiceClient(driver, url);
   try {
+    // 이전에 enable→disable을 거친 서비스 DB는(--drop 없이 끈 게 기본값이라
+    // "SP-00001 6절: 로컬 SQLite는 지우지 않고 백업으로 남긴다"와 대칭으로
+    // 서비스 DB 쪽 행도 안 지워진 채로 남아있다) 그 시점의 로컬 상태가 이미
+    // disable 단계에서 로컬로 전부 회수됐으므로(`disableServiceDb`가
+    // `replaceLocalComments`로 로컬을 서비스 DB 스냅샷으로 덮어씀), 지금
+    // 로컬이 최신 진실이다 - 재활성화 전에 서비스 DB를 비우지 않으면
+    // 같은 id로 다시 create()하다 유니크 제약 위반으로 실패한다(실제로
+    // 두 번째 enable에서 재현해서 발견). disable의 `replaceLocalComments`와
+    // 대칭으로 여기서도 먼저 비우고 로컬 상태로 다시 채운다.
+    await client.docComment.deleteMany();
     const localRows = readLocalComments();
     for (const row of localRows) {
       await client.docComment.create({ data: row });
