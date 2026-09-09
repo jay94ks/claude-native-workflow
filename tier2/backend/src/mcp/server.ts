@@ -9,11 +9,12 @@ import { createDoc } from "../core/create.js";
 import { transitionDone } from "../core/transition.js";
 import { DESIGN_TYPES, TYPE_NAMES } from "../core/types.js";
 import { pull as gitPull, sync as gitSync } from "../core/git.js";
+import { gitLog, gitCommitDetail, gitDiff, gitBlame } from "../core/gitlog.js";
+import { listComments, addComment, resolveComment } from "../core/comments.js";
 
 // SP-00001 3절의 MCP 도구. api/server.ts, cli/index.ts와 마찬가지로 core/를
 // 직접 호출한다(1절: "MCP 서버, CLI, 로컬 API가 전부 같은 core/ 함수를
-// 직접 호출한다") - 서로를 거쳐가지 않음. git_log/docs_comment는 core에 그
-// 모듈이 아직 없어(PL-00001 2단계 6번) 이번엔 등록하지 않는다.
+// 직접 호출한다") - 서로를 거쳐가지 않음.
 
 function parseRootArg(argv: string[]): string {
   const idx = argv.indexOf("--root");
@@ -139,6 +140,71 @@ async function main() {
     async ({ message }) => {
       try {
         return textResult(await gitSync(message));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "git_log",
+    {
+      title: "git 이력/diff/blame 조회(읽기 전용)",
+      description:
+        "action=log(커밋 목록, path/limit 옵션) · show(sha로 커밋 1건 상세) · " +
+        "diff(sha로 변경 내용) · blame(path로 줄별 이력) 중 하나를 실행한다.",
+      inputSchema: {
+        action: z.enum(["log", "show", "diff", "blame"]),
+        path: z.string().optional(),
+        sha: z.string().optional(),
+        limit: z.number().optional(),
+      },
+    },
+    async ({ action, path, sha, limit }) => {
+      try {
+        if (action === "log") return textResult(await gitLog(path, limit ?? 30));
+        if (action === "show") {
+          if (!sha) return errorResult(new Error("show는 sha가 필요합니다"));
+          const detail = await gitCommitDetail(sha);
+          if (!detail) return errorResult(new Error(`찾을 수 없습니다: ${sha}`));
+          return textResult(detail);
+        }
+        if (action === "diff") {
+          if (!sha) return errorResult(new Error("diff는 sha가 필요합니다"));
+          return textResult({ diff: await gitDiff(sha) });
+        }
+        if (!path) return errorResult(new Error("blame은 path가 필요합니다"));
+        return textResult({ blame: await gitBlame(path) });
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "docs_comment",
+    {
+      title: "문서 코멘트(비공식 토론용)",
+      description:
+        "SP-00003 2절 - docs/PROTOCOL.md의 공식 답변 대기(RP)와 별개인 문서 단위 " +
+        "코멘트. action=list(조회) · add(작성, text 필요) · resolve(해결 처리, comment_id 필요).",
+      inputSchema: {
+        action: z.enum(["list", "add", "resolve"]),
+        path: z.string(),
+        text: z.string().optional(),
+        comment_id: z.number().optional(),
+      },
+    },
+    async ({ action, path, text, comment_id }) => {
+      try {
+        if (action === "list") return textResult(listComments(path));
+        if (action === "add") {
+          if (!text) return errorResult(new Error("add는 text가 필요합니다"));
+          return textResult({ id: addComment(path, text) });
+        }
+        if (comment_id === undefined) return errorResult(new Error("resolve는 comment_id가 필요합니다"));
+        resolveComment(path, comment_id);
+        return textResult({ ok: true });
       } catch (err) {
         return errorResult(err);
       }

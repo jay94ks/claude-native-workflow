@@ -11,6 +11,8 @@ import { createDoc } from "../core/create.js";
 import { transitionDone } from "../core/transition.js";
 import { DESIGN_TYPES, TYPE_NAMES } from "../core/types.js";
 import { pull as gitPull, push as gitPush, commitDocsChange, sync as gitSync } from "../core/git.js";
+import { gitLog, gitCommitDetail, gitDiff, gitBlame } from "../core/gitlog.js";
+import { listComments, addComment, resolveComment } from "../core/comments.js";
 
 // Express 4 only forwards synchronous throws to the error middleware on its
 // own - an async handler's rejected promise needs an explicit catch, or a
@@ -124,6 +126,42 @@ export function createApp() {
     const { message } = req.body as { message?: string };
     res.json(await gitSync(message));
   }));
+
+  app.get("/api/git/log", asyncRoute(async (req, res) => {
+    const relPath = req.query.path ? String(req.query.path) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 30;
+    res.json(await gitLog(relPath, limit));
+  }));
+
+  app.get("/api/git/blame", asyncRoute(async (req, res) => {
+    res.type("text/plain").send(await gitBlame(String(req.query.path ?? "")));
+  }));
+
+  app.get("/api/git/commits/:sha", asyncRoute(async (req, res) => {
+    const detail = await gitCommitDetail(req.params.sha);
+    if (!detail) { res.status(404).json({ error: "not found" }); return; }
+    res.json(detail);
+  }));
+
+  app.get("/api/git/diff/:sha", asyncRoute(async (req, res) => {
+    res.type("text/plain").send(await gitDiff(req.params.sha));
+  }));
+
+  // :path contains slashes (e.g. decision/DC-00001.md), same as the reply route.
+  app.get(/^\/api\/docs\/(.+)\/comments$/, (req, res) => {
+    res.json(listComments(req.params[0]));
+  });
+
+  app.post(/^\/api\/docs\/(.+)\/comments$/, (req, res) => {
+    const { body } = req.body as { body?: string };
+    if (!body) return res.status(400).json({ error: "body required" });
+    res.json({ id: addComment(req.params[0], body) });
+  });
+
+  app.post(/^\/api\/docs\/(.+)\/comments\/(\d+)\/resolve$/, (req, res) => {
+    resolveComment(req.params[0], Number(req.params[1]));
+    res.json({ ok: true });
+  });
 
   // core throws plain Error/NotFoundError on bad input - synchronous route
   // handlers land here on their own (Express 4), async ones via asyncRoute.

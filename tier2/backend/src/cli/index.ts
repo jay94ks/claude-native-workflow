@@ -8,11 +8,12 @@ import { createDoc } from "../core/create.js";
 import { transitionDone } from "../core/transition.js";
 import { DESIGN_TYPES, TYPE_NAMES } from "../core/types.js";
 import { pull as gitPull, push as gitPush, commitDocsChange, sync as gitSync } from "../core/git.js";
+import { gitLog, gitCommitDetail, gitDiff, gitBlame } from "../core/gitlog.js";
+import { listComments, addComment, resolveComment } from "../core/comments.js";
 
 // SP-00001 4절의 CLI. api/server.ts와 마찬가지로 core/를 직접 호출한다
 // (SP-00001 1절: "MCP 서버, CLI, 로컬 API가 전부 같은 core/ 함수를 직접
-// 호출한다"). comment 하위 명령은 core에 그 모듈이 아직 없어(PL-00001
-// 2단계 6번) 이번엔 등록하지 않는다.
+// 호출한다").
 
 const program = new Command();
 program
@@ -117,6 +118,58 @@ gitCmd
   .description("pull -> commit -> push를 한 번에")
   .option("-m, --message <text>", "커밋 메시지", "docs: sync")
   .action(async (opts: { message: string }) => printJson(await gitSync(opts.message)));
+
+gitCmd
+  .command("log")
+  .description("docs/ 커밋 이력 조회")
+  .option("--path <path>", "특정 문서로 한정")
+  .option("--limit <n>", "최대 개수", "30")
+  .action(async (opts: { path?: string; limit: string }) => {
+    printJson(await gitLog(opts.path, Number(opts.limit)));
+  });
+
+gitCmd
+  .command("diff <sha>")
+  .description("커밋 diff 조회")
+  .action(async (sha: string) => console.log(await gitDiff(sha)));
+
+gitCmd
+  .command("blame <path>")
+  .description("문서 blame 조회")
+  .action(async (path: string) => console.log(await gitBlame(path)));
+
+gitCmd
+  .command("show <sha>")
+  .description("커밋 1건 상세 조회")
+  .action(async (sha: string) => {
+    const detail = await gitCommitDetail(sha);
+    if (!detail) {
+      console.error(`찾을 수 없습니다: ${sha}`);
+      process.exitCode = 1;
+      return;
+    }
+    printJson(detail);
+  });
+
+const commentCmd = program.command("comment").description("문서 코멘트(SP-00003 2절, 비공식 토론용)");
+
+commentCmd
+  .command("list <path>")
+  .description("문서의 코멘트 목록 조회")
+  .action((path: string) => printJson(listComments(path)));
+
+commentCmd
+  .command("add <path> <text...>")
+  .description("코멘트 작성")
+  .action((path: string, textParts: string[]) => printJson({ id: addComment(path, textParts.join(" ")) }));
+
+commentCmd
+  .command("resolve <path> <commentId>")
+  .description("코멘트 해결 처리")
+  .action((path: string, commentId: string) => {
+    resolveComment(path, Number(commentId));
+    printJson({ ok: true });
+  });
 
 program
   .command("validate")

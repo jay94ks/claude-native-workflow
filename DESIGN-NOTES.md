@@ -481,3 +481,39 @@ git 테스트에 쓴 bare 저장소/클론/임시 MCP 스모크테스트 스크�
 검증 후 삭제. 실제 리포의 git 히스토리는 건드리지 않음. 남은 6~10번(git
 이력/코멘트, 변경 큐, 선택적 DB, Quasar 대시보드, Docker)은 이어서
 진행한다.
+
+### 2026-09-09 (계속 6) — PL-00001 2단계 6번: git 이력/diff/blame + 코멘트
+
+이어서 6번을 구현·검증했다. `core/gitlog.ts`는 Tier 1이 subprocess로 직접
+파싱하던 `git log --pretty=format:...` 방식 대신 `simple-git`의 구조화된
+`log()`를 그대로 썼다 — Node 쪽엔 이미 있는 의존성이고 굳이 포맷 문자열을
+다시 파싱할 이유가 없어서(Tier 1은 stdlib뿐이라 그 방식이 유일한 선택이었을
+뿐, 정본은 아니었음).
+
+- **코멘트 저장소로 `node:sqlite`(`DatabaseSync`)를 선택** — Tier 1이 Python
+  stdlib `sqlite3`를 쓴 것과 같은 이유(추가 의존성 없이 로컬 파일 DB)를
+  Node 쪽에서 재현하려면 `better-sqlite3` 같은 네이티브 바인딩을 새로
+  설치해야 하는데, Node 22.5+에 `node:sqlite`가 내장돼 있어(`DatabaseSync`,
+  `prepare`/`run`/`get`/`all`) 그걸로 대체 — 아직 experimental이라 매 실행마다
+  경고가 뜨지만(`import` 시점에 뜸, 실제 사용 여부와 무관), 별도 네이티브
+  의존성을 추가하는 것보다 낫다고 판단.
+- `core/localdb.ts`에 `docs/.workflow/data.db` 하나를 `doc_comments`
+  테이블(이번 구현)과 `change_notices` 테이블(다음 7번에서 쓸 것 — 테이블만
+  미리 만들어둠, Tier 1의 `_data_conn()`이 두 테이블을 한 커넥션 함수에
+  같이 만드는 것과 동일 구조)로 공유.
+- **CLI 명령어를 스펙 표기에서 실용적으로 변형** — SP-00001 4절은
+  `docs comment <path> <text>` / `docs comment resolve <path> <id>`처럼
+  "무동사=작성"으로 표기했지만, commander로 그대로 구현하면 `resolve`가
+  `<path>` 자리의 값으로도 서브커맨드 이름으로도 동시에 해석될 수 있는
+  모호성이 생긴다. 대신 `docs comment add/list/resolve`로 전부 서브커맨드화
+  — API/MCP는 스펙 그대로(`action` 파라미터로 list/add/resolve 구분)
+  유지했으니 계약 자체는 안 바뀌었고, CLI 표기만 좁힌 것.
+- 실제 로컬 git 저장소에서 `docs new`로 커밋을 만든 뒤 `docs git log`가
+  실제 `git log`와, `docs git show`/`docs git diff`가 실제 `git show`와,
+  `docs git blame`이 실제 `git blame`과 각각 동일한 내용을 반환하는지
+  직접 대조 확인. 코멘트는 CLI(`add`→`list`→`resolve`→`list`)와 MCP
+  (SDK `Client`+`StdioClientTransport`로 동일 시나리오) 양쪽에서 재현,
+  한글 본문이 그대로 왕복하는 것까지 확인.
+
+남은 7~10번(변경 추적 큐, 선택적 서비스 DB, Quasar 대시보드, Docker)은
+이어서 진행한다.
