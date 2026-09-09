@@ -1106,3 +1106,17 @@ clone해서 `docs/.config.json` ENOENT) - `git branch -a`로 바로 원인
 `tier3/skill`의 "명령 전체 목록"에 15개 전부 반영, `SP-00002` 4절에도
 표에 없던 라우트 존재를 명시. 상세는 [DN-00001](docs/done/DN-00001.md)
 "tier3 CLI 전체 재검증" 참고.
+
+### 2026-09-10 (계속 21) — tier2 CLI/MCP도 라우트 전체 대조: search 하나 누락
+
+"tier2 CLI도 같은 방식으로 전체 라우트 대조해줘"로 `tier2/backend`의
+라우트 25개를 `docs` CLI + MCP 도구와 전부 대조했다. tier3와 달리
+이번엔 대부분 이미 맞춰져 있었고 - `search` 딱 하나만 빠져 있었다.
+`GET /api/search?q=` 라우트는 있는데 CLI(`docs search`)도 MCP
+(`docs_search`)도 없었다. 추가하고 스크래치 환경에서 CLI/MCP 양쪽
+다 한글 검색어로 실제 결과가 나오는 것까지 확인했다. `tier2/skill`
+SKILL.md와 `SP-00001` 3·4절에도 반영.
+
+이걸로 tier2/tier3 두 CLI(및 tier2 MCP) 모두 실제 REST 라우트 표면과
+완전히 1:1로 맞춰졌다 - 상세는 [DN-00001](docs/done/DN-00001.md)
+"tier2 CLI/MCP도 같은 방식으로 라우트 전체 대조" 참고.

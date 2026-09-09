@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { setProjectRoot } from "../core/paths.js";
-import { buildTree, listPending, listByTypes, getDoc, extractSection, saveDocBody } from "../core/docstore.js";
+import { buildTree, listPending, listByTypes, getDoc, extractSection, saveDocBody, searchDocs } from "../core/docstore.js";
 import { answerPending } from "../core/reply.js";
 import { createDoc } from "../core/create.js";
 import { transitionDone } from "../core/transition.js";
@@ -79,6 +79,16 @@ async function main() {
       if (kind === "logs") return textResult(listByTypes(new Set(["LG"])));
       return textResult(listByTypes(new Set(Object.keys(TYPE_NAMES).filter((t) => t !== "IX"))));
     },
+  );
+
+  server.registerTool(
+    "docs_search",
+    {
+      title: "전문 검색",
+      description: "제목/본문에서 검색어를 포함하는 문서를 찾는다.",
+      inputSchema: { query: z.string() },
+    },
+    async ({ query }) => textResult(searchDocs(query)),
   );
 
   server.registerTool(

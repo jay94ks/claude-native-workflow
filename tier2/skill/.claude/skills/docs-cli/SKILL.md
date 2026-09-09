@@ -35,9 +35,10 @@ CLI를 쓸 때, 프로젝트 루트(= `docs/`의 부모 디렉터리)가 현재 
 ## 문서 조회
 
 - MCP: `docs_tree`(전체 트리) · `docs_get`(`path`, 선택적 `anchor`) ·
-  `docs_list`(`kind`: design/logs/all)
+  `docs_list`(`kind`: design/logs/all) · `docs_search`(`query`)
 - CLI: `docs tree` · `docs get <path>` · `docs design` · `docs logs`
-  (`docs list --type <타입>`은 임의 타입 조합 조회) · `docs all`
+  (`docs list --type <타입>`은 임의 타입 조합 조회) · `docs all` ·
+  `docs search <query>`(전문 검색)
 
 기존 문서를 고치기 전엔 반드시 먼저 현재 내용을 읽는다 — 아래 "문서
 본문 편집"이 본문 전체를 덮어쓰기 때문에, 현재 상태를 모르고 쓰면 기존
@@ -132,6 +133,7 @@ git commit(+설정에 따라 push)까지 된다(아래 "git 동기화" 참고).
 | `docs_get` | `docs get <path>` | 문서 1건 조회 |
 | `docs_pending` | `docs pending` | 답변 대기 목록 |
 | `docs_list` | `docs design` / `docs logs` / `docs all` / `docs list --type <T>` | 타입별 목록 |
+| `docs_search` | `docs search <query>` | 전문 검색 |
 | `docs_new` | `docs new <type> --title <t> [--links <ids>]` | 새 문서 생성 |
 | `docs_save` | `docs save <path> <file>` | 문서 본문 갱신(자동 커밋 없음) |
 | `docs_reply` | `docs reply <path> <qid> <답변...>` | 답변 대기 질문에 답변 |

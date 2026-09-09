@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import { setProjectRoot } from "../core/paths.js";
-import { buildTree, listPending, listByTypes, getDoc, saveDocBody } from "../core/docstore.js";
+import { buildTree, listPending, listByTypes, getDoc, saveDocBody, searchDocs } from "../core/docstore.js";
 import { validateAll } from "../core/validate.js";
 import { answerPending } from "../core/reply.js";
 import { createDoc } from "../core/create.js";
@@ -60,6 +60,11 @@ program
   .command("all")
   .description("전체 문서 목록 조회")
   .action(() => printJson(listByTypes(new Set(Object.keys(TYPE_NAMES).filter((t) => t !== "IX")))));
+
+program
+  .command("search <query>")
+  .description("전문 검색")
+  .action((query: string) => printJson(searchDocs(query)));
 
 program
   .command("get <path>")
