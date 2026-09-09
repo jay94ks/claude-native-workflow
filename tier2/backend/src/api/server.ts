@@ -24,14 +24,24 @@ function asyncRoute(handler: (req: Request, res: Response) => Promise<void>): Re
   };
 }
 
-function parseArgs(argv: string[]): { port: number; root: string } {
+function parseArgs(argv: string[]): { port: number; root: string; host: string } {
   let port = 8766;
   let root = process.cwd();
+  // SP-00001 2절: "신뢰된 로컬 환경 전제, 127.0.0.1 또는 옵션으로 LAN
+  // 바인딩" - 127.0.0.1이 기본값. 컨테이너 안에서는 그 "127.0.0.1"이
+  // 컨테이너 자신만의 루프백이라 바깥(같은 compose 네트워크의 nginx,
+  // 호스트의 포트 매핑 전부 포함)에서 전혀 닿지 않는다 - Dockerfile의
+  // CMD가 --host 0.0.0.0을 넘긴다(docker-compose.yml로 이미 포트가
+  // 명시적으로 노출된 컨테이너 안에서의 0.0.0.0 바인딩은 이 문서가
+  // 말하는 "신뢰 안 된 네트워크 노출"이 아니다 - 그 경계는 이미
+  // docker-compose.yml의 ports: 매핑이 담당).
+  let host = "127.0.0.1";
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--port") port = Number(argv[++i]);
     else if (argv[i] === "--root") root = argv[++i];
+    else if (argv[i] === "--host") host = argv[++i];
   }
-  return { port, root };
+  return { port, root, host };
 }
 
 export function createApp() {
@@ -187,7 +197,7 @@ export function createApp() {
 }
 
 async function main() {
-  const { port, root } = parseArgs(process.argv.slice(2));
+  const { port, root, host } = parseArgs(process.argv.slice(2));
   setProjectRoot(root);
 
   // SP-00001 5절: "세션/백엔드 기동 시" git pull. A conflict is reported,
@@ -200,8 +210,8 @@ async function main() {
   }
 
   const app = createApp();
-  app.listen(port, "127.0.0.1", () => {
-    console.log(`tier2 backend: http://127.0.0.1:${port}  (root: ${path.resolve(getProjectRoot())})`);
+  app.listen(port, host, () => {
+    console.log(`tier2 backend: http://${host}:${port}  (root: ${path.resolve(getProjectRoot())})`);
   });
 }
 

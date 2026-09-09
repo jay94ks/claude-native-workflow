@@ -1,0 +1,22 @@
+# SP-00001 7절 "패키징: Docker + Docker Compose". backend+dashboard를 함께
+# 기동한다. 이 파일은 실제 프로젝트에 tier2/가 배포된 상태(<프로젝트 루트>/
+# tier2/docker/docker-compose.yml)를 전제로, 프로젝트 루트(docs/의 부모
+# 디렉터리)를 backend 컨테이너에 /workspace로 마운트한다.
+services:
+  backend:
+    build:
+      context: ../backend
+    ports:
+      - "8766:8766"
+    volumes:
+      - ../..:/workspace
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ../dashboard
+    ports:
+      - "9200:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
