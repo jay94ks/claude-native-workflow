@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>docs dashboard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="tree-pane">
+    <div class="brand">docs</div>
+    <div id="tree"></div>
+  </aside>
+  <main id="main-pane">
+    <nav id="tabs">
+      <button class="tab active" data-tab="all">문서</button>
+      <button class="tab" data-tab="design">설계</button>
+      <button class="tab" data-tab="logs">기록</button>
+    </nav>
+    <div id="list-pane"></div>
+    <div id="doc-pane" hidden></div>
+  </main>
+</div>
+
+<dialog id="reply-dialog">
+  <form method="dialog" id="reply-form">
+    <h3>답변 입력</h3>
+    <p class="reply-question" id="reply-question"></p>
+    <textarea id="reply-answer" rows="6" placeholder="답변 내용을 입력하세요"></textarea>
+    <div class="dialog-actions">
+      <button type="button" id="reply-cancel">취소</button>
+      <button type="submit" id="reply-submit">답변 제출</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>
