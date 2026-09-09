@@ -1,0 +1,68 @@
+# SP-00002 7절 패키징. tier2와 달리 DB가 선택이 아니라 필수라서(6절)
+# mysql 서비스를 같이 띄운다 - SP-00001 6절 "MySQL 메인"을 그대로 기본값으로
+# 삼되, DB_DRIVER/DATABASE_URL만 바꾸면 postgres/sqlite로도 붙는다
+# (docker-entrypoint.sh가 DB_DRIVER를 보고 맞는 Prisma 스키마로 push한다).
+# 시크릿(MYSQL_ROOT_PASSWORD/JWT_SECRET/GITHUB_WEBHOOK_SECRET)은 이 폴더의
+# .env(.env.example 참고, 커밋 안 함)에서 읽는다 - DC-00002 RP-00006
+# "dotenv + 배포 플랫폼 기본 시크릿 매니저".
+services:
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_DATABASE: claude_native_workflow
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # 컨테이너 안에서 셸로 실행해야 MYSQL_ROOT_PASSWORD 환경변수를 그대로
+      # 쓸 수 있다 - 처음엔 비밀번호를 하드코딩했다가(`-proot`) 실제 값과
+      # 안 맞아서 ping이 인증에서부터 실패하는 걸 보고 고쳤다. 그것과
+      # 별개로 mysql 공식 이미지는 최초 기동 시 "임시 서버"로 초기화한 뒤
+      # 잠깐 내렸다 진짜 서버로 다시 띄우는 2단계 과정을 거치는데, 이
+      # healthcheck는 그 임시 서버에도 healthy로 응답해버릴 수 있어
+      # backend가 그 사이 짧은 공백 구간에 붙었다가 실패하는 걸 실제로
+      # 겪었다 - backend는 `restart: unless-stopped`로 재시도하다 mysql이
+      # 진짜로 준비되면 자연히 성공하므로 별도 재시도 로직을 backend
+      # 쪽에 추가하진 않았다(최초 기동 1회성 문제, 운영 중엔 안 겪음).
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p\"$$MYSQL_ROOT_PASSWORD\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: tier3/backend/Dockerfile
+    environment:
+      PORT: 8767
+      HOST: 0.0.0.0
+      DB_DRIVER: mysql
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/claude_native_workflow
+      JWT_SECRET: ${JWT_SECRET}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+      # 각 프로젝트를 clone해 두는 자리 - 컨테이너 재시작 후에도 clone을
+      # 다시 받지 않도록 볼륨에 둔다.
+      TIER3_PROJECTS_DIR: /data/projects
+    volumes:
+      - projects-data:/data/projects
+    ports:
+      - "8767:8767"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ../..
+      dockerfile: tier3/dashboard/Dockerfile
+    ports:
+      - "9300:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  projects-data:

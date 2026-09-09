@@ -909,3 +909,54 @@ comments.ts`를 새로 만들어 하나의 서비스 DB를 `project_id`로 나�
 
 이걸로 3단계 1~6번이 전부 끝났다. 남은 건 7번(배포)과 Skill 문서
 작성, 그리고 4단계다.
+
+### 2026-09-10 (계속 16) — 7번: Docker 배포 패키징, 3단계 전체 완료
+
+"계속 진행해줘"로 7번(SP-00002 7절, DC-00002 확정대로)을 구현했다.
+호스팅 벤더는 정하지 않고 Docker/Docker Compose 패키징만 만든다는
+원칙이라, tier2의 `Dockerfile`/`docker-compose.yml`을 참고해 같은
+패턴으로 짰다.
+
+가장 신경 쓴 부분은 tier2에는 없던 문제 - tier3는 tier2를 `file:`
+의존성(백엔드)과 상대경로 import(대시보드)로 재사용하고 있어서, 이미지
+빌드 컨텍스트도 tier2/backend·tier2/dashboard를 tier3와 같은 상대
+위치에 함께 담아야 했다. 그래서 두 Dockerfile 다 tier2 것들과 달리
+**monorepo 루트**를 빌드 컨텍스트로 받게 짰다(빌드를 최종 이미지 안에서
+그대로 하니 멀티스테이지로 나눌 때 흔한 "심볼릭 링크가 스테이지 넘어가며
+깨지는" 걱정도 자연히 없어짐). 루트 컨텍스트를 쓰면 전체 monorepo의
+`node_modules`가 전송 대상이 될 수 있어서 루트 `.dockerignore`도
+새로 추가했다(서브폴더 컨텍스트를 쓰는 tier2 기존 이미지엔 영향 없음).
+
+대시보드 이미지는 실제로 빌드해보고서야 진짜 문제 하나를 발견했다 -
+tier2/dashboard 소스가 쓰는 `marked`/`vue`/`quasar`는 "import하는 파일
+기준 위쪽 `node_modules`"로 찾아지는데, tier3/dashboard의 `node_modules`는
+그 파일 입장에서 형제 디렉터리라 안 잡힌다. 로컬 dev에서 이 문제가 안
+보였던 건 순전히 tier2/dashboard가 이미 따로 `npm install`돼 있었기
+때문 - 이미지 빌드 중 tier2/dashboard도 그 자리에서 `npm ci`해주는
+걸로 고쳤다.
+
+백엔드는 DB가 선택이 아니라 필수라(6절) 컨테이너 기동 스크립트
+(`docker-entrypoint.sh`)가 `DB_DRIVER`에 맞는 Prisma 스키마로 먼저
+`db push`한 뒤 서버를 띄운다. `docker-compose.yml`엔 mysql 서비스도
+같이 넣었다(SP-00001 6절 "MySQL 메인"이 기본값). 시크릿은 `.env`
+(저장소 `.gitignore`가 이미 `.env`/`.env.*`를 막고 `.env.example`만
+예외로 허용해서 그대로 씀)로 주입.
+
+실제로 `docker compose build && up`까지 돌려서 mysql+backend+dashboard
+3개 컨테이너로 회원가입/로그인(백엔드 직접 호출 + dashboard `/api`
+프록시 양쪽)/웹훅 401/브라우저로 nginx 프로덕션 빌드 로그인 화면까지
+확인했다. `down && up`(볼륨 유지)으로 재기동해 mysql 데이터가 실제로
+살아남는지도 확인하다가 진짜 버그 하나를 더 잡았다 - mysql healthcheck를
+급하게 `-proot`로 하드코딩해뒀는데 실제 비밀번호(`.env`의
+`MYSQL_ROOT_PASSWORD`)와 안 맞았다. 이것 때문인지 mysql 공식 이미지
+자체의 "임시 서버로 초기화 → 잠깐 내림 → 진짜 서버로 재기동" 2단계
+기동 과정 때문인지(둘 다 겹쳤을 가능성이 큼) backend가 mysql이 아직
+진짜로 안 떠 있는 짧은 공백에 붙었다가 두 번 연속 `P1001`로 실패하는
+걸 실제로 봤다 - `restart: unless-stopped`가 세 번째 시도에서 자연
+복구시켰다(최초 기동 1회성 문제라 별도 재시도 로직은 안 넣음).
+healthcheck를 `$MYSQL_ROOT_PASSWORD`를 셸로 참조하게 고친 뒤 재현
+안 되는 것까지 재확인. 테스트에 쓴 `.env`/컨테이너/이미지/볼륨은
+전부 정리.
+
+이걸로 3단계(SP-00002, 1~7번)가 전부 끝났다. 남은 건 Skill 문서
+작성과 4단계(문서 정리 및 마무리)뿐이다.

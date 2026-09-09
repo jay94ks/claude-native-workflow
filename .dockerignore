@@ -1,0 +1,13 @@
+# tier3/backend, tier3/dashboard 이미지는 monorepo 루트를 빌드 컨텍스트로 쓴다
+# (tier2/backend·tier2/dashboard 소스를 같은 상대 경로로 COPY해야 file:
+# 의존성 심볼릭 링크와 상대경로 import가 그대로 성립하기 때문 -
+# tier3/backend/Dockerfile, tier3/dashboard/Dockerfile 주석 참고). 호스트의
+# node_modules/dist/generated는 이미지 안에서 다시 설치·빌드하므로 컨텍스트에
+# 넣을 필요가 없다(넣으면 전송량만 커지고, Windows에서 만들어진 네이티브
+# 바이너리가 Linux 이미지에서 깨질 수도 있다).
+**/node_modules
+**/dist
+**/generated
+**/*.db
+**/*.tsbuildinfo
+.git
