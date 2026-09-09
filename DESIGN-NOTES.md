@@ -400,3 +400,34 @@ PL-00001 2단계 1~2번(`core/`, `api/`)을 실제로 구현·검증했다. 범�
 `tier2/backend/.gitignore`로 `node_modules/`/`dist/` 제외. 남은 3~10번
 (CLI, MCP, git 자동화, git 이력/코멘트, 변경 큐, 선택적 DB, Quasar 대시보드,
 Docker)은 다음 세션에서 이어간다.
+
+### 2026-09-09 (계속 4) — PL-00001 2단계 3~4번: CLI + MCP
+
+"계속 진행해줘"로 이어서 3번(`cli/`)과 4번(`mcp/`)을 구현·검증했다. 둘 다
+SP-00001 1절의 원칙("MCP 서버, CLI, 로컬 API가 전부 같은 core/ 함수를
+직접 호출한다")을 그대로 따라 `api/server.ts`처럼 core를 직접 불러 쓰고,
+서로를 거치지 않는다.
+
+- **CLI**(`commander`): `docs tree`/`pending`/`design`/`all`/`get`/`new`/
+  `reply`/`transition-done`/`validate`, 전역 `--root`. `--root`를 서브커맨드
+  앞/뒤 어디에 둬도 되는지 실제로 둘 다 테스트해서 확인(commander의 전역
+  옵션 상속 동작 확인 차 궁금해서 검증). 스캐치 `docs/` 사본에서 `new` →
+  질문 추가 → `pending` → `reply` → `new PL` → `transition-done` →
+  `validate` 시나리오를 CLI로 그대로 재현, 한글 타이틀도 CLI 인자로 바로
+  넘겨서 깨지지 않는 것까지 확인(2번에서 발견한 curl 콘솔 인코딩 문제는
+  curl 자체의 문제였고, `argv`로 넘기는 이 경로엔 해당 없음을 재확인).
+- **MCP**(`@modelcontextprotocol/sdk` + `zod`): `docs_tree`/`docs_get`
+  (`anchor` 지원)/`docs_pending`/`docs_list`(`design`/`logs`/`all`)/
+  `docs_new`/`docs_reply`/`docs_transition_done` 7개 도구 등록.
+  `git_sync`/`git_log`/`docs_comment`는 SP-00001 3절 표에 있지만 그 core
+  모듈이 아직 없어(5~6번) 이번엔 등록하지 않음 — 없는 기능을 있는 것처럼
+  노출하지 않는다는 원칙.
+- MCP는 자동화 클라이언트가 없어 검증이 애매했는데, SDK 자체의
+  `Client`+`StdioClientTransport`로 실제 서버 프로세스를 자식 프로세스로
+  띄우고 7개 도구를 전부 호출하는 임시 스크립트를 짜서(테스트 후 삭제)
+  2번 API 때와 동일한 전체 시나리오(생성→답변→전환→검증)를 재현 —
+  JSON-RPC 경유라 한글 인자도 문제없이 왕복하는 것까지 확인.
+
+CLI/MCP 둘 다 `tsc --noEmit` 통과 + 스캐치 폴더에서 실제 실행까지 확인한
+뒤 스캐치 폴더/임시 스크립트 삭제. 남은 5~10번(git 자동화, git 이력/코멘트,
+변경 큐, 선택적 DB, Quasar 대시보드, Docker)은 이어서 진행한다.

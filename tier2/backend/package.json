@@ -4,17 +4,23 @@
   "private": true,
   "type": "module",
   "main": "dist/api/server.js",
+  "bin": {
+    "docs": "dist/cli/index.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/api/server.ts",
     "start": "node dist/api/server.js",
     "cli": "tsx src/cli/index.ts",
+    "mcp": "tsx src/mcp/server.ts",
     "validate": "tsx src/cli/index.ts validate"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "commander": "^12.1.0",
     "express": "^4.21.1",
-    "simple-git": "^3.27.0"
+    "simple-git": "^3.27.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
