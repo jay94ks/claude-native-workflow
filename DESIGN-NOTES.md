@@ -1214,3 +1214,26 @@ enable은 항상 실패한다"는 뜻이었다. `enableServiceDb`에 `deleteMany
 로 먼저 비우는 처리를 대칭으로 추가해서 고쳤고, enable→disable(기본)→
 enable→disable(--drop)→enable 5단계 전체를 실제 postgres로 다시
 돌려 `psql`로 직접 확인까지 통과.
+
+### 2026-09-10 (계속 26) — QA: 진짜 저장형 XSS 발견 + 수정
+
+보안 관점으로 방향을 바꿔봤다. `tier2/dashboard`(→ `tier3/dashboard`도
+그대로 재사용)의 `DocViewer.vue`가 `marked.parse()` → `v-html`로 문서
+본문을 렌더링하는데, `marked`는 raw HTML을 기본 통과시킨다(sanitize
+옵션이 v5+에서 없어짐) - `tier1`의 손수 짠 렌더러는 애초에 HTML을
+이스케이프하고 시작해서 이 문제가 없다는 것도 대조하며 확인.
+
+`<img src=x onerror="...">`를 본문에 심은 문서로 실제 재현 - 문서를
+열자마자 스크립트가 실행돼 탭 제목이 바뀌는 것까지 직접 봤다. 진짜
+저장형 XSS였다 - 문서를 쓸 수 있는 사람(tier3라면 editor)이면 그
+문서를 보는 다른 사람(owner 포함)의 브라우저에서 임의 코드를 실행시킬
+수 있었다는 뜻이고, localStorage의 로그인 토큰을 훔치는 권한 상승까지
+이론상 가능했다.
+
+`dompurify`를 추가해서 `marked.parse()` 출력을 `v-html`에 넣기 전에
+`sanitize()`로 걸러내도록 고쳤다. 같은 페이로드로 재검증 - `onerror`
+실행 안 됨, 안전한 raw HTML(`<img>`, `<b>`)은 그대로 정상 렌더링(과도한
+차단 없음)까지 확인. `tier2/tier3 dashboard` 둘 다 `vue-tsc -b`와 실제
+프로덕션 `vite build` 통과, `dompurify`가 tier3에도 별도 설치 없이
+그대로 재사용되는 것까지 확인. 상세는 [DN-00001](docs/done/DN-00001.md)
+"QA: 저장형 XSS(stored XSS) 진짜 취약점 발견 + 수정" 참고.

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { client, type DocDetail, type PendingItem, type Comment, type CommitSummary } from "../api";
 
 const props = defineProps<{ path: string }>();
@@ -20,7 +21,15 @@ const selectedDiff = ref<{ sha: string; text: string; files: string[] } | null>(
 const blameText = ref<string | null>(null);
 const blameLoading = ref(false);
 
-const renderedBody = computed(() => (doc.value ? marked.parse(doc.value.body, { async: false }) : ""));
+// marked는 마크다운 소스에 섞인 raw HTML을 기본적으로 그대로 통과시킨다
+// (별도 sanitize 옵션이 없음 - v5+에서 제거됨) - 문서 본문은 Tier 3에서
+// 나(owner)보다 낮은 신뢰의 editor가 쓸 수도 있는 콘텐츠라, 그대로
+// v-html에 넣으면 <img onerror=...> 같은 저장형 XSS가 그대로 실행된다
+// (스크래치 환경에서 실제로 재현해서 확인한 뒤 고침). DOMPurify로
+// 스크립트/이벤트 핸들러를 걷어내고서만 렌더링한다.
+const renderedBody = computed(() =>
+  doc.value ? DOMPurify.sanitize(marked.parse(doc.value.body, { async: false }) as string) : "",
+);
 
 async function load() {
   editing.value = false;
