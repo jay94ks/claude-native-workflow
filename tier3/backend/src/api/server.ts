@@ -2,7 +2,7 @@ import express, { type Request, type Response, type NextFunction, type RequestHa
 import rateLimit from "express-rate-limit";
 import crypto from "node:crypto";
 import { connectDb } from "../core/db.js";
-import { register, login, refresh, logout, AuthError } from "../core/auth.js";
+import { register, login, refresh, logout, AuthError, assertJwtSecretConfigured } from "../core/auth.js";
 import {
   createProject, listMyProjects, addMember, updateMemberRole, removeMember,
   listMembers, findUserByIdentifier, findProjectsByRepoUrl, ROLES, type Role,
@@ -328,6 +328,7 @@ export function createApp() {
 }
 
 async function main() {
+  assertJwtSecretConfigured();
   await connectDb();
   const port = Number(process.env.PORT ?? 8767);
   const host = process.env.HOST ?? "127.0.0.1";

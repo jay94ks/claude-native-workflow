@@ -1275,3 +1275,22 @@ tier2(`gitlog.ts`에 `assertInsideDocs()` 추가, `gitCommitDetail`/
 확인 - Express 4 메이저 자체의 오래된 전이 의존성이라 이번 범위에선
 안 고치고 사실만 기록. 상세는 [DN-00001](docs/done/DN-00001.md)
 "QA: rate limiting 부재 확인 + /api/auth/*에 실제로 추가" 참고.
+
+### 2026-09-10 (계속 29) — QA: MySQL root 접속 + JWT_SECRET 길이 미검증 발견
+
+설계자가 짚어준 "MySQL/tier3 초기 배포 스크립트" 각도. `tier3/docker/
+docker-compose.yml`의 backend가 MySQL에 root로 붙고 있던 최소 권한
+위반을 발견 - `MYSQL_USER: docs3_app`을 추가해 `MYSQL_DATABASE`
+하나에만 권한을 가진 별도 계정으로 바꿨다. 실제 `mysql:8` 컨테이너로
+`SHOW GRANTS`까지 확인해 전역 권한이 없음을 검증했고, 이 계정만으로
+스키마 push부터 회원가입/로그인까지 끝까지 동작하는 것도 확인(회귀
+없음).
+
+같이 보다가 `JWT_SECRET`이 길이/강도 검사 없이 뭐든 받아주는 것도
+발견 - 최소 32자 검사를 추가하고, 처음엔 로그인 시점에만 걸리게 했다가
+(재현해보니 첫 로그인까지 문제가 조용히 숨어있었음) `connectDb()`처럼
+서버 기동 시 즉시 실패하는 `assertJwtSecretConfigured()`로 바꿨다.
+재빌드 후 짧은 값은 포트를 열기 전에 크래시, 유효한 값은 정상
+기동+회원가입/로그인까지 되는 것 둘 다 재현 확인. 상세는
+[DN-00001](docs/done/DN-00001.md) "QA: MySQL 컨테이너가 root로 붙는
+문제 + JWT_SECRET 최소 길이 미검증" 참고.

@@ -2,15 +2,23 @@
 # mysql 서비스를 같이 띄운다 - SP-00001 6절 "MySQL 메인"을 그대로 기본값으로
 # 삼되, DB_DRIVER/DATABASE_URL만 바꾸면 postgres/sqlite로도 붙는다
 # (docker-entrypoint.sh가 DB_DRIVER를 보고 맞는 Prisma 스키마로 push한다).
-# 시크릿(MYSQL_ROOT_PASSWORD/JWT_SECRET/GITHUB_WEBHOOK_SECRET)은 이 폴더의
-# .env(.env.example 참고, 커밋 안 함)에서 읽는다 - DC-00002 RP-00006
-# "dotenv + 배포 플랫폼 기본 시크릿 매니저".
+# 시크릿(MYSQL_ROOT_PASSWORD/MYSQL_APP_PASSWORD/JWT_SECRET/
+# GITHUB_WEBHOOK_SECRET)은 이 폴더의 .env(.env.example 참고, 커밋 안 함)
+# 에서 읽는다 - DC-00002 RP-00006 "dotenv + 배포 플랫폼 기본 시크릿
+# 매니저".
 services:
   mysql:
     image: mysql:8
     environment:
       MYSQL_DATABASE: claude_native_workflow
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # backend는 root로 붙지 않는다(QA로 찾은 최소 권한 위반 - 처음엔
+      # DATABASE_URL이 root를 그대로 썼었다) - 공식 mysql 이미지는
+      # MYSQL_USER/MYSQL_PASSWORD를 주면 MYSQL_DATABASE에만 전체 권한을
+      # 가진 별도 계정을 자동으로 만들어준다. root는 이 컨테이너의
+      # healthcheck(관리 목적)에서만 쓴다.
+      MYSQL_USER: docs3_app
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -38,7 +46,7 @@ services:
       PORT: 8767
       HOST: 0.0.0.0
       DB_DRIVER: mysql
-      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/claude_native_workflow
+      DATABASE_URL: mysql://docs3_app:${MYSQL_APP_PASSWORD}@mysql:3306/claude_native_workflow
       JWT_SECRET: ${JWT_SECRET}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
       # 각 프로젝트를 clone해 두는 자리 - 컨테이너 재시작 후에도 clone을

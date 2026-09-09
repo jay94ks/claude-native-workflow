@@ -9,10 +9,28 @@ import { getDb } from "./db.js";
 const ACCESS_TOKEN_TTL_SEC = 15 * 60; // 15분
 const REFRESH_TOKEN_TTL_DAYS = 30;
 
+// QA로 발견: JWT_SECRET이 비어있지만 않으면 뭐든 그대로 받아줬다 -
+// "changeme"처럼 짧고 흔한 값을 그대로 배포해도 기동 시점엔 아무 신호가
+// 없었다는 뜻(그 상태로는 HS256 서명이 사실상 무차별 대입으로 위조
+// 가능). 최소 길이만 강제해서 최소한 이런 명백히 약한 값은 기동 자체를
+// 막는다 - 실제 무작위성까지 검증할 순 없지만(길이만 볼 뿐), 값을 아예
+// 안 채우거나 짧게 대충 채우는 흔한 실수는 배포 전에 걸린다.
+const JWT_SECRET_MIN_LEN = 32;
+
 function jwtSecret(): string {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET 환경변수가 필요합니다");
+  if (secret.length < JWT_SECRET_MIN_LEN) {
+    throw new Error(`JWT_SECRET이 너무 짧습니다(${secret.length}자) - 최소 ${JWT_SECRET_MIN_LEN}자 이상의 무작위 값을 쓰세요`);
+  }
   return secret;
+}
+
+/** connectDb()처럼 서버 기동 시 한 번 불러서 즉시 실패시킨다 - 안 그러면
+ * 이 문제가 첫 로그인 시도가 들어올 때까지 조용히 숨어있다가 그제서야
+ * 400으로 드러난다(실제로 그렇게 재현해서 확인함). */
+export function assertJwtSecretConfigured(): void {
+  jwtSecret();
 }
 
 export interface AccessTokenPayload {
