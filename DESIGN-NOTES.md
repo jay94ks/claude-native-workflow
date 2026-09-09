@@ -1258,3 +1258,20 @@ tier2(`gitlog.ts`에 `assertInsideDocs()` 추가, `gitCommitDetail`/
 안 보이는 것까지 확인. tier3는 이 함수들을 그대로 쓰는 얇은 라우트라
 별도 코드 변경 없이 자동 적용. 상세는 [DN-00001](docs/done/DN-00001.md)
 "QA: 경로 순회(path traversal) 진짜 취약점 발견 + 수정" 참고.
+
+### 2026-09-10 (계속 28) — QA: rate limiting 부재 확인 + 실제 추가
+
+설계자가 짚어준 각도 - `/api/auth/register`·`/api/auth/login`에 브루트
+포스 방어가 전혀 없었다. `express-rate-limit`가 `node_modules`엔
+있었지만(다른 패키지가 끌어온 전이 의존성) 어느 `package.json`에도
+직접 의존성이 아니었고 실제로 걸려 있지도 않았다 - Tier 3는 인증 안 된
+상태에서 누구나 부르는 인터넷 노출 진입점이라 실제 공백이었다.
+
+`tier3/backend`에 정식 직접 의존성으로 추가하고 register/login/refresh
+세 라우트에 IP당 15분 10회 제한을 걸었다. 스크래치 서버에 연속 12번
+로그인을 보내서 실제 확인 - 10번째까지는 정상 400(자격 증명 틀림),
+11번째부터 429로 막힘. `npm audit`가 같이 잡은 express/qs 취약점 2건은
+새로 생긴 게 아니라 손 안 댄 tier2/backend에도 똑같이 있는 걸 대조
+확인 - Express 4 메이저 자체의 오래된 전이 의존성이라 이번 범위에선
+안 고치고 사실만 기록. 상세는 [DN-00001](docs/done/DN-00001.md)
+"QA: rate limiting 부재 확인 + /api/auth/*에 실제로 추가" 참고.

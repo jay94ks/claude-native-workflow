@@ -1,4 +1,5 @@
 import express, { type Request, type Response, type NextFunction, type RequestHandler } from "express";
+import rateLimit from "express-rate-limit";
 import crypto from "node:crypto";
 import { connectDb } from "../core/db.js";
 import { register, login, refresh, logout, AuthError } from "../core/auth.js";
@@ -86,7 +87,23 @@ export function createApp() {
 
   // ---------------------------------------------------------------- auth (SP-00002 2절)
 
-  app.post("/api/auth/register", asyncRoute(async (req, res) => {
+  // QA로 발견: register/login에 브루트포스·계정 스팸 방어가 전혀 없었다
+  // (express-rate-limit는 다른 의존성이 끌어온 전이 의존성으로만 설치돼
+  // 있었을 뿐 실제로 쓰이진 않고 있었음). Tier 3는 인터넷에 노출되는
+  // 미인증 진입점이라 이 두 라우트만이라도 IP당 요청 수를 제한한다 -
+  // login은 비밀번호 추측 시도를, register는 계정 대량 생성을 늦춘다.
+  // refresh는 유효한 refresh token을 이미 가진 클라이언트만 부를 수 있어
+  // 상대적으로 덜 급하지만, 탈취된 토큰으로 회전을 반복 시도하는 것도
+  // 늦추는 게 안전해서 같이 걸어둔다.
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "요청이 너무 많습니다. 잠시 후 다시 시도하세요." },
+  });
+
+  app.post("/api/auth/register", authLimiter, asyncRoute(async (req, res) => {
     const { username, email, password } = req.body as { username?: string; email?: string; password?: string };
     if (!username || !email || !password) {
       res.status(400).json({ error: "username/email/password required" }); return;
@@ -94,7 +111,7 @@ export function createApp() {
     res.json(await register({ username, email, password }));
   }));
 
-  app.post("/api/auth/login", asyncRoute(async (req, res) => {
+  app.post("/api/auth/login", authLimiter, asyncRoute(async (req, res) => {
     const { username_or_email, password } = req.body as { username_or_email?: string; password?: string };
     if (!username_or_email || !password) {
       res.status(400).json({ error: "username_or_email/password required" }); return;
@@ -102,7 +119,7 @@ export function createApp() {
     res.json(await login(username_or_email, password));
   }));
 
-  app.post("/api/auth/refresh", asyncRoute(async (req, res) => {
+  app.post("/api/auth/refresh", authLimiter, asyncRoute(async (req, res) => {
     const { refresh_token } = req.body as { refresh_token?: string };
     if (!refresh_token) { res.status(400).json({ error: "refresh_token required" }); return; }
     res.json(await refresh(refresh_token));
