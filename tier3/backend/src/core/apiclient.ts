@@ -14,7 +14,7 @@ async function doFetch(base: string, path: string, token: string, init?: Request
   });
 }
 
-export async function apiCall<T>(path: string, init?: RequestInit): Promise<T> {
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const creds = loadCredentials();
   if (!creds) throw new ApiError("로그인이 필요합니다: docs3 login --api <url> --username <u> --password <p>");
 
@@ -34,8 +34,19 @@ export async function apiCall<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
+    // git/blame·git/diff는 text/plain을 돌려주므로 에러 바디도 JSON이
+    // 아닐 수 있다 - 파싱 실패 시 상태 텍스트로 대체.
     const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
     throw new ApiError(body.error ?? `HTTP ${res.status}`);
   }
-  return res.json() as Promise<T>;
+  return res;
+}
+
+export async function apiCall<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await apiFetch(path, init)).json() as Promise<T>;
+}
+
+/** git/blame·git/diff처럼 JSON이 아니라 순수 텍스트를 돌려주는 라우트용. */
+export async function apiCallText(path: string, init?: RequestInit): Promise<string> {
+  return (await apiFetch(path, init)).text();
 }

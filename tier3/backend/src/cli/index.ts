@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import { Command } from "commander";
 import { saveCredentials, loadCredentials, clearCredentials, credentialsPath } from "../core/credentials.js";
-import { apiCall } from "../core/apiclient.js";
+import { apiCall, apiCallText } from "../core/apiclient.js";
 
 // SP-00002 2절 "Skill이 안내하는 얇은 REST 클라이언트" - tier2의 docs CLI와
 // 달리 core를 직접 호출하지 않는다(로컬 파일이 없다 - 서버가 어딘가
@@ -14,6 +14,36 @@ program.name("docs3").description("claude-native-workflow 고급(Tier 3) REST �
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
+
+program
+  .command("register")
+  .description("계정 생성(가입 후 별도로 docs3 login 필요)")
+  .requiredOption("--api <url>", "Tier 3 서버 주소, 예: https://docs3.example.com")
+  .requiredOption("--username <username>", "아이디")
+  .requiredOption("--email <email>", "이메일")
+  .option("--password <password>", "비밀번호(생략 시 DOCS3_PASSWORD 환경변수 사용)")
+  .action(async (opts: { api: string; username: string; email: string; password?: string }) => {
+    const password = opts.password ?? process.env.DOCS3_PASSWORD;
+    if (!password) {
+      console.error("--password 또는 DOCS3_PASSWORD 환경변수가 필요합니다");
+      process.exitCode = 1;
+      return;
+    }
+    const apiBase = opts.api.replace(/\/+$/, "");
+    const res = await fetch(`${apiBase}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: opts.username, email: opts.email, password }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+      console.error(body.error ?? `HTTP ${res.status}`);
+      process.exitCode = 1;
+      return;
+    }
+    printJson(await res.json());
+    console.log("가입 완료 - docs3 login으로 로그인하세요.");
+  });
 
 program
   .command("login")
@@ -102,6 +132,21 @@ program
   );
 
 program
+  .command("member-role <projectId> <userId>")
+  .description("멤버 역할 변경(owner만)")
+  .requiredOption("--role <role>", "viewer|editor|owner")
+  .action(async (projectId: string, userId: string, opts: { role: string }) =>
+    printJson(await apiCall(`/api/projects/${projectId}/members/${userId}`, { method: "PATCH", body: JSON.stringify({ role: opts.role }) })),
+  );
+
+program
+  .command("member-remove <projectId> <userId>")
+  .description("멤버 제거(owner만)")
+  .action(async (projectId: string, userId: string) =>
+    printJson(await apiCall(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" })),
+  );
+
+program
   .command("tree <projectId>")
   .description("문서 트리 조회")
   .action(async (projectId: string) => printJson(await apiCall(`/api/projects/${projectId}/tree`)));
@@ -125,6 +170,33 @@ program
   .command("pending <projectId>")
   .description("답변 대기 목록")
   .action(async (projectId: string) => printJson(await apiCall(`/api/projects/${projectId}/pending`)));
+
+program
+  .command("design <projectId>")
+  .description("DC/RV/FX 목록 조회")
+  .action(async (projectId: string) => printJson(await apiCall(`/api/projects/${projectId}/design`)));
+
+program
+  .command("logs <projectId>")
+  .description("LG 목록 조회")
+  .action(async (projectId: string) => printJson(await apiCall(`/api/projects/${projectId}/logs`)));
+
+program
+  .command("all <projectId>")
+  .description("전체 문서 목록 조회")
+  .action(async (projectId: string) => printJson(await apiCall(`/api/projects/${projectId}/all`)));
+
+program
+  .command("search <projectId> <query>")
+  .description("전문 검색")
+  .action(async (projectId: string, query: string) =>
+    printJson(await apiCall(`/api/projects/${projectId}/search?q=${encodeURIComponent(query)}`)),
+  );
+
+program
+  .command("validate <projectId>")
+  .description("docs/ 구조 검증")
+  .action(async (projectId: string) => printJson(await apiCall(`/api/projects/${projectId}/validate`)));
 
 program
   .command("new <projectId> <type>")
@@ -170,6 +242,79 @@ gitCmd
 gitCmd
   .command("pull <projectId>")
   .action(async (projectId: string) => printJson(await apiCall(`/api/projects/${projectId}/git/pull`, { method: "POST" })));
+
+gitCmd
+  .command("log <projectId>")
+  .description("docs/ 커밋 이력 조회(읽기 전용)")
+  .option("--path <path>", "특정 문서로 한정")
+  .option("--limit <n>", "최대 개수", "30")
+  .action(async (projectId: string, opts: { path?: string; limit: string }) => {
+    const params = new URLSearchParams({ limit: opts.limit });
+    if (opts.path) params.set("path", opts.path);
+    printJson(await apiCall(`/api/projects/${projectId}/git/log?${params}`));
+  });
+
+gitCmd
+  .command("blame <projectId> <path>")
+  .description("문서 blame 조회(읽기 전용)")
+  .action(async (projectId: string, path: string) =>
+    console.log(await apiCallText(`/api/projects/${projectId}/git/blame?path=${encodeURIComponent(path)}`)),
+  );
+
+gitCmd
+  .command("show <projectId> <sha>")
+  .description("커밋 1건 상세 조회(읽기 전용)")
+  .action(async (projectId: string, sha: string) => printJson(await apiCall(`/api/projects/${projectId}/git/commits/${sha}`)));
+
+gitCmd
+  .command("diff <projectId> <sha>")
+  .description("커밋 diff 조회(읽기 전용)")
+  .action(async (projectId: string, sha: string) =>
+    console.log(await apiCallText(`/api/projects/${projectId}/git/diff/${sha}`)),
+  );
+
+const commentCmd = program.command("comment").description("문서 코멘트(비공식 토론용, 프로젝트별 공유 서비스 DB)");
+
+commentCmd
+  .command("list <projectId> <path>")
+  .description("문서의 코멘트 목록 조회")
+  .action(async (projectId: string, path: string) =>
+    printJson(await apiCall(`/api/projects/${projectId}/docs/${encodeURIComponent(path)}/comments`)),
+  );
+
+commentCmd
+  .command("add <projectId> <path> <text...>")
+  .description("코멘트 작성")
+  .action(async (projectId: string, path: string, textParts: string[]) =>
+    printJson(await apiCall(`/api/projects/${projectId}/docs/${encodeURIComponent(path)}/comments`, {
+      method: "POST", body: JSON.stringify({ body: textParts.join(" ") }),
+    })),
+  );
+
+commentCmd
+  .command("resolve <projectId> <path> <commentId>")
+  .description("코멘트 해결 처리")
+  .action(async (projectId: string, path: string, commentId: string) =>
+    printJson(await apiCall(`/api/projects/${projectId}/docs/${encodeURIComponent(path)}/comments/${commentId}/resolve`, { method: "POST" })),
+  );
+
+// tier2의 `docs changes`(인자 없음, 프로젝트가 하나뿐)와 달리 여기는
+// projectId가 필요해서 `changes <projectId>`를 그대로 쓰면 `ack`
+// 서브커맨드와 위치 인자가 모호해진다 - `list`/`ack` 둘 다 서브커맨드로
+// 분리(git/comment 그룹과 같은 패턴).
+const changesCmd = program.command("changes").description("변경 추적 큐");
+
+changesCmd
+  .command("list <projectId>")
+  .description("미확인 변경 목록 조회")
+  .action(async (projectId: string) => printJson(await apiCall(`/api/projects/${projectId}/changes`)));
+
+changesCmd
+  .command("ack <projectId> <id>")
+  .description("변경 항목을 확인 처리(큐에서 제거)")
+  .action(async (projectId: string, id: string) =>
+    printJson(await apiCall(`/api/projects/${projectId}/changes/${id}/ack`, { method: "POST" })),
+  );
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(err instanceof Error ? err.message : String(err));

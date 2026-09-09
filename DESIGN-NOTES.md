@@ -1071,3 +1071,38 @@ Skill 문서(tier2/tier3 둘 다)에 "프론트매터 포함 전체 마크다운
 참고" 식 링크 여러 개(README.md 두 곳, DC-00001/DC-00002, SP-00003 -
 전부 DN-00001을 가리키게 정정). 상세는 [DN-00001](docs/done/DN-00001.md)
 "종료 후 추가 발견 사항" 참고.
+
+### 2026-09-10 (계속 20) — docs3 CLI 전면 재검증: 15개 명령 누락 발견 + 추가
+
+"tier3 CLI도 같은 방식으로 한번 더 검증해줘"라는 요청으로, 이번엔
+개별 명령 하나씩 보는 대신 `tier3/backend/src/api/server.ts`의 라우트
+전체를 `docs3` CLI와 1:1로 대조했다. `save` 하나가 아니라 15개 명령이
+통째로 빠져 있었다는 걸 이번에 알았다 - `register`(가입 경로 자체가
+없었음), design/logs/all/search/validate, git log/blame/show/diff(이력
+조회 - commit/push/pull만 있었음), comment list/add/resolve, changes
+list/ack, 멤버 역할변경/제거. 규모가 커서 먼저 확인받고 진행했다.
+
+추가하면서 진짜 버그를 하나 더 잡았다 - `git/blame`·`git/diff/:sha`는
+`text/plain`을 돌려주는데 `apiCall<T>()`는 항상 `.json()`을 부르므로
+그대로 쓰면 파싱 에러가 난다. `apiclient.ts`를 리팩터링해서 인증/refresh
+로직을 공유하는 `apiFetch()`로 뽑고, JSON용 `apiCall()`/텍스트용
+`apiCallText()`로 나눴다. `changes`도 tier2처럼 인자 없이 둘 수 없다는
+걸 알아채서(`<projectId>`가 필요해 `ack` 서브커맨드와 위치 인자가
+겹침) `git`/`comment`처럼 `list`/`ack` 서브커맨드를 가진 그룹으로
+바꿨다.
+
+검증은 스크래치 서버에 15개 명령을 전부 실행해서 확인했다 - register→
+login→project-create→design/logs/validate(빈 프로젝트)→new→all/search
+(한글)→save(본문만)→new(DC)→save(질문 추가)→pending→reply→comment
+add/list/resolve→git log(요청자 이름으로 커밋된 것 확인)→git show/
+diff/blame(텍스트 정상)→두 번째 계정 가입→invite→members→member-role→
+member-remove→git commit/push/pull→logout. 스크래치 셋업 중 진짜
+실수도 하나 났다 - bare 저장소를 `git init --bare`한 뒤 `main`에만
+push했는데 이 환경 git 기본 브랜치가 `master`라 bare 저장소 HEAD가
+계속 빈 `master`를 가리키고 있었다(project-create가 빈 작업 트리를
+clone해서 `docs/.config.json` ENOENT) - `git branch -a`로 바로 원인
+잡아내고 `master`에 다시 push해서 해결(tier3 코드 버그 아님).
+
+`tier3/skill`의 "명령 전체 목록"에 15개 전부 반영, `SP-00002` 4절에도
+표에 없던 라우트 존재를 명시. 상세는 [DN-00001](docs/done/DN-00001.md)
+"tier3 CLI 전체 재검증" 참고.
