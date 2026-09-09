@@ -18,6 +18,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "tier2/dashboard", "run", "dev"],
       "port": 9200
+    },
+    {
+      "name": "tier3-dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "tier3/dashboard", "run", "dev"],
+      "port": 9300
     }
   ]
 }

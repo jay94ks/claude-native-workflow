@@ -1,5 +1,21 @@
 // SP-00003 2절 공통 API를 그대로 호출하는 얇은 클라이언트. dev 서버는
 // vite.config.ts의 프록시로 /api를 backend(기본 8766)에 넘긴다.
+//
+// basePath/authToken은 tier3/dashboard가 이 파일을 그대로(수정 없이)
+// 재사용하기 위한 것 - SP-00002 8절 "커밋 이력/diff/blame/코멘트 자체는
+// 등급 공통... 화면 자체는 SP-00001과 동일"이라, 문서 조회/편집 화면을
+// tier3용으로 새로 만드는 대신 이 클라이언트 + tier2/dashboard의 Vue
+// 컴포넌트를 그대로 가져다 쓰고 basePath만 `/api/projects/:id`로,
+// authToken만 로그인 토큰으로 바꿔 끼운다. 기본값은 tier2 자신의 기존
+// 동작(basePath "/api", 토큰 없음)과 완전히 같아서 tier2/dashboard
+// 자체는 아무것도 안 바뀐다.
+let basePath = "/api";
+let authToken: string | undefined;
+
+export function configureApi(opts: { basePath?: string; authToken?: string }): void {
+  if (opts.basePath !== undefined) basePath = opts.basePath;
+  if (opts.authToken !== undefined) authToken = opts.authToken;
+}
 
 export interface DocMeta {
   id?: string;
@@ -89,9 +105,13 @@ export interface ChangeNotice {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`${basePath}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -101,7 +121,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function apiText(path: string): Promise<string> {
-  const res = await fetch(`/api${path}`);
+  const res = await fetch(`${basePath}${path}`, {
+    headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
 }

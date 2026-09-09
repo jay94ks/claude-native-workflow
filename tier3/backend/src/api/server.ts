@@ -8,14 +8,18 @@ import {
 } from "../core/projects.js";
 import { ensureProjectCheckout, commitAsAndPush, projectDir } from "../core/workspace.js";
 import { authenticate, requireProjectRole, withProjectRoot, type AuthedRequest } from "../middleware/auth.js";
+import { listComments, addComment, resolveComment } from "../core/comments.js";
 
 import {
-  buildTree, getDoc, listPending, listByTypes, NotFoundError,
+  buildTree, getDoc, saveDocBody, searchDocs, listPending, listByTypes, extractSection, NotFoundError,
 } from "@claude-native-workflow/tier2-backend/dist/core/docstore.js";
+import { validateAll } from "@claude-native-workflow/tier2-backend/dist/core/validate.js";
 import { createDoc } from "@claude-native-workflow/tier2-backend/dist/core/create.js";
 import { answerPending } from "@claude-native-workflow/tier2-backend/dist/core/reply.js";
 import { transitionDone } from "@claude-native-workflow/tier2-backend/dist/core/transition.js";
 import { pull as gitPull, push as gitPush } from "@claude-native-workflow/tier2-backend/dist/core/git.js";
+import { gitLog, gitCommitDetail, gitDiff, gitBlame } from "@claude-native-workflow/tier2-backend/dist/core/gitlog.js";
+import { listChangeNotices, ackChangeNotice } from "@claude-native-workflow/tier2-backend/dist/core/changes.js";
 import { runWithProjectRoot } from "@claude-native-workflow/tier2-backend/dist/core/paths.js";
 import { DESIGN_TYPES, TYPE_NAMES } from "@claude-native-workflow/tier2-backend/dist/core/types.js";
 
@@ -162,6 +166,13 @@ export function createApp() {
   app.get("/api/projects/:projectId/doc", ...viewer, (req, res) => {
     const doc = getDoc(String(req.query.path ?? ""));
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const anchor = req.query.anchor ? String(req.query.anchor) : undefined;
+    if (anchor) {
+      const section = extractSection(doc.body, anchor);
+      if (section === null) { res.status(404).json({ error: "anchor not found" }); return; }
+      res.json({ path: doc.path, meta: doc.meta, body: section, anchor });
+      return;
+    }
     res.json(doc);
   });
 
@@ -179,6 +190,69 @@ export function createApp() {
 
   app.get("/api/projects/:projectId/all", ...viewer, (_req, res) => {
     res.json(listByTypes(new Set(Object.keys(TYPE_NAMES).filter((t) => t !== "IX"))));
+  });
+
+  app.get("/api/projects/:projectId/search", ...viewer, (req, res) => {
+    res.json(searchDocs(String(req.query.q ?? "")));
+  });
+
+  app.get("/api/projects/:projectId/validate", ...viewer, (_req, res) => {
+    res.json(validateAll());
+  });
+
+  app.post("/api/projects/:projectId/doc/save", ...editor, asyncRoute(async (req, res) => {
+    const { path: relPath, body } = req.body as { path?: string; body?: string };
+    if (!relPath || body === undefined) { res.status(400).json({ error: "path/body required" }); return; }
+    const result = saveDocBody(relPath, body);
+    await commitProjectChange(req, `docs: edit ${relPath} (${req.user!.username})`);
+    res.json(result);
+  }));
+
+  app.get("/api/projects/:projectId/git/log", ...viewer, asyncRoute(async (req, res) => {
+    const relPath = req.query.path ? String(req.query.path) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 30;
+    res.json(await gitLog(relPath, limit));
+  }));
+
+  app.get("/api/projects/:projectId/git/blame", ...viewer, asyncRoute(async (req, res) => {
+    res.type("text/plain").send(await gitBlame(String(req.query.path ?? "")));
+  }));
+
+  app.get("/api/projects/:projectId/git/commits/:sha", ...viewer, asyncRoute(async (req, res) => {
+    const detail = await gitCommitDetail(req.params.sha);
+    if (!detail) { res.status(404).json({ error: "not found" }); return; }
+    res.json(detail);
+  }));
+
+  app.get("/api/projects/:projectId/git/diff/:sha", ...viewer, asyncRoute(async (req, res) => {
+    res.type("text/plain").send(await gitDiff(req.params.sha));
+  }));
+
+  // SP-00002 8절: doc_comments는 프로젝트별 커넥션이 아니라 project_id로
+  // 나뉜 공유 서비스 DB - tier2의 core/comments.ts(로컬/토글 기반)가 아니라
+  // 이 저장소 자체의 core/comments.ts(project_id 필터)를 쓴다.
+  app.get("/api/projects/:projectId/docs/:docPath(.*)/comments", authenticate, requireProjectRole("viewer"), asyncRoute(async (req, res) => {
+    res.json(await listComments(req.params.projectId, req.params.docPath));
+  }));
+
+  app.post("/api/projects/:projectId/docs/:docPath(.*)/comments", authenticate, requireProjectRole("viewer"), asyncRoute(async (req, res) => {
+    const { body } = req.body as { body?: string };
+    if (!body) { res.status(400).json({ error: "body required" }); return; }
+    res.json({ id: await addComment(req.params.projectId, req.params.docPath, body) });
+  }));
+
+  app.post("/api/projects/:projectId/docs/:docPath(.*)/comments/:id(\\d+)/resolve", authenticate, requireProjectRole("viewer"), asyncRoute(async (req, res) => {
+    await resolveComment(req.params.projectId, req.params.docPath, Number(req.params.id));
+    res.json({ ok: true });
+  }));
+
+  app.get("/api/projects/:projectId/changes", ...viewer, (_req, res) => {
+    res.json(listChangeNotices());
+  });
+
+  app.post("/api/projects/:projectId/changes/:id/ack", ...editor, (req, res) => {
+    ackChangeNotice(Number(req.params.id));
+    res.json({ ok: true });
   });
 
   async function commitProjectChange(req: AuthedRequest, message: string) {
