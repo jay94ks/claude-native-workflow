@@ -1,0 +1,312 @@
+import fs from "node:fs";
+import path from "node:path";
+import type {
+  DocListItem, DocMeta, PendingItem, PendingQuestion, TreeNode,
+} from "./types.js";
+import { docsDir, rel, resolveInDocs, isInsideDocs } from "./paths.js";
+import { dumpFrontmatter } from "./frontmatter.js";
+import { today } from "./tracking.js";
+import { iterDocFiles, readDocSync } from "./fsdocs.js";
+import { validateDoc } from "./validate.js";
+
+export { iterDocFiles, readDocSync };
+
+// ---------------------------------------------------------------- read gate (SP-00003 6.2)
+//
+// mtime+size checked in-memory cache: an unchanged file costs one stat()
+// call, never a read+parse. This is the caching half of the read gate;
+// change_notices/trace_events (the notification half, SP-00003 5절/6절) land
+// with git automation + the change queue (PL-00001 2단계 5~7번) - not yet
+// wired here.
+
+interface CacheEntry {
+  mtimeMs: number;
+  size: number;
+  meta: DocMeta;
+  pending: PendingQuestion[];
+}
+
+const metaCache = new Map<string, CacheEntry>();
+
+export function scanMeta(absPath: string): { meta: DocMeta; pending: PendingQuestion[] } {
+  const relPath = rel(absPath);
+  const st = fs.statSync(absPath);
+  const cached = metaCache.get(relPath);
+  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+    return { meta: cached.meta, pending: cached.pending };
+  }
+  const { body, meta } = readDocSync(absPath);
+  const pending = scanPendingInText(body);
+  metaCache.set(relPath, { mtimeMs: st.mtimeMs, size: st.size, meta, pending });
+  return { meta, pending };
+}
+
+function invalidateCache(absPath: string): void {
+  metaCache.delete(rel(absPath));
+}
+
+// ---------------------------------------------------------------- pending questions
+
+const PENDING_LINE_RE = /^- \[ \] \(Q(\d+)\) (.+)$/;
+const OPTION_RE = /^\s+- (권장|대안): (.+)$/;
+
+export function scanPendingInText(body: string): PendingQuestion[] {
+  const lines = body.split("\n");
+  const out: PendingQuestion[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const m = PENDING_LINE_RE.exec(lines[i]);
+    if (!m) {
+      i++;
+      continue;
+    }
+    const [, qid, question] = m;
+    const options: PendingQuestion["options"] = [];
+    let j = i + 1;
+    while (j < lines.length) {
+      const om = OPTION_RE.exec(lines[j]);
+      if (!om) break;
+      options.push({ kind: om[1] as "권장" | "대안", text: om[2] });
+      j++;
+    }
+    out.push({ qid, question, options });
+    i = j;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- tree / list / search
+
+export function buildTree(): TreeNode {
+  const d = docsDir();
+
+  const walk = (dirPath: string): TreeNode => {
+    const node: TreeNode = { name: path.basename(dirPath), type: "dir", children: [] };
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    } catch {
+      return node;
+    }
+    entries.sort((a, b) => {
+      const af = a.isFile() ? 1 : 0;
+      const bf = b.isFile() ? 1 : 0;
+      if (af !== bf) return af - bf;
+      return a.name.localeCompare(b.name);
+    });
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const full = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        node.children!.push(walk(full));
+      } else if (entry.name.endsWith(".md")) {
+        const { meta } = scanMeta(full);
+        node.children!.push({
+          name: entry.name,
+          type: "file",
+          path: rel(full),
+          id: meta.id ?? entry.name.replace(/\.md$/, ""),
+          title: meta.title ?? "",
+          doc_type: meta.type ?? "",
+          status: meta.status ?? "",
+        });
+      }
+    }
+    return node;
+  };
+
+  return walk(d);
+}
+
+export function listPending(): PendingItem[] {
+  const items: PendingItem[] = [];
+  for (const p of iterDocFiles()) {
+    const { meta, pending } = scanMeta(p);
+    for (const { qid, question, options } of pending) {
+      items.push({
+        doc_path: rel(p),
+        doc_id: meta.id ?? path.basename(p).replace(/\.md$/, ""),
+        title: meta.title ?? "",
+        question_id: qid,
+        question,
+        options,
+        updated: meta.updated ?? meta.created ?? "",
+      });
+    }
+  }
+  return items;
+}
+
+export function listByTypes(types: Set<string>): DocListItem[] {
+  const out: DocListItem[] = [];
+  for (const p of iterDocFiles()) {
+    const { meta } = scanMeta(p);
+    const t = meta.type ?? "";
+    if (types.has(t)) {
+      out.push({
+        path: rel(p),
+        id: meta.id ?? path.basename(p).replace(/\.md$/, ""),
+        title: meta.title ?? "",
+        type: t,
+        status: meta.status ?? "",
+        updated: meta.updated ?? "",
+        reply_pending: Boolean(meta.reply_pending ?? false),
+        target: meta.target ?? "",
+      });
+    }
+  }
+  out.sort((a, b) => (a.updated < b.updated ? 1 : a.updated > b.updated ? -1 : 0));
+  return out;
+}
+
+export function slugify(text: string): string {
+  let s = text.trim().toLowerCase();
+  s = s.replace(/[`~!@#$%^&*()+=[\]{}|\\:;"'<>,.?/]/g, "");
+  s = s.replace(/\s+/g, "-");
+  return s;
+}
+
+export function extractSection(body: string, anchor: string): string | null {
+  const lines = body.split("\n");
+  const headingRe = /^(#{1,6})\s+(.*)$/;
+  let start = -1;
+  let startLevel = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = headingRe.exec(lines[i]);
+    if (m && slugify(m[2]) === anchor) {
+      start = i;
+      startLevel = m[1].length;
+      break;
+    }
+  }
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let j = start + 1; j < lines.length; j++) {
+    const m = headingRe.exec(lines[j]);
+    if (m && m[1].length <= startLevel) {
+      end = j;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n").replace(/\n+$/, "");
+}
+
+export interface SearchResult {
+  path: string;
+  id: string;
+  title: string;
+  type: string;
+  snippet: string;
+}
+
+export function searchDocs(query: string): SearchResult[] {
+  const q = (query ?? "").trim().toLowerCase();
+  if (!q) return [];
+  const results: SearchResult[] = [];
+  for (const p of iterDocFiles()) {
+    const { meta, body } = readDocSync(p);
+    const haystack = `${meta.id ?? ""} ${meta.title ?? ""}\n${body}`.toLowerCase();
+    const idx = haystack.indexOf(q);
+    if (idx === -1) continue;
+    const start = Math.max(0, idx - 40);
+    const snippet = haystack.slice(start, idx + q.length + 40).trim();
+    results.push({
+      path: rel(p),
+      id: meta.id ?? path.basename(p).replace(/\.md$/, ""),
+      title: meta.title ?? "",
+      type: meta.type ?? "",
+      snippet,
+    });
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------- index table regen
+
+function rebuildTable(indexPath: string, rows: string[], header: [string, string]): void {
+  const text = fs.readFileSync(indexPath, "utf-8");
+  const lines = [header[0], header[1], ...(rows.length ? rows : ["| _(항목 없음)_ | | | |"])];
+  const tableMd = lines.join("\n");
+  const newText = text.replace(
+    /(<!-- TABLE:START -->\n)([\s\S]*?)(\n<!-- TABLE:END -->)/,
+    (_match, pre: string, _body: string, post: string) => pre + tableMd + post,
+  );
+  fs.writeFileSync(indexPath, newText, "utf-8");
+}
+
+export function rebuildReplyIndex(): void {
+  const rows = listPending().map(
+    (it) => `| [${it.doc_id}](../${it.doc_path}) | Q${it.question_id} | ${it.question} | ${it.updated} |`,
+  );
+  rebuildTable(
+    path.join(docsDir(), "reply", "index.md"),
+    rows,
+    ["| 대상 문서 | 질문 ID | 질문 요약 | 등록일 |", "|---|---|---|---|"],
+  );
+}
+
+export function rebuildLogsIndex(): void {
+  const rows: string[] = [];
+  const logsDir = path.join(docsDir(), "logs");
+  if (fs.existsSync(logsDir)) {
+    for (const name of fs.readdirSync(logsDir).filter((n) => n.startsWith("LG-") && n.endsWith(".md")).sort()) {
+      const p = path.join(logsDir, name);
+      const { meta } = readDocSync(p);
+      const qids = ((meta.question_ids as unknown as string[]) ?? []).join(", ");
+      rows.push(
+        `| [${meta.id ?? name.replace(/\.md$/, "")}](${name}) | ${meta.target ?? ""} | ` +
+          `${qids} | ${meta.updated ?? meta.created ?? ""} |`,
+      );
+    }
+  }
+  rebuildTable(
+    path.join(docsDir(), "logs", "index.md"),
+    rows,
+    ["| 번호 | 대상 문서 | 답변된 질문 | 최근 처리일 |", "|---|---|---|---|"],
+  );
+}
+
+export function findLgByTarget(docId: string): { path: string; meta: DocMeta; body: string } | null {
+  const folder = path.join(docsDir(), "logs");
+  if (!fs.existsSync(folder)) return null;
+  for (const name of fs.readdirSync(folder).filter((n) => n.startsWith("LG-") && n.endsWith(".md")).sort()) {
+    const p = path.join(folder, name);
+    const { meta, body } = readDocSync(p);
+    if (meta.target === docId) {
+      return { path: p, meta, body };
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------- doc read / save
+
+export class NotFoundError extends Error {
+  constructor(relPath: string) {
+    super(`not found: ${relPath}`);
+    this.name = "NotFoundError";
+  }
+}
+
+export function getDoc(relPath: string): { path: string; meta: DocMeta; body: string } | null {
+  const p = resolveInDocs(relPath);
+  if (!isInsideDocs(p) || !fs.existsSync(p)) return null;
+  const { meta, body } = readDocSync(p);
+  return { path: relPath, meta, body };
+}
+
+export function saveDocBody(relPath: string, newBody: string): { path: string; updated: string } {
+  const p = resolveInDocs(relPath);
+  if (!isInsideDocs(p) || !fs.existsSync(p)) {
+    throw new NotFoundError(relPath);
+  }
+  const { meta } = readDocSync(p);
+  meta.updated = today();
+  const violations = validateDoc(p, meta);
+  if (violations.length) {
+    throw new Error("검증 실패: " + violations.map((v) => v.message).join("; "));
+  }
+  fs.writeFileSync(p, dumpFrontmatter(meta, newBody), "utf-8");
+  invalidateCache(p);
+  return { path: relPath, updated: meta.updated as string };
+}

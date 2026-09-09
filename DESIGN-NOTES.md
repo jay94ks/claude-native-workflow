@@ -348,3 +348,55 @@ Python stdlib만 쓴다는 뜻이었지 부트스트랩 프롬프트 자체가 �
 `docs/reply/index.md`는 대시보드가 `TABLE:START`/`END` 마커 사이만
 자동 갱신하는 특수 형식이라 예외적으로 그대로 URL 참조 유지. 결과:
 19개 URL → 10개 URL, 3343자 → 2687자.
+
+### 2026-09-09 (계속 3) — PL-00001 2단계(Tier 2) 착수: `core`/`api` 포팅
+
+"PL-00001 2단계 Tier 2 시작하자"는 요청으로 `tier2/backend`를 새로
+스캐폴딩(`package.json`/`tsconfig.json`, Node LTS + TypeScript, [DC-00001]
+(docs/decision/DC-00001.md)에서 확정한 Express/simple-git/Prisma 스택)하고,
+PL-00001 2단계 1~2번(`core/`, `api/`)을 실제로 구현·검증했다. 범위가 커서
+(core→api→cli→mcp→git 자동화→이력/코멘트→변경 큐→DB→대시보드→Docker, 총
+10개 순차 항목) 이번엔 1~2번까지만 하고 실제로 서버를 띄워 검증한 뒤 세션을
+마무리하기로 판단(각 항목이 다음 항목의 전제라는 계획 자체의 순서를 그대로
+따름).
+
+- `docs/PROTOCOL.md`의 frontmatter 파서/덤퍼, `.tracking.json` 번호 발급,
+  읽기 게이트(SP-00003 6.2절 mtime+size 캐시), `scan_pending`(옵션 파싱
+  포함), `docs validate`, `answer_pending`(RP 폴딩 + LG find-or-create),
+  `save_doc_body`를 Tier 1(Python)에서 1:1로 TypeScript에 포팅.
+  `parse_frontmatter`는 범용 YAML 라이브러리(`js-yaml` 등)를 쓰지 않고
+  Tier 1과 정확히 같은 부분집합만 손으로 다시 구현 — 두 엔진이 "무엇을
+  유효한 프론트매터로 보는가"에서 갈라지면 안 된다는 SP-00003 7절의
+  드리프트 우려 때문.
+- 순환 참조 문제 발견: `validate.ts`가 파일 순회 함수를 `docstore.ts`에서
+  가져오려 했는데, `docstore.ts`의 쓰기 경로(`saveDocBody`)가 저장 전
+  `validateDoc`을 불러야 해서 서로 물렸다. 파일 읽기만 하는 부분을
+  `fsdocs.ts`로 분리해서 해결(`fsdocs.ts` ← `validate.ts` ← `docstore.ts`
+  단방향).
+- Tier 1에는 없던 두 가지를 이번에 새로 설계해야 했다:
+  - **`POST /api/docs`(문서 생성)** — Tier 1은 대시보드가 생성을 하지 않고
+    Claude가 파일을 직접 쓰지만, SP-00003 2절 라우트 표와 SP-00001 4절의
+    `docs new` CLI가 이미 이 라우트를 전제하고 있어 Tier 2부터는 API로도
+    문서를 생성하게 구현. 대상 타입의 `docs/<폴더>/index.md` 표에서
+    "아직 문서 없음" 자리를 실제 행으로 치환(또는 이어붙임).
+  - **`PL→DN` 전환** — `docs/PROTOCOL.md` 5절 예시 스텁(`{id, type,
+    status}` 3필드만)을 그대로 구현하면 7절 필수 필드 규칙(`created`/
+    `updated` 필수)을 스스로 어겨서, 쓰기 경로가 저장 전 검증을 통과해야
+    한다는 원칙(SP-00003 7.3절)과 모순됐다. `created`/`updated`/`links`
+    (새 `DN`을 가리킴)를 유지하는 형태로 최소 변형해서 검증을 통과시킴 —
+    문서 예시는 나중에 이 실제 구현에 맞춰 업데이트가 필요.
+- 실제 검증: 스캐치 폴더에 `tier1/docs`(빈 템플릿)를 복사해 그 위에서 서버를
+  띄우고, `SP`/`DC`/`RM`/`PL` 문서 생성 → `DC`에 옵션이 달린 질문 추가(`doc/
+  save`) → 답변 처리(RP 앵커/LG 파일/`reply`·`logs` 색인 갱신 확인) → 앵커
+  기반 부분 읽기 → `PL→DN` 전환(스텁/DN 파일/`plan/index.md`에서 행 제거
+  확인) → `docs validate` 재실행(빈 배열 확인)까지 전부 실제 HTTP 요청으로
+  검증. 진짜 리포의 `docs/`는 건드리지 않았고, 검증 후 스캐치 폴더는 삭제.
+- 실제로 서버를 띄운 덕에 잡은 문제 하나: `curl`에 한글 JSON을 직접 넘기면
+  Windows 콘솔 코드페이지 때문에 깨진 바이트가 그대로 저장됐다(Tier 1 때
+  겪은 것과 증상은 비슷하지만 원인은 다름 — 이번엔 서버 코드가 아니라 curl
+  호출 자체가 인코딩을 깨뜨린 것). Node `fetch`로 우회해서 재확인하니
+  정상 — 서버 쪽 코드는 처음부터 문제 없었음.
+
+`tier2/backend/.gitignore`로 `node_modules/`/`dist/` 제외. 남은 3~10번
+(CLI, MCP, git 자동화, git 이력/코멘트, 변경 큐, 선택적 DB, Quasar 대시보드,
+Docker)은 다음 세션에서 이어간다.
