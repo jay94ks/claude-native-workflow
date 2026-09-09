@@ -213,6 +213,8 @@ function showListPane() {
 async function loadList() {
   const pane = document.getElementById("list-pane");
   pane.innerHTML = "불러오는 중...";
+  if (state.tab === "pending") return loadPendingList(pane);
+
   let items;
   if (state.tab === "all") items = await api("/api/all");
   else if (state.tab === "design") items = await api("/api/design");
@@ -236,6 +238,79 @@ async function loadList() {
       el("div", { class: "meta" }, `${TYPE_LABEL[it.type] || it.type} · ${it.updated || ""}`),
     ]);
     pane.appendChild(card);
+  }
+}
+
+// 프로젝트 전체를 훑어 미답변 (Qn)을 전부 모아 보여준다 - 문서 하나를 열어야만
+// 보이던 pending-section(scanPending, 그 문서 안 질문만)과 달리 여러 문서에
+// 흩어진 질문을 한 화면에서 확인할 수 있다.
+async function loadPendingList(pane) {
+  const items = await api("/api/pending");
+  pane.innerHTML = "";
+  if (!items.length) {
+    pane.appendChild(el("div", { class: "empty-note" }, "답변 대기 중인 질문이 없습니다."));
+    return;
+  }
+  for (const it of items) {
+    const rec = (it.options || []).find((o) => o.kind === "권장");
+    pane.appendChild(el("div", {
+      class: "doc-card",
+      onclick: async () => {
+        await openDoc(it.doc_path);
+        openReplyDialog(it.doc_path, it.question_id, it.question, it.options || []);
+      },
+    }, [
+      el("div", { class: "row1" }, [
+        el("span", {}, [
+          el("span", { class: "id" }, it.doc_id),
+          el("span", { class: "title" }, it.title || "(제목 없음)"),
+        ]),
+        el("span", { class: "badge pending" }, `Q${it.question_id}`),
+      ]),
+      el("div", { class: "meta" }, it.question),
+      rec ? el("div", { class: "rec-preview" }, `권장: ${rec.text}`) : null,
+    ]));
+  }
+}
+
+// ---------------------------------------------------------------- search
+
+let searchDebounce = null;
+
+function initSearch() {
+  const input = document.getElementById("search-input");
+  const results = document.getElementById("search-results");
+  const tree = document.getElementById("tree");
+
+  input.addEventListener("input", () => {
+    clearTimeout(searchDebounce);
+    const q = input.value.trim();
+    if (!q) {
+      results.hidden = true;
+      results.innerHTML = "";
+      tree.hidden = false;
+      return;
+    }
+    searchDebounce = setTimeout(() => runSearch(q, results, tree), 250);
+  });
+}
+
+async function runSearch(q, results, tree) {
+  const items = await api("/api/search?q=" + encodeURIComponent(q));
+  tree.hidden = true;
+  results.hidden = false;
+  results.innerHTML = "";
+  if (!items.length) {
+    results.appendChild(el("div", { class: "empty-note" }, "검색 결과가 없습니다."));
+    return;
+  }
+  for (const it of items) {
+    results.appendChild(el("div", {
+      class: "search-result", onclick: () => openDoc(it.path),
+    }, [
+      el("div", { class: "search-result-title" }, `${it.id} · ${it.title || "(제목 없음)"}`),
+      el("div", { class: "search-result-snippet" }, `…${it.snippet}…`),
+    ]));
   }
 }
 
@@ -443,10 +518,24 @@ async function loadCommentsSection(pane, docPath) {
 async function loadHistorySection(pane, docPath) {
   const section = el("div", { class: "history-section" }, [
     el("h4", {}, "커밋 이력"),
+    el("button", {
+      class: "blame-toggle-btn",
+      onclick: async () => {
+        if (!blameBox.hidden) { blameBox.hidden = true; return; }
+        blameBox.hidden = false;
+        blameBox.textContent = "불러오는 중...";
+        const res = await fetch("/api/git/blame?path=" + encodeURIComponent(docPath));
+        blameBox.textContent = await res.text();
+      },
+    }, "blame 보기"),
   ]);
   pane.appendChild(section);
+  const blameBox = el("pre", { class: "diff-box", hidden: "hidden" });
+  section.appendChild(blameBox);
   const list = el("div", { class: "history-list" }, "불러오는 중...");
   section.appendChild(list);
+  const filesBox = el("div", { class: "commit-files", hidden: "hidden" });
+  section.appendChild(filesBox);
   const diffBox = el("pre", { class: "diff-box", hidden: "hidden" });
   section.appendChild(diffBox);
 
@@ -467,8 +556,18 @@ async function loadHistorySection(pane, docPath) {
     list.appendChild(el("div", { class: "commit-row", onclick: async () => {
       diffBox.hidden = false;
       diffBox.textContent = "불러오는 중...";
-      const res = await fetch("/api/git/diff/" + c.sha);
-      diffBox.textContent = await res.text();
+      filesBox.hidden = true;
+      const [detail, diffText] = await Promise.all([
+        api("/api/git/commits/" + c.sha).catch(() => null),
+        fetch("/api/git/diff/" + c.sha).then((r) => r.text()),
+      ]);
+      if (detail && detail.files && detail.files.length) {
+        filesBox.hidden = false;
+        filesBox.innerHTML = "";
+        filesBox.appendChild(el("div", { class: "commit-files-title" }, `변경된 파일 (${detail.files.length})`));
+        for (const f of detail.files) filesBox.appendChild(el("div", { class: "commit-file-row" }, f));
+      }
+      diffBox.textContent = diffText;
     } }, [
       el("span", { class: "commit-sha" }, c.sha.slice(0, 8)),
       el("span", { class: "commit-date" }, c.date),
@@ -649,6 +748,7 @@ function initReplyDialog() {
 
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
 initReplyDialog();
+initSearch();
 loadTree();
 setTab("all");
 loadChangeBanner();

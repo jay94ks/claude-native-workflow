@@ -10,6 +10,8 @@
 <div id="app">
   <aside id="tree-pane">
     <div class="brand">docs</div>
+    <input id="search-input" type="search" placeholder="검색...">
+    <div id="search-results" hidden></div>
     <div id="tree"></div>
   </aside>
   <main id="main-pane">
@@ -17,6 +19,7 @@
       <button class="tab active" data-tab="all">문서</button>
       <button class="tab" data-tab="design">설계</button>
       <button class="tab" data-tab="logs">기록</button>
+      <button class="tab" data-tab="pending">답변 대기</button>
     </nav>
     <div id="change-banner" hidden></div>
     <div id="list-pane"></div>
