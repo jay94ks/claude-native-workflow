@@ -7,11 +7,12 @@ import { answerPending } from "../core/reply.js";
 import { createDoc } from "../core/create.js";
 import { transitionDone } from "../core/transition.js";
 import { DESIGN_TYPES, TYPE_NAMES } from "../core/types.js";
+import { pull as gitPull, push as gitPush, commitDocsChange, sync as gitSync } from "../core/git.js";
 
 // SP-00001 4절의 CLI. api/server.ts와 마찬가지로 core/를 직접 호출한다
 // (SP-00001 1절: "MCP 서버, CLI, 로컬 API가 전부 같은 core/ 함수를 직접
-// 호출한다"). git/comment 하위 명령은 core에 그 모듈이 아직 없어(PL-00001
-// 2단계 5~6번) 이번엔 등록하지 않는다.
+// 호출한다"). comment 하위 명령은 core에 그 모듈이 아직 없어(PL-00001
+// 2단계 6번) 이번엔 등록하지 않는다.
 
 const program = new Command();
 program
@@ -73,25 +74,49 @@ program
   .description("새 문서 생성")
   .requiredOption("--title <title>", "문서 제목")
   .option("--links <ids>", "쉼표로 구분된 links 목록, 예: DS-00001,PL-00001")
-  .action((type: string, opts: { title: string; links?: string }) => {
+  .action(async (type: string, opts: { title: string; links?: string }) => {
     const links = opts.links ? opts.links.split(",").map((s) => s.trim()).filter(Boolean) : [];
-    printJson(createDoc({ type, title: opts.title, links }));
+    printJson(await createDoc({ type, title: opts.title, links }));
   });
 
 program
   .command("reply <path> <questionId> <answer...>")
   .description("답변 대기 질문에 답변 처리")
-  .action((path: string, questionId: string, answerParts: string[]) => {
-    printJson(answerPending(path, questionId, answerParts.join(" ")));
+  .action(async (path: string, questionId: string, answerParts: string[]) => {
+    printJson(await answerPending(path, questionId, answerParts.join(" ")));
   });
 
 program
   .command("transition-done <planId>")
   .description("PL -> DN 전환")
   .requiredOption("--report <text>", "완료 결과 보고 내용")
-  .action((planId: string, opts: { report: string }) => {
-    printJson(transitionDone(planId, opts.report));
+  .action(async (planId: string, opts: { report: string }) => {
+    printJson(await transitionDone(planId, opts.report));
   });
+
+const gitCmd = program.command("git").description("git 자동화(SP-00001 5절)");
+
+gitCmd
+  .command("pull")
+  .description("git pull (충돌 시 자동 병합하지 않고 보고)")
+  .action(async () => printJson(await gitPull()));
+
+gitCmd
+  .command("commit")
+  .description("docs/ 변경분 커밋")
+  .option("-m, --message <text>", "커밋 메시지", "docs: manual commit")
+  .action(async (opts: { message: string }) => printJson(await commitDocsChange(opts.message)));
+
+gitCmd
+  .command("push")
+  .description("git push (push_mode와 무관하게 항상 실행)")
+  .action(async () => printJson(await gitPush()));
+
+gitCmd
+  .command("sync")
+  .description("pull -> commit -> push를 한 번에")
+  .option("-m, --message <text>", "커밋 메시지", "docs: sync")
+  .action(async (opts: { message: string }) => printJson(await gitSync(opts.message)));
 
 program
   .command("validate")

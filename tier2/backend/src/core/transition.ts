@@ -6,6 +6,7 @@ import { dumpFrontmatter } from "./frontmatter.js";
 import { nextSeq, today } from "./tracking.js";
 import { NotFoundError } from "./docstore.js";
 import { validateDoc } from "./validate.js";
+import { afterWrite } from "./git.js";
 
 export interface TransitionResult {
   dn_id: string;
@@ -24,7 +25,7 @@ export interface TransitionResult {
  * in PROTOCOL.md 5절 - the full form is still schema-valid under 7절's
  * required-field rules, which the 3-field version isn't.
  */
-export function transitionDone(planId: string, report: string): TransitionResult {
+export async function transitionDone(planId: string, report: string): Promise<TransitionResult> {
   const planPath = resolveInDocs(`plan/${planId}.md`);
   if (!fs.existsSync(planPath)) {
     throw new NotFoundError(`plan/${planId}.md`);
@@ -75,6 +76,7 @@ export function transitionDone(planId: string, report: string): TransitionResult
 
   removeFromPlanIndex(planId);
 
+  await afterWrite(`docs: complete ${planId} → ${dnId}`);
   return { dn_id: dnId, dn_path: `done/${dnId}.md`, pl_path: `plan/${planId}.md` };
 }
 

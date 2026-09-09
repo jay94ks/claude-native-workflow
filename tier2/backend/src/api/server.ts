@@ -1,4 +1,4 @@
-import express, { type Request, type Response, type NextFunction } from "express";
+import express, { type Request, type Response, type NextFunction, type RequestHandler } from "express";
 import path from "node:path";
 import { setProjectRoot, getProjectRoot } from "../core/paths.js";
 import {
@@ -10,6 +10,16 @@ import { answerPending } from "../core/reply.js";
 import { createDoc } from "../core/create.js";
 import { transitionDone } from "../core/transition.js";
 import { DESIGN_TYPES, TYPE_NAMES } from "../core/types.js";
+import { pull as gitPull, push as gitPush, commitDocsChange, sync as gitSync } from "../core/git.js";
+
+// Express 4 only forwards synchronous throws to the error middleware on its
+// own - an async handler's rejected promise needs an explicit catch, or a
+// failed git call would hang the request instead of producing a response.
+function asyncRoute(handler: (req: Request, res: Response) => Promise<void>): RequestHandler {
+  return (req, res, next) => {
+    handler(req, res).catch(next);
+  };
+}
 
 function parseArgs(argv: string[]): { port: number; root: string } {
   let port = 8766;
@@ -72,33 +82,51 @@ export function createApp() {
     res.json(saveDocBody(relPath, body));
   });
 
-  app.post("/api/docs", (req, res) => {
+  app.post("/api/docs", asyncRoute(async (req, res) => {
     const { type, title, links, status } = req.body as {
       type?: string; title?: string; links?: string[]; status?: string;
     };
-    if (!type || !title) return res.status(400).json({ error: "type/title required" });
-    res.json(createDoc({ type, title, links, status }));
-  });
+    if (!type || !title) { res.status(400).json({ error: "type/title required" }); return; }
+    res.json(await createDoc({ type, title, links, status }));
+  }));
 
   // path segments of a doc (e.g. decision/DC-00001.md) contain slashes, so
   // :path alone won't match - a RegExp route captures the whole thing.
-  app.post(/^\/api\/docs\/(.+)\/reply$/, (req, res) => {
+  app.post(/^\/api\/docs\/(.+)\/reply$/, asyncRoute(async (req, res) => {
     const docPath = req.params[0];
     const { question_id, answer } = req.body as { question_id?: string | number; answer?: string };
     if (question_id === undefined || answer === undefined) {
-      return res.status(400).json({ error: "question_id/answer required" });
+      res.status(400).json({ error: "question_id/answer required" }); return;
     }
-    res.json(answerPending(docPath, String(question_id), answer));
-  });
+    res.json(await answerPending(docPath, String(question_id), answer));
+  }));
 
-  app.post("/api/plan/:id/transition-done", (req, res) => {
+  app.post("/api/plan/:id/transition-done", asyncRoute(async (req, res) => {
     const { report } = req.body as { report?: string };
-    if (!report) return res.status(400).json({ error: "report required" });
-    res.json(transitionDone(req.params.id, report));
-  });
+    if (!report) { res.status(400).json({ error: "report required" }); return; }
+    res.json(await transitionDone(req.params.id, report));
+  }));
 
-  // core throws plain Error/NotFoundError on bad input - all route handlers
-  // above are synchronous, so Express 4 routes those throws here on its own.
+  app.post("/api/git/pull", asyncRoute(async (_req, res) => {
+    res.json(await gitPull());
+  }));
+
+  app.post("/api/git/commit", asyncRoute(async (req, res) => {
+    const { message } = req.body as { message?: string };
+    res.json(await commitDocsChange(message ?? "docs: manual commit"));
+  }));
+
+  app.post("/api/git/push", asyncRoute(async (_req, res) => {
+    res.json(await gitPush());
+  }));
+
+  app.post("/api/git/sync", asyncRoute(async (req, res) => {
+    const { message } = req.body as { message?: string };
+    res.json(await gitSync(message));
+  }));
+
+  // core throws plain Error/NotFoundError on bad input - synchronous route
+  // handlers land here on their own (Express 4), async ones via asyncRoute.
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof NotFoundError) {
       return res.status(404).json({ error: err.message });
@@ -110,13 +138,26 @@ export function createApp() {
   return app;
 }
 
-function main() {
+async function main() {
   const { port, root } = parseArgs(process.argv.slice(2));
   setProjectRoot(root);
+
+  // SP-00001 5절: "세션/백엔드 기동 시" git pull. A conflict is reported,
+  // never auto-merged - and never blocks the server from starting; the
+  // designer sees it in the log and resolves it themselves.
+  const pullResult = await gitPull();
+  if (pullResult.attempted) {
+    if (pullResult.ok) console.log(`git pull: ${pullResult.message}`);
+    else console.warn(`git pull 실패(설계자 확인 필요): ${pullResult.message}`);
+  }
+
   const app = createApp();
   app.listen(port, "127.0.0.1", () => {
     console.log(`tier2 backend: http://127.0.0.1:${port}  (root: ${path.resolve(getProjectRoot())})`);
   });
 }
 
-main();
+main().catch((err: unknown) => {
+  console.error(err);
+  process.exit(1);
+});

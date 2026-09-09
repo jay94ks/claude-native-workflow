@@ -8,11 +8,12 @@ import { answerPending } from "../core/reply.js";
 import { createDoc } from "../core/create.js";
 import { transitionDone } from "../core/transition.js";
 import { DESIGN_TYPES, TYPE_NAMES } from "../core/types.js";
+import { pull as gitPull, sync as gitSync } from "../core/git.js";
 
 // SP-00001 3절의 MCP 도구. api/server.ts, cli/index.ts와 마찬가지로 core/를
 // 직접 호출한다(1절: "MCP 서버, CLI, 로컬 API가 전부 같은 core/ 함수를
-// 직접 호출한다") - 서로를 거쳐가지 않음. git_sync/git_log/docs_comment는
-// core에 그 모듈이 아직 없어(PL-00001 2단계 5~6번) 이번엔 등록하지 않는다.
+// 직접 호출한다") - 서로를 거쳐가지 않음. git_log/docs_comment는 core에 그
+// 모듈이 아직 없어(PL-00001 2단계 6번) 이번엔 등록하지 않는다.
 
 function parseRootArg(argv: string[]): string {
   const idx = argv.indexOf("--root");
@@ -28,7 +29,7 @@ function errorResult(err: unknown) {
   return { content: [{ type: "text" as const, text: message }], isError: true };
 }
 
-function main() {
+async function main() {
   setProjectRoot(parseRootArg(process.argv.slice(2)));
 
   const server = new McpServer({ name: "claude-native-workflow-docs", version: "0.1.0" });
@@ -89,7 +90,7 @@ function main() {
     },
     async ({ type, title, links }) => {
       try {
-        return textResult(createDoc({ type, title, links }));
+        return textResult(await createDoc({ type, title, links }));
       } catch (err) {
         return errorResult(err);
       }
@@ -105,7 +106,7 @@ function main() {
     },
     async ({ path, question_id, answer }) => {
       try {
-        return textResult(answerPending(path, question_id, answer));
+        return textResult(await answerPending(path, question_id, answer));
       } catch (err) {
         return errorResult(err);
       }
@@ -121,18 +122,41 @@ function main() {
     },
     async ({ plan_id, report }) => {
       try {
-        return textResult(transitionDone(plan_id, report));
+        return textResult(await transitionDone(plan_id, report));
       } catch (err) {
         return errorResult(err);
       }
     },
   );
 
+  server.registerTool(
+    "git_sync",
+    {
+      title: "git pull -> commit -> push",
+      description: "docs/ 변경분을 pull -> commit -> push로 한 번에 동기화한다.",
+      inputSchema: { message: z.string().optional() },
+    },
+    async ({ message }) => {
+      try {
+        return textResult(await gitSync(message));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  // SP-00001 5절: "세션/백엔드 기동 시" git pull - MCP 서버가 뜨는 시점도
+  // 이 "세션 시작"에 해당한다. 충돌은 보고만 하고 서버는 계속 뜬다.
+  const pullResult = await gitPull();
+  if (pullResult.attempted && !pullResult.ok) {
+    console.error(`git pull 실패(설계자 확인 필요): ${pullResult.message}`);
+  }
+
   const transport = new StdioServerTransport();
-  server.connect(transport).catch((err: unknown) => {
-    console.error(err);
-    process.exit(1);
-  });
+  await server.connect(transport);
 }
 
-main();
+main().catch((err: unknown) => {
+  console.error(err);
+  process.exit(1);
+});

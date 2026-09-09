@@ -4,6 +4,7 @@ import { readDocSync } from "./fsdocs.js";
 import { dumpFrontmatter } from "./frontmatter.js";
 import { nextSeq, today } from "./tracking.js";
 import { findLgByTarget, rebuildLogsIndex, rebuildReplyIndex, NotFoundError } from "./docstore.js";
+import { afterWrite } from "./git.js";
 import type { DocMeta } from "./types.js";
 
 const PENDING_ANY_RE = /^- \[ \] \(Q\d+\) .+$/m;
@@ -24,7 +25,7 @@ export interface AnswerResult {
  * that in-page anchor instead of a separate RP file - ported 1:1 from
  * tier1/tools/docs/server.py's answer_pending.
  */
-export function answerPending(docPathRel: string, questionId: string, answerText: string): AnswerResult {
+export async function answerPending(docPathRel: string, questionId: string, answerText: string): Promise<AnswerResult> {
   const docPath = resolveInDocs(docPathRel);
   if (!isInsideDocs(docPath) || !fs.existsSync(docPath)) {
     throw new NotFoundError(docPathRel);
@@ -101,5 +102,6 @@ export function answerPending(docPathRel: string, questionId: string, answerText
   rebuildReplyIndex();
   rebuildLogsIndex();
 
+  await afterWrite(`docs: answer ${docId} (${qTag}) → ${rpId}`);
   return { rp_id: rpId, lg_id: lgId, reply_pending: remaining };
 }

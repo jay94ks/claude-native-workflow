@@ -4,6 +4,7 @@ import { docsDir } from "./paths.js";
 import { dumpFrontmatter } from "./frontmatter.js";
 import { nextSeq, today } from "./tracking.js";
 import { validateDoc } from "./validate.js";
+import { afterWrite } from "./git.js";
 import type { DocMeta } from "./types.js";
 
 // Type -> docs/<folder>/ mapping (tier1/docs/index.md 1절의 타입 분류표와 동일).
@@ -36,8 +37,10 @@ const DEFAULT_STATUS: Record<string, string> = {
  * docs/<folder>/index.md (replacing the "아직 문서 없음" placeholder row if
  * that's still the only row). Rejects (no file written) if the resulting
  * frontmatter wouldn't pass `docs validate` (SP-00003 7.3절 - write paths
- * validate before writing). */
-export function createDoc(input: CreateDocInput): CreateDocResult {
+ * validate before writing). Auto-commits (and pushes, if push_mode is
+ * immediate) via SP-00001 5절 git 자동화 - failures there don't undo the
+ * write, callers can inspect the result if they care. */
+export async function createDoc(input: CreateDocInput): Promise<CreateDocResult> {
   const folder = TYPE_FOLDER[input.type];
   if (!folder) {
     throw new Error(`알 수 없는 타입입니다: ${input.type}`);
@@ -67,6 +70,7 @@ export function createDoc(input: CreateDocInput): CreateDocResult {
   fs.writeFileSync(filePath, dumpFrontmatter(meta, body), "utf-8");
   appendIndexRow(folder, id, input.title, meta.status as string, meta.updated as string);
 
+  await afterWrite(`docs: new ${id}`);
   return { id, path: `${folder}/${id}.md` };
 }
 

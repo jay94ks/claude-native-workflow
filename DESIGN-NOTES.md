@@ -431,3 +431,53 @@ SP-00001 1절의 원칙("MCP 서버, CLI, 로컬 API가 전부 같은 core/ 함�
 CLI/MCP 둘 다 `tsc --noEmit` 통과 + 스캐치 폴더에서 실제 실행까지 확인한
 뒤 스캐치 폴더/임시 스크립트 삭제. 남은 5~10번(git 자동화, git 이력/코멘트,
 변경 큐, 선택적 DB, Quasar 대시보드, Docker)은 이어서 진행한다.
+
+### 2026-09-09 (계속 5) — PL-00001 2단계 5번: git 자동화
+
+"계속 진행" 요청으로 5번(git 자동화, SP-00001 5절)을 구현·검증했다.
+`core/config.ts`(`docs/.config.json` 로더 + 기본값)와 `core/git.ts`
+(`simple-git`)를 새로 만들고, `createDoc`/`answerPending`/`transitionDone`
+성공 직후 자동으로 `docs/`만 commit(+`push_mode: immediate`면 push까지)
+하도록 연결했다. git 호출이 전부 비동기라 이 세 core 함수의 시그니처가
+`Promise`로 바뀌었고, 그걸 부르는 `api`/`cli`/`mcp` 세 진입점도 전부
+`await`로 맞춰야 했다 — Express 4가 동기 throw는 알아서 에러 미들웨어로
+보내주지만 비동기 핸들러의 reject는 그렇지 않아서, `asyncRoute` 래퍼로
+감싸 `.catch(next)`로 명시적으로 연결했다(안 하면 실패한 요청이 응답 없이
+멈춘다).
+
+- CLI `docs git pull/commit/push/sync`, API `POST /api/git/pull|commit|
+  push|sync`, MCP `git_sync` 도구까지 세 진입점 모두 추가.
+- `api/server.ts`·`mcp/server.ts` 기동 시 자동 `git pull`(SP-00001 5절
+  "세션/백엔드 기동 시"). 충돌이면 자동 병합을 시도하지 않고 로그/도구
+  결과로만 보고하고, 서버는 계속 뜬다 - "중단"을 "서버가 죽는다"가 아니라
+  "그 pull 시도만 멈추고 자동 병합은 안 한다"로 해석.
+- **실제 다중 설계자 git 흐름을 처음부터 끝까지 재현해서 검증** — 로컬
+  bare 저장소(`origin.git`) + 두 클론("설계자 A", "설계자 B")을 만들어:
+  1. A에서 `docs new`(CLI) → 자동 commit+push → bare 저장소에 실제로
+     커밋이 도착하는지 `git log`로 확인.
+  2. B가 다른 클론에서 커밋+push한 뒤, A에서 `docs git pull` → B의 변경이
+     정상 반영되는지 확인.
+  3. 같은 파일의 같은 줄을 A/B 양쪽에서 각각 고쳐 **진짜 merge conflict**를
+     만들고, A에서 `docs git pull` → 자동 병합을 시도하지 않고 그대로
+     실패를 보고하는지, `git status`로 conflict marker(`UU`)가 실제
+     워킹트리에 남아 있는지까지 확인한 뒤 `git merge --abort`로 정리.
+  4. `docs/.config.json`에 `push_mode: manual`을 넣고 `docs new` → commit은
+     되지만 push는 안 됨을 확인 → 수동 `docs git push` → 이번엔 원격이
+     그새 앞서가 있어 non-fast-forward로 거부되는 것까지 재현.
+  5. `POST /api/git/pull|sync` 라우트도 API 서버를 띄워 동일 시나리오로
+     재확인, `docs new`(API)가 만든 커밋이 bare 저장소에 실제로 도착하는
+     것까지 `git log --git-dir`로 확인.
+- **검증 중 실제 버그 발견**: `pull()`이 실패하면 원인과 무관하게 전부
+  `conflict: true`로 표시하고 있었다 — "원격이 없음"/"upstream 미설정"
+  같은, 진짜 merge conflict가 아닌 실패까지 "충돌"로 잘못 분류됨(MCP
+  스모크테스트 중 remote 없는 저장소로 테스트하다가 발견). git 출력에
+  `CONFLICT` 문자열이 실제로 있을 때만 `conflict: true`로 좁히고, 두
+  경우(진짜 충돌/그 외 실패)를 각각 다시 재현해서 구분되는 것까지 재확인.
+  이번 세션에서 실제로 서버/CLI/MCP를 계속 띄워보고 잡은 세 번째 버그
+  (앞선 두 개: 읽기 게이트 해시 사용 버그, Windows subprocess 인코딩
+  버그와 같은 패턴).
+
+git 테스트에 쓴 bare 저장소/클론/임시 MCP 스모크테스트 스크립트는 전부
+검증 후 삭제. 실제 리포의 git 히스토리는 건드리지 않음. 남은 6~10번(git
+이력/코멘트, 변경 큐, 선택적 DB, Quasar 대시보드, Docker)은 이어서
+진행한다.
