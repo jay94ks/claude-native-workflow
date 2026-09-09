@@ -12,6 +12,9 @@ import argparse
 import datetime
 import json
 import re
+import sqlite3
+import subprocess
+import sys
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -154,21 +157,32 @@ def read_doc(path: Path):
 # the cache on restart just costs one full (still fast) rescan.
 
 _META_CACHE_LOCK = threading.Lock()
-_META_CACHE = {}  # rel_path -> (mtime, meta, pending_list)
+_META_CACHE = {}  # rel_path -> (mtime, meta, pending_list, size)
 
 
-def get_doc_meta(path: Path):
-    """(meta, pending_list) for path, via the mtime-checked in-memory cache."""
+def scan_meta(path: Path, source="scan"):
+    """(meta, pending_list) for path, via the mtime+size checked in-memory
+    cache (SP-00003 6.2). Unchanged files cost one stat() call, no read.
+    When a file actually changed since we last saw it (not a cold start),
+    records a change_notice - this is the single place that happens, so
+    every caller (tree/list/search, and eventually git-pull/webhook/api
+    handlers once those exist) gets it for free."""
     rel_path = rel(path)
-    mtime = path.stat().st_mtime
+    st = path.stat()
     with _META_CACHE_LOCK:
         cached = _META_CACHE.get(rel_path)
-        if cached and cached[0] == mtime:
+        if cached and cached[0] == st.st_mtime and cached[3] == st.st_size:
             return cached[1], cached[2]
+        was_cached = cached is not None
+
     _, meta, body = read_doc(path)
     pending = scan_pending_in_text(body)
     with _META_CACHE_LOCK:
-        _META_CACHE[rel_path] = (mtime, meta, pending)
+        _META_CACHE[rel_path] = (st.st_mtime, meta, pending, st.st_size)
+
+    if was_cached:
+        create_change_notice(rel_path, source, git_diff_summary(rel_path))
+
     return meta, pending
 
 
@@ -187,7 +201,7 @@ def build_tree():
             if entry.is_dir():
                 node["children"].append(walk(entry))
             elif entry.suffix == ".md":
-                meta, _ = get_doc_meta(entry)
+                meta, _ = scan_meta(entry)
                 node["children"].append({
                     "name": entry.name,
                     "type": "file",
@@ -202,21 +216,48 @@ def build_tree():
     return walk(d)
 
 
+OPTION_RE = re.compile(r"^\s+- (권장|대안): (.+)$")
+
+
 def scan_pending_in_text(body):
-    return [(m.group(1), m.group(2)) for m in PENDING_RE.finditer(body)]
+    """[(qid, question, options)] - options is [{"kind": "권장"|"대안", "text": ...}],
+    read from indented `- 권장: ...` / `- 대안: ...` lines directly under a
+    `- [ ] (Qn) ...` line (docs/PROTOCOL.md 4절). Optional - most questions
+    have none."""
+    lines = body.split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^- \[ \] \(Q(\d+)\) (.+)$", lines[i])
+        if not m:
+            i += 1
+            continue
+        qid, question = m.group(1), m.group(2)
+        options = []
+        j = i + 1
+        while j < len(lines):
+            om = OPTION_RE.match(lines[j])
+            if not om:
+                break
+            options.append({"kind": om.group(1), "text": om.group(2)})
+            j += 1
+        out.append((qid, question, options))
+        i = j
+    return out
 
 
 def list_pending():
     items = []
     for p in iter_doc_files():
-        meta, pending = get_doc_meta(p)
-        for qid, question in pending:
+        meta, pending = scan_meta(p)
+        for qid, question, options in pending:
             items.append({
                 "doc_path": rel(p),
                 "doc_id": meta.get("id", p.stem),
                 "title": meta.get("title", ""),
                 "question_id": qid,
                 "question": question,
+                "options": options,
                 "updated": meta.get("updated", meta.get("created", "")),
             })
     return items
@@ -225,7 +266,7 @@ def list_pending():
 def list_by_types(types):
     out = []
     for p in iter_doc_files():
-        meta, _ = get_doc_meta(p)
+        meta, _ = scan_meta(p)
         t = meta.get("type", "")
         if t in types:
             out.append({
@@ -254,6 +295,319 @@ def next_seq(doc_type):
     data[doc_type] = n
     tf.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return f"{doc_type}-{n:05d}"
+
+
+# ---------------------------------------------------------------- local data store
+#
+# change_notices (SP-00003 5절) and doc_comments (SP-00003 2절/코멘트) are not
+# derived from docs/*.md - they're real data with no markdown-file source of
+# truth, so (unlike the meta cache above) they live in a small SQLite file
+# instead of memory. docs/.workflow/ is gitignored; this file never gets
+# committed.
+
+_DATA_LOCK = threading.Lock()
+
+
+def _data_db_path():
+    d = docs_dir() / ".workflow"
+    d.mkdir(exist_ok=True)
+    return d / "data.db"
+
+
+def _data_conn():
+    conn = sqlite3.connect(str(_data_db_path()))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS change_notices ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, doc_path TEXT NOT NULL,"
+        " source TEXT NOT NULL, summary TEXT NOT NULL, ref TEXT, created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS doc_comments ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, doc_path TEXT NOT NULL,"
+        " body TEXT NOT NULL, created_at TEXT NOT NULL, resolved_at TEXT)"
+    )
+    return conn
+
+
+def _now():
+    return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def create_change_notice(doc_path, source, summary, ref=None):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            conn.execute(
+                "INSERT INTO change_notices (doc_path, source, summary, ref, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (doc_path, source, summary, ref, _now()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def list_change_notices():
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, doc_path, source, summary, ref, created_at"
+                " FROM change_notices ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+    return [
+        {"id": r[0], "doc_path": r[1], "source": r[2], "summary": r[3], "ref": r[4], "created_at": r[5]}
+        for r in rows
+    ]
+
+
+def ack_change_notice(notice_id):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            conn.execute("DELETE FROM change_notices WHERE id = ?", (notice_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def list_comments(doc_path):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, body, created_at, resolved_at FROM doc_comments"
+                " WHERE doc_path = ? ORDER BY id",
+                (doc_path,),
+            ).fetchall()
+        finally:
+            conn.close()
+    return [{"id": r[0], "body": r[1], "created_at": r[2], "resolved_at": r[3]} for r in rows]
+
+
+def add_comment(doc_path, body):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO doc_comments (doc_path, body, created_at) VALUES (?, ?, ?)",
+                (doc_path, body, _now()),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+
+def resolve_comment(doc_path, comment_id):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            conn.execute(
+                "UPDATE doc_comments SET resolved_at = ? WHERE id = ? AND doc_path = ?",
+                (_now(), comment_id, doc_path),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------- git (subprocess)
+#
+# docs/*.md is a git-tracked directory. We shell out to the git binary rather
+# than reimplementing diffing/history ourselves (SP-00003 6.2) - it's already
+# there, already correct, already fast.
+
+def _git(args, cwd=None, timeout=10):
+    try:
+        # encoding="utf-8" is required, not just text=True: on Windows,
+        # text=True decodes subprocess output with the OS locale encoding
+        # (e.g. cp949 on Korean Windows), which crashes on the UTF-8 bytes
+        # git actually writes for any non-ASCII commit message/diff content.
+        return subprocess.run(
+            ["git", *args], cwd=cwd or str(project_root()),
+            capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
+        )
+    except Exception as e:
+        class _Fail:
+            returncode = 1
+            stdout = ""
+            stderr = str(e)
+        return _Fail()
+
+
+def git_diff_summary(rel_path):
+    target = str(docs_dir() / rel_path)
+    out = _git(["diff", "--stat", "--", target])
+    if out.returncode == 0 and out.stdout.strip():
+        return out.stdout.strip().splitlines()[0]
+    out = _git(["diff", "--cached", "--stat", "--", target])
+    if out.returncode == 0 and out.stdout.strip():
+        return out.stdout.strip().splitlines()[0]
+    return f"{rel_path} 내용이 변경됨"
+
+
+def git_log(rel_path=None, limit=30):
+    args = ["log", f"-{int(limit)}", "--pretty=format:%H|%an|%ad|%s", "--date=short"]
+    if rel_path:
+        args += ["--", str(docs_dir() / rel_path)]
+    out = _git(args)
+    commits = []
+    for line in out.stdout.splitlines():
+        parts = line.split("|", 3)
+        if len(parts) == 4:
+            commits.append({"sha": parts[0], "author": parts[1], "date": parts[2], "message": parts[3]})
+    return commits
+
+
+def git_commit_detail(sha):
+    out = _git(["show", "--stat", "--pretty=format:%H|%an|%ad|%s", "--date=iso", sha])
+    lines = out.stdout.splitlines()
+    if not lines:
+        return None
+    parts = lines[0].split("|", 3)
+    files = [l.strip() for l in lines[1:] if l.strip() and "|" in l]
+    return {
+        "sha": parts[0] if len(parts) > 0 else sha,
+        "author": parts[1] if len(parts) > 1 else "",
+        "date": parts[2] if len(parts) > 2 else "",
+        "message": parts[3] if len(parts) > 3 else "",
+        "files": files,
+    }
+
+
+def git_diff(sha):
+    out = _git(["show", sha, "--", "docs"])
+    return out.stdout
+
+
+def git_blame(rel_path):
+    out = _git(["blame", "--date=short", "--", str(docs_dir() / rel_path)])
+    return out.stdout
+
+
+# ---------------------------------------------------------------- section read / search
+
+def slugify(text):
+    s = text.strip().lower()
+    s = re.sub(r"[`~!@#$%^&*()+=\[\]{}|\\:;\"'<>,.?/]", "", s)
+    s = re.sub(r"\s+", "-", s)
+    return s
+
+
+def extract_section(body, anchor):
+    lines = body.split("\n")
+    heading_re = re.compile(r"^(#{1,6})\s+(.*)$")
+    start, start_level = None, None
+    for i, line in enumerate(lines):
+        m = heading_re.match(line)
+        if m and slugify(m.group(2)) == anchor:
+            start, start_level = i, len(m.group(1))
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        m = heading_re.match(lines[j])
+        if m and len(m.group(1)) <= start_level:
+            end = j
+            break
+    return "\n".join(lines[start:end]).rstrip("\n")
+
+
+def search_docs(query):
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    results = []
+    for p in iter_doc_files():
+        _, meta, body = read_doc(p)
+        haystack = f"{meta.get('id', '')} {meta.get('title', '')}\n{body}".lower()
+        idx = haystack.find(q)
+        if idx == -1:
+            continue
+        start = max(0, idx - 40)
+        snippet = haystack[start:idx + len(q) + 40].strip()
+        results.append({
+            "path": rel(p), "id": meta.get("id", p.stem), "title": meta.get("title", ""),
+            "type": meta.get("type", ""), "snippet": snippet,
+        })
+    return results
+
+
+# ---------------------------------------------------------------- structure validation
+#
+# SP-00003 7절: hand-coded rules mirroring docs/PROTOCOL.md 3절. A full
+# schemas/*.schema.json + cross-tier conformance suite is future work for
+# when Tier 2/3 exist to drift against - not needed yet with one implementation.
+
+STATUS_ENUM = {
+    "SP": {"draft", "active", "superseded", "archived"},
+    "DS": {"draft", "active", "superseded", "archived"},
+    "RM": {"draft", "active", "superseded", "archived"},
+    "TP": {"draft", "active", "superseded", "archived"},
+    "PL": {"planned", "in_progress", "done"},
+    "DC": {"open", "answered", "applied", "rejected", "wontfix"},
+    "RV": {"open", "answered", "applied", "rejected", "wontfix"},
+    "FX": {"open", "answered", "applied", "rejected", "wontfix"},
+}
+ID_RE = re.compile(r"^[A-Z]{2}-\d{5}$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def validate_doc(path, meta):
+    violations = []
+
+    def add(field, rule, message):
+        violations.append({"path": rel(path), "field": field, "rule": rule, "message": message})
+
+    doc_id = meta.get("id")
+    if not doc_id:
+        add("id", "required", "id 필드가 없습니다")
+    else:
+        if not ID_RE.match(str(doc_id)):
+            add("id", "pattern", f"id 형식이 TYPE-00000이 아닙니다: {doc_id}")
+        if doc_id != path.stem:
+            add("id", "consistency", f"id({doc_id})가 파일명({path.stem})과 다릅니다")
+
+    if not meta.get("type"):
+        add("type", "required", "type 필드가 없습니다")
+
+    for field in ("created", "updated"):
+        val = meta.get(field)
+        if not val:
+            add(field, "required", f"{field} 필드가 없습니다")
+        elif not DATE_RE.match(str(val)):
+            add(field, "pattern", f"{field} 값이 YYYY-MM-DD 형식이 아닙니다: {val}")
+
+    doc_type = meta.get("type")
+    if doc_type in STATUS_ENUM:
+        status = meta.get("status")
+        if not status:
+            add("status", "required", "status 필드가 없습니다")
+        elif status not in STATUS_ENUM[doc_type]:
+            add("status", "enum", f"status 값 '{status}'는 {doc_type} 타입에서 허용되지 않습니다")
+
+    links = meta.get("links")
+    if links is not None:
+        if not isinstance(links, list):
+            add("links", "type", "links는 배열이어야 합니다")
+        else:
+            for link in links:
+                if not ID_RE.match(str(link)):
+                    add("links", "pattern", f"links 항목 형식이 잘못됨: {link}")
+
+    return violations
+
+
+def validate_all():
+    violations = []
+    for p in iter_doc_files():
+        _, meta, _ = read_doc(p)
+        violations.extend(validate_doc(p, meta))
+    return violations
 
 
 def rebuild_table(index_path: Path, rows, header):
@@ -389,6 +743,27 @@ def answer_pending(doc_path_rel, question_id, answer_text):
     return {"rp_id": rp_id, "lg_id": lg_id, "reply_pending": remaining}
 
 
+def save_doc_body(doc_path_rel, new_body):
+    """Overwrite a document's body from the dashboard's markdown editor.
+    Frontmatter is untouched except `updated` - this is a body-content edit,
+    not a metadata change (status/links/etc. still only change through the
+    controlled flows: answer_pending, or Claude directly). Runs the same
+    structure check as `docs validate` before writing, so a broken edit
+    can't corrupt the file's frontmatter contract."""
+    doc_path = (docs_dir() / doc_path_rel).resolve()
+    if not str(doc_path).startswith(str(docs_dir().resolve())) or not doc_path.exists():
+        raise FileNotFoundError(doc_path_rel)
+
+    _, meta, _ = read_doc(doc_path)
+    meta["updated"] = today()
+    violations = validate_doc(doc_path, meta)
+    if violations:
+        raise ValueError("검증 실패: " + "; ".join(v["message"] for v in violations))
+
+    doc_path.write_text(dump_frontmatter(meta, new_body), encoding="utf-8")
+    return {"path": doc_path_rel, "updated": meta["updated"]}
+
+
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
@@ -425,12 +800,43 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(list_by_types({"LG"}))
             if parsed.path == "/api/all":
                 return self._json(list_by_types(set(TYPE_NAMES) - {"IX"}))
+            if parsed.path == "/api/changes":
+                return self._json(list_change_notices())
+            if parsed.path == "/api/validate":
+                return self._json(validate_all())
+            if parsed.path == "/api/search":
+                return self._json(search_docs(qs.get("q", [""])[0]))
+            if parsed.path == "/api/git/log":
+                rel_path = qs.get("path", [None])[0]
+                limit = int(qs.get("limit", ["30"])[0])
+                return self._json(git_log(rel_path, limit))
+            if parsed.path == "/api/git/blame":
+                rel_path = qs.get("path", [""])[0]
+                return self._text(git_blame(rel_path))
+            m = re.match(r"^/api/git/commits/(.+)$", parsed.path)
+            if m:
+                detail = git_commit_detail(m.group(1))
+                if detail is None:
+                    return self._json({"error": "not found"}, 404)
+                return self._json(detail)
+            m = re.match(r"^/api/git/diff/(.+)$", parsed.path)
+            if m:
+                return self._text(git_diff(m.group(1)))
+            m = re.match(r"^/api/docs/(.+)/comments$", parsed.path)
+            if m:
+                return self._json(list_comments(m.group(1)))
             if parsed.path == "/api/doc":
                 rel_path = qs.get("path", [""])[0]
+                anchor = qs.get("anchor", [None])[0]
                 p = (docs_dir() / rel_path).resolve()
                 if not str(p).startswith(str(docs_dir().resolve())) or not p.exists():
                     return self._json({"error": "not found"}, 404)
                 text, meta, body = read_doc(p)
+                if anchor:
+                    section = extract_section(body, anchor)
+                    if section is None:
+                        return self._json({"error": "anchor not found"}, 404)
+                    return self._json({"path": rel_path, "meta": meta, "body": section, "anchor": anchor})
                 return self._json({"path": rel_path, "meta": meta, "body": body})
             return self._serve_static(parsed.path)
         except Exception as e:
@@ -449,6 +855,21 @@ class Handler(BaseHTTPRequestHandler):
                 result = answer_pending(
                     payload["doc_path"], str(payload["question_id"]), payload["answer"])
                 return self._json(result)
+            if parsed.path == "/api/doc/save":
+                result = save_doc_body(payload["path"], payload["body"])
+                return self._json(result)
+            m = re.match(r"^/api/changes/(\d+)/ack$", parsed.path)
+            if m:
+                ack_change_notice(int(m.group(1)))
+                return self._json({"ok": True})
+            m = re.match(r"^/api/docs/(.+)/comments/(\d+)/resolve$", parsed.path)
+            if m:
+                resolve_comment(m.group(1), int(m.group(2)))
+                return self._json({"ok": True})
+            m = re.match(r"^/api/docs/(.+)/comments$", parsed.path)
+            if m:
+                cid = add_comment(m.group(1), payload["body"])
+                return self._json({"id": cid})
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 400)
@@ -473,7 +894,19 @@ def main():
     parser = argparse.ArgumentParser(description="docs/ design-workflow dashboard")
     parser.add_argument("--port", type=int, default=8756)
     parser.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    parser.add_argument("--validate", action="store_true",
+                         help="check docs/ structure (SP-00003 7절) and exit, no server")
     ARGS = parser.parse_args()
+
+    if ARGS.validate:
+        violations = validate_all()
+        if not violations:
+            print("모든 문서가 유효합니다.")
+            return
+        for v in violations:
+            print(f"{v['path']}: [{v['rule']}] {v['field']} - {v['message']}")
+        sys.exit(1)
+
     server = ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)
     print(f"docs dashboard: http://127.0.0.1:{ARGS.port}  (root: {project_root()})")
     try:

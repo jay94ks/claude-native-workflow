@@ -107,6 +107,26 @@ body {
 .badge.pending { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
 
 #doc-pane .doc-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.edit-btn { border: 1px solid var(--border); background: var(--bg-alt); color: var(--text); border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.edit-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.doc-edit-wrap { display: flex; flex-direction: column; gap: 8px; }
+.edit-toolbar { display: flex; gap: 4px; flex-wrap: wrap; }
+.edit-toolbar button {
+  border: 1px solid var(--border); background: var(--bg-alt); color: var(--text);
+  border-radius: 6px; padding: 4px 10px; font-size: 12px; font-family: inherit; cursor: pointer;
+}
+.edit-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+.doc-edit-area {
+  width: 100%; min-height: 360px; font-family: ui-monospace, monospace; font-size: 12.5px;
+  line-height: 1.5; padding: 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); resize: vertical;
+}
+.edit-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
+.edit-status { font-size: 12px; color: var(--text-dim); }
+.edit-actions button { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-alt); color: var(--text); cursor: pointer; }
+.edit-save { background: var(--accent); color: #fff; border-color: var(--accent); }
 #doc-pane .back { cursor: pointer; color: var(--accent); font-size: 13px; margin-bottom: 12px; display: inline-block; }
 #doc-pane .doc-meta-line { color: var(--text-dim); font-size: 12px; margin-bottom: 16px; }
 .doc-body h1, .doc-body h2, .doc-body h3 { line-height: 1.3; }
@@ -140,6 +160,7 @@ body {
   margin-bottom: 8px;
 }
 .pending-card .q { font-size: 13px; }
+.pending-card .rec-preview { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
 .pending-card button {
   flex-shrink: 0;
   border: none;
@@ -172,10 +193,58 @@ dialog {
   color: var(--text);
 }
 dialog::backdrop { background: rgba(0,0,0,.4); }
+#reply-dialog { width: min(720px, 92vw); max-height: 85vh; overflow: auto; }
 .reply-question { font-size: 13px; color: var(--text-dim); background: var(--bg-alt); padding: 8px 10px; border-radius: 6px; }
+.reply-reference-wrap { margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.reply-reference-wrap > summary { cursor: pointer; padding: 6px 10px; font-size: 12px; color: var(--text-dim); }
+.reply-reference { max-height: 280px; overflow: auto; padding: 4px 12px 10px; font-size: 12.5px; }
+.reply-reference details { border-top: 1px solid var(--border); padding: 6px 0; }
+.reply-reference details:first-child { border-top: none; }
+.reply-reference details summary { cursor: pointer; font-weight: 600; font-size: 12.5px; }
+.reply-reference details .doc-body { margin-top: 6px; }
+.reply-options { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.reply-option-btn {
+  text-align: left; font-size: 12.5px; padding: 8px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg-alt); color: var(--text); cursor: pointer;
+}
+.reply-option-btn.recommended { border-color: var(--accent); background: var(--accent-bg); font-weight: 600; }
 #reply-answer { width: 100%; margin-top: 10px; font-family: inherit; font-size: 13px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .dialog-actions button { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-alt); cursor: pointer; }
 #reply-submit { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 .empty-note { color: var(--text-dim); padding: 20px 0; }
+
+/* change queue banner */
+#change-banner {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin: 0 20px 12px; padding: 8px 12px; border-radius: 8px;
+  background: var(--warn-bg); color: var(--warn); font-size: 12.5px;
+}
+.change-chip {
+  font-family: monospace; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 8px; cursor: pointer; color: var(--text);
+}
+#change-banner button {
+  border: none; background: var(--accent); color: #fff; border-radius: 6px;
+  padding: 2px 8px; cursor: pointer; font-size: 12px;
+}
+
+/* comments */
+.comments-section, .history-section { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px; }
+.comment-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.comment-card.resolved { opacity: .6; }
+.comment-body { font-size: 13px; white-space: pre-wrap; }
+.comment-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11.5px; color: var(--text-dim); }
+.comment-meta button { border: none; background: var(--bg-alt); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; cursor: pointer; color: var(--text); }
+.comment-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.comment-form textarea { width: 100%; font-family: inherit; font-size: 13px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.comment-form button { align-self: flex-end; border: none; background: var(--accent); color: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+
+/* git history */
+.commit-row { display: flex; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; align-items: baseline; }
+.commit-row:hover { background: var(--accent-bg); }
+.commit-sha { font-family: monospace; color: var(--accent); }
+.commit-date { color: var(--text-dim); flex-shrink: 0; }
+.commit-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-box { margin-top: 10px; background: var(--bg-alt); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 11.5px; max-height: 360px; overflow: auto; white-space: pre-wrap; }

@@ -258,7 +258,10 @@ function renderDoc(doc) {
   pane.appendChild(el("span", { class: "back", onclick: showListPane }, "← 목록으로"));
   pane.appendChild(el("div", { class: "doc-header" }, [
     el("h2", {}, `${meta.id || doc.path} ${meta.title ? "· " + meta.title : ""}`),
-    el("span", { class: "badge" }, meta.status || ""),
+    el("span", { class: "header-actions" }, [
+      el("span", { class: "badge" }, meta.status || ""),
+      el("button", { class: "edit-btn", onclick: () => enterEditMode(doc) }, "편집"),
+    ]),
   ]));
   pane.appendChild(el("div", { class: "doc-meta-line" },
     `${meta.type ? TYPE_LABEL[meta.type] || meta.type : ""} · updated ${meta.updated || meta.created || "-"} · ${doc.path}`));
@@ -283,9 +286,13 @@ function renderDoc(doc) {
       el("h4", {}, `답변 대기 항목 (${pendingItems.length})`),
     ]);
     for (const p of pendingItems) {
+      const rec = p.options.find((o) => o.kind === "권장");
       section.appendChild(el("div", { class: "pending-card" }, [
-        el("div", { class: "q" }, `(Q${p.qid}) ${p.text}`),
-        el("button", { onclick: () => openReplyDialog(doc.path, p.qid, p.text) }, "답변 입력"),
+        el("div", {}, [
+          el("div", { class: "q" }, `(Q${p.qid}) ${p.text}`),
+          rec ? el("div", { class: "rec-preview" }, `권장: ${rec.text}`) : null,
+        ]),
+        el("button", { onclick: () => openReplyDialog(doc.path, p.qid, p.text, p.options) }, "답변 입력"),
       ]));
     }
     pane.appendChild(section);
@@ -295,21 +302,228 @@ function renderDoc(doc) {
     pane.appendChild(el("div", { class: "howto-section" }, [
       el("h4", {}, "답변 입력 후 처리 요령"),
       el("ol", {}, [
-        el("li", {}, "답변을 제출하면 RP-XXXXX 번호가 발급되고, docs/reply/RP-XXXXX.md에 질문·답변 전문이 저장됩니다."),
-        el("li", {}, "이 문서의 해당 (Qn) 줄이 체크되고 RP 링크가 남습니다 (전문은 중복 저장하지 않음)."),
+        el("li", {}, "답변을 제출하면 RP-XXXXX 번호가 발급되고, 이 문서 하단 \"## 답변 기록\" 섹션에 질문·답변 전문이 직접 기록됩니다(별도 파일을 만들지 않습니다)."),
+        el("li", {}, "이 문서의 해당 (Qn) 줄이 체크되고 그 기록으로 가는 앵커 링크가 남습니다."),
         el("li", {}, "docs/reply/index.md 미답변 큐에서 이 항목이 제거됩니다."),
-        el("li", {}, "docs/logs/에 처리 기록(LG)이 생성되고 이 문서·RP에 연결됩니다."),
+        el("li", {}, "docs/logs/에 처리 기록(LG, 대상 문서당 1개)이 남고 이 문서·RP 앵커에 연결됩니다."),
         el("li", {}, "이 문서의 모든 질문에 답변되면 상태가 answered로 바뀝니다."),
       ]),
     ]));
   }
+
+  loadCommentsSection(pane, doc.path);
+  loadHistorySection(pane, doc.path);
+}
+
+// ---------------------------------------------------------------- body editor
+//
+// Body-only editing (frontmatter is never touched here - id/type/status/links
+// still only change through the controlled flows). Plain textarea + a small
+// toolbar that wraps the current selection with markdown syntax, rather than
+// a WYSIWYG editor - keeps this dependency-free and the saved file exactly
+// what the designer sees in the box.
+
+function wrapSelection(textarea, before, after) {
+  after = after === undefined ? before : after;
+  const start = textarea.selectionStart, end = textarea.selectionEnd;
+  const val = textarea.value;
+  textarea.value = val.slice(0, start) + before + val.slice(start, end) + after + val.slice(end);
+  textarea.focus();
+  textarea.selectionStart = start + before.length;
+  textarea.selectionEnd = end + before.length;
+}
+
+function prefixCurrentLine(textarea, prefix) {
+  const start = textarea.selectionStart;
+  const val = textarea.value;
+  const lineStart = val.lastIndexOf("\n", start - 1) + 1;
+  textarea.value = val.slice(0, lineStart) + prefix + val.slice(lineStart);
+  textarea.focus();
+  textarea.selectionStart = textarea.selectionEnd = start + prefix.length;
+}
+
+function enterEditMode(doc) {
+  const pane = document.getElementById("doc-pane");
+  const bodyDiv = pane.querySelector(".doc-body");
+  if (!bodyDiv) return;
+
+  const textarea = el("textarea", { class: "doc-edit-area", spellcheck: "false" });
+  textarea.value = doc.body;
+
+  const toolbar = el("div", { class: "edit-toolbar" }, [
+    el("button", { type: "button", title: "굵게", onclick: () => wrapSelection(textarea, "**") }, "B"),
+    el("button", { type: "button", title: "취소선", onclick: () => wrapSelection(textarea, "~~") }, "S"),
+    el("button", { type: "button", title: "제목 1", onclick: () => prefixCurrentLine(textarea, "# ") }, "H1"),
+    el("button", { type: "button", title: "제목 2", onclick: () => prefixCurrentLine(textarea, "## ") }, "H2"),
+    el("button", { type: "button", title: "코드", onclick: () => wrapSelection(textarea, "`") }, "Code"),
+    el("button", { type: "button", title: "링크", onclick: () => wrapSelection(textarea, "[", "](url)") }, "Link"),
+  ]);
+
+  const status = el("span", { class: "edit-status" }, "");
+  const actions = el("div", { class: "edit-actions" }, [
+    status,
+    el("button", { type: "button", class: "edit-cancel", onclick: () => renderDoc(doc) }, "취소"),
+    el("button", {
+      type: "button", class: "edit-save",
+      onclick: async () => {
+        status.textContent = "저장 중...";
+        try {
+          await api("/api/doc/save", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: doc.path, body: textarea.value }),
+          });
+          await openDoc(doc.path);
+        } catch (e) {
+          status.textContent = "";
+          alert("저장 실패: " + e.message);
+        }
+      },
+    }, "저장"),
+  ]);
+
+  const editWrap = el("div", { class: "doc-edit-wrap" }, [toolbar, textarea, actions]);
+  bodyDiv.replaceWith(editWrap);
+  textarea.focus();
+}
+
+// ---------------------------------------------------------------- comments
+
+async function loadCommentsSection(pane, docPath) {
+  const section = el("div", { class: "comments-section" }, [
+    el("h4", {}, "코멘트"),
+  ]);
+  pane.appendChild(section);
+  const list = el("div", { class: "comments-list" }, "불러오는 중...");
+  section.appendChild(list);
+
+  let comments;
+  try {
+    comments = await api("/api/docs/" + docPath + "/comments");
+  } catch (e) {
+    list.textContent = "코멘트를 불러오지 못했습니다.";
+    return;
+  }
+
+  list.innerHTML = "";
+  if (!comments.length) {
+    list.appendChild(el("div", { class: "empty-note" }, "아직 코멘트가 없습니다."));
+  }
+  for (const c of comments) {
+    list.appendChild(el("div", { class: "comment-card" + (c.resolved_at ? " resolved" : "") }, [
+      el("div", { class: "comment-body" }, c.body),
+      el("div", { class: "comment-meta" }, [
+        el("span", {}, c.created_at + (c.resolved_at ? " · 해결됨" : "")),
+        c.resolved_at ? null : el("button", {
+          onclick: async () => {
+            await api("/api/docs/" + docPath + "/comments/" + c.id + "/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+            openDoc(docPath);
+          },
+        }, "해결 처리"),
+      ]),
+    ]));
+  }
+
+  const form = el("div", { class: "comment-form" }, [
+    el("textarea", { id: "new-comment-text", rows: "2", placeholder: "코멘트 작성 (비공식 토론용 - 마크다운 파일에는 남지 않습니다)" }),
+    el("button", {
+      onclick: async () => {
+        const ta = document.getElementById("new-comment-text");
+        const body = ta.value.trim();
+        if (!body) return;
+        await api("/api/docs/" + docPath + "/comments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body }) });
+        openDoc(docPath);
+      },
+    }, "코멘트 등록"),
+  ]);
+  section.appendChild(form);
+}
+
+// ---------------------------------------------------------------- git history
+
+async function loadHistorySection(pane, docPath) {
+  const section = el("div", { class: "history-section" }, [
+    el("h4", {}, "커밋 이력"),
+  ]);
+  pane.appendChild(section);
+  const list = el("div", { class: "history-list" }, "불러오는 중...");
+  section.appendChild(list);
+  const diffBox = el("pre", { class: "diff-box", hidden: "hidden" });
+  section.appendChild(diffBox);
+
+  let commits;
+  try {
+    commits = await api("/api/git/log?path=" + encodeURIComponent(docPath) + "&limit=10");
+  } catch (e) {
+    list.textContent = "git 이력을 불러오지 못했습니다(git 저장소가 아니거나 git이 없을 수 있습니다).";
+    return;
+  }
+
+  list.innerHTML = "";
+  if (!commits.length) {
+    list.appendChild(el("div", { class: "empty-note" }, "커밋 이력이 없습니다."));
+    return;
+  }
+  for (const c of commits) {
+    list.appendChild(el("div", { class: "commit-row", onclick: async () => {
+      diffBox.hidden = false;
+      diffBox.textContent = "불러오는 중...";
+      const res = await fetch("/api/git/diff/" + c.sha);
+      diffBox.textContent = await res.text();
+    } }, [
+      el("span", { class: "commit-sha" }, c.sha.slice(0, 8)),
+      el("span", { class: "commit-date" }, c.date),
+      el("span", { class: "commit-msg" }, c.message),
+    ]));
+  }
+}
+
+// ---------------------------------------------------------------- change queue
+
+async function loadChangeBanner() {
+  const holder = document.getElementById("change-banner");
+  let notices;
+  try {
+    notices = await api("/api/changes");
+  } catch (e) {
+    return;
+  }
+  holder.innerHTML = "";
+  if (!notices.length) { holder.hidden = true; return; }
+  holder.hidden = false;
+  holder.appendChild(el("span", {}, `변경 감지: ${notices.length}건 (직접 편집 등으로 캐시와 달라진 문서)`));
+  for (const n of notices) {
+    holder.appendChild(el("span", { class: "change-chip", onclick: () => openDoc(n.doc_path) }, n.doc_path));
+    holder.appendChild(el("button", {
+      onclick: async (ev) => {
+        ev.stopPropagation();
+        await api("/api/changes/" + n.id + "/ack", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        loadChangeBanner();
+      },
+    }, "확인"));
+  }
 }
 
 function scanPending(body) {
+  // mirrors server.py scan_pending_in_text: an optional indented
+  // "- 권장: ..." / "- 대안: ..." block right under the (Qn) line becomes
+  // clickable quick-answer options in the reply dialog.
+  const lines = body.split("\n");
+  const qRe = /^- \[ \] \(Q(\d+)\) (.+)$/;
+  const optRe = /^\s+- (권장|대안): (.+)$/;
   const out = [];
-  const re = /^- \[ \] \(Q(\d+)\) (.+)$/gm;
-  let m;
-  while ((m = re.exec(body))) out.push({ qid: m[1], text: m[2] });
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(qRe);
+    if (!m) continue;
+    const options = [];
+    let j = i + 1;
+    while (j < lines.length) {
+      const om = lines[j].match(optRe);
+      if (!om) break;
+      options.push({ kind: om[1], text: om[2] });
+      j++;
+    }
+    out.push({ qid: m[1], text: m[2], options });
+  }
   return out;
 }
 
@@ -356,10 +570,52 @@ function resolveRelativeLink(fromPath, href) {
 
 let pendingReply = null; // {docPath, qid}
 
-function openReplyDialog(docPath, qid, text) {
+async function openReplyDialog(docPath, qid, text, options) {
   pendingReply = { docPath, qid };
   document.getElementById("reply-question").textContent = `(Q${qid}) ${text}`;
-  document.getElementById("reply-answer").value = "";
+  const answerBox = document.getElementById("reply-answer");
+  answerBox.value = "";
+
+  // Reference material = the related SP/DS/PL/... docs this one cites via
+  // its own frontmatter `links` - the context that motivated the question -
+  // not the question sheet's own text (that's already open behind the dialog).
+  const ref = document.getElementById("reply-reference");
+  ref.innerHTML = "불러오는 중...";
+  const links = (state.currentDoc && state.currentDoc.path === docPath && state.currentDoc.meta.links) || [];
+  if (!links.length) {
+    ref.innerHTML = `<div class="empty-note">이 문서에 연결된(links) 참고 문서가 없습니다.</div>`;
+  } else {
+    const parts = [];
+    for (const id of links) {
+      const node = state.idIndex[id];
+      if (!node) { parts.push(`<div class="empty-note">${id} (문서를 찾을 수 없음)</div>`); continue; }
+      try {
+        const linked = await api("/api/doc?path=" + encodeURIComponent(node.path));
+        parts.push(
+          `<details><summary>${id} · ${linked.meta.title || node.path}</summary>` +
+          `<div class="doc-body">${renderMarkdown(linked.body)}</div></details>`
+        );
+      } catch (e) {
+        parts.push(`<div class="empty-note">${id} 불러오기 실패</div>`);
+      }
+    }
+    ref.innerHTML = parts.join("");
+  }
+
+  // Quick-answer: DC/RV/FX authored with "- 권장: ..." / "- 대안: ..." lines
+  // under the question show up here as one-click fills - the designer can
+  // still edit before submitting, this just saves retyping the option text.
+  const optBox = document.getElementById("reply-options");
+  optBox.innerHTML = "";
+  optBox.hidden = !options || !options.length;
+  for (const o of options || []) {
+    optBox.appendChild(el("button", {
+      type: "button",
+      class: "reply-option-btn" + (o.kind === "권장" ? " recommended" : ""),
+      onclick: () => { answerBox.value = o.text; answerBox.focus(); },
+    }, `${o.kind}: ${o.text}`));
+  }
+
   document.getElementById("reply-dialog").showModal();
 }
 
@@ -395,3 +651,4 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
 initReplyDialog();
 loadTree();
 setTab("all");
+loadChangeBanner();

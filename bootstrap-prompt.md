@@ -161,7 +161,20 @@ reply_pending: false
 - [ ] (Q2) 세션 만료 시간은 몇 분으로?
 ```
 
-답변이 처리되면 해당 줄이 다음과 같이 바뀐다(링크는 같은 문서 안의 앵커):
+**질문 바로 아래 들여쓴 줄로 권장/대안을 붙일 수 있다(선택)** — 대시보드가
+이걸 답변 다이얼로그의 원클릭 채우기 버튼으로 보여준다. 없어도 되고, 있으면
+설계자가 프롬프트로 직접 물었을 때 Claude가 그랬던 것처럼 "권장 + 이유"를
+먼저, 나머지 대안을 뒤에 적는다:
+
+```markdown
+## 답변 대기
+- [ ] (Q1) 로컬 API 서버 프레임워크는?
+  - 권장: Express — 생태계가 가장 넓고 실수가 적음
+  - 대안: Fastify — 스키마 검증 내장, 생태계는 더 작음
+```
+
+답변이 처리되면 해당 줄이 다음과 같이 바뀐다(링크는 같은 문서 안의 앵커,
+`권장`/`대안` 줄은 무엇이 제안됐었는지 기록으로 그대로 남는다):
 
 ```markdown
 - [x] (Q1) 인증 토큰 저장 방식은 A안(로컬스토리지)/B안(세션 쿠키) 중 무엇으로? → [RP-00007](#rp-00007)
@@ -234,8 +247,14 @@ python tools/docs/server.py
 ```
 
 기본적으로 `http://localhost:8756`에서 열리며, 좌측 트리(문서 계층), `문서`/`설계`
-(`DC`/`RV`/`FX`)/`기록`(`LG`) 탭, 답변 대기 카드와 다이얼로그를 제공한다. 대시보드는
-조회와 답변 입력만 담당하고, 문서 생성/편집은 Claude와의 대화로만 이뤄진다.
+(`DC`/`RV`/`FX`)/`기록`(`LG`) 탭, 답변 대기 카드와 다이얼로그를 제공한다. 문서
+본문은 대시보드에서 직접 편집할 수도 있다(각 문서 뷰의 "편집" 버튼 — 마크다운
+툴바로 굵게/취소선/제목/코드/링크를 넣을 수 있다). **프론트매터는 이 편집기가
+건드리지 않는다** — `id`/`type`/`status`/`links` 같은 구조적 필드는 여전히
+답변 처리 흐름이나 Claude와의 대화로만 바뀐다. 저장 시 서버가 7절의 구조
+검증을 통과해야만 실제로 파일에 반영한다. 새 문서 생성은 여전히 Claude와의
+대화로만 이뤄진다(번호 발급·색인 등재까지 걸린 절차라 대시보드에서 직접
+만들지 않는다).
 
 문서 수가 늘어나도 매 요청마다 전체 파일을 다시 읽지 않도록, 대시보드
 프로세스가 파일별 mtime을 기준으로 프론트매터·답변 대기 목록을 메모리에
@@ -434,6 +453,9 @@ import argparse
 import datetime
 import json
 import re
+import sqlite3
+import subprocess
+import sys
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -576,21 +598,32 @@ def read_doc(path: Path):
 # the cache on restart just costs one full (still fast) rescan.
 
 _META_CACHE_LOCK = threading.Lock()
-_META_CACHE = {}  # rel_path -> (mtime, meta, pending_list)
+_META_CACHE = {}  # rel_path -> (mtime, meta, pending_list, size)
 
 
-def get_doc_meta(path: Path):
-    """(meta, pending_list) for path, via the mtime-checked in-memory cache."""
+def scan_meta(path: Path, source="scan"):
+    """(meta, pending_list) for path, via the mtime+size checked in-memory
+    cache (SP-00003 6.2). Unchanged files cost one stat() call, no read.
+    When a file actually changed since we last saw it (not a cold start),
+    records a change_notice - this is the single place that happens, so
+    every caller (tree/list/search, and eventually git-pull/webhook/api
+    handlers once those exist) gets it for free."""
     rel_path = rel(path)
-    mtime = path.stat().st_mtime
+    st = path.stat()
     with _META_CACHE_LOCK:
         cached = _META_CACHE.get(rel_path)
-        if cached and cached[0] == mtime:
+        if cached and cached[0] == st.st_mtime and cached[3] == st.st_size:
             return cached[1], cached[2]
+        was_cached = cached is not None
+
     _, meta, body = read_doc(path)
     pending = scan_pending_in_text(body)
     with _META_CACHE_LOCK:
-        _META_CACHE[rel_path] = (mtime, meta, pending)
+        _META_CACHE[rel_path] = (st.st_mtime, meta, pending, st.st_size)
+
+    if was_cached:
+        create_change_notice(rel_path, source, git_diff_summary(rel_path))
+
     return meta, pending
 
 
@@ -609,7 +642,7 @@ def build_tree():
             if entry.is_dir():
                 node["children"].append(walk(entry))
             elif entry.suffix == ".md":
-                meta, _ = get_doc_meta(entry)
+                meta, _ = scan_meta(entry)
                 node["children"].append({
                     "name": entry.name,
                     "type": "file",
@@ -624,21 +657,48 @@ def build_tree():
     return walk(d)
 
 
+OPTION_RE = re.compile(r"^\s+- (권장|대안): (.+)$")
+
+
 def scan_pending_in_text(body):
-    return [(m.group(1), m.group(2)) for m in PENDING_RE.finditer(body)]
+    """[(qid, question, options)] - options is [{"kind": "권장"|"대안", "text": ...}],
+    read from indented `- 권장: ...` / `- 대안: ...` lines directly under a
+    `- [ ] (Qn) ...` line (docs/PROTOCOL.md 4절). Optional - most questions
+    have none."""
+    lines = body.split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^- \[ \] \(Q(\d+)\) (.+)$", lines[i])
+        if not m:
+            i += 1
+            continue
+        qid, question = m.group(1), m.group(2)
+        options = []
+        j = i + 1
+        while j < len(lines):
+            om = OPTION_RE.match(lines[j])
+            if not om:
+                break
+            options.append({"kind": om.group(1), "text": om.group(2)})
+            j += 1
+        out.append((qid, question, options))
+        i = j
+    return out
 
 
 def list_pending():
     items = []
     for p in iter_doc_files():
-        meta, pending = get_doc_meta(p)
-        for qid, question in pending:
+        meta, pending = scan_meta(p)
+        for qid, question, options in pending:
             items.append({
                 "doc_path": rel(p),
                 "doc_id": meta.get("id", p.stem),
                 "title": meta.get("title", ""),
                 "question_id": qid,
                 "question": question,
+                "options": options,
                 "updated": meta.get("updated", meta.get("created", "")),
             })
     return items
@@ -647,7 +707,7 @@ def list_pending():
 def list_by_types(types):
     out = []
     for p in iter_doc_files():
-        meta, _ = get_doc_meta(p)
+        meta, _ = scan_meta(p)
         t = meta.get("type", "")
         if t in types:
             out.append({
@@ -676,6 +736,319 @@ def next_seq(doc_type):
     data[doc_type] = n
     tf.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return f"{doc_type}-{n:05d}"
+
+
+# ---------------------------------------------------------------- local data store
+#
+# change_notices (SP-00003 5절) and doc_comments (SP-00003 2절/코멘트) are not
+# derived from docs/*.md - they're real data with no markdown-file source of
+# truth, so (unlike the meta cache above) they live in a small SQLite file
+# instead of memory. docs/.workflow/ is gitignored; this file never gets
+# committed.
+
+_DATA_LOCK = threading.Lock()
+
+
+def _data_db_path():
+    d = docs_dir() / ".workflow"
+    d.mkdir(exist_ok=True)
+    return d / "data.db"
+
+
+def _data_conn():
+    conn = sqlite3.connect(str(_data_db_path()))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS change_notices ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, doc_path TEXT NOT NULL,"
+        " source TEXT NOT NULL, summary TEXT NOT NULL, ref TEXT, created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS doc_comments ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, doc_path TEXT NOT NULL,"
+        " body TEXT NOT NULL, created_at TEXT NOT NULL, resolved_at TEXT)"
+    )
+    return conn
+
+
+def _now():
+    return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def create_change_notice(doc_path, source, summary, ref=None):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            conn.execute(
+                "INSERT INTO change_notices (doc_path, source, summary, ref, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (doc_path, source, summary, ref, _now()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def list_change_notices():
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, doc_path, source, summary, ref, created_at"
+                " FROM change_notices ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+    return [
+        {"id": r[0], "doc_path": r[1], "source": r[2], "summary": r[3], "ref": r[4], "created_at": r[5]}
+        for r in rows
+    ]
+
+
+def ack_change_notice(notice_id):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            conn.execute("DELETE FROM change_notices WHERE id = ?", (notice_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def list_comments(doc_path):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, body, created_at, resolved_at FROM doc_comments"
+                " WHERE doc_path = ? ORDER BY id",
+                (doc_path,),
+            ).fetchall()
+        finally:
+            conn.close()
+    return [{"id": r[0], "body": r[1], "created_at": r[2], "resolved_at": r[3]} for r in rows]
+
+
+def add_comment(doc_path, body):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO doc_comments (doc_path, body, created_at) VALUES (?, ?, ?)",
+                (doc_path, body, _now()),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+
+def resolve_comment(doc_path, comment_id):
+    with _DATA_LOCK:
+        conn = _data_conn()
+        try:
+            conn.execute(
+                "UPDATE doc_comments SET resolved_at = ? WHERE id = ? AND doc_path = ?",
+                (_now(), comment_id, doc_path),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------- git (subprocess)
+#
+# docs/*.md is a git-tracked directory. We shell out to the git binary rather
+# than reimplementing diffing/history ourselves (SP-00003 6.2) - it's already
+# there, already correct, already fast.
+
+def _git(args, cwd=None, timeout=10):
+    try:
+        # encoding="utf-8" is required, not just text=True: on Windows,
+        # text=True decodes subprocess output with the OS locale encoding
+        # (e.g. cp949 on Korean Windows), which crashes on the UTF-8 bytes
+        # git actually writes for any non-ASCII commit message/diff content.
+        return subprocess.run(
+            ["git", *args], cwd=cwd or str(project_root()),
+            capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
+        )
+    except Exception as e:
+        class _Fail:
+            returncode = 1
+            stdout = ""
+            stderr = str(e)
+        return _Fail()
+
+
+def git_diff_summary(rel_path):
+    target = str(docs_dir() / rel_path)
+    out = _git(["diff", "--stat", "--", target])
+    if out.returncode == 0 and out.stdout.strip():
+        return out.stdout.strip().splitlines()[0]
+    out = _git(["diff", "--cached", "--stat", "--", target])
+    if out.returncode == 0 and out.stdout.strip():
+        return out.stdout.strip().splitlines()[0]
+    return f"{rel_path} 내용이 변경됨"
+
+
+def git_log(rel_path=None, limit=30):
+    args = ["log", f"-{int(limit)}", "--pretty=format:%H|%an|%ad|%s", "--date=short"]
+    if rel_path:
+        args += ["--", str(docs_dir() / rel_path)]
+    out = _git(args)
+    commits = []
+    for line in out.stdout.splitlines():
+        parts = line.split("|", 3)
+        if len(parts) == 4:
+            commits.append({"sha": parts[0], "author": parts[1], "date": parts[2], "message": parts[3]})
+    return commits
+
+
+def git_commit_detail(sha):
+    out = _git(["show", "--stat", "--pretty=format:%H|%an|%ad|%s", "--date=iso", sha])
+    lines = out.stdout.splitlines()
+    if not lines:
+        return None
+    parts = lines[0].split("|", 3)
+    files = [l.strip() for l in lines[1:] if l.strip() and "|" in l]
+    return {
+        "sha": parts[0] if len(parts) > 0 else sha,
+        "author": parts[1] if len(parts) > 1 else "",
+        "date": parts[2] if len(parts) > 2 else "",
+        "message": parts[3] if len(parts) > 3 else "",
+        "files": files,
+    }
+
+
+def git_diff(sha):
+    out = _git(["show", sha, "--", "docs"])
+    return out.stdout
+
+
+def git_blame(rel_path):
+    out = _git(["blame", "--date=short", "--", str(docs_dir() / rel_path)])
+    return out.stdout
+
+
+# ---------------------------------------------------------------- section read / search
+
+def slugify(text):
+    s = text.strip().lower()
+    s = re.sub(r"[`~!@#$%^&*()+=\[\]{}|\\:;\"'<>,.?/]", "", s)
+    s = re.sub(r"\s+", "-", s)
+    return s
+
+
+def extract_section(body, anchor):
+    lines = body.split("\n")
+    heading_re = re.compile(r"^(#{1,6})\s+(.*)$")
+    start, start_level = None, None
+    for i, line in enumerate(lines):
+        m = heading_re.match(line)
+        if m and slugify(m.group(2)) == anchor:
+            start, start_level = i, len(m.group(1))
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        m = heading_re.match(lines[j])
+        if m and len(m.group(1)) <= start_level:
+            end = j
+            break
+    return "\n".join(lines[start:end]).rstrip("\n")
+
+
+def search_docs(query):
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    results = []
+    for p in iter_doc_files():
+        _, meta, body = read_doc(p)
+        haystack = f"{meta.get('id', '')} {meta.get('title', '')}\n{body}".lower()
+        idx = haystack.find(q)
+        if idx == -1:
+            continue
+        start = max(0, idx - 40)
+        snippet = haystack[start:idx + len(q) + 40].strip()
+        results.append({
+            "path": rel(p), "id": meta.get("id", p.stem), "title": meta.get("title", ""),
+            "type": meta.get("type", ""), "snippet": snippet,
+        })
+    return results
+
+
+# ---------------------------------------------------------------- structure validation
+#
+# SP-00003 7절: hand-coded rules mirroring docs/PROTOCOL.md 3절. A full
+# schemas/*.schema.json + cross-tier conformance suite is future work for
+# when Tier 2/3 exist to drift against - not needed yet with one implementation.
+
+STATUS_ENUM = {
+    "SP": {"draft", "active", "superseded", "archived"},
+    "DS": {"draft", "active", "superseded", "archived"},
+    "RM": {"draft", "active", "superseded", "archived"},
+    "TP": {"draft", "active", "superseded", "archived"},
+    "PL": {"planned", "in_progress", "done"},
+    "DC": {"open", "answered", "applied", "rejected", "wontfix"},
+    "RV": {"open", "answered", "applied", "rejected", "wontfix"},
+    "FX": {"open", "answered", "applied", "rejected", "wontfix"},
+}
+ID_RE = re.compile(r"^[A-Z]{2}-\d{5}$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def validate_doc(path, meta):
+    violations = []
+
+    def add(field, rule, message):
+        violations.append({"path": rel(path), "field": field, "rule": rule, "message": message})
+
+    doc_id = meta.get("id")
+    if not doc_id:
+        add("id", "required", "id 필드가 없습니다")
+    else:
+        if not ID_RE.match(str(doc_id)):
+            add("id", "pattern", f"id 형식이 TYPE-00000이 아닙니다: {doc_id}")
+        if doc_id != path.stem:
+            add("id", "consistency", f"id({doc_id})가 파일명({path.stem})과 다릅니다")
+
+    if not meta.get("type"):
+        add("type", "required", "type 필드가 없습니다")
+
+    for field in ("created", "updated"):
+        val = meta.get(field)
+        if not val:
+            add(field, "required", f"{field} 필드가 없습니다")
+        elif not DATE_RE.match(str(val)):
+            add(field, "pattern", f"{field} 값이 YYYY-MM-DD 형식이 아닙니다: {val}")
+
+    doc_type = meta.get("type")
+    if doc_type in STATUS_ENUM:
+        status = meta.get("status")
+        if not status:
+            add("status", "required", "status 필드가 없습니다")
+        elif status not in STATUS_ENUM[doc_type]:
+            add("status", "enum", f"status 값 '{status}'는 {doc_type} 타입에서 허용되지 않습니다")
+
+    links = meta.get("links")
+    if links is not None:
+        if not isinstance(links, list):
+            add("links", "type", "links는 배열이어야 합니다")
+        else:
+            for link in links:
+                if not ID_RE.match(str(link)):
+                    add("links", "pattern", f"links 항목 형식이 잘못됨: {link}")
+
+    return violations
+
+
+def validate_all():
+    violations = []
+    for p in iter_doc_files():
+        _, meta, _ = read_doc(p)
+        violations.extend(validate_doc(p, meta))
+    return violations
 
 
 def rebuild_table(index_path: Path, rows, header):
@@ -811,6 +1184,27 @@ def answer_pending(doc_path_rel, question_id, answer_text):
     return {"rp_id": rp_id, "lg_id": lg_id, "reply_pending": remaining}
 
 
+def save_doc_body(doc_path_rel, new_body):
+    """Overwrite a document's body from the dashboard's markdown editor.
+    Frontmatter is untouched except `updated` - this is a body-content edit,
+    not a metadata change (status/links/etc. still only change through the
+    controlled flows: answer_pending, or Claude directly). Runs the same
+    structure check as `docs validate` before writing, so a broken edit
+    can't corrupt the file's frontmatter contract."""
+    doc_path = (docs_dir() / doc_path_rel).resolve()
+    if not str(doc_path).startswith(str(docs_dir().resolve())) or not doc_path.exists():
+        raise FileNotFoundError(doc_path_rel)
+
+    _, meta, _ = read_doc(doc_path)
+    meta["updated"] = today()
+    violations = validate_doc(doc_path, meta)
+    if violations:
+        raise ValueError("검증 실패: " + "; ".join(v["message"] for v in violations))
+
+    doc_path.write_text(dump_frontmatter(meta, new_body), encoding="utf-8")
+    return {"path": doc_path_rel, "updated": meta["updated"]}
+
+
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
@@ -847,12 +1241,43 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(list_by_types({"LG"}))
             if parsed.path == "/api/all":
                 return self._json(list_by_types(set(TYPE_NAMES) - {"IX"}))
+            if parsed.path == "/api/changes":
+                return self._json(list_change_notices())
+            if parsed.path == "/api/validate":
+                return self._json(validate_all())
+            if parsed.path == "/api/search":
+                return self._json(search_docs(qs.get("q", [""])[0]))
+            if parsed.path == "/api/git/log":
+                rel_path = qs.get("path", [None])[0]
+                limit = int(qs.get("limit", ["30"])[0])
+                return self._json(git_log(rel_path, limit))
+            if parsed.path == "/api/git/blame":
+                rel_path = qs.get("path", [""])[0]
+                return self._text(git_blame(rel_path))
+            m = re.match(r"^/api/git/commits/(.+)$", parsed.path)
+            if m:
+                detail = git_commit_detail(m.group(1))
+                if detail is None:
+                    return self._json({"error": "not found"}, 404)
+                return self._json(detail)
+            m = re.match(r"^/api/git/diff/(.+)$", parsed.path)
+            if m:
+                return self._text(git_diff(m.group(1)))
+            m = re.match(r"^/api/docs/(.+)/comments$", parsed.path)
+            if m:
+                return self._json(list_comments(m.group(1)))
             if parsed.path == "/api/doc":
                 rel_path = qs.get("path", [""])[0]
+                anchor = qs.get("anchor", [None])[0]
                 p = (docs_dir() / rel_path).resolve()
                 if not str(p).startswith(str(docs_dir().resolve())) or not p.exists():
                     return self._json({"error": "not found"}, 404)
                 text, meta, body = read_doc(p)
+                if anchor:
+                    section = extract_section(body, anchor)
+                    if section is None:
+                        return self._json({"error": "anchor not found"}, 404)
+                    return self._json({"path": rel_path, "meta": meta, "body": section, "anchor": anchor})
                 return self._json({"path": rel_path, "meta": meta, "body": body})
             return self._serve_static(parsed.path)
         except Exception as e:
@@ -871,6 +1296,21 @@ class Handler(BaseHTTPRequestHandler):
                 result = answer_pending(
                     payload["doc_path"], str(payload["question_id"]), payload["answer"])
                 return self._json(result)
+            if parsed.path == "/api/doc/save":
+                result = save_doc_body(payload["path"], payload["body"])
+                return self._json(result)
+            m = re.match(r"^/api/changes/(\d+)/ack$", parsed.path)
+            if m:
+                ack_change_notice(int(m.group(1)))
+                return self._json({"ok": True})
+            m = re.match(r"^/api/docs/(.+)/comments/(\d+)/resolve$", parsed.path)
+            if m:
+                resolve_comment(m.group(1), int(m.group(2)))
+                return self._json({"ok": True})
+            m = re.match(r"^/api/docs/(.+)/comments$", parsed.path)
+            if m:
+                cid = add_comment(m.group(1), payload["body"])
+                return self._json({"id": cid})
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 400)
@@ -895,7 +1335,19 @@ def main():
     parser = argparse.ArgumentParser(description="docs/ design-workflow dashboard")
     parser.add_argument("--port", type=int, default=8756)
     parser.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    parser.add_argument("--validate", action="store_true",
+                         help="check docs/ structure (SP-00003 7절) and exit, no server")
     ARGS = parser.parse_args()
+
+    if ARGS.validate:
+        violations = validate_all()
+        if not violations:
+            print("모든 문서가 유효합니다.")
+            return
+        for v in violations:
+            print(f"{v['path']}: [{v['rule']}] {v['field']} - {v['message']}")
+        sys.exit(1)
+
     server = ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)
     print(f"docs dashboard: http://127.0.0.1:{ARGS.port}  (root: {project_root()})")
     try:
@@ -931,6 +1383,7 @@ if __name__ == "__main__":
       <button class="tab" data-tab="design">설계</button>
       <button class="tab" data-tab="logs">기록</button>
     </nav>
+    <div id="change-banner" hidden></div>
     <div id="list-pane"></div>
     <div id="doc-pane" hidden></div>
   </main>
@@ -940,6 +1393,11 @@ if __name__ == "__main__":
   <form method="dialog" id="reply-form">
     <h3>답변 입력</h3>
     <p class="reply-question" id="reply-question"></p>
+    <details class="reply-reference-wrap" open>
+      <summary>관련 문서 참고 (이 문서가 links로 연결한 SP/DS/PL 등)</summary>
+      <div class="reply-reference" id="reply-reference"></div>
+    </details>
+    <div id="reply-options" class="reply-options" hidden></div>
     <textarea id="reply-answer" rows="6" placeholder="답변 내용을 입력하세요"></textarea>
     <div class="dialog-actions">
       <button type="button" id="reply-cancel">취소</button>
@@ -1065,6 +1523,26 @@ body {
 .badge.pending { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
 
 #doc-pane .doc-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.edit-btn { border: 1px solid var(--border); background: var(--bg-alt); color: var(--text); border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.edit-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.doc-edit-wrap { display: flex; flex-direction: column; gap: 8px; }
+.edit-toolbar { display: flex; gap: 4px; flex-wrap: wrap; }
+.edit-toolbar button {
+  border: 1px solid var(--border); background: var(--bg-alt); color: var(--text);
+  border-radius: 6px; padding: 4px 10px; font-size: 12px; font-family: inherit; cursor: pointer;
+}
+.edit-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+.doc-edit-area {
+  width: 100%; min-height: 360px; font-family: ui-monospace, monospace; font-size: 12.5px;
+  line-height: 1.5; padding: 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); resize: vertical;
+}
+.edit-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
+.edit-status { font-size: 12px; color: var(--text-dim); }
+.edit-actions button { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-alt); color: var(--text); cursor: pointer; }
+.edit-save { background: var(--accent); color: #fff; border-color: var(--accent); }
 #doc-pane .back { cursor: pointer; color: var(--accent); font-size: 13px; margin-bottom: 12px; display: inline-block; }
 #doc-pane .doc-meta-line { color: var(--text-dim); font-size: 12px; margin-bottom: 16px; }
 .doc-body h1, .doc-body h2, .doc-body h3 { line-height: 1.3; }
@@ -1098,6 +1576,7 @@ body {
   margin-bottom: 8px;
 }
 .pending-card .q { font-size: 13px; }
+.pending-card .rec-preview { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
 .pending-card button {
   flex-shrink: 0;
   border: none;
@@ -1130,13 +1609,61 @@ dialog {
   color: var(--text);
 }
 dialog::backdrop { background: rgba(0,0,0,.4); }
+#reply-dialog { width: min(720px, 92vw); max-height: 85vh; overflow: auto; }
 .reply-question { font-size: 13px; color: var(--text-dim); background: var(--bg-alt); padding: 8px 10px; border-radius: 6px; }
+.reply-reference-wrap { margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.reply-reference-wrap > summary { cursor: pointer; padding: 6px 10px; font-size: 12px; color: var(--text-dim); }
+.reply-reference { max-height: 280px; overflow: auto; padding: 4px 12px 10px; font-size: 12.5px; }
+.reply-reference details { border-top: 1px solid var(--border); padding: 6px 0; }
+.reply-reference details:first-child { border-top: none; }
+.reply-reference details summary { cursor: pointer; font-weight: 600; font-size: 12.5px; }
+.reply-reference details .doc-body { margin-top: 6px; }
+.reply-options { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.reply-option-btn {
+  text-align: left; font-size: 12.5px; padding: 8px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg-alt); color: var(--text); cursor: pointer;
+}
+.reply-option-btn.recommended { border-color: var(--accent); background: var(--accent-bg); font-weight: 600; }
 #reply-answer { width: 100%; margin-top: 10px; font-family: inherit; font-size: 13px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .dialog-actions button { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-alt); cursor: pointer; }
 #reply-submit { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 .empty-note { color: var(--text-dim); padding: 20px 0; }
+
+/* change queue banner */
+#change-banner {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin: 0 20px 12px; padding: 8px 12px; border-radius: 8px;
+  background: var(--warn-bg); color: var(--warn); font-size: 12.5px;
+}
+.change-chip {
+  font-family: monospace; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 8px; cursor: pointer; color: var(--text);
+}
+#change-banner button {
+  border: none; background: var(--accent); color: #fff; border-radius: 6px;
+  padding: 2px 8px; cursor: pointer; font-size: 12px;
+}
+
+/* comments */
+.comments-section, .history-section { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px; }
+.comment-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.comment-card.resolved { opacity: .6; }
+.comment-body { font-size: 13px; white-space: pre-wrap; }
+.comment-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11.5px; color: var(--text-dim); }
+.comment-meta button { border: none; background: var(--bg-alt); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; cursor: pointer; color: var(--text); }
+.comment-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.comment-form textarea { width: 100%; font-family: inherit; font-size: 13px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.comment-form button { align-self: flex-end; border: none; background: var(--accent); color: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+
+/* git history */
+.commit-row { display: flex; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; align-items: baseline; }
+.commit-row:hover { background: var(--accent-bg); }
+.commit-sha { font-family: monospace; color: var(--accent); }
+.commit-date { color: var(--text-dim); flex-shrink: 0; }
+.commit-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-box { margin-top: 10px; background: var(--bg-alt); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 11.5px; max-height: 360px; overflow: auto; white-space: pre-wrap; }
 ```
 
 ### 파일: `tools/docs/static/app.js`
@@ -1402,7 +1929,10 @@ function renderDoc(doc) {
   pane.appendChild(el("span", { class: "back", onclick: showListPane }, "← 목록으로"));
   pane.appendChild(el("div", { class: "doc-header" }, [
     el("h2", {}, `${meta.id || doc.path} ${meta.title ? "· " + meta.title : ""}`),
-    el("span", { class: "badge" }, meta.status || ""),
+    el("span", { class: "header-actions" }, [
+      el("span", { class: "badge" }, meta.status || ""),
+      el("button", { class: "edit-btn", onclick: () => enterEditMode(doc) }, "편집"),
+    ]),
   ]));
   pane.appendChild(el("div", { class: "doc-meta-line" },
     `${meta.type ? TYPE_LABEL[meta.type] || meta.type : ""} · updated ${meta.updated || meta.created || "-"} · ${doc.path}`));
@@ -1427,9 +1957,13 @@ function renderDoc(doc) {
       el("h4", {}, `답변 대기 항목 (${pendingItems.length})`),
     ]);
     for (const p of pendingItems) {
+      const rec = p.options.find((o) => o.kind === "권장");
       section.appendChild(el("div", { class: "pending-card" }, [
-        el("div", { class: "q" }, `(Q${p.qid}) ${p.text}`),
-        el("button", { onclick: () => openReplyDialog(doc.path, p.qid, p.text) }, "답변 입력"),
+        el("div", {}, [
+          el("div", { class: "q" }, `(Q${p.qid}) ${p.text}`),
+          rec ? el("div", { class: "rec-preview" }, `권장: ${rec.text}`) : null,
+        ]),
+        el("button", { onclick: () => openReplyDialog(doc.path, p.qid, p.text, p.options) }, "답변 입력"),
       ]));
     }
     pane.appendChild(section);
@@ -1439,21 +1973,228 @@ function renderDoc(doc) {
     pane.appendChild(el("div", { class: "howto-section" }, [
       el("h4", {}, "답변 입력 후 처리 요령"),
       el("ol", {}, [
-        el("li", {}, "답변을 제출하면 RP-XXXXX 번호가 발급되고, docs/reply/RP-XXXXX.md에 질문·답변 전문이 저장됩니다."),
-        el("li", {}, "이 문서의 해당 (Qn) 줄이 체크되고 RP 링크가 남습니다 (전문은 중복 저장하지 않음)."),
+        el("li", {}, "답변을 제출하면 RP-XXXXX 번호가 발급되고, 이 문서 하단 \"## 답변 기록\" 섹션에 질문·답변 전문이 직접 기록됩니다(별도 파일을 만들지 않습니다)."),
+        el("li", {}, "이 문서의 해당 (Qn) 줄이 체크되고 그 기록으로 가는 앵커 링크가 남습니다."),
         el("li", {}, "docs/reply/index.md 미답변 큐에서 이 항목이 제거됩니다."),
-        el("li", {}, "docs/logs/에 처리 기록(LG)이 생성되고 이 문서·RP에 연결됩니다."),
+        el("li", {}, "docs/logs/에 처리 기록(LG, 대상 문서당 1개)이 남고 이 문서·RP 앵커에 연결됩니다."),
         el("li", {}, "이 문서의 모든 질문에 답변되면 상태가 answered로 바뀝니다."),
       ]),
     ]));
   }
+
+  loadCommentsSection(pane, doc.path);
+  loadHistorySection(pane, doc.path);
+}
+
+// ---------------------------------------------------------------- body editor
+//
+// Body-only editing (frontmatter is never touched here - id/type/status/links
+// still only change through the controlled flows). Plain textarea + a small
+// toolbar that wraps the current selection with markdown syntax, rather than
+// a WYSIWYG editor - keeps this dependency-free and the saved file exactly
+// what the designer sees in the box.
+
+function wrapSelection(textarea, before, after) {
+  after = after === undefined ? before : after;
+  const start = textarea.selectionStart, end = textarea.selectionEnd;
+  const val = textarea.value;
+  textarea.value = val.slice(0, start) + before + val.slice(start, end) + after + val.slice(end);
+  textarea.focus();
+  textarea.selectionStart = start + before.length;
+  textarea.selectionEnd = end + before.length;
+}
+
+function prefixCurrentLine(textarea, prefix) {
+  const start = textarea.selectionStart;
+  const val = textarea.value;
+  const lineStart = val.lastIndexOf("\n", start - 1) + 1;
+  textarea.value = val.slice(0, lineStart) + prefix + val.slice(lineStart);
+  textarea.focus();
+  textarea.selectionStart = textarea.selectionEnd = start + prefix.length;
+}
+
+function enterEditMode(doc) {
+  const pane = document.getElementById("doc-pane");
+  const bodyDiv = pane.querySelector(".doc-body");
+  if (!bodyDiv) return;
+
+  const textarea = el("textarea", { class: "doc-edit-area", spellcheck: "false" });
+  textarea.value = doc.body;
+
+  const toolbar = el("div", { class: "edit-toolbar" }, [
+    el("button", { type: "button", title: "굵게", onclick: () => wrapSelection(textarea, "**") }, "B"),
+    el("button", { type: "button", title: "취소선", onclick: () => wrapSelection(textarea, "~~") }, "S"),
+    el("button", { type: "button", title: "제목 1", onclick: () => prefixCurrentLine(textarea, "# ") }, "H1"),
+    el("button", { type: "button", title: "제목 2", onclick: () => prefixCurrentLine(textarea, "## ") }, "H2"),
+    el("button", { type: "button", title: "코드", onclick: () => wrapSelection(textarea, "`") }, "Code"),
+    el("button", { type: "button", title: "링크", onclick: () => wrapSelection(textarea, "[", "](url)") }, "Link"),
+  ]);
+
+  const status = el("span", { class: "edit-status" }, "");
+  const actions = el("div", { class: "edit-actions" }, [
+    status,
+    el("button", { type: "button", class: "edit-cancel", onclick: () => renderDoc(doc) }, "취소"),
+    el("button", {
+      type: "button", class: "edit-save",
+      onclick: async () => {
+        status.textContent = "저장 중...";
+        try {
+          await api("/api/doc/save", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: doc.path, body: textarea.value }),
+          });
+          await openDoc(doc.path);
+        } catch (e) {
+          status.textContent = "";
+          alert("저장 실패: " + e.message);
+        }
+      },
+    }, "저장"),
+  ]);
+
+  const editWrap = el("div", { class: "doc-edit-wrap" }, [toolbar, textarea, actions]);
+  bodyDiv.replaceWith(editWrap);
+  textarea.focus();
+}
+
+// ---------------------------------------------------------------- comments
+
+async function loadCommentsSection(pane, docPath) {
+  const section = el("div", { class: "comments-section" }, [
+    el("h4", {}, "코멘트"),
+  ]);
+  pane.appendChild(section);
+  const list = el("div", { class: "comments-list" }, "불러오는 중...");
+  section.appendChild(list);
+
+  let comments;
+  try {
+    comments = await api("/api/docs/" + docPath + "/comments");
+  } catch (e) {
+    list.textContent = "코멘트를 불러오지 못했습니다.";
+    return;
+  }
+
+  list.innerHTML = "";
+  if (!comments.length) {
+    list.appendChild(el("div", { class: "empty-note" }, "아직 코멘트가 없습니다."));
+  }
+  for (const c of comments) {
+    list.appendChild(el("div", { class: "comment-card" + (c.resolved_at ? " resolved" : "") }, [
+      el("div", { class: "comment-body" }, c.body),
+      el("div", { class: "comment-meta" }, [
+        el("span", {}, c.created_at + (c.resolved_at ? " · 해결됨" : "")),
+        c.resolved_at ? null : el("button", {
+          onclick: async () => {
+            await api("/api/docs/" + docPath + "/comments/" + c.id + "/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+            openDoc(docPath);
+          },
+        }, "해결 처리"),
+      ]),
+    ]));
+  }
+
+  const form = el("div", { class: "comment-form" }, [
+    el("textarea", { id: "new-comment-text", rows: "2", placeholder: "코멘트 작성 (비공식 토론용 - 마크다운 파일에는 남지 않습니다)" }),
+    el("button", {
+      onclick: async () => {
+        const ta = document.getElementById("new-comment-text");
+        const body = ta.value.trim();
+        if (!body) return;
+        await api("/api/docs/" + docPath + "/comments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body }) });
+        openDoc(docPath);
+      },
+    }, "코멘트 등록"),
+  ]);
+  section.appendChild(form);
+}
+
+// ---------------------------------------------------------------- git history
+
+async function loadHistorySection(pane, docPath) {
+  const section = el("div", { class: "history-section" }, [
+    el("h4", {}, "커밋 이력"),
+  ]);
+  pane.appendChild(section);
+  const list = el("div", { class: "history-list" }, "불러오는 중...");
+  section.appendChild(list);
+  const diffBox = el("pre", { class: "diff-box", hidden: "hidden" });
+  section.appendChild(diffBox);
+
+  let commits;
+  try {
+    commits = await api("/api/git/log?path=" + encodeURIComponent(docPath) + "&limit=10");
+  } catch (e) {
+    list.textContent = "git 이력을 불러오지 못했습니다(git 저장소가 아니거나 git이 없을 수 있습니다).";
+    return;
+  }
+
+  list.innerHTML = "";
+  if (!commits.length) {
+    list.appendChild(el("div", { class: "empty-note" }, "커밋 이력이 없습니다."));
+    return;
+  }
+  for (const c of commits) {
+    list.appendChild(el("div", { class: "commit-row", onclick: async () => {
+      diffBox.hidden = false;
+      diffBox.textContent = "불러오는 중...";
+      const res = await fetch("/api/git/diff/" + c.sha);
+      diffBox.textContent = await res.text();
+    } }, [
+      el("span", { class: "commit-sha" }, c.sha.slice(0, 8)),
+      el("span", { class: "commit-date" }, c.date),
+      el("span", { class: "commit-msg" }, c.message),
+    ]));
+  }
+}
+
+// ---------------------------------------------------------------- change queue
+
+async function loadChangeBanner() {
+  const holder = document.getElementById("change-banner");
+  let notices;
+  try {
+    notices = await api("/api/changes");
+  } catch (e) {
+    return;
+  }
+  holder.innerHTML = "";
+  if (!notices.length) { holder.hidden = true; return; }
+  holder.hidden = false;
+  holder.appendChild(el("span", {}, `변경 감지: ${notices.length}건 (직접 편집 등으로 캐시와 달라진 문서)`));
+  for (const n of notices) {
+    holder.appendChild(el("span", { class: "change-chip", onclick: () => openDoc(n.doc_path) }, n.doc_path));
+    holder.appendChild(el("button", {
+      onclick: async (ev) => {
+        ev.stopPropagation();
+        await api("/api/changes/" + n.id + "/ack", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        loadChangeBanner();
+      },
+    }, "확인"));
+  }
 }
 
 function scanPending(body) {
+  // mirrors server.py scan_pending_in_text: an optional indented
+  // "- 권장: ..." / "- 대안: ..." block right under the (Qn) line becomes
+  // clickable quick-answer options in the reply dialog.
+  const lines = body.split("\n");
+  const qRe = /^- \[ \] \(Q(\d+)\) (.+)$/;
+  const optRe = /^\s+- (권장|대안): (.+)$/;
   const out = [];
-  const re = /^- \[ \] \(Q(\d+)\) (.+)$/gm;
-  let m;
-  while ((m = re.exec(body))) out.push({ qid: m[1], text: m[2] });
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(qRe);
+    if (!m) continue;
+    const options = [];
+    let j = i + 1;
+    while (j < lines.length) {
+      const om = lines[j].match(optRe);
+      if (!om) break;
+      options.push({ kind: om[1], text: om[2] });
+      j++;
+    }
+    out.push({ qid: m[1], text: m[2], options });
+  }
   return out;
 }
 
@@ -1500,10 +2241,52 @@ function resolveRelativeLink(fromPath, href) {
 
 let pendingReply = null; // {docPath, qid}
 
-function openReplyDialog(docPath, qid, text) {
+async function openReplyDialog(docPath, qid, text, options) {
   pendingReply = { docPath, qid };
   document.getElementById("reply-question").textContent = `(Q${qid}) ${text}`;
-  document.getElementById("reply-answer").value = "";
+  const answerBox = document.getElementById("reply-answer");
+  answerBox.value = "";
+
+  // Reference material = the related SP/DS/PL/... docs this one cites via
+  // its own frontmatter `links` - the context that motivated the question -
+  // not the question sheet's own text (that's already open behind the dialog).
+  const ref = document.getElementById("reply-reference");
+  ref.innerHTML = "불러오는 중...";
+  const links = (state.currentDoc && state.currentDoc.path === docPath && state.currentDoc.meta.links) || [];
+  if (!links.length) {
+    ref.innerHTML = `<div class="empty-note">이 문서에 연결된(links) 참고 문서가 없습니다.</div>`;
+  } else {
+    const parts = [];
+    for (const id of links) {
+      const node = state.idIndex[id];
+      if (!node) { parts.push(`<div class="empty-note">${id} (문서를 찾을 수 없음)</div>`); continue; }
+      try {
+        const linked = await api("/api/doc?path=" + encodeURIComponent(node.path));
+        parts.push(
+          `<details><summary>${id} · ${linked.meta.title || node.path}</summary>` +
+          `<div class="doc-body">${renderMarkdown(linked.body)}</div></details>`
+        );
+      } catch (e) {
+        parts.push(`<div class="empty-note">${id} 불러오기 실패</div>`);
+      }
+    }
+    ref.innerHTML = parts.join("");
+  }
+
+  // Quick-answer: DC/RV/FX authored with "- 권장: ..." / "- 대안: ..." lines
+  // under the question show up here as one-click fills - the designer can
+  // still edit before submitting, this just saves retyping the option text.
+  const optBox = document.getElementById("reply-options");
+  optBox.innerHTML = "";
+  optBox.hidden = !options || !options.length;
+  for (const o of options || []) {
+    optBox.appendChild(el("button", {
+      type: "button",
+      class: "reply-option-btn" + (o.kind === "권장" ? " recommended" : ""),
+      onclick: () => { answerBox.value = o.text; answerBox.focus(); },
+    }, `${o.kind}: ${o.text}`));
+  }
+
   document.getElementById("reply-dialog").showModal();
 }
 
@@ -1539,6 +2322,7 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
 initReplyDialog();
 loadTree();
 setTab("all");
+loadChangeBanner();
 ```
 
 

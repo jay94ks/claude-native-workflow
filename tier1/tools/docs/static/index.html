@@ -18,6 +18,7 @@
       <button class="tab" data-tab="design">설계</button>
       <button class="tab" data-tab="logs">기록</button>
     </nav>
+    <div id="change-banner" hidden></div>
     <div id="list-pane"></div>
     <div id="doc-pane" hidden></div>
   </main>
@@ -27,6 +28,11 @@
   <form method="dialog" id="reply-form">
     <h3>답변 입력</h3>
     <p class="reply-question" id="reply-question"></p>
+    <details class="reply-reference-wrap" open>
+      <summary>관련 문서 참고 (이 문서가 links로 연결한 SP/DS/PL 등)</summary>
+      <div class="reply-reference" id="reply-reference"></div>
+    </details>
+    <div id="reply-options" class="reply-options" hidden></div>
     <textarea id="reply-answer" rows="6" placeholder="답변 내용을 입력하세요"></textarea>
     <div class="dialog-actions">
       <button type="button" id="reply-cancel">취소</button>
