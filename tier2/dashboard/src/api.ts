@@ -73,6 +73,14 @@ export interface DocDetail {
   body: string;
 }
 
+export interface SearchResult {
+  path: string;
+  id: string;
+  title: string;
+  type: string;
+  snippet: string;
+}
+
 export interface Violation {
   path: string;
   field: string;
@@ -134,7 +142,7 @@ export const client = {
   design: () => api<DocListItem[]>("/design"),
   logs: () => api<DocListItem[]>("/logs"),
   all: () => api<DocListItem[]>("/all"),
-  search: (q: string) => api<DocListItem[]>(`/search?q=${encodeURIComponent(q)}`),
+  search: (q: string) => api<SearchResult[]>(`/search?q=${encodeURIComponent(q)}`),
   validate: () => api<Violation[]>("/validate"),
   doc: (path: string, anchor?: string) =>
     api<DocDetail>(`/doc?path=${encodeURIComponent(path)}${anchor ? `&anchor=${encodeURIComponent(anchor)}` : ""}`),

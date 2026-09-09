@@ -16,7 +16,9 @@ const saving = ref(false);
 const comments = ref<Comment[]>([]);
 const newComment = ref("");
 const commits = ref<CommitSummary[]>([]);
-const selectedDiff = ref<{ sha: string; text: string } | null>(null);
+const selectedDiff = ref<{ sha: string; text: string; files: string[] } | null>(null);
+const blameText = ref<string | null>(null);
+const blameLoading = ref(false);
 
 const renderedBody = computed(() => (doc.value ? marked.parse(doc.value.body, { async: false }) : ""));
 
@@ -35,6 +37,17 @@ async function loadComments() {
 async function loadHistory() {
   commits.value = await client.gitLog(props.path, 20);
   selectedDiff.value = null;
+  blameText.value = null;
+}
+
+async function toggleBlame() {
+  if (blameText.value !== null) { blameText.value = null; return; }
+  blameLoading.value = true;
+  try {
+    blameText.value = await client.gitBlame(props.path);
+  } finally {
+    blameLoading.value = false;
+  }
 }
 
 watch(() => props.path, load, { immediate: true });
@@ -90,8 +103,8 @@ async function resolveComment(id: number) {
 }
 
 async function viewDiff(sha: string) {
-  const text = await client.gitDiff(sha);
-  selectedDiff.value = { sha, text };
+  const [text, detail] = await Promise.all([client.gitDiff(sha), client.gitCommit(sha)]);
+  selectedDiff.value = { sha, text, files: detail?.files ?? [] };
 }
 </script>
 
@@ -162,7 +175,12 @@ async function viewDiff(sha: string) {
       </div>
 
       <div class="col-12 col-md-6">
-        <div class="text-subtitle2 q-mb-xs">커밋 이력</div>
+        <div class="row items-center q-mb-xs">
+          <div class="text-subtitle2">커밋 이력</div>
+          <q-space />
+          <q-btn flat dense size="sm" :loading="blameLoading" :label="blameText !== null ? 'blame 닫기' : 'blame 보기'" @click="toggleBlame" />
+        </div>
+        <pre v-if="blameText !== null" class="diff-box">{{ blameText }}</pre>
         <q-list bordered separator dense>
           <q-item v-for="c in commits" :key="c.sha" clickable @click="viewDiff(c.sha)">
             <q-item-section>
@@ -172,6 +190,10 @@ async function viewDiff(sha: string) {
           </q-item>
           <q-item v-if="!commits.length"><q-item-section class="text-grey-6">이력 없음</q-item-section></q-item>
         </q-list>
+        <div v-if="selectedDiff && selectedDiff.files.length" class="commit-files">
+          <div class="text-caption text-weight-bold">변경된 파일 ({{ selectedDiff.files.length }})</div>
+          <div v-for="f in selectedDiff.files" :key="f" class="commit-file-row">{{ f }}</div>
+        </div>
         <pre v-if="selectedDiff" class="diff-box">{{ selectedDiff.text }}</pre>
       </div>
     </div>
@@ -187,6 +209,8 @@ async function viewDiff(sha: string) {
 .markdown-body :deep(table) { border-collapse: collapse; }
 .markdown-body :deep(td), .markdown-body :deep(th) { border: 1px solid #ddd; padding: 4px 8px; }
 .diff-box { background: #f5f5f5; padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 12px; max-height: 400px; }
+.commit-files { margin-top: 8px; font-family: ui-monospace, monospace; font-size: 12px; color: #666; }
+.commit-file-row { padding: 1px 0; }
 .edit-toolbar { display: flex; gap: 4px; }
 .edit-textarea {
   width: 100%;

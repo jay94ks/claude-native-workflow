@@ -1147,3 +1147,29 @@ vanilla JS로 연결 - 사이드바 검색창, "답변 대기" 탭(클릭하면 
 확인, 기존 "문서" 탭 회귀 없음과 콘솔 에러 없음까지 확인. 상세는
 [DN-00001](docs/done/DN-00001.md) "tier1 — CLI가 아니라 대시보드 UI와
 라우트를 대조" 참고.
+
+### 2026-09-10 (계속 23) — QA 확대: tier2/dashboard(Quasar)도 준동문 3개+1
+
+"QA 진행하면서 미비되거나 보완해야될걸 찾으면서 문서화도 하고 커밋,
+푸시도 단위별로 진행하도록 해"라는 지시로, tier1에서 찾은 패턴(백엔드
+메서드는 있는데 화면이 안 씀)을 tier2/dashboard(Quasar)에도 적용했다.
+`api.ts`의 `client` 객체 vs 실제 `.vue`가 부르는 지점을 대조해서
+`validate`/`gitBlame`/`gitCommit`(파일 목록) 3개가 완전히 준동문,
+전체 답변 대기 뷰도 없다는 걸 확인(`search`는 `ReplyDialog.vue`가
+내부적으로만 씀 - tier1과 똑같은 증상).
+
+tier1과 같은 4가지를 Quasar 컴포넌트로 연결 - 사이드바 검색 입력,
+"답변 대기" 탭(클릭 시 문서+답변 다이얼로그 동시 오픈), 헤더 "검증"
+버튼(결과 다이얼로그), 커밋 이력 섹션에 blame 토글+"변경된 파일"
+목록. `api.ts`에 실제 반환 모양에 맞는 `SearchResult` 타입도 새로
+만들었다(기존 `DocListItem[]` 타입은 부정확했음).
+
+`tier3/dashboard`가 `DocViewer.vue`/`DocTree.vue`를 그대로 재사용하므로
+blame·커밋 파일 목록은 자동으로 같이 적용된다 - 검색/전체 답변 대기/
+검증은 tier3가 자기 `DashboardView.vue`를 따로 갖고 있어서 다음 QA
+단위에서 별도로 본다.
+
+`vue-tsc -b`(tier2/tier3 둘 다) 통과 확인 후 스크래치 프로젝트에 실제
+서버를 띄워 브라우저로 4개 기능 전부 클릭 검증, 콘솔 에러 없음까지
+확인. 상세는 [DN-00001](docs/done/DN-00001.md) "QA 확대: tier2/dashboard
+(Quasar)도 같은 준동문 패턴 발견" 참고.
