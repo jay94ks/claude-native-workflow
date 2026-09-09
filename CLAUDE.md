@@ -46,14 +46,20 @@ claude-native-workflow **자신**의 설계 기록(DS/SP/PL/DC 등, 실제 내�
 
 ## `tier1/` 참조 원본을 고쳤을 때
 
-`tier1/CLAUDE.md`, `tier1/docs/`, `tier1/tools/docs/` 중 하나라도 고치면
-반드시 재생성한다:
+`bootstrap-prompt.md`는 `tier1/` 파일들의 내용을 직접 담지 않고, 각 파일을
+`origin/main`의 `raw.githubusercontent.com` URL로 가리킨다(새 프로젝트에서
+Claude가 이 URL을 fetch해서 그대로 저장). 그래서:
+
+- **내용만 고쳤다면**: commit+push까지 끝내면 끝. `scripts/build_prompt.py`를
+  다시 돌릴 필요 없음 — URL이 `main` 브랜치를 가리키므로 push된 순간 최신
+  내용이 자동 반영된다.
+- **파일을 추가/삭제했다면**: `bootstrap-prompt.md`의 URL 표 자체를 갱신해야
+  하므로 재생성한다:
 
 ```bash
 python scripts/build_prompt.py
 ```
 
-`bootstrap-prompt.md`가 `tier1/` 내용 그대로 재조립된다. `bootstrap-prompt.md`를
-손으로 직접 고치지 않는다(다음 재생성 때 덮어써짐).
+`bootstrap-prompt.md`를 손으로 직접 고치지 않는다(다음 재생성 때 덮어써짐).
 
 <!-- 아래에 프로젝트 고유의 빌드/테스트/코딩 규칙을 추가한다. -->
