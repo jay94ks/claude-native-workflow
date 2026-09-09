@@ -1237,3 +1237,24 @@ enable→disable(--drop)→enable 5단계 전체를 실제 postgres로 다시
 프로덕션 `vite build` 통과, `dompurify`가 tier3에도 별도 설치 없이
 그대로 재사용되는 것까지 확인. 상세는 [DN-00001](docs/done/DN-00001.md)
 "QA: 저장형 XSS(stored XSS) 진짜 취약점 발견 + 수정" 참고.
+
+### 2026-09-10 (계속 27) — QA: 경로 순회 취약점 발견 + tier1/tier2 둘 다 수정
+
+XSS 다음으로 관련 보안 경계를 더 훑다가 - 문서 CRUD엔 다 있는 `docs/`
+밖 접근 차단(`isInsideDocs`)이 git 이력류 함수(`gitLog`/`gitBlame`,
+Python `git_log`/`git_blame`)엔 아예 없다는 걸 코드 대조로 발견했다.
+같은 git 저장소 안 `docs/` 밖에 비밀 파일을 두고
+`git/blame?path=../SECRET.txt`를 실제로 호출해 재현 - 파일 전체 내용이
+그대로 응답에 실려 나왔다. `git/log`/`git/blame`은 Tier 3 기준
+`viewer` 권한만 있어도 부를 수 있는 읽기 전용 라우트라 위험도가 실제로
+높았다. `gitCommitDetail`("변경된 파일" 목록 기능)도 `-- docs` 같은
+pathspec 제한이 없어서 파일 경로(내용은 아님)가 새는 걸 같이 확인.
+
+tier2(`gitlog.ts`에 `assertInsideDocs()` 추가, `gitCommitDetail`/
+`gitDiff`는 `-- docsDir()`로 통일)와 tier1(Python `server.py`에
+`resolve_in_docs_or_raise()` 추가, 대칭 적용) 둘 다 고쳤다. 재현했던
+페이로드로 재검증 - 양쪽 다 이제 막히고, 정상 `docs/` 안 경로는 회귀
+없이 그대로 동작, 혼합 커밋의 "변경된 파일" 목록에서도 비밀 파일이 더는
+안 보이는 것까지 확인. tier3는 이 함수들을 그대로 쓰는 얇은 라우트라
+별도 코드 변경 없이 자동 적용. 상세는 [DN-00001](docs/done/DN-00001.md)
+"QA: 경로 순회(path traversal) 진짜 취약점 발견 + 수정" 참고.

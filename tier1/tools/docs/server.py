@@ -128,6 +128,20 @@ def rel(path: Path):
     return str(path.relative_to(docs_dir())).replace("\\", "/")
 
 
+def resolve_in_docs_or_raise(rel_path: str) -> Path:
+    """docs/ 밖 경로 접근을 막는 /api/doc 등과 같은 경계를 git 이력류
+    함수에도 강제한다 - git_log/git_blame이 이 검사 없이 rel_path를 그대로
+    docs_dir()에 이어붙이고 있어서 `?path=../../SECRET.txt`처럼 같은 git
+    저장소 안의 docs/ 밖 파일 내용을 그대로 읽어올 수 있는 걸 실제로
+    재현해서 발견한 경로 순회 취약점 - QA 중 tier2(TypeScript) 쪽에서
+    먼저 찾아 고치고, 같은 문제가 여기 Python 구현에도 그대로 있다는 걸
+    확인해서 대칭으로 고침."""
+    p = (docs_dir() / rel_path).resolve()
+    if not str(p).startswith(str(docs_dir().resolve())):
+        raise ValueError(f"docs/ 밖 경로입니다: {rel_path}")
+    return p
+
+
 def iter_doc_files():
     d = docs_dir()
     if not d.exists():
@@ -452,7 +466,7 @@ def git_diff_summary(rel_path):
 def git_log(rel_path=None, limit=30):
     args = ["log", f"-{int(limit)}", "--pretty=format:%H|%an|%ad|%s", "--date=short"]
     if rel_path:
-        args += ["--", str(docs_dir() / rel_path)]
+        args += ["--", str(resolve_in_docs_or_raise(rel_path))]
     out = _git(args)
     commits = []
     for line in out.stdout.splitlines():
@@ -463,7 +477,9 @@ def git_log(rel_path=None, limit=30):
 
 
 def git_commit_detail(sha):
-    out = _git(["show", "--stat", "--pretty=format:%H|%an|%ad|%s", "--date=iso", sha])
+    # git_diff와 같은 이유로 "-- docs"를 붙인다 - 안 붙이면 그 커밋이 docs/
+    # 밖 파일도 같이 바꿨을 때 그 파일명까지 "변경된 파일" 목록에 새어나간다.
+    out = _git(["show", "--stat", "--pretty=format:%H|%an|%ad|%s", "--date=iso", sha, "--", "docs"])
     lines = out.stdout.splitlines()
     if not lines:
         return None
@@ -484,7 +500,7 @@ def git_diff(sha):
 
 
 def git_blame(rel_path):
-    out = _git(["blame", "--date=short", "--", str(docs_dir() / rel_path)])
+    out = _git(["blame", "--date=short", "--", str(resolve_in_docs_or_raise(rel_path))])
     return out.stdout
 
 
