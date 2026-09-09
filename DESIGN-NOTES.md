@@ -335,3 +335,16 @@ Python stdlib만 쓴다는 뜻이었지 부트스트랩 프롬프트 자체가 �
   `CLAUDE.md`/`README.md`에 이 두 갈래를 명시적으로 구분해 적어둠.
 - URL이 실제로 200을 반환하는지 `curl`로 검증(직전 커밋으로 이미
   `origin/main`에 push된 상태였어서 바로 확인 가능했음).
+
+이어서 설계자가 "하위 index들은 protocol에 따라 자동 생성되면 되는거라,
+저걸 굳이 전부 다운받으라고 안내하기 보단, 일반화하여 공통된 설명을
+부착하는게 맞을것 같네"라고 추가 지적. 실제로 `docs/spec/index.md`,
+`docs/plan/index.md` 등 9개 하위 색인은 제목/설명/상위 링크/빈 표만 다른
+100% 판박이 구조였고, `docs/PROTOCOL.md` 1절 자체가 "`docs/index.md`의
+표가 원본"이라고 명시하고 있어 그 표만으로 전부 파생 가능했다. 9개 URL을
+`FILES`에서 빼고, `GENERIC_INDEX_TEMPLATE` 하나를 부트스트랩 지시문
+안에 박아 "`docs/index.md`의 타입 분류표를 보고 `IX`/`LG`/`RP`를 뺀
+나머지 타입마다 이 템플릿으로 생성해"로 대체. `docs/logs/index.md`와
+`docs/reply/index.md`는 대시보드가 `TABLE:START`/`END` 마커 사이만
+자동 갱신하는 특수 형식이라 예외적으로 그대로 URL 참조 유지. 결과:
+19개 URL → 10개 URL, 3343자 → 2687자.
