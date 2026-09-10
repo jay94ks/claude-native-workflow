@@ -9,7 +9,14 @@ FROM node:22-slim
 # libssl - node:22-slim엔 기본으로 없어서 `prisma generate`가 빌드 중
 # "failed to detect the libssl/openssl version" 경고를 내며 추측값으로
 # 대체한다. 실제로 이 이미지를 빌드해보고서야 드러난 문제.
-RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+#
+# QA로 발견: git도 마찬가지로 node:22-slim엔 기본 설치돼 있지 않은데,
+# 이 서버는 문서 생성/저장/답변마다 자동으로 git commit을 한다(SP-00001
+# 5절 - 이 워크플로우의 핵심 기능). git 없이 실제 이미지를 빌드해
+# 컨테이너 안에서 문서를 하나 만들어보고서야 "spawn git ENOENT"로 바로
+# 깨지는 걸 확인 - 이제까지의 도커 검증은 대부분 npm run dev(로컬
+# node/git 그대로 사용)로 이뤄져서 이 이미지 자체로 안 걸렸던 것.
+RUN apt-get update -y && apt-get install -y openssl git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

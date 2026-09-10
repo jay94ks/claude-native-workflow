@@ -11,7 +11,10 @@ FROM node:22-slim
 
 # tier2/backend의 Prisma 쿼리 엔진이 필요로 하는 libssl (node:22-slim엔
 # 기본으로 없음 - tier2/backend/Dockerfile에서 이미 겪은 문제와 동일).
-RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+# git도 기본 미설치(같은 이유로 tier2/backend/Dockerfile에서 QA로 발견해
+# 같이 고침) - Tier 3는 git clone/pull(프로젝트 저장소 동기화)과 문서마다의
+# 자동 commit 둘 다에 git이 필요해서 tier2보다도 더 필수적이다.
+RUN apt-get update -y && apt-get install -y openssl git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /repo
 

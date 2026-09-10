@@ -1323,3 +1323,25 @@ viewer 권한만 있어도 되는 "읽기 전용" 라우트가 사실은 임의 
 여부 추정 가능)은 확인만 하고 이번 범위에선 고치지 않기로 함(낮은
 우선순위, 별도 결정 없이 바로 적용 안 함). 상세는
 [DN-00001](docs/done/DN-00001.md) 해당 QA 절 참고.
+
+### 2026-09-10 (계속 31) — QA: tier2/tier3 Docker 이미지에 git 미설치 → 자동 commit 실제로 깨짐
+
+"새 프로젝트 시작 흐름이 명확하지 않다"는 지적을 조사하다가 발견한 더
+심각한 버그. Tier 2 CLI를 컨테이너 안에서 `docker exec`로 직접 써보는
+경로를 실제로 검증해보려다가 `docs new SP ...`가 `Error: spawn git
+ENOENT`로 바로 깨지는 걸 봤다 - `tier2/backend`/`tier3/backend`
+Dockerfile 둘 다 openssl만 설치하고 git은 빠져 있었다(`node:22-slim`
+베이스엔 기본 미포함). 그런데 이 백엔드들은 문서 생성/저장/답변마다
+자동 git commit하는 게 SP-00001 5절의 핵심 기능이라, README 그대로
+`docker compose up`으로 배포하면 대시보드에서 문서 하나만 만들어도
+그 자리에서 깨지는 상태였다 - 이제까지의 대시보드 검증이 대부분
+`npm run dev`(로컬 git 그대로 사용)로 이뤄져서 실제 Docker 이미지로는
+한 번도 끝까지 검증된 적이 없었던 것.
+
+두 Dockerfile에 `git` 설치를 추가하고, 실제로 이미지를 재빌드해서
+스크래치 프로젝트(방금 부트스트랩된 새 프로젝트 상태를 재현)에
+마운트 → `docker exec`로 `docs new SP ...` 실행 → 문서 생성 + git
+커밋("docs: new SP-00002")이 실제로 잡히는 것까지 재현 확인. tier3
+이미지도 재빌드해 git 정상 동작 확인. 상세는
+[DN-00001](docs/done/DN-00001.md) "QA: tier2/tier3 Docker 이미지에
+git이 아예 없어 자동 commit이 실제로는 다 깨짐" 참고.
