@@ -1,5 +1,7 @@
 import { getDb } from "./db.js";
 import { seedDefaultDocTypes } from "./docTypes.js";
+import { getMemberRole } from "./members.js";
+import { isTeamAdmin } from "./teamAdmins.js";
 
 const DEFAULT_GROUP_NAME = "기본";
 
@@ -22,6 +24,8 @@ export interface Project {
   id: string;
   projectGroupId: string;
   name: string;
+  hidden: boolean;
+  hiddenBy: string | null;
 }
 
 export async function createProject(name: string, projectGroupId?: string): Promise<Project> {
@@ -37,27 +41,60 @@ export async function createProject(name: string, projectGroupId?: string): Prom
   }
   const row = await db.project.create({ data: { name, projectGroupId: groupId } });
   await seedDefaultDocTypes(row.id);
-  return { id: row.id, projectGroupId: row.projectGroupId, name: row.name };
+  return { id: row.id, projectGroupId: row.projectGroupId, name: row.name, hidden: row.hidden, hiddenBy: row.hiddenBy };
 }
 
 export async function getProject(id: string): Promise<Project | null> {
   const db = getDb();
   const row = await db.project.findUnique({ where: { id } });
   if (!row) return null;
-  return { id: row.id, projectGroupId: row.projectGroupId, name: row.name };
+  return { id: row.id, projectGroupId: row.projectGroupId, name: row.name, hidden: row.hidden, hiddenBy: row.hiddenBy };
 }
 
-export async function listProjects(projectGroupId?: string): Promise<Project[]> {
+/** Project→ProjectGroup을 거쳐 그 그룹이 속한 팀 id를 구한다(팀 없으면
+ * null) - 숨김 프로젝트 접근/팀장 판정이 재사용. */
+export async function getOwningTeamId(projectId: string): Promise<string | null> {
+  const db = getDb();
+  const project = await db.project.findUnique({ where: { id: projectId } });
+  if (!project) return null;
+  const group = await db.projectGroup.findUnique({ where: { id: project.projectGroupId } });
+  return group?.teamId ?? null;
+}
+
+/** 숨김 처리된 프로젝트를 이 사용자가 볼 수 있는가 - 그 프로젝트의
+ * Member거나, 그 프로젝트가 속한 팀의 팀장이면 true. */
+export async function canSeeHiddenProject(projectId: string, userId: string): Promise<boolean> {
+  const role = await getMemberRole(projectId, userId);
+  if (role) return true;
+  const teamId = await getOwningTeamId(projectId);
+  return isTeamAdmin(teamId, userId);
+}
+
+/** hidden=true면 hiddenBy=actingUserId 기록, false면 hiddenBy를 비운다
+ * (더는 의미가 없으므로). */
+export async function setProjectHidden(projectId: string, hidden: boolean, actingUserId: string): Promise<Project> {
+  const db = getDb();
+  const row = await db.project.update({
+    where: { id: projectId },
+    data: { hidden, hiddenBy: hidden ? actingUserId : null },
+  });
+  return { id: row.id, projectGroupId: row.projectGroupId, name: row.name, hidden: row.hidden, hiddenBy: row.hiddenBy };
+}
+
+/** 숨김 프로젝트는 canSeeHiddenProject를 만족하는 viewer에게만 보인다 -
+ * 숨김 아닌 프로젝트는 지금처럼(멤버십 무관) 전체 공개 목록. */
+export async function listProjects(projectGroupId: string | undefined, viewerId: string): Promise<Project[]> {
   const db = getDb();
   const rows = await db.project.findMany({
     where: projectGroupId ? { projectGroupId } : undefined,
     orderBy: { createdAt: "desc" },
   });
-  return rows.map((r: { id: string; projectGroupId: string; name: string }) => ({
-    id: r.id,
-    projectGroupId: r.projectGroupId,
-    name: r.name,
-  }));
+  const visible: Project[] = [];
+  for (const r of rows as { id: string; projectGroupId: string; name: string; hidden: boolean; hiddenBy: string | null }[]) {
+    if (r.hidden && !(await canSeeHiddenProject(r.id, viewerId))) continue;
+    visible.push({ id: r.id, projectGroupId: r.projectGroupId, name: r.name, hidden: r.hidden, hiddenBy: r.hiddenBy });
+  }
+  return visible;
 }
 
 export async function assertProjectExists(projectId: string): Promise<void> {

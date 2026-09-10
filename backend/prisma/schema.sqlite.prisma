@@ -51,20 +51,28 @@ model TrackingCode {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  username     String   @unique
-  email        String?  @unique
-  passwordHash String
-  createdAt    DateTime @default(now())
+  id            String   @id @default(cuid())
+  username      String   @unique
+  email         String?  @unique
+  phone         String?
+  emailVisible  Boolean  @default(false)
+  phoneVisible  Boolean  @default(false)
+  passwordHash  String
+  createdAt     DateTime @default(now())
 
   gitCredentials    GitCredential[]
   refreshTokens     RefreshToken[]
   memberships       Member[]
   documentsCreated  Document[]         @relation("DocumentCreatedBy")
   revisionsEdited   DocumentRevision[] @relation("RevisionEditedBy")
+  questionsAsked    Question[]         @relation("QuestionAskedBy")
   answersGiven      Answer[]           @relation("AnswerAnsweredBy")
   comments          Comment[]          @relation("CommentAuthor")
   messagesSent      Message[]          @relation("MessageAuthor")
+  teamAdminships    TeamAdmin[]
+  accessOverrides   DocAccessOverride[]
+  foldersCreated    Folder[]
+  hiddenProjects    Project[]          @relation("ProjectHiddenBy")
 }
 
 model RefreshToken {
@@ -109,6 +117,20 @@ model Team {
   docTypes      DocType[]
   templateFiles TemplateFile[]
   trackingCodes TrackingCode[]
+  admins        TeamAdmin[]
+}
+
+model TeamAdmin {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([teamId, userId])
+  @@index([userId])
 }
 
 model ProjectGroup {
@@ -129,9 +151,12 @@ model Project {
   id             String   @id @default(cuid())
   projectGroupId String
   name           String
+  hidden         Boolean  @default(false)
+  hiddenBy       String?
   createdAt      DateTime @default(now())
 
   projectGroup    ProjectGroup     @relation(fields: [projectGroupId], references: [id])
+  hiddenByUser    User?            @relation("ProjectHiddenBy", fields: [hiddenBy], references: [id])
   gitRepo         ProjectGitRepo?
   members         Member[]
   docTypes        DocType[]
@@ -141,6 +166,8 @@ model Project {
   messages        Message[]
   templateFiles   TemplateFile[]
   trackingCodes   TrackingCode[]
+  folders         Folder[]
+  accessOverrides DocAccessOverride[]
 
   @@index([projectGroupId])
 }
@@ -190,9 +217,10 @@ model DocType {
   projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
   project      Project?      @relation(fields: [projectId], references: [id])
 
-  statuses    DocStatus[]
-  transitions DocStatusTransition[]
-  documents   Document[]
+  statuses        DocStatus[]
+  transitions     DocStatusTransition[]
+  documents       Document[]
+  accessOverrides DocAccessOverride[]
 
   @@index([teamId])
   @@index([projectGroupId])
@@ -204,6 +232,7 @@ model DocStatus {
   docTypeId  String
   code       String
   label      String
+  guideline  String?
   isTerminal Boolean @default(false)
 
   docType         DocType               @relation(fields: [docTypeId], references: [id])
@@ -234,6 +263,7 @@ model Document {
   id           String   @id @default(cuid())
   projectId    String
   docTypeId    String
+  folderId     String?
   trackingCode String   @unique // "XX-XXXXXXXX"
   title        String
   body         String
@@ -244,18 +274,22 @@ model Document {
 
   project Project   @relation(fields: [projectId], references: [id])
   docType DocType   @relation(fields: [docTypeId], references: [id])
+  folder  Folder?   @relation(fields: [folderId], references: [id])
   status  DocStatus @relation(fields: [statusId], references: [id])
   creator User      @relation("DocumentCreatedBy", fields: [createdBy], references: [id])
 
-  revisions DocumentRevision[]
-  linksOut  DocumentLink[]           @relation("DocumentLinkSource")
-  linksIn   DocumentLink[]           @relation("DocumentLinkTarget")
-  questions Question[]
-  comments  Comment[]                @relation("DocumentComments")
+  revisions          DocumentRevision[]
+  linksOut           DocumentLink[]       @relation("DocumentLinkSource")
+  linksIn            DocumentLink[]       @relation("DocumentLinkTarget")
+  questions          Question[]
+  questionReferences QuestionReference[]
+  comments           Comment[]            @relation("DocumentComments")
+  accessOverrides    DocAccessOverride[]
 
   @@index([projectId])
   @@index([docTypeId])
   @@index([statusId])
+  @@index([folderId])
 }
 
 model DocumentRevision {
@@ -265,7 +299,7 @@ model DocumentRevision {
   editedBy   String
   editedAt   DateTime @default(now())
 
-  document Document @relation(fields: [documentId], references: [id])
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   editor   User     @relation("RevisionEditedBy", fields: [editedBy], references: [id])
 
   @@index([documentId])
@@ -279,8 +313,8 @@ model DocumentLink {
   toTrackingCode String
   linkType       String?
 
-  fromDocument Document @relation("DocumentLinkSource", fields: [fromDocumentId], references: [id])
-  toDocument   Document @relation("DocumentLinkTarget", fields: [toTrackingCode], references: [trackingCode])
+  fromDocument Document @relation("DocumentLinkSource", fields: [fromDocumentId], references: [id], onDelete: Cascade)
+  toDocument   Document @relation("DocumentLinkTarget", fields: [toTrackingCode], references: [trackingCode], onDelete: Cascade)
 
   @@index([fromDocumentId])
   @@index([toTrackingCode])
@@ -294,13 +328,29 @@ model Question {
   trackingCode String   @unique // "QU-XXXXXXXX"
   ordinal      Int
   text         String
-  status       String   @default("open") // open | answered
+  askedBy      String
+  status       String   @default("open") // open | pending | resolved
   createdAt    DateTime @default(now())
 
-  document Document @relation(fields: [documentId], references: [id])
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  asker    User     @relation("QuestionAskedBy", fields: [askedBy], references: [id])
   answer   Answer?
+  refs     QuestionReference[]
 
   @@index([documentId])
+}
+
+model QuestionReference {
+  id           String   @id @default(cuid())
+  questionId   String
+  trackingCode String
+  createdAt    DateTime @default(now())
+
+  question           Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  referencedDocument Document @relation(fields: [trackingCode], references: [trackingCode], onDelete: Cascade)
+
+  @@unique([questionId, trackingCode])
+  @@index([trackingCode])
 }
 
 model Answer {
@@ -326,7 +376,7 @@ model Comment {
   resolvedAt   DateTime?
 
   project  Project  @relation(fields: [projectId], references: [id])
-  document Document @relation("DocumentComments", fields: [trackingCode], references: [trackingCode])
+  document Document @relation("DocumentComments", fields: [trackingCode], references: [trackingCode], onDelete: Cascade)
   author   User     @relation("CommentAuthor", fields: [authorId], references: [id])
 
   @@index([projectId])
@@ -368,11 +418,12 @@ model PushHookQueueEntry {
 // ---------------------------------------------------------------- 인스턴스 메시징
 
 model Message {
-  id        String   @id @default(cuid())
-  projectId String
-  authorId  String? // null이면 시스템 브로드캐스트
-  body      String
-  createdAt DateTime @default(now())
+  id          String    @id @default(cuid())
+  projectId   String
+  authorId    String? // null이면 시스템 브로드캐스트
+  body        String
+  deliveredAt DateTime?
+  createdAt   DateTime  @default(now())
 
   project Project @relation(fields: [projectId], references: [id])
   author  User?   @relation("MessageAuthor", fields: [authorId], references: [id])
@@ -403,4 +454,49 @@ model TemplateFile {
   @@index([teamId])
   @@index([projectGroupId])
   @@index([projectId])
+}
+
+// ---------------------------------------------------------------- 문서 정리용 폴더 (DB 전용, AI는 모름)
+model Folder {
+  id             String   @id @default(cuid())
+  projectId      String
+  parentFolderId String?
+  name           String
+  createdBy      String
+  createdAt      DateTime @default(now())
+
+  project         Project             @relation(fields: [projectId], references: [id])
+  parentFolder    Folder?             @relation("FolderChildren", fields: [parentFolderId], references: [id])
+  childFolders    Folder[]            @relation("FolderChildren")
+  documents       Document[]
+  creator         User                @relation(fields: [createdBy], references: [id])
+  accessOverrides DocAccessOverride[]
+
+  @@index([projectId, parentFolderId])
+}
+
+// ---------------------------------------------------------------- 협업자별 세부 접근 권한
+model DocAccessOverride {
+  id         String   @id @default(cuid())
+  projectId  String
+  userId     String
+  docTypeId  String?
+  documentId String?
+  folderId   String?
+  canRead    Boolean?
+  canWrite   Boolean?
+  canDelete  Boolean?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  project  Project   @relation(fields: [projectId], references: [id])
+  user     User      @relation(fields: [userId], references: [id])
+  docType  DocType?  @relation(fields: [docTypeId], references: [id], onDelete: Cascade)
+  document Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  folder   Folder?   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, userId])
+  @@index([docTypeId])
+  @@index([documentId])
+  @@index([folderId])
 }

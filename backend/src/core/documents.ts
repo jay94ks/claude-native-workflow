@@ -13,6 +13,7 @@ export interface DocumentDetail {
   body: string;
   statusId: string;
   statusCode: string;
+  createdBy: string;
 }
 
 function toSearchable(doc: {
@@ -23,6 +24,7 @@ function toSearchable(doc: {
   title: string;
   body: string;
   statusId: string;
+  createdBy: string;
   createdAt: Date;
   updatedAt: Date;
 }, statusCode: string): SearchableDocument {
@@ -35,6 +37,7 @@ function toSearchable(doc: {
     body: doc.body,
     statusId: doc.statusId,
     statusCode,
+    createdBy: doc.createdBy,
     createdAt: doc.createdAt.getTime(),
     updatedAt: doc.updatedAt.getTime(),
   };
@@ -101,6 +104,7 @@ export async function createDocument(input: CreateDocumentInput): Promise<Docume
     body: row.body,
     statusId: row.statusId,
     statusCode: status.code,
+    createdBy: row.createdBy,
   };
 }
 
@@ -177,6 +181,7 @@ export async function saveDocumentBody(
     body: row.body,
     statusId: row.statusId,
     statusCode: status.code,
+    createdBy: row.createdBy,
   };
 }
 
@@ -206,6 +211,7 @@ export async function transitionDocumentStatus(trackingCode: string, toStatusCod
     body: row.body,
     statusId: row.statusId,
     statusCode: target.code,
+    createdBy: row.createdBy,
   };
 }
 
@@ -249,4 +255,22 @@ export async function listBacklinks(trackingCode: string): Promise<{ trackingCod
     trackingCode: l.fromDocument.trackingCode,
     title: l.fromDocument.title,
   }));
+}
+
+/** 문서 삭제 - 리비전/링크(양쪽)/코멘트/질문+답변/질의 참고 태깅까지
+ * 스키마의 onDelete: Cascade로 한 번에 정리된다. 검색 인덱스에서도
+ * 제거하고 실시간 "delete" 이벤트를 발행한다. */
+export async function deleteDocument(trackingCode: string): Promise<void> {
+  const db = getDb();
+  const existing = await db.document.findUnique({ where: { trackingCode } });
+  if (!existing) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  await db.document.delete({ where: { trackingCode } });
+  await indexSyncDelete(trackingCode);
+  await realtimePublish(projectChangesTopic(existing.projectId), {
+    entity: "document",
+    action: "delete",
+    id: existing.id,
+    trackingCode,
+    at: new Date().toISOString(),
+  } satisfies ChangeEvent);
 }

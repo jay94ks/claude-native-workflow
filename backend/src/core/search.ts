@@ -34,6 +34,7 @@ export interface SearchableDocument {
   body: string;
   statusId: string;
   statusCode: string;
+  createdBy: string;
   createdAt: number; // epoch ms - Meilisearch 정렬/필터용
   updatedAt: number;
 }

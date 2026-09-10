@@ -174,3 +174,79 @@ export async function logout(refreshTokenValue: string): Promise<void> {
     data: { revokedAt: new Date() },
   });
 }
+
+// ---------------------------------------------------------------- 프로필
+
+export interface MeProfile {
+  id: string;
+  username: string;
+  email: string | null;
+  phone: string | null;
+  emailVisible: boolean;
+  phoneVisible: boolean;
+}
+
+export async function getMe(userId: string): Promise<MeProfile> {
+  const db = getDb();
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AuthError(`사용자를 찾을 수 없습니다: ${userId}`);
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    phone: user.phone,
+    emailVisible: user.emailVisible,
+    phoneVisible: user.phoneVisible,
+  };
+}
+
+export interface UpdateMeInput {
+  email?: string;
+  phone?: string;
+  emailVisible?: boolean;
+  phoneVisible?: boolean;
+}
+
+export async function updateMe(userId: string, input: UpdateMeInput): Promise<MeProfile> {
+  const db = getDb();
+  const user = await db.user.update({
+    where: { id: userId },
+    data: {
+      email: input.email !== undefined ? input.email.trim() || null : undefined,
+      phone: input.phone !== undefined ? input.phone.trim() || null : undefined,
+      emailVisible: input.emailVisible,
+      phoneVisible: input.phoneVisible,
+    },
+  });
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    phone: user.phone,
+    emailVisible: user.emailVisible,
+    phoneVisible: user.phoneVisible,
+  };
+}
+
+export interface PublicProfile {
+  id: string;
+  username: string;
+  email: string | null;
+  phone: string | null;
+}
+
+/** 본인이면 email/phone 전체 공개, 아니면 emailVisible/phoneVisible에
+ * 따라 가린다 - username/id는 이미 CLI 로그인 아이디로도 쓰이는 값이라
+ * 민감정보로 취급하지 않고 항상 공개. */
+export async function getPublicProfile(viewerId: string, targetUserId: string): Promise<PublicProfile> {
+  const db = getDb();
+  const user = await db.user.findUnique({ where: { id: targetUserId } });
+  if (!user) throw new AuthError(`사용자를 찾을 수 없습니다: ${targetUserId}`);
+  const isSelf = viewerId === targetUserId;
+  return {
+    id: user.id,
+    username: user.username,
+    email: isSelf || user.emailVisible ? user.email : null,
+    phone: isSelf || user.phoneVisible ? user.phone : null,
+  };
+}

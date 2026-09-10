@@ -2,6 +2,8 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
+import UserRef from "./UserRef.vue";
+import TrackingCodeText from "./TrackingCodeText.vue";
 
 const props = defineProps<{ projectId: string; trackingCode: string }>();
 
@@ -79,13 +81,14 @@ onUnmounted(() => disconnect?.());
 <template>
   <section class="panel">
     <h2>코멘트</h2>
+    <p class="hint">설계자들끼리만 공유되는 채널 - AI(CLI/MCP)에는 노출되지 않는다.</p>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="loading" class="muted">불러오는 중...</p>
     <ul v-else class="comments">
       <li v-for="c in comments" :key="c.id">
         <div class="c-row">
-          <span class="author">{{ c.authorId }}</span>
-          <span class="body">{{ c.body }}</span>
+          <span class="author"><UserRef :user-id="c.authorId" /></span>
+          <span class="body"><TrackingCodeText :text="c.body" /></span>
           <span class="at">{{ new Date(c.createdAt).toLocaleString() }}</span>
         </div>
         <div class="c-actions">
@@ -108,6 +111,11 @@ onUnmounted(() => disconnect?.());
 }
 h2 {
   font-size: 15px;
+  margin: 0 0 4px;
+}
+.hint {
+  font-size: 12px;
+  color: #999;
   margin: 0 0 10px;
 }
 .comments {

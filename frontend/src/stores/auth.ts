@@ -6,9 +6,19 @@ interface LoginResponse {
   refresh_token: string;
 }
 
+export interface Me {
+  id: string;
+  username: string;
+  email: string | null;
+  phone: string | null;
+  emailVisible: boolean;
+  phoneVisible: boolean;
+}
+
 export const useAuthStore = defineStore("auth", {
   state: () => ({
     loggedIn: isLoggedIn(),
+    me: null as Me | null,
   }),
   actions: {
     async login(usernameOrEmail: string, password: string): Promise<void> {
@@ -18,6 +28,7 @@ export const useAuthStore = defineStore("auth", {
       });
       setTokens(res.access_token, res.refresh_token);
       this.loggedIn = true;
+      await this.loadMe();
     },
     async register(username: string, password: string, email?: string): Promise<void> {
       await apiCall("/auth/register", {
@@ -25,9 +36,19 @@ export const useAuthStore = defineStore("auth", {
         body: JSON.stringify({ username, password, email }),
       });
     },
+    // 실패해도 조용히 무시 - teamsEnabled 조회 실패 시 기본값을 유지하는
+    // 기존 관례와 동일(내 정보가 없어도 나머지 화면은 정상 동작해야 함).
+    async loadMe(): Promise<void> {
+      try {
+        this.me = await apiCall<Me>("/auth/me");
+      } catch {
+        // 무시
+      }
+    },
     logout(): void {
       clearTokens();
       this.loggedIn = false;
+      this.me = null;
     },
   },
 });

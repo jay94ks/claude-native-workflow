@@ -4,13 +4,16 @@ import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import { apiCall } from "../api/client";
 import DocumentExplorer from "./DocumentExplorer.vue";
+import DocumentPreviewDialog from "./DocumentPreviewDialog.vue";
 
 const router = useRouter();
 const route = useRoute();
 const auth = useAuthStore();
 const teamsEnabled = ref(true);
 
-const activeProjectId = computed(() => (typeof route.params.id === "string" ? route.params.id : null));
+const activeProjectId = computed(() =>
+  route.meta.projectContext && typeof route.params.id === "string" ? route.params.id : null,
+);
 
 onMounted(async () => {
   try {
@@ -20,6 +23,7 @@ onMounted(async () => {
     // 조회 실패해도 기본값(true)으로 둔다 - 네비게이션이 아예 안 보이는
     // 것보다 안전한 쪽으로.
   }
+  if (!auth.me) await auth.loadMe();
 });
 
 function handleLogout() {
@@ -41,11 +45,13 @@ function handleLogout() {
         <router-link to="/groups">프로젝트 그룹</router-link>
         <router-link to="/projects">프로젝트</router-link>
       </nav>
+      <router-link v-if="auth.me" :to="`/users/${auth.me.id}`" class="me-link">내 정보</router-link>
       <button class="logout" @click="handleLogout">로그아웃</button>
     </aside>
     <main class="content">
       <slot />
     </main>
+    <DocumentPreviewDialog />
   </div>
 </template>
 
@@ -97,6 +103,19 @@ nav a.router-link-active {
   margin-bottom: 12px;
 }
 .back-link:hover {
+  background: #2e2f4d;
+  color: #fff;
+}
+.me-link {
+  display: block;
+  color: #c7c9e8;
+  text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.me-link:hover {
   background: #2e2f4d;
   color: #fff;
 }

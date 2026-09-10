@@ -2,6 +2,8 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
+import UserRef from "./UserRef.vue";
+import TrackingCodeText from "./TrackingCodeText.vue";
 
 const props = defineProps<{ projectId: string; trackingCode: string }>();
 const emit = defineEmits<{ statusTransitioned: [statusCode: string] }>();
@@ -15,7 +17,9 @@ interface QuestionItem {
   trackingCode: string;
   ordinal: number;
   text: string;
-  status: string;
+  askedBy: string;
+  status: string; // open | pending | resolved
+  refs: string[];
   answer: AnswerDetail | null;
 }
 
@@ -24,11 +28,15 @@ const loading = ref(true);
 const error = ref("");
 
 const newQuestion = ref("");
+const newRefs = ref("");
 const asking = ref(false);
 
 const answerDrafts = ref<Record<string, string>>({});
 const answering = ref<Record<string, boolean>>({});
+const acking = ref<Record<string, boolean>>({});
 const transitionNotice = ref("");
+
+const STATUS_LABEL: Record<string, string> = { open: "미답변", pending: "확인 대기", resolved: "처리 완료" };
 
 let disconnect: (() => void) | null = null;
 
@@ -51,9 +59,13 @@ async function askQuestion() {
   try {
     await apiCall(`/documents/${props.trackingCode}/questions`, {
       method: "POST",
-      body: JSON.stringify({ text: newQuestion.value.trim() }),
+      body: JSON.stringify({
+        text: newQuestion.value.trim(),
+        refs: newRefs.value ? newRefs.value.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+      }),
     });
     newQuestion.value = "";
+    newRefs.value = "";
     await load();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "질문 등록에 실패했습니다";
@@ -86,6 +98,19 @@ async function answer(q: QuestionItem) {
   }
 }
 
+async function ack(q: QuestionItem) {
+  acking.value = { ...acking.value, [q.trackingCode]: true };
+  error.value = "";
+  try {
+    await apiCall(`/questions/${q.trackingCode}/ack`, { method: "POST" });
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "확인 처리에 실패했습니다";
+  } finally {
+    acking.value = { ...acking.value, [q.trackingCode]: false };
+  }
+}
+
 onMounted(async () => {
   await load();
   disconnect = await connectProjectRealtime(props.projectId, {
@@ -101,6 +126,7 @@ onUnmounted(() => disconnect?.());
 <template>
   <section class="panel">
     <h2>질의/답변</h2>
+    <p class="hint">질의는 AI(클로드)가 등록하고, 설계자가 답변한다.</p>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="transitionNotice" class="notice">{{ transitionNotice }}</p>
     <p v-if="loading" class="muted">불러오는 중...</p>
@@ -108,12 +134,22 @@ onUnmounted(() => disconnect?.());
       <li v-for="q in questions" :key="q.trackingCode">
         <div class="q-row">
           <code>{{ q.trackingCode }}</code>
-          <span class="status" :class="q.status">{{ q.status }}</span>
-          <span class="text">{{ q.text }}</span>
+          <span class="status" :class="q.status">{{ STATUS_LABEL[q.status] ?? q.status }}</span>
+          <span class="text"><TrackingCodeText :text="q.text" /></span>
+        </div>
+        <div class="q-meta">
+          질의자 <UserRef :user-id="q.askedBy" />
+          <template v-if="q.refs.length > 0">
+            · 참고:
+            <TrackingCodeText v-for="ref in q.refs" :key="ref" :text="ref" class="ref-chip" />
+          </template>
         </div>
         <div v-if="q.answer" class="answer">
-          <span class="body">{{ q.answer.body }}</span>
-          <span class="meta">{{ q.answer.answeredBy }} · {{ new Date(q.answer.answeredAt).toLocaleString() }}</span>
+          <span class="body"><TrackingCodeText :text="q.answer.body" /></span>
+          <span class="meta"><UserRef :user-id="q.answer.answeredBy" /> · {{ new Date(q.answer.answeredAt).toLocaleString() }}</span>
+          <button v-if="q.status === 'pending'" class="ack-btn" :disabled="acking[q.trackingCode]" @click="ack(q)">
+            AI 확인 완료로 표시
+          </button>
         </div>
         <form v-else class="answer-row" @submit.prevent="answer(q)">
           <input v-model="answerDrafts[q.trackingCode]" type="text" placeholder="답변 입력..." />
@@ -124,6 +160,7 @@ onUnmounted(() => disconnect?.());
     </ul>
     <form class="ask-row" @submit.prevent="askQuestion">
       <input v-model="newQuestion" type="text" placeholder="새 질문 등록..." />
+      <input v-model="newRefs" type="text" placeholder="참고 문서 코드(쉼표 구분, 선택)" class="refs-input" />
       <button type="submit" :disabled="asking">질문 등록</button>
     </form>
   </section>
@@ -135,6 +172,11 @@ onUnmounted(() => disconnect?.());
 }
 h2 {
   font-size: 15px;
+  margin: 0 0 4px;
+}
+.hint {
+  font-size: 12px;
+  color: #999;
   margin: 0 0 10px;
 }
 .questions {
@@ -174,9 +216,13 @@ h2 {
   color: #555;
   flex-shrink: 0;
 }
-.status.answered {
+.status.resolved {
   background: #e3f6ec;
   color: #1f9254;
+}
+.status.pending {
+  background: #e4e9fb;
+  color: #3454d1;
 }
 .status.open {
   background: #fdf0e3;
@@ -184,6 +230,18 @@ h2 {
 }
 .text {
   flex: 1;
+}
+.q-meta {
+  font-size: 11px;
+  color: #999;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ref-chip {
+  margin-right: 2px;
 }
 .answer {
   margin-top: 6px;
@@ -194,10 +252,24 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  align-items: flex-start;
 }
 .answer .meta {
   color: #999;
   font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ack-btn {
+  background: #fff;
+  border: 1px solid #3454d1;
+  color: #3454d1;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 2px;
 }
 .answer-row,
 .ask-row {
@@ -214,6 +286,9 @@ h2 {
   padding: 8px 10px;
   border: 1px solid #d8dae0;
   border-radius: 6px;
+}
+.refs-input {
+  flex: 1;
 }
 .answer-row button,
 .ask-row button {

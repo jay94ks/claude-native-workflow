@@ -1089,6 +1089,84 @@ REST 라우트, CLI 명령어 이름, MCP 도구 이름, 프런트엔드 라우�
 브라우저/CLI/MCP 재기동 검증은 다음 세션에서 이어서 진행 예정 - 컴파일
 레벨 검증까지 이 라운드에서 완료).
 
+## 설계자 프로필 + 프로젝트 숨김/팀장 + 문서 세부 권한/상태/메시지/QA 개편 - 완료 (2026-09-11)
+
+설계자가 한 번에 11개 묶음(A~K)으로 요청한 대규모 라운드 - 스키마
+(User.phone/emailVisible/phoneVisible, Team.admins, TeamAdmin,
+Project.hidden/hiddenBy/folders/accessOverrides, DocStatus.guideline,
+Document.folderId/questionReferences/accessOverrides, Question.askedBy/
+refs, Message.deliveredAt, Folder, DocAccessOverride 신규/확장) →
+core(permissions.ts/folders.ts/teamAdmins.ts/activity.ts 신규,
+docTypes.ts/questions.ts/messages.ts/auth.ts/projects.ts/documents.ts
+확장) → API → CLI/MCP → 프런트엔드(신규 컴포넌트 9개, 기존 뷰 다수
+개편) 전 계층에 걸친 변경.
+
+**핵심 내용**(SKILL.md/README.md 본문이 상세 - 여기서는 검증 중 발견한
+버그와 설계 결정만 기록):
+
+- A) `[userId]` 참조 + 프로필 화면 + 활동 이력, B) 프로젝트 숨김 +
+  팀장, C) 문서/타입/프로젝트 3단계 세부 권한 + `notices` 프롤로그,
+  D+I) 상태 콤보박스 + 표준 상태 코드 6종 고정(`draft`로 못 돌아가는
+  절대 규칙), E+K) 메시지 대기/기록 분리 + 장애 복구용 `message
+  recent`, F) 질의/답변 3단계 재정의(`open→pending→resolved`) + 참고
+  문서 태깅, G) 코멘트 AI 격리(CLI/MCP 완전 제거, 웹은 유지), H) 읽기/
+  편집 모드 분리 + 다이얼로그 미리보기, J) 문서 정리용 폴더(AI 완전
+  비가시).
+
+**구현 후 실측 검증 중 발견하고 그 자리에서 고친 버그 5건** (전부
+스크래치 SQLite+실제 CLI/MCP/브라우저 왕복으로 재현 후 수정·재검증):
+
+1. **`DocAccessOverride`의 scope FK가 Prisma 기본 `SetNull`로 남아있던
+   문제** - `documentId`/`docTypeId`/`folderId`에 `onDelete`를 명시하지
+   않아, 문서를 삭제하면 그 문서를 겨냥한 오버라이드 행이 삭제되는 게
+   아니라 `documentId`만 `null`로 바뀌어 **"문서 하나에 준 delete=true
+   오버라이드"가 조용히 "프로젝트 전체에 대한 delete=true 오버라이드"로
+   승격**되는 심각한 권한 확대 버그였다(실측: 문서별 삭제 허용을 준
+   viewer 계정이 그 문서를 지운 뒤, 전혀 다른 문서도 삭제할 수 있게
+   됨). 세 FK 모두 `onDelete: Cascade`로 수정(3드라이버 스키마 전부) -
+   대상이 없어진 오버라이드는 행 자체가 삭제되는 게 맞는 의미.
+2. **`core/folders.ts`의 폴더 쓰기 권한 오버라이드를 실제로 설정할
+   API가 없었음** - `resolveFolderWritePermission()`은 처음부터
+   `DocAccessOverride.folderId`를 읽도록 설계됐지만, 그 값을 쓰는
+   라우트(`PUT /api/folders/:folderId/access`)가 애초에 안 만들어져
+   있어 "상위 폴더 쓰기 권한 없으면 하위 폴더 생성 불가" 요구사항을
+   검증할 방법 자체가 없었다. 새 라우트를 추가(owner 전용, `core/
+   folders.ts`에 `getFolderById()` 신규)해 실측까지 완료.
+3. **`core/questions.ts`의 `listPendingQuestions`/`answerQuestion`/
+   `acknowledgeQuestion`이 `refs: []`를 하드코딩** - `QuestionReference`
+   조인 테이블에서 실제로 조회하는 곳은 `listQuestions()`(문서별 전체
+   스레드) 하나뿐이라, `docs pending`/답변/ack 응답에는 태깅한 참고
+   문서가 항상 빈 배열로 나왔다. 세 함수 모두 실제 join 조회로 수정.
+4. **프런트 라우트 `/users/:id`와 `/projects/:id`가 파라미터 이름
+   `id`를 공유** - `AppLayout.vue`가 `route.params.id`의 존재만으로
+   "프로젝트 컨텍스트"를 판단해서, 프로필 화면(`/users/:id`)을 열 때마다
+   그 userId를 프로젝트 id로 오인해 `DocumentExplorer`가 깨진 API
+   호출("최소 viewer 권한 필요" 에러)을 반복했다 - 모든 프로필 화면에서
+   재현됨. `/projects/:id` 라우트에 `meta: { projectContext: true }`를
+   달고 `AppLayout.vue`가 그 메타를 같이 확인하도록 수정.
+5. **`saveDocumentBody()`/`transitionDocumentStatus()`/`createDocument()`가
+   `DocumentDetail` 반환값에 `createdBy`를 안 담음** - 문서를 처음 열
+   때(GET, 검색 인덱스 경유라 `createdBy` 포함)는 작성자 링크가 정상
+   이지만, 저장/상태전이 후 프런트가 그 응답으로 로컬 상태를 갱신하면
+   작성자 링크가 `/users/undefined`로 깨졌다(새로고침하면 다시 정상 -
+   PUT 응답만의 문제였음). `DocumentDetail`에 `createdBy` 필드를
+   추가하고 세 함수 모두 채우도록 수정.
+
+추가로 `AccessControlManager.vue`의 오버라이드 목록 라벨 로직이
+`folderId`를 확인하지 않아 폴더 스코프 오버라이드를 "공통"(프로젝트
+전체)으로 잘못 표시하던 문제도 발견해 수정(관리자가 실제보다 넓은
+제한을 건 것으로 오인할 수 있는 UI 버그).
+
+**검증**: SQLite 스크래치 DB + 실제 백엔드 프로세스로 A~K 전부 CLI
+왕복 실측(계정 2개로 owner/editor 역할 분리, 팀장 등록, 숨김 프로젝트
+가시성, 세부 권한 차단·허용, 폴더 CRUD+권한+AI 비가시성, 메시지
+대기/기록/최근조회, 질의 3단계+ack), MCP stdio로 도구 목록(85개,
+comment_*/folder_* 없음 확인) + notices 프롤로그 별도 블록 확인,
+브라우저로 UserProfileView/DocumentEditorView(읽기·편집·XSS 새니타이즈·
+상태콤보)/DocumentsView+FolderTree/MessagesView/AccessControlManager
+실제 클릭 검증. `npx tsc --noEmit`(backend)/`npm run build`
+(frontend, `vue-tsc -b` 포함) 클린.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

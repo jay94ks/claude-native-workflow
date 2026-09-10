@@ -1,17 +1,28 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
+import MarkdownBody from "../components/MarkdownBody.vue";
+import UserRef from "../components/UserRef.vue";
 import QAPanel from "../components/QAPanel.vue";
 import CommentsPanel from "../components/CommentsPanel.vue";
 
 const props = defineProps<{ id: string; trackingCode: string }>();
+const router = useRouter();
 
 interface DocumentDetail {
   trackingCode: string;
   title: string;
   body: string;
   statusCode: string;
+  createdBy: string;
+  notices?: string[];
+}
+interface NextStatus {
+  code: string;
+  label: string;
+  guideline: string | null;
 }
 
 const doc = ref<DocumentDetail | null>(null);
@@ -20,9 +31,20 @@ const loading = ref(true);
 const error = ref("");
 const saving = ref(false);
 const saveMessage = ref("");
+const mode = ref<"read" | "edit">("read");
 
+const nextStatuses = ref<NextStatus[]>([]);
 const toStatusCode = ref("");
 const transitionError = ref("");
+
+const deleting = ref(false);
+const deleteError = ref("");
+
+const messageDraft = ref("");
+const messageOpen = ref(false);
+const messageSending = ref(false);
+const messageError = ref("");
+const messageSent = ref(false);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -44,12 +66,22 @@ async function fetchDocument(retryOn404: boolean): Promise<DocumentDetail> {
   }
 }
 
+async function loadNextStatuses() {
+  try {
+    nextStatuses.value = await apiCall<NextStatus[]>(`/documents/${props.trackingCode}/next-statuses`);
+  } catch {
+    nextStatuses.value = [];
+  }
+}
+
 async function load() {
   loading.value = true;
   error.value = "";
   try {
     doc.value = await fetchDocument(true);
     body.value = doc.value.body;
+    mode.value = "read";
+    await loadNextStatuses();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "문서를 불러오지 못했습니다";
   } finally {
@@ -65,6 +97,19 @@ async function load() {
 // 잠깐 다시 보일 수 있음 - fetchDocument의 재시도 패턴과 같은 원인).
 function refreshStatus(statusCode: string) {
   if (doc.value) doc.value.statusCode = statusCode;
+  loadNextStatuses();
+}
+
+function startEdit() {
+  if (!doc.value) return;
+  body.value = doc.value.body;
+  saveMessage.value = "";
+  mode.value = "edit";
+}
+
+function cancelEdit() {
+  if (doc.value) body.value = doc.value.body;
+  mode.value = "read";
 }
 
 async function save() {
@@ -77,6 +122,7 @@ async function save() {
       body: JSON.stringify({ body: body.value }),
     });
     saveMessage.value = "저장됨";
+    mode.value = "read";
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "저장에 실패했습니다";
   } finally {
@@ -85,18 +131,53 @@ async function save() {
 }
 
 async function transition() {
-  if (!toStatusCode.value.trim()) return;
+  if (!toStatusCode.value) return;
   transitionError.value = "";
   try {
     doc.value = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}/transition`, {
       method: "POST",
-      body: JSON.stringify({ toStatusCode: toStatusCode.value.trim() }),
+      body: JSON.stringify({ toStatusCode: toStatusCode.value }),
     });
     toStatusCode.value = "";
+    await loadNextStatuses();
   } catch (err) {
     transitionError.value = err instanceof ApiError ? err.message : "상태 전이에 실패했습니다";
   }
 }
+
+async function remove() {
+  deleting.value = true;
+  deleteError.value = "";
+  try {
+    await apiCall(`/documents/${props.trackingCode}`, { method: "DELETE" });
+    router.push(`/projects/${props.id}/documents`);
+  } catch (err) {
+    deleteError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
+    deleting.value = false;
+  }
+}
+
+async function sendInstructionMessage() {
+  if (!messageDraft.value.trim()) return;
+  messageSending.value = true;
+  messageError.value = "";
+  try {
+    await apiCall(`/projects/${props.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ body: `[${props.trackingCode}] ${messageDraft.value.trim()}` }),
+    });
+    messageDraft.value = "";
+    messageOpen.value = false;
+    messageSent.value = true;
+    setTimeout(() => (messageSent.value = false), 3000);
+  } catch (err) {
+    messageError.value = err instanceof ApiError ? err.message : "전송에 실패했습니다";
+  } finally {
+    messageSending.value = false;
+  }
+}
+
+const statusOptionLabel = computed(() => (s: NextStatus) => (s.guideline ? `${s.label} — ${s.guideline}` : s.label));
 
 onMounted(load);
 </script>
@@ -109,22 +190,58 @@ onMounted(load);
       <div>
         <code>{{ doc.trackingCode }}</code>
         <h1>{{ doc.title }}</h1>
+        <div class="meta">작성자 <UserRef :user-id="doc.createdBy" /></div>
       </div>
       <div class="actions">
         <span class="status">{{ doc.statusCode }}</span>
-        <button :disabled="saving" @click="save">{{ saving ? "저장 중..." : "저장" }}</button>
       </div>
     </div>
+
+    <div v-if="doc.notices && doc.notices.length > 0" class="notice-banner">
+      <p v-for="(n, i) in doc.notices" :key="i">⚠ {{ n }}</p>
+    </div>
+
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="saveMessage" class="saved">{{ saveMessage }}</p>
+    <p v-if="messageSent" class="saved">메시지를 보냈습니다.</p>
 
-    <MonacoEditor v-model="body" language="markdown" class="editor" />
-
-    <div class="transition-row">
-      <input v-model="toStatusCode" type="text" placeholder="전이할 상태 코드(예: active)" />
-      <button @click="transition">상태 전이</button>
+    <div class="toolbar">
+      <select v-model="toStatusCode">
+        <option value="">상태 전이...</option>
+        <option v-for="s in nextStatuses" :key="s.code" :value="s.code">{{ statusOptionLabel(s) }}</option>
+      </select>
+      <button class="secondary" :disabled="!toStatusCode" @click="transition">전이</button>
       <span v-if="transitionError" class="error">{{ transitionError }}</span>
+
+      <span class="spacer"></span>
+
+      <button v-if="mode === 'read'" class="secondary" @click="messageOpen = !messageOpen">메시지로 지시</button>
+      <button v-if="mode === 'read'" class="secondary" @click="startEdit">편집</button>
+      <button v-if="mode === 'read'" class="danger" :disabled="deleting" @click="remove">
+        {{ deleting ? "삭제 중..." : "삭제" }}
+      </button>
     </div>
+    <p v-if="deleteError" class="error">{{ deleteError }}</p>
+
+    <div v-if="messageOpen" class="message-compose">
+      <textarea v-model="messageDraft" rows="2" :placeholder="`[${trackingCode}] 지시할 내용을 입력...`"></textarea>
+      <div class="message-actions">
+        <button :disabled="messageSending" @click="sendInstructionMessage">전송</button>
+        <button type="button" class="secondary" @click="messageOpen = false">취소</button>
+      </div>
+      <p v-if="messageError" class="error">{{ messageError }}</p>
+    </div>
+
+    <template v-if="mode === 'read'">
+      <MarkdownBody :body="doc.body" class="body-view" />
+    </template>
+    <template v-else>
+      <MonacoEditor v-model="body" language="markdown" class="editor" />
+      <div class="edit-actions">
+        <button :disabled="saving" @click="save">{{ saving ? "저장 중..." : "저장" }}</button>
+        <button type="button" class="secondary" @click="cancelEdit">취소</button>
+      </div>
+    </template>
 
     <QAPanel :project-id="id" :tracking-code="trackingCode" class="qa" @status-transitioned="refreshStatus" />
     <CommentsPanel :project-id="id" :tracking-code="trackingCode" />
@@ -148,6 +265,14 @@ h1 {
   font-size: 19px;
   margin: 6px 0 0;
 }
+.meta {
+  font-size: 12px;
+  color: #888;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 .actions {
   display: flex;
   align-items: center;
@@ -160,6 +285,53 @@ h1 {
   padding: 4px 10px;
   border-radius: 999px;
 }
+.notice-banner {
+  background: #fbf3d9;
+  border: 1px solid #ecd98a;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+.notice-banner p {
+  margin: 2px 0;
+  font-size: 13px;
+  color: #7a5c00;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+.toolbar select {
+  padding: 7px 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  max-width: 320px;
+}
+.spacer {
+  flex: 1;
+}
+.message-compose {
+  background: #f8f9fb;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+.message-compose textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-family: inherit;
+  resize: vertical;
+}
+.message-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
 button {
   background: #3454d1;
   color: #fff;
@@ -167,23 +339,36 @@ button {
   padding: 8px 16px;
   border-radius: 6px;
   font-weight: 600;
+  cursor: pointer;
+}
+button.secondary {
+  background: #fff;
+  color: #333;
+  border: 1px solid #d8dae0;
+  font-weight: 500;
+}
+button.danger {
+  background: #fff;
+  color: #d1344b;
+  border: 1px solid #f0c7d0;
+  font-weight: 500;
 }
 button:disabled {
   opacity: 0.6;
+  cursor: default;
+}
+.body-view {
+  margin: 16px 0;
+  min-height: 200px;
 }
 .editor {
   height: 500px;
   margin: 16px 0;
 }
-.transition-row {
+.edit-actions {
   display: flex;
   gap: 8px;
-  align-items: center;
-}
-.transition-row input {
-  padding: 8px 10px;
-  border: 1px solid #d8dae0;
-  border-radius: 6px;
+  margin-bottom: 16px;
 }
 .qa {
   margin-top: 28px;

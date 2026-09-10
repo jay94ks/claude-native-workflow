@@ -4,14 +4,28 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { connectDb } from "../core/db.js";
-import { register, login, refresh, logout, AuthError, assertJwtSecretConfigured, seedDefaultAdminAccount } from "../core/auth.js";
+import {
+  register,
+  login,
+  refresh,
+  logout,
+  AuthError,
+  assertJwtSecretConfigured,
+  seedDefaultAdminAccount,
+  getMe,
+  updateMe,
+  getPublicProfile,
+} from "../core/auth.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
 import { createTeam, listTeams } from "../core/teams.js";
+import { addTeamAdmin, removeTeamAdmin, listTeamAdmins } from "../core/teamAdmins.js";
 import { getInstallConfig } from "../core/installConfig.js";
 import { createProjectGroup, listProjectGroups } from "../core/projectGroups.js";
-import { createProject, getProject, listProjects } from "../core/projects.js";
+import { createProject, getProject, listProjects, canSeeHiddenProject, setProjectHidden, getOwningTeamId } from "../core/projects.js";
 import { addMember, listMembers, getMemberRole, roleSatisfies } from "../core/members.js";
+import { isTeamAdmin } from "../core/teamAdmins.js";
+import { listUserActivity } from "../core/activity.js";
 import {
   createDocType,
   listDocTypes,
@@ -21,7 +35,9 @@ import {
   getDocTypeById,
   addDocStatusTransitionByCode,
   listDocStatusTransitions,
+  seedStandardStatusFlow,
   setDocTypeGuideline,
+  allowedNextStatuses,
 } from "../core/docTypes.js";
 import {
   createDocument,
@@ -33,12 +49,23 @@ import {
   addDocumentLink,
   listBacklinks,
   listDocumentRevisions,
+  deleteDocument,
 } from "../core/documents.js";
 import { createReport } from "../core/report.js";
-import { addQuestion, listPendingQuestions, answerQuestion, listQuestions, getQuestionProjectId } from "../core/questions.js";
+import {
+  addQuestion,
+  listPendingQuestions,
+  answerQuestion,
+  listQuestions,
+  getQuestionProjectId,
+  acknowledgeQuestion,
+  countPendingQuestions,
+} from "../core/questions.js";
 import { addComment, listComments, resolveComment } from "../core/comments.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
 import { ensureSearchIndexes } from "../core/search.js";
+import { resolveEffectivePermission, setAccessOverride, listAccessOverrides } from "../core/permissions.js";
+import { createFolder, renameFolder, deleteFolder, listFolders, listFolderDocuments, moveDocumentToFolder, getFolderById } from "../core/folders.js";
 import { authenticate, requireProjectRole, type AuthedRequest } from "../middleware/auth.js";
 import {
   linkSelfHostedRepo,
@@ -61,7 +88,7 @@ import {
   acknowledgeQueueEntry,
   completeQueueEntry,
 } from "../core/pushHookPrompts.js";
-import { sendMessage, listMessages, waitForMessage } from "../core/messages.js";
+import { sendMessage, listMessages, waitForMessage, listRecentMessages } from "../core/messages.js";
 import { checkConnect, checkAcl, ensureEmqxAuthConfigured } from "../core/emqxAuth.js";
 
 const app = express();
@@ -196,6 +223,47 @@ app.get(
   }),
 );
 
+// ---------------------------------------------------------------- 프로필/사용자
+
+app.get(
+  "/api/auth/me",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await getMe(req.userId!));
+  }),
+);
+
+app.put(
+  "/api/auth/me",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { email, phone, emailVisible, phoneVisible } = req.body as {
+      email?: string;
+      phone?: string;
+      emailVisible?: boolean;
+      phoneVisible?: boolean;
+    };
+    res.json(await updateMe(req.userId!, { email, phone, emailVisible, phoneVisible }));
+  }),
+);
+
+app.get(
+  "/api/users/:userId",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await getPublicProfile(req.userId!, req.params.userId));
+  }),
+);
+
+app.get(
+  "/api/users/:userId/activity",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : 30;
+    res.json(await listUserActivity(req.userId!, req.params.userId, limit));
+  }),
+);
+
 // ---------------------------------------------------------------- 팀/그룹/프로젝트
 
 app.post(
@@ -213,6 +281,36 @@ app.get(
   authenticate,
   asyncRoute(async (_req, res) => {
     res.json(await listTeams());
+  }),
+);
+
+// 팀장 관리 - 팀 스코프 쓰기는 지금까지 전부 authenticate만 요구해왔다
+// (설치 단위 admin role이 아직 없다는 기존 한계의 연장 - PUT /api/templates,
+// POST /api/teams/:id/doc-types 등과 동일).
+app.post(
+  "/api/teams/:teamId/admins",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { userId } = req.body as { userId?: string };
+    if (!userId) { res.status(400).json({ error: "userId가 필요합니다" }); return; }
+    res.json(await addTeamAdmin(req.params.teamId, userId));
+  }),
+);
+
+app.delete(
+  "/api/teams/:teamId/admins/:userId",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    await removeTeamAdmin(req.params.teamId, req.params.userId);
+    res.json({ ok: true });
+  }),
+);
+
+app.get(
+  "/api/teams/:teamId/admins",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listTeamAdmins(req.params.teamId));
   }),
 );
 
@@ -250,18 +348,48 @@ app.get(
   "/api/projects",
   authenticate,
   asyncRoute(async (req, res) => {
-    res.json(await listProjects(req.query.projectGroupId as string | undefined));
+    res.json(await listProjects(req.query.projectGroupId as string | undefined, req.userId!));
   }),
 );
 
+// 멤버가 아니어도 팀장이면 숨겨진 프로젝트를 열어볼 수 있어야 한다(6번 -
+// 숨김 해제 판단용) - requireProjectRole 단독이 아니라, 그 체크가
+// 실패해도 canSeeHiddenProject로 한 번 더 확인하는 인라인 체크로 교체.
+// 팀장이 자동으로 프로젝트 내용까지 볼 권한을 얻는 건 아니다 - 이
+// 라우트(존재 확인)만 이렇게 넓고, 문서/멤버 등 다른 라우트는 그대로
+// requireProjectRole 유지.
 app.get(
   "/api/projects/:projectId",
   authenticate,
-  requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
+    const role = await getMemberRole(req.params.projectId, req.userId!);
+    if (!role && !(await canSeeHiddenProject(req.params.projectId, req.userId!))) {
+      res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" });
+      return;
+    }
     const project = await getProject(req.params.projectId);
     if (!project) { res.status(404).json({ error: "not found" }); return; }
-    res.json(project);
+    const notice = role ? await pendingQuestionNotice(req.params.projectId) : null;
+    res.json(withNotices(project, notice));
+  }),
+);
+
+// 프로젝트 owner 또는 그 프로젝트가 속한 팀의 팀장만 숨김을 켜고 끌 수
+// 있다(canSeeHiddenProject보다 엄격 - 일반 멤버는 안 됨).
+app.put(
+  "/api/projects/:projectId/hidden",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const role = await getMemberRole(req.params.projectId, req.userId!);
+    const teamId = await getOwningTeamId(req.params.projectId);
+    const isAdmin = await isTeamAdmin(teamId, req.userId!);
+    if (role !== "owner" && !isAdmin) {
+      res.status(403).json({ error: "프로젝트 owner 또는 팀장만 숨김 상태를 바꿀 수 있습니다" });
+      return;
+    }
+    const { hidden } = req.body as { hidden?: boolean };
+    if (hidden === undefined) { res.status(400).json({ error: "hidden이 필요합니다" }); return; }
+    res.json(await setProjectHidden(req.params.projectId, hidden, req.userId!));
   }),
 );
 
@@ -397,9 +525,9 @@ app.post(
       res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
       return;
     }
-    const { code, label, isTerminal } = req.body as { code?: string; label?: string; isTerminal?: boolean };
-    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await addDocStatus(req.params.docTypeId, code, label, isTerminal ?? false));
+    const { code } = req.body as { code?: string };
+    if (!code) { res.status(400).json({ error: "code가 필요합니다(draft/review/pending/approved/deprecated/archived 중 하나)" }); return; }
+    res.json(await addDocStatus(req.params.docTypeId, code));
   }),
 );
 
@@ -440,6 +568,20 @@ app.put(
   }),
 );
 
+app.post(
+  "/api/projects/:projectId/doc-types/:docTypeId/standard-flow",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    await seedStandardStatusFlow(req.params.docTypeId);
+    res.json({ ok: true });
+  }),
+);
+
 // 팀/그룹 스코프 DocType에 상태/전이 붙이기 - 생성/목록 라우트와 같은
 // 인가 수준(authenticate만, 팀/그룹 단위 관리자 역할이 아직 없다는
 // 이미 문서화된 한계를 그대로 따름 - PUT /api/templates와 동일).
@@ -451,9 +593,9 @@ app.post(
       res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
       return;
     }
-    const { code, label, isTerminal } = req.body as { code?: string; label?: string; isTerminal?: boolean };
-    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await addDocStatus(req.params.docTypeId, code, label, isTerminal ?? false));
+    const { code } = req.body as { code?: string };
+    if (!code) { res.status(400).json({ error: "code가 필요합니다(draft/review/pending/approved/deprecated/archived 중 하나)" }); return; }
+    res.json(await addDocStatus(req.params.docTypeId, code));
   }),
 );
 
@@ -493,6 +635,19 @@ app.put(
 );
 
 app.post(
+  "/api/teams/:teamId/doc-types/:docTypeId/standard-flow",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    await seedStandardStatusFlow(req.params.docTypeId);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
   "/api/project-groups/:groupId/doc-types/:docTypeId/statuses",
   authenticate,
   asyncRoute(async (req, res) => {
@@ -500,9 +655,9 @@ app.post(
       res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
       return;
     }
-    const { code, label, isTerminal } = req.body as { code?: string; label?: string; isTerminal?: boolean };
-    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await addDocStatus(req.params.docTypeId, code, label, isTerminal ?? false));
+    const { code } = req.body as { code?: string };
+    if (!code) { res.status(400).json({ error: "code가 필요합니다(draft/review/pending/approved/deprecated/archived 중 하나)" }); return; }
+    res.json(await addDocStatus(req.params.docTypeId, code));
   }),
 );
 
@@ -538,6 +693,19 @@ app.put(
     const { guideline } = req.body as { guideline?: string };
     if (guideline === undefined) { res.status(400).json({ error: "guideline이 필요합니다" }); return; }
     res.json(await setDocTypeGuideline(req.params.docTypeId, guideline));
+  }),
+);
+
+app.post(
+  "/api/project-groups/:groupId/doc-types/:docTypeId/standard-flow",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    await seedStandardStatusFlow(req.params.docTypeId);
+    res.json({ ok: true });
   }),
 );
 
@@ -592,13 +760,25 @@ app.get(
   }),
 );
 
+// 문서는 trackingCode로만 식별되고(경로에 projectId 없음) 지금까지
+// requireProjectRole을 못 걸어 GET/PUT/transition/links가 authenticate만
+// 걸린 채 남아있었다(신규 버그 수정 - questions/comments 라우트에서
+// 이미 겪은 것과 같은 원인). resolveEffectivePermission()으로
+// read/write/delete를 확인하고, 오버라이드가 적용됐으면 notices 배열에
+// 안내 배너를 얹는다(없으면 필드 생략 - 평소엔 노이즈 없음).
+function withNotices<T extends object>(payload: T, notice: string | null): T & { notices?: string[] } {
+  return notice ? { ...payload, notices: [notice] } : payload;
+}
+
 app.get(
   "/api/documents/:trackingCode",
   authenticate,
   asyncRoute(async (req, res) => {
     const doc = await getDocument(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
-    res.json(doc);
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(withNotices(doc, perm.notice));
   }),
 );
 
@@ -606,9 +786,13 @@ app.put(
   "/api/documents/:trackingCode",
   authenticate,
   asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
     const { body } = req.body as { body?: string };
     if (body === undefined) { res.status(400).json({ error: "body가 필요합니다" }); return; }
-    res.json(await saveDocumentBody(req.params.trackingCode, body, req.userId!));
+    res.json(withNotices(await saveDocumentBody(req.params.trackingCode, body, req.userId!), perm.notice));
   }),
 );
 
@@ -616,9 +800,25 @@ app.post(
   "/api/documents/:trackingCode/transition",
   authenticate,
   asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
     const { toStatusCode } = req.body as { toStatusCode?: string };
     if (!toStatusCode) { res.status(400).json({ error: "toStatusCode가 필요합니다" }); return; }
-    res.json(await transitionDocumentStatus(req.params.trackingCode, toStatusCode));
+    res.json(withNotices(await transitionDocumentStatus(req.params.trackingCode, toStatusCode), perm.notice));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/next-statuses",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(await allowedNextStatuses(doc.docTypeId, doc.statusId));
   }),
 );
 
@@ -626,6 +826,10 @@ app.post(
   "/api/documents/:trackingCode/links",
   authenticate,
   asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
     const { toTrackingCode, linkType } = req.body as { toTrackingCode?: string; linkType?: string };
     if (!toTrackingCode) { res.status(400).json({ error: "toTrackingCode가 필요합니다" }); return; }
     await addDocumentLink(req.params.trackingCode, toTrackingCode, linkType);
@@ -637,6 +841,10 @@ app.get(
   "/api/documents/:trackingCode/backlinks",
   authenticate,
   asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
     res.json(await listBacklinks(req.params.trackingCode));
   }),
 );
@@ -645,7 +853,172 @@ app.get(
   "/api/documents/:trackingCode/revisions",
   authenticate,
   asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
     res.json(await listDocumentRevisions(req.params.trackingCode));
+  }),
+);
+
+app.delete(
+  "/api/documents/:trackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.delete) { res.status(403).json({ error: "이 문서에 대한 삭제 권한이 없습니다" }); return; }
+    await deleteDocument(req.params.trackingCode);
+    res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- 세부 접근 권한 (오너 전용)
+
+app.put(
+  "/api/projects/:projectId/access",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const { userId, canRead, canWrite, canDelete } = req.body as {
+      userId?: string;
+      canRead?: boolean;
+      canWrite?: boolean;
+      canDelete?: boolean;
+    };
+    if (!userId) { res.status(400).json({ error: "userId가 필요합니다" }); return; }
+    await setAccessOverride(req.params.projectId, userId, {}, { canRead, canWrite, canDelete });
+    res.json({ ok: true });
+  }),
+);
+
+app.put(
+  "/api/projects/:projectId/doc-types/:docTypeId/access",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const { userId, canRead, canWrite, canDelete } = req.body as {
+      userId?: string;
+      canRead?: boolean;
+      canWrite?: boolean;
+      canDelete?: boolean;
+    };
+    if (!userId) { res.status(400).json({ error: "userId가 필요합니다" }); return; }
+    await setAccessOverride(req.params.projectId, userId, { docTypeId: req.params.docTypeId }, { canRead, canWrite, canDelete });
+    res.json({ ok: true });
+  }),
+);
+
+app.put(
+  "/api/documents/:trackingCode/access",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const role = await getMemberRole(doc.projectId, req.userId!);
+    if (role !== "owner") { res.status(403).json({ error: "프로젝트 owner만 접근 권한을 설정할 수 있습니다" }); return; }
+    const { userId, canRead, canWrite, canDelete } = req.body as {
+      userId?: string;
+      canRead?: boolean;
+      canWrite?: boolean;
+      canDelete?: boolean;
+    };
+    if (!userId) { res.status(400).json({ error: "userId가 필요합니다" }); return; }
+    await setAccessOverride(doc.projectId, userId, { documentId: doc.id }, { canRead, canWrite, canDelete });
+    res.json({ ok: true });
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/access",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    res.json(await listAccessOverrides(req.params.projectId));
+  }),
+);
+
+// ---------------------------------------------------------------- 문서 정리용 폴더 (웹 전용 - AI는 모름, CLI/MCP는 절대 호출하지 않음)
+
+app.post(
+  "/api/projects/:projectId/folders",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { name, parentFolderId } = req.body as { name?: string; parentFolderId?: string };
+    if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
+    res.json(await createFolder(req.params.projectId, name, parentFolderId, req.userId!));
+  }),
+);
+
+app.put(
+  "/api/folders/:folderId",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { name } = req.body as { name?: string };
+    if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
+    res.json(await renameFolder(req.params.folderId, name, req.userId!));
+  }),
+);
+
+app.delete(
+  "/api/folders/:folderId",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    await deleteFolder(req.params.folderId, req.userId!);
+    res.json({ ok: true });
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/folders",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listFolders(req.params.projectId));
+  }),
+);
+
+app.get(
+  "/api/folders/:folderId/documents",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listFolderDocuments(req.params.folderId));
+  }),
+);
+
+app.put(
+  "/api/folders/:folderId/access",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const folder = await getFolderById(req.params.folderId);
+    if (!folder) { res.status(404).json({ error: "폴더를 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(folder.projectId, req.userId!);
+    if (role !== "owner") { res.status(403).json({ error: "프로젝트 owner만 접근 권한을 설정할 수 있습니다" }); return; }
+    const { userId, canRead, canWrite, canDelete } = req.body as {
+      userId?: string;
+      canRead?: boolean;
+      canWrite?: boolean;
+      canDelete?: boolean;
+    };
+    if (!userId) { res.status(400).json({ error: "userId가 필요합니다" }); return; }
+    await setAccessOverride(folder.projectId, userId, { folderId: folder.id }, { canRead, canWrite, canDelete });
+    res.json({ ok: true });
+  }),
+);
+
+app.put(
+  "/api/documents/:trackingCode/folder",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    const { folderId } = req.body as { folderId?: string | null };
+    await moveDocumentToFolder(req.params.trackingCode, folderId ?? null, req.userId!);
+    res.json({ ok: true });
   }),
 );
 
@@ -664,7 +1037,13 @@ app.post(
   }),
 );
 
-// ---------------------------------------------------------------- 질의/답변 (pending/reply)
+// ---------------------------------------------------------------- 질의/답변 (질의는 AI, 답변은 설계자 - open→pending→resolved)
+
+async function pendingQuestionNotice(projectId: string): Promise<string | null> {
+  const n = await countPendingQuestions(projectId);
+  if (n === 0) return null;
+  return `이 프로젝트에 설계자가 답변했지만 아직 확인하지 않은 질의가 ${n}건 있습니다 - docs question ack <trackingCode>로 처리하세요`;
+}
 
 app.post(
   "/api/documents/:trackingCode/questions",
@@ -674,9 +1053,9 @@ app.post(
     if (!document) { res.status(404).json({ error: "문서를 찾을 수 없습니다" }); return; }
     const role = await getMemberRole(document.projectId, req.userId!);
     if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
-    const { text } = req.body as { text?: string };
+    const { text, refs } = req.body as { text?: string; refs?: string[] };
     if (!text) { res.status(400).json({ error: "text가 필요합니다" }); return; }
-    res.json(await addQuestion(req.params.trackingCode, text));
+    res.json(await addQuestion(req.params.trackingCode, text, req.userId!, refs));
   }),
 );
 
@@ -697,7 +1076,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    res.json(await listPendingQuestions(req.params.projectId));
+    const notice = await pendingQuestionNotice(req.params.projectId);
+    res.json(withNotices({ questions: await listPendingQuestions(req.params.projectId) }, notice));
   }),
 );
 
@@ -712,6 +1092,18 @@ app.post(
     const { body } = req.body as { body?: string };
     if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
     res.json(await answerQuestion(req.params.trackingCode, body, req.userId!));
+  }),
+);
+
+app.post(
+  "/api/questions/:trackingCode/ack",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getQuestionProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "질문을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    res.json(await acknowledgeQuestion(req.params.trackingCode));
   }),
 );
 
@@ -800,7 +1192,9 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    res.json(await listMessages(req.params.projectId));
+    const status = req.query.status as "pending" | "delivered" | "all" | undefined;
+    const markDelivered = req.query.markDelivered === "true";
+    res.json(await listMessages(req.params.projectId, { status, markDelivered }));
   }),
 );
 
@@ -822,6 +1216,17 @@ app.get(
   asyncRoute(async (req, res) => {
     const timeoutSec = Number(req.query.timeout ?? 60);
     res.json(await waitForMessage(req.params.projectId, timeoutSec));
+  }),
+);
+
+// 장애 복구용 - 상태를 전혀 바꾸지 않는 순수 조회(반복 호출해도 안전).
+app.get(
+  "/api/projects/:projectId/messages/recent",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : 20;
+    res.json(await listRecentMessages(req.params.projectId, limit));
   }),
 );
 

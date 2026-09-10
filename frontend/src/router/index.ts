@@ -10,12 +10,15 @@ const router = createRouter({
     { path: "/teams", name: "teams", component: () => import("../views/TeamsView.vue") },
     { path: "/groups", name: "groups", component: () => import("../views/ProjectGroupsView.vue") },
     { path: "/projects", name: "projects", component: () => import("../views/ProjectsView.vue") },
+    { path: "/users/:id", name: "user-profile", component: () => import("../views/UserProfileView.vue"), props: true },
     {
       path: "/projects/:id",
       component: () => import("../views/ProjectShellView.vue"),
       props: true,
+      meta: { projectContext: true },
       children: [
         { path: "", name: "project-detail", component: () => import("../views/ProjectHomeView.vue"), props: true },
+        { path: "messages", name: "project-messages", component: () => import("../views/MessagesView.vue"), props: true },
         { path: "documents", name: "documents", component: () => import("../views/DocumentsView.vue"), props: true },
         {
           path: "documents/:trackingCode",

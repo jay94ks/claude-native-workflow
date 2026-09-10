@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import DocTypeManager from "../components/DocTypeManager.vue";
 import GitRepoPanel from "../components/GitRepoPanel.vue";
+import AccessControlManager from "../components/AccessControlManager.vue";
 
 const props = defineProps<{ id: string }>();
 
@@ -108,6 +109,14 @@ onMounted(load);
         </li>
         <li v-if="members.length === 0" class="muted">멤버가 없습니다.</li>
       </ul>
+    </section>
+
+    <section>
+      <h2>접근 권한</h2>
+      <p class="hint">
+        협업 중인 설계자의 읽기/쓰기/삭제 권한을 공통/문서 타입별/개별 문서 단위로 더 좁게 제한(또는 넓게 예외 허용)할 수 있다.
+      </p>
+      <AccessControlManager :project-id="id" />
     </section>
   </template>
 </template>

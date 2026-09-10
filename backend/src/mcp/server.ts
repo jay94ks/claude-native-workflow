@@ -13,8 +13,18 @@ import { scanDirectory, applyManifest } from "../cli/migrate.js";
 // 컨텍스트에 남는 걸 피하기 위해 - CLI로 미리 `docs auth login`을 한 번
 // 해두는 걸 전제로 한다). 진단용으로 auth_whoami만 예외로 둔다.
 
+// AI 안내(prologue) - 응답 객체에 notices: string[]가 있으면 JSON
+// 블록 앞에 별도 text content 블록을 하나 더 붙인다(MCP가 다중 content
+// 블록을 지원 - "prologue"라는 표현 그대로 본문 앞에 별개 블록).
 function textResult(value: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
+  const blocks: { type: "text"; text: string }[] = [];
+  if (value && typeof value === "object" && Array.isArray((value as { notices?: unknown }).notices)) {
+    for (const notice of (value as { notices: string[] }).notices) {
+      blocks.push({ type: "text", text: `⚠ ${notice}` });
+    }
+  }
+  blocks.push({ type: "text", text: JSON.stringify(value, null, 2) });
+  return { content: blocks };
 }
 
 function errorResult(err: unknown) {
@@ -47,11 +57,34 @@ async function main() {
 
   // ---------------------------------------------------------------- 인증(진단용)
 
-  tool("auth_whoami", "로그인 상태 확인", "현재 저장된 자격증명의 API 주소를 반환한다(로그인 자체는 CLI에서 `docs auth login`으로).", {}, async () => {
+  tool("auth_whoami", "로그인 상태 확인", "현재 로그인된 사용자 정보를 반환한다(로그인 자체는 CLI에서 `docs auth login`으로).", {}, async () => {
     const creds = loadCredentials();
     if (!creds) return { logged_in: false };
-    return { logged_in: true, api_base: creds.api_base };
+    return { logged_in: true, ...(await call<Record<string, unknown>>("/api/auth/me")) };
   });
+
+  // ---------------------------------------------------------------- 프로필/사용자
+
+  tool(
+    "profile_set",
+    "내 프로필 수정",
+    "이메일/전화번호와 타인 공개 여부를 설정한다.",
+    { email: z.string().optional(), phone: z.string().optional(), emailVisible: z.boolean().optional(), phoneVisible: z.boolean().optional() },
+    async (a) => call("/api/auth/me", { method: "PUT", body: JSON.stringify(a) }),
+  );
+  tool("user_get", "다른 설계자 프로필 조회", "userId의 공개 프로필을 조회한다(비공개 필드는 가려짐).", { userId: z.string() }, async (a) =>
+    call(`/api/users/${a.userId}`),
+  );
+  tool(
+    "user_activity",
+    "설계자 최근 활동 이력",
+    "그 설계자의 최근 작업 이력(문서 작성/수정, 질의/답변, 코멘트, 메시지) - 숨겨진 프로젝트의 활동은 조회자가 그 프로젝트 멤버이거나 팀장일 때만 포함된다.",
+    { userId: z.string(), limit: z.number().optional() },
+    async (a) => {
+      const qs = a.limit ? `?limit=${encodeURIComponent(String(a.limit))}` : "";
+      return call(`/api/users/${a.userId}/activity${qs}`);
+    },
+  );
 
   // ---------------------------------------------------------------- git 자격증명
 
@@ -73,6 +106,13 @@ async function main() {
     call("/api/teams", { method: "POST", body: JSON.stringify(a) }),
   );
   tool("team_list", "팀 목록", "전체 팀 목록.", {}, async () => call("/api/teams"));
+  tool("team_admin_add", "팀장 등록", "그 팀의 팀장으로 사용자를 등록한다(숨겨진 프로젝트를 보고 해제할 수 있게 됨).", { teamId: z.string(), userId: z.string() }, async (a) =>
+    call(`/api/teams/${a.teamId}/admins`, { method: "POST", body: JSON.stringify({ userId: a.userId }) }),
+  );
+  tool("team_admin_remove", "팀장 해제", "그 팀의 팀장에서 사용자를 제외한다.", { teamId: z.string(), userId: z.string() }, async (a) =>
+    call(`/api/teams/${a.teamId}/admins/${a.userId}`, { method: "DELETE" }),
+  );
+  tool("team_admin_list", "팀장 목록", "그 팀의 팀장 목록.", { teamId: z.string() }, async (a) => call(`/api/teams/${a.teamId}/admins`));
   tool(
     "group_create",
     "프로젝트 그룹 생성",
@@ -97,6 +137,13 @@ async function main() {
   });
   tool("project_get", "프로젝트 조회", "id로 프로젝트 1건을 조회한다.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}`),
+  );
+  tool(
+    "project_hide",
+    "프로젝트 숨김 설정",
+    "프로젝트를 숨기거나(hidden=true) 해제한다(hidden=false) - 프로젝트 owner 또는 그 프로젝트가 속한 팀의 팀장만 가능.",
+    { projectId: z.string(), hidden: z.boolean() },
+    async (a) => call(`/api/projects/${a.projectId}/hidden`, { method: "PUT", body: JSON.stringify({ hidden: a.hidden }) }),
   );
   tool(
     "member_add",
@@ -165,13 +212,20 @@ async function main() {
   tool(
     "doctype_status_add",
     "문서 타입 상태 추가",
-    "그 문서 타입이 가질 수 있는 상태를 하나 정의한다(새 타입은 상태가 0개라 이걸로 최소 1개는 만들어야 문서 생성이 가능해진다).",
-    { projectId: z.string(), docTypeId: z.string(), code: z.string(), label: z.string(), isTerminal: z.boolean().optional() },
+    "그 문서 타입에 표준 상태 코드 하나를 추가한다(code는 draft/review/pending/approved/deprecated/archived 중 하나 - 라벨/지침/종료 여부는 고정값, 새 타입은 상태가 0개라 이걸로 최소 1개는 만들어야 문서 생성이 가능해진다).",
+    { projectId: z.string(), docTypeId: z.string(), code: z.enum(["draft", "review", "pending", "approved", "deprecated", "archived"]) },
     async (a) =>
       call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/statuses`, {
         method: "POST",
-        body: JSON.stringify({ code: a.code, label: a.label, isTerminal: a.isTerminal ?? false }),
+        body: JSON.stringify({ code: a.code }),
       }),
+  );
+  tool(
+    "doctype_apply_standard_flow",
+    "표준 상태 흐름 일괄 적용",
+    "표준 상태 6개(draft/review/pending/approved/deprecated/archived)와 draft를 제외한 모든 전이를 한 번에 세팅한다.",
+    { projectId: z.string(), docTypeId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/standard-flow`, { method: "POST" }),
   );
   tool(
     "doctype_transition_add",
@@ -194,13 +248,20 @@ async function main() {
   tool(
     "doctype_status_add_team",
     "팀 스코프 문서 타입 상태 추가",
-    "팀 스코프 문서 타입이 가질 수 있는 상태를 하나 정의한다.",
-    { teamId: z.string(), docTypeId: z.string(), code: z.string(), label: z.string(), isTerminal: z.boolean().optional() },
+    "팀 스코프 문서 타입에 표준 상태 코드 하나를 추가한다(draft/review/pending/approved/deprecated/archived 중 하나).",
+    { teamId: z.string(), docTypeId: z.string(), code: z.enum(["draft", "review", "pending", "approved", "deprecated", "archived"]) },
     async (a) =>
       call(`/api/teams/${a.teamId}/doc-types/${a.docTypeId}/statuses`, {
         method: "POST",
-        body: JSON.stringify({ code: a.code, label: a.label, isTerminal: a.isTerminal ?? false }),
+        body: JSON.stringify({ code: a.code }),
       }),
+  );
+  tool(
+    "doctype_apply_standard_flow_team",
+    "팀 스코프 표준 상태 흐름 일괄 적용",
+    "표준 상태 6개와 전이를 한 번에 세팅한다.",
+    { teamId: z.string(), docTypeId: z.string() },
+    async (a) => call(`/api/teams/${a.teamId}/doc-types/${a.docTypeId}/standard-flow`, { method: "POST" }),
   );
   tool(
     "doctype_transition_add_team",
@@ -216,13 +277,20 @@ async function main() {
   tool(
     "doctype_status_add_group",
     "그룹 스코프 문서 타입 상태 추가",
-    "프로젝트 그룹 스코프 문서 타입이 가질 수 있는 상태를 하나 정의한다.",
-    { groupId: z.string(), docTypeId: z.string(), code: z.string(), label: z.string(), isTerminal: z.boolean().optional() },
+    "프로젝트 그룹 스코프 문서 타입에 표준 상태 코드 하나를 추가한다(draft/review/pending/approved/deprecated/archived 중 하나).",
+    { groupId: z.string(), docTypeId: z.string(), code: z.enum(["draft", "review", "pending", "approved", "deprecated", "archived"]) },
     async (a) =>
       call(`/api/project-groups/${a.groupId}/doc-types/${a.docTypeId}/statuses`, {
         method: "POST",
-        body: JSON.stringify({ code: a.code, label: a.label, isTerminal: a.isTerminal ?? false }),
+        body: JSON.stringify({ code: a.code }),
       }),
+  );
+  tool(
+    "doctype_apply_standard_flow_group",
+    "그룹 스코프 표준 상태 흐름 일괄 적용",
+    "표준 상태 6개와 전이를 한 번에 세팅한다.",
+    { groupId: z.string(), docTypeId: z.string() },
+    async (a) => call(`/api/project-groups/${a.groupId}/doc-types/${a.docTypeId}/standard-flow`, { method: "POST" }),
   );
   tool(
     "doctype_transition_add_group",
@@ -291,6 +359,46 @@ async function main() {
     { trackingCode: z.string() },
     async (a) => call(`/api/documents/${a.trackingCode}/revisions`),
   );
+  tool(
+    "document_next_statuses",
+    "다음 선택 가능 상태 목록",
+    "이 문서에서 지금 전이 가능한 다음 상태 목록(코드/라벨/지침).",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/documents/${a.trackingCode}/next-statuses`),
+  );
+  tool(
+    "document_delete",
+    "문서 삭제",
+    "문서를 삭제한다(리비전/링크/코멘트/질문+답변까지 함께 정리) - delete 권한이 필요하다.",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/documents/${a.trackingCode}`, { method: "DELETE" }),
+  );
+
+  // ---------------------------------------------------------------- 세부 접근 권한
+
+  tool(
+    "access_set",
+    "세부 접근 권한 설정",
+    "프로젝트 공통/문서타입/개별문서 스코프 중 하나(docTypeId나 documentId를 주면 그 스코프, 둘 다 안 주면 프로젝트 공통)로 특정 사용자의 읽기/쓰기/삭제 권한을 설정한다 - owner 전용.",
+    {
+      projectId: z.string(),
+      userId: z.string(),
+      docTypeId: z.string().optional(),
+      documentId: z.string().optional(),
+      canRead: z.boolean().optional(),
+      canWrite: z.boolean().optional(),
+      canDelete: z.boolean().optional(),
+    },
+    async (a) => {
+      const patch = { userId: a.userId, canRead: a.canRead, canWrite: a.canWrite, canDelete: a.canDelete };
+      if (a.documentId) return call(`/api/documents/${a.documentId}/access`, { method: "PUT", body: JSON.stringify(patch) });
+      if (a.docTypeId) return call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/access`, { method: "PUT", body: JSON.stringify(patch) });
+      return call(`/api/projects/${a.projectId}/access`, { method: "PUT", body: JSON.stringify(patch) });
+    },
+  );
+  tool("access_list", "세부 접근 권한 목록", "프로젝트에 설정된 모든 오버라이드 목록.", { projectId: z.string() }, async (a) =>
+    call(`/api/projects/${a.projectId}/access`),
+  );
 
   // ---------------------------------------------------------------- 보고서
 
@@ -308,39 +416,37 @@ async function main() {
 
   // ---------------------------------------------------------------- 질의/답변
 
-  tool("question_add", "질의 등록", "문서에 대한 질의를 등록하고 추적 코드를 발급받는다.", { trackingCode: z.string(), text: z.string() }, async (a) =>
-    call(`/api/documents/${a.trackingCode}/questions`, { method: "POST", body: JSON.stringify({ text: a.text }) }),
+  tool(
+    "question_add",
+    "질의 등록",
+    "문서에 대한 질의를 등록하고 추적 코드를 발급받는다(질의는 AI가 등록, 설계자가 답변) - refs로 판단에 참고한 문서를 태깅할 수 있다.",
+    { trackingCode: z.string(), text: z.string(), refs: z.array(z.string()).optional() },
+    async (a) => call(`/api/documents/${a.trackingCode}/questions`, { method: "POST", body: JSON.stringify({ text: a.text, refs: a.refs }) }),
   );
-  tool("question_list", "문서의 전체 질의/답변 조회", "한 문서의 질의 전체(미답변+답변완료)를 답변과 함께 순서대로 조회한다.", { trackingCode: z.string() }, async (a) =>
+  tool("question_list", "문서의 전체 질의/답변 조회", "한 문서의 질의 전체(open+pending+resolved)를 답변과 함께 순서대로 조회한다.", { trackingCode: z.string() }, async (a) =>
     call(`/api/documents/${a.trackingCode}/questions`),
   );
-  tool("pending_list", "답변 대기 목록", "프로젝트의 미답변 질의 목록.", { projectId: z.string() }, async (a) =>
+  tool("pending_list", "미해결 질의 목록", "프로젝트의 미해결(open+pending) 질의 목록 - pending은 설계자가 답변했지만 AI가 아직 확인 안 한 것.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/pending`),
   );
   tool(
     "question_reply",
     "질의에 답변",
-    "질의에 답변하면 상태가 answered로 바뀌고, 문서의 모든 질의가 답변되면 문서 상태도 자동 전이될 수 있다.",
+    "질의에 답변하면 상태가 pending으로 바뀌고(종결 아님 - AI 확인 대기), 문서의 모든 질의가 open을 벗어나면 문서 상태도 자동 전이될 수 있다.",
     { questionTrackingCode: z.string(), body: z.string() },
     async (a) => call(`/api/questions/${a.questionTrackingCode}/answer`, { method: "POST", body: JSON.stringify({ body: a.body }) }),
   );
-
-  // ---------------------------------------------------------------- 코멘트
-
-  tool("comment_list", "코멘트 목록", "문서의 코멘트 목록.", { projectId: z.string(), trackingCode: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/documents/${a.trackingCode}/comments`),
-  );
   tool(
-    "comment_add",
-    "코멘트 추가",
-    "문서에 코멘트를 남긴다.",
-    { projectId: z.string(), trackingCode: z.string(), body: z.string() },
-    async (a) =>
-      call(`/api/projects/${a.projectId}/documents/${a.trackingCode}/comments`, { method: "POST", body: JSON.stringify({ body: a.body }) }),
+    "question_ack",
+    "질의 확인 완료 표시",
+    "설계자가 답변한(pending) 질의를 확인 완료(resolved)로 표시한다 - pending 목록에 쌓인 것을 처리할 때 씀.",
+    { questionTrackingCode: z.string() },
+    async (a) => call(`/api/questions/${a.questionTrackingCode}/ack`, { method: "POST" }),
   );
-  tool("comment_resolve", "코멘트 해결 처리", "코멘트를 해결 처리한다.", { projectId: z.string(), commentId: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/comments/${a.commentId}/resolve`, { method: "POST" }),
-  );
+
+  // 코멘트는 설계자들끼리만 쓰는 채널이다(웹 UI 전용) - AI의 참고
+  // 지표가 될 수 없어 의도적으로 도구를 두지 않는다("CLI/MCP 명령어
+  // 완전성" 원칙의 세 번째 의도적 예외).
 
   // ---------------------------------------------------------------- 템플릿 (CLAUDE.md, SKILL.md 등)
 
@@ -520,8 +626,15 @@ async function main() {
     call(`/api/projects/${a.projectId}/push-hook-queue/${a.id}/done`, { method: "POST" }),
   );
 
-  tool("message_list", "인스턴스 메시지 목록", "그 프로젝트의 지금까지의 메시지 기록을 조회한다.", { projectId: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/messages`),
+  tool(
+    "message_list",
+    "인스턴스 메시지 목록",
+    "그 프로젝트의 메시지 기록을 조회한다 - 이 도구로 읽어간 대기(pending) 상태 메시지는 자동으로 기록(delivered) 처리된다(AI가 읽어감의 정의). status로 pending/delivered/all 필터 가능(기본 all).",
+    { projectId: z.string(), status: z.enum(["pending", "delivered", "all"]).optional() },
+    async (a) => {
+      const qs = new URLSearchParams({ markDelivered: "true", ...(a.status ? { status: String(a.status) } : {}) });
+      return call(`/api/projects/${a.projectId}/messages?${qs}`);
+    },
   );
   tool("message_send", "인스턴스 메시지 전송", "같은 프로젝트의 다른 세션/설계자에게 메시지를 남긴다.", { projectId: z.string(), body: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/messages`, { method: "POST", body: JSON.stringify({ body: a.body }) }),
@@ -529,9 +642,19 @@ async function main() {
   tool(
     "message_wait",
     "새 메시지 대기",
-    "새 메시지가 오거나 타임아웃될 때까지 블로킹한다(내부적으로 EMQX 구독 - 폴링 아님).",
+    "새 메시지가 오거나 타임아웃될 때까지 블로킹한다(내부적으로 EMQX 구독 - 폴링 아님). 받은 메시지는 자동으로 기록(delivered) 처리된다.",
     { projectId: z.string(), timeoutSec: z.number().optional() },
     async (a) => call(`/api/projects/${a.projectId}/messages/wait?timeout=${a.timeoutSec ?? 60}`),
+  );
+  tool(
+    "message_recent",
+    "최근 메시지 조회(장애 복구용)",
+    "상태를 전혀 바꾸지 않는 순수 조회 - 시스템 다운 등으로 세션이 비정상 종료됐다가 복구됐을 때 마지막 기록을 확인하는 용도라 반복 호출해도 안전하다. 대기/기록 구분 없이 최신순.",
+    { projectId: z.string(), limit: z.number().optional() },
+    async (a) => {
+      const qs = a.limit ? `?limit=${encodeURIComponent(String(a.limit))}` : "";
+      return call(`/api/projects/${a.projectId}/messages/recent${qs}`);
+    },
   );
 
   // ---------------------------------------------------------------- 가이디드 마이그레이션 (Phase 6)

@@ -38,6 +38,7 @@ watch(() => props.id, load);
 
     <nav class="tabs">
       <router-link :to="`/projects/${id}`">홈</router-link>
+      <router-link :to="`/projects/${id}/messages`">메시지</router-link>
       <router-link :to="`/projects/${id}/documents`">문서</router-link>
       <router-link :to="`/projects/${id}/source`">소스 코드</router-link>
       <router-link :to="`/projects/${id}/changes`">변경 추적</router-link>

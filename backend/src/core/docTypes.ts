@@ -19,7 +19,34 @@ export interface DocStatus {
   id: string;
   code: string;
   label: string;
+  guideline: string | null;
   isTerminal: boolean;
+}
+
+// 문서 "상태"는 DocType과 달리 관리자가 자유롭게 정의하는 대상이
+// 아니다(설계자 확인 - "타입 분류 체계를 관리자가 자유롭게 정의"는
+// DocType에 대한 원칙이지 상태에는 적용되지 않음) - 시스템 전역에서
+// 고정된 의미를 갖는 6개 표준 코드만 허용한다. archived는 폐기가
+// 아니라 보관, deprecated는 프로젝트 내에서 더 이상 인용되지 않는다는
+// 뜻일 뿐 상황에 따라 다른 상태로 되돌릴 수 있다(다만 draft로는 어떤
+// 상태에서도 되돌아갈 수 없다 - addDocStatusTransition[ByCode]에서
+// 강제).
+export const STANDARD_DOC_STATUSES: { code: string; label: string; guideline: string; isTerminal: boolean }[] = [
+  { code: "draft", label: "초안", guideline: "아직 작업 중인 단계 - 검토 전 자유롭게 고칠 수 있다.", isTerminal: false },
+  { code: "review", label: "검토 중", guideline: "다른 설계자나 AI의 확인을 기다리는 단계.", isTerminal: false },
+  { code: "pending", label: "보류", guideline: "추가 결정이나 외부 조건을 기다리며 잠시 멈춘 단계.", isTerminal: false },
+  { code: "approved", label: "승인됨", guideline: "확정되어 적용 중인 최종 버전.", isTerminal: false },
+  {
+    code: "deprecated",
+    label: "더 이상 인용되지 않음",
+    guideline: "폐기가 아니라, 프로젝트 안에서 더 이상 참고·인용 대상이 아니라는 뜻 - 상황에 따라 다시 다른 상태로 되돌릴 수 있다.",
+    isTerminal: false,
+  },
+  { code: "archived", label: "보관됨", guideline: "폐기가 아니라 보관 - 더 이상 활성 작업 대상은 아니지만 기록으로 남긴다.", isTerminal: true },
+];
+
+function findStandardStatus(code: string): (typeof STANDARD_DOC_STATUSES)[number] | undefined {
+  return STANDARD_DOC_STATUSES.find((s) => s.code === code.toLowerCase());
 }
 
 export interface DocStatusTransition {
@@ -92,15 +119,21 @@ export async function setDocTypeGuideline(docTypeId: string, guideline: string):
   return { id: row.id, code: row.code, label: row.label, guideline: row.guideline };
 }
 
-export async function addDocStatus(
-  docTypeId: string,
-  code: string,
-  label: string,
-  isTerminal = false,
-): Promise<DocStatus> {
+/** code는 STANDARD_DOC_STATUSES 6개 중 하나여야 한다(대소문자 무관) -
+ * 라벨/지침/종료 여부는 입력받지 않고 항상 표준값으로 고정된다("특수
+ * 상태 코드는 정해져 있다" - 설계자 확인). */
+export async function addDocStatus(docTypeId: string, code: string): Promise<DocStatus> {
+  const std = findStandardStatus(code);
+  if (!std) {
+    throw new Error(
+      `상태 코드는 draft/review/pending/approved/deprecated/archived 중 하나여야 합니다: ${code}`,
+    );
+  }
   const db = getDb();
-  const row = await db.docStatus.create({ data: { docTypeId, code, label, isTerminal } });
-  return { id: row.id, code: row.code, label: row.label, isTerminal: row.isTerminal };
+  const row = await db.docStatus.create({
+    data: { docTypeId, code: std.code, label: std.label, guideline: std.guideline, isTerminal: std.isTerminal },
+  });
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isTerminal: row.isTerminal };
 }
 
 export async function addDocStatusTransition(
@@ -110,6 +143,10 @@ export async function addDocStatusTransition(
   label?: string,
 ): Promise<DocStatusTransition> {
   const db = getDb();
+  const to = await db.docStatus.findUnique({ where: { id: toStatusId } });
+  if (to?.code === "draft") {
+    throw new Error("draft 상태로는 어떤 상태에서도 되돌아갈 수 없습니다");
+  }
   const row = await db.docStatusTransition.create({
     data: { docTypeId, fromStatusId, toStatusId, label: label ?? null },
   });
@@ -131,7 +168,7 @@ export async function listDocTypes(scope: ScopeInput): Promise<DocType[]> {
 export async function listDocStatuses(docTypeId: string): Promise<DocStatus[]> {
   const db = getDb();
   const rows = await db.docStatus.findMany({ where: { docTypeId } });
-  return rows.map((r: DocStatus) => ({ id: r.id, code: r.code, label: r.label, isTerminal: r.isTerminal }));
+  return rows.map((r: DocStatus) => ({ id: r.id, code: r.code, label: r.label, guideline: r.guideline, isTerminal: r.isTerminal }));
 }
 
 /** 프로젝트 스코프에 없으면 그 프로젝트의 group, 없으면 그 group의
@@ -188,7 +225,7 @@ export async function findDocStatusByCode(docTypeId: string, code: string): Prom
   const db = getDb();
   const row = await db.docStatus.findUnique({ where: { docTypeId_code: { docTypeId, code } } });
   if (!row) return null;
-  return { id: row.id, code: row.code, label: row.label, isTerminal: row.isTerminal };
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isTerminal: row.isTerminal };
 }
 
 /** API/CLI가 소유권(어느 스코프 소속인지) 확인할 때 쓴다 - DocType은
@@ -265,86 +302,51 @@ export async function initialStatusFor(docTypeId: string): Promise<DocStatus> {
   return entryPoints[0] ?? statuses[0];
 }
 
+/** 표준 6개 상태를 전부 추가하고, draft를 도착지로 하는 것만 제외한
+ * 모든 순서쌍(25개)으로 전이를 완전 연결한다 - 관리자가 하나씩 안
+ * 그어도 문서 편집기가 항상 유연하게 다음 상태를 고를 수 있다. 이미
+ * 있는 상태/전이는 건너뛴다(재호출해도 안전). */
+export async function seedStandardStatusFlow(docTypeId: string): Promise<void> {
+  const existing = await listDocStatuses(docTypeId);
+  const existingCodes = new Set(existing.map((s) => s.code));
+  const statusIdByCode = new Map<string, string>(existing.map((s) => [s.code, s.id]));
+  for (const std of STANDARD_DOC_STATUSES) {
+    if (existingCodes.has(std.code)) continue;
+    const status = await addDocStatus(docTypeId, std.code);
+    statusIdByCode.set(std.code, status.id);
+  }
+  const existingTransitions = await listDocStatusTransitions(docTypeId);
+  const existingPairs = new Set(existingTransitions.map((t) => `${t.fromStatusId}->${t.toStatusId}`));
+  for (const from of STANDARD_DOC_STATUSES) {
+    for (const to of STANDARD_DOC_STATUSES) {
+      if (from.code === to.code || to.code === "draft") continue;
+      const fromId = statusIdByCode.get(from.code);
+      const toId = statusIdByCode.get(to.code);
+      if (!fromId || !toId || existingPairs.has(`${fromId}->${toId}`)) continue;
+      await addDocStatusTransition(docTypeId, fromId, toId);
+    }
+  }
+}
+
 // ---------------------------------------------------------------- 기본값 시딩
 
 interface SeedSpec {
   code: string;
   label: string;
   guideline: string;
-  statuses: { code: string; label: string; isTerminal?: boolean }[];
-  transitions: [string, string][]; // [fromCode, toCode]
 }
 
+// 6개 기본 DocType 전부 표준 상태 어휘(draft/review/pending/approved/
+// deprecated/archived)를 동일하게 쓴다("일반화되어야 한다" - 설계자
+// 확인, 유형마다 제각각이던 흐름을 하나로 통일) - 타입 간 차이는 코드/
+// 라벨/지침(분류 자체)에만 남는다.
 const DEFAULT_TYPES: SeedSpec[] = [
-  {
-    code: "SP",
-    label: "설계 명세",
-    guideline: "지금 만들고 있는 것이 무엇인지, 어떻게 동작해야 하는지 명세한다.",
-    statuses: [
-      { code: "draft", label: "초안" },
-      { code: "active", label: "적용 중" },
-      { code: "archived", label: "보관", isTerminal: true },
-    ],
-    transitions: [
-      ["draft", "active"],
-      ["active", "archived"],
-    ],
-  },
-  {
-    code: "DC",
-    label: "결정 요구사항 및 요청",
-    guideline: "설계자의 확인/선택이 필요한 사항을 등록한다 - 답변되면 반영 완료까지 추적한다.",
-    statuses: [
-      { code: "open", label: "미답변" },
-      { code: "answered", label: "답변됨" },
-      { code: "applied", label: "반영 완료", isTerminal: true },
-    ],
-    transitions: [
-      ["open", "answered"],
-      ["answered", "applied"],
-    ],
-  },
-  {
-    code: "PL",
-    label: "실행 계획",
-    guideline: "무엇을, 어떤 순서로 할지 계획을 기록한다.",
-    statuses: [
-      { code: "draft", label: "초안" },
-      { code: "active", label: "진행 중" },
-      { code: "done", label: "완료", isTerminal: true },
-    ],
-    transitions: [
-      ["draft", "active"],
-      ["active", "done"],
-    ],
-  },
-  {
-    code: "PD",
-    label: "실행 결과 보고",
-    guideline: "작업을 마친 뒤 무엇을 했는지, 어떻게 검증했는지 요약해 남긴다.",
-    statuses: [{ code: "final", label: "완료", isTerminal: true }],
-    transitions: [],
-  },
-  {
-    code: "RM",
-    label: "지시 사항/지침",
-    guideline: "설계자가 내린 지시나 지켜야 할 지침을 기록한다 - 필요 없어지면 보관 처리한다.",
-    statuses: [
-      { code: "active", label: "적용 중" },
-      { code: "archived", label: "보관", isTerminal: true },
-    ],
-    transitions: [["active", "archived"]],
-  },
-  {
-    code: "DS",
-    label: "설계 결정",
-    guideline: "설계 결정과 그 근거를 기록한다 - 왜 이렇게 만들기로 했는지 나중에 되짚어볼 수 있도록.",
-    statuses: [
-      { code: "open", label: "검토 중" },
-      { code: "decided", label: "확정", isTerminal: true },
-    ],
-    transitions: [["open", "decided"]],
-  },
+  { code: "SP", label: "설계 명세", guideline: "지금 만들고 있는 것이 무엇인지, 어떻게 동작해야 하는지 명세한다." },
+  { code: "DC", label: "결정 요구사항 및 요청", guideline: "설계자의 확인/선택이 필요한 사항을 등록한다 - 답변되면 반영 완료까지 추적한다." },
+  { code: "PL", label: "실행 계획", guideline: "무엇을, 어떤 순서로 할지 계획을 기록한다." },
+  { code: "PD", label: "실행 결과 보고", guideline: "작업을 마친 뒤 무엇을 했는지, 어떻게 검증했는지 요약해 남긴다." },
+  { code: "RM", label: "지시 사항/지침", guideline: "설계자가 내린 지시나 지켜야 할 지침을 기록한다 - 필요 없어지면 보관 처리한다." },
+  { code: "DS", label: "설계 결정", guideline: "설계 결정과 그 근거를 기록한다 - 왜 이렇게 만들기로 했는지 나중에 되짚어볼 수 있도록." },
 ];
 
 /** createProject() 직후 호출 - 새 프로젝트가 타입 체계 없이 시작하지
@@ -353,16 +355,6 @@ const DEFAULT_TYPES: SeedSpec[] = [
 export async function seedDefaultDocTypes(projectId: string): Promise<void> {
   for (const spec of DEFAULT_TYPES) {
     const docType = await createDocType({ projectId }, spec.code, spec.label, spec.guideline);
-    const statusIdByCode = new Map<string, string>();
-    for (const s of spec.statuses) {
-      const status = await addDocStatus(docType.id, s.code, s.label, s.isTerminal ?? false);
-      statusIdByCode.set(s.code, status.id);
-    }
-    for (const [fromCode, toCode] of spec.transitions) {
-      const fromId = statusIdByCode.get(fromCode);
-      const toId = statusIdByCode.get(toCode);
-      if (!fromId || !toId) continue;
-      await addDocStatusTransition(docType.id, fromId, toId);
-    }
+    await seedStandardStatusFlow(docType.id);
   }
 }

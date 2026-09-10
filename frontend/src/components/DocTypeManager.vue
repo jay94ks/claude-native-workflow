@@ -14,8 +14,11 @@ interface DocStatus {
   id: string;
   code: string;
   label: string;
+  guideline: string | null;
   isTerminal: boolean;
 }
+
+const STANDARD_STATUS_CODES = ["draft", "review", "pending", "approved", "deprecated", "archived"];
 interface DocStatusTransition {
   id: string;
   fromStatusId: string;
@@ -84,9 +87,9 @@ const detailError = ref("");
 const detailLoading = ref(false);
 
 const newStatusCode = ref("");
-const newStatusLabel = ref("");
-const newStatusTerminal = ref(false);
 const statusAddError = ref("");
+const applyingStandardFlow = ref(false);
+const standardFlowError = ref("");
 
 const newTransitionFrom = ref("");
 const newTransitionTo = ref("");
@@ -160,23 +163,31 @@ async function toggleExpand(docTypeId: string) {
 }
 
 async function addStatus() {
-  if (!expandedId.value || !newStatusCode.value.trim() || !newStatusLabel.value.trim()) return;
+  if (!expandedId.value || !newStatusCode.value) return;
   statusAddError.value = "";
   try {
     await apiCall(`${basePath.value}/${expandedId.value}/statuses`, {
       method: "POST",
-      body: JSON.stringify({
-        code: newStatusCode.value.trim(),
-        label: newStatusLabel.value.trim(),
-        isTerminal: newStatusTerminal.value,
-      }),
+      body: JSON.stringify({ code: newStatusCode.value }),
     });
     newStatusCode.value = "";
-    newStatusLabel.value = "";
-    newStatusTerminal.value = false;
     await loadDetail(expandedId.value);
   } catch (err) {
     statusAddError.value = err instanceof ApiError ? err.message : "상태 추가에 실패했습니다";
+  }
+}
+
+async function applyStandardFlow() {
+  if (!expandedId.value) return;
+  applyingStandardFlow.value = true;
+  standardFlowError.value = "";
+  try {
+    await apiCall(`${basePath.value}/${expandedId.value}/standard-flow`, { method: "POST" });
+    await loadDetail(expandedId.value);
+  } catch (err) {
+    standardFlowError.value = err instanceof ApiError ? err.message : "표준 흐름 적용에 실패했습니다";
+  } finally {
+    applyingStandardFlow.value = false;
   }
 }
 
@@ -247,21 +258,27 @@ onMounted(loadTypes);
               <p v-if="guidelineSaveError" class="error">{{ guidelineSaveError }}</p>
             </div>
 
-            <h4>상태</h4>
+            <h4>상태(표준 6개 어휘 - draft/review/pending/approved/deprecated/archived만 사용 가능)</h4>
             <ul class="statuses">
               <li v-for="s in statuses" :key="s.id">
                 <code>{{ s.code }}</code> {{ s.label }}
                 <span v-if="s.isTerminal" class="badge">종료</span>
+                <span v-if="s.guideline" class="status-guideline">— {{ s.guideline }}</span>
               </li>
               <li v-if="statuses.length === 0" class="muted">상태가 없습니다 - 최소 하나는 있어야 문서를 만들 수 있습니다.</li>
             </ul>
             <form class="add-row" @submit.prevent="addStatus">
-              <input v-model="newStatusCode" type="text" placeholder="상태 코드" />
-              <input v-model="newStatusLabel" type="text" placeholder="라벨" />
-              <label class="checkbox"><input v-model="newStatusTerminal" type="checkbox" /> 종료 상태</label>
+              <select v-model="newStatusCode">
+                <option value="">상태 코드 선택</option>
+                <option v-for="c in STANDARD_STATUS_CODES" :key="c" :value="c">{{ c }}</option>
+              </select>
               <button type="submit">상태 추가</button>
+              <button type="button" class="standard-flow-btn" :disabled="applyingStandardFlow" @click="applyStandardFlow">
+                표준 상태 흐름 한 번에 적용
+              </button>
             </form>
             <p v-if="statusAddError" class="error">{{ statusAddError }}</p>
+            <p v-if="standardFlowError" class="error">{{ standardFlowError }}</p>
 
             <h4>전이</h4>
             <ul class="transitions">
@@ -440,6 +457,19 @@ onMounted(loadTypes);
   padding: 1px 8px;
   font-size: 11px;
   margin-left: 6px;
+}
+.status-guideline {
+  color: #999;
+  font-size: 12px;
+  margin-left: 4px;
+}
+.standard-flow-btn {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  color: #333;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
 }
 .add-row {
   display: flex;

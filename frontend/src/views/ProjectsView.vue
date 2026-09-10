@@ -6,6 +6,7 @@ interface Project {
   id: string;
   projectGroupId: string;
   name: string;
+  hidden: boolean;
 }
 interface ProjectGroup {
   id: string;
@@ -18,6 +19,7 @@ const newName = ref("");
 const newGroupId = ref("");
 const error = ref("");
 const loading = ref(true);
+const hideError = ref("");
 
 async function load() {
   loading.value = true;
@@ -55,6 +57,19 @@ async function create() {
   }
 }
 
+async function toggleHidden(project: Project) {
+  hideError.value = "";
+  try {
+    await apiCall(`/projects/${project.id}/hidden`, {
+      method: "PUT",
+      body: JSON.stringify({ hidden: !project.hidden }),
+    });
+    await load();
+  } catch (err) {
+    hideError.value = err instanceof ApiError ? err.message : "숨김 상태를 바꾸지 못했습니다(owner 또는 팀장만 가능)";
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -69,11 +84,16 @@ onMounted(load);
     <button type="submit">추가</button>
   </form>
   <p v-if="error" class="error">{{ error }}</p>
+  <p v-if="hideError" class="error">{{ hideError }}</p>
   <p v-if="loading">불러오는 중...</p>
   <ul v-else class="list">
     <li v-for="project in projects" :key="project.id">
-      <router-link :to="`/projects/${project.id}`">{{ project.name }}</router-link>
-      <span class="muted">{{ groupName(project.projectGroupId) }}</span>
+      <span class="left">
+        <router-link :to="`/projects/${project.id}`">{{ project.name }}</router-link>
+        <span v-if="project.hidden" class="hidden-badge">🔒 숨김</span>
+        <span class="muted">{{ groupName(project.projectGroupId) }}</span>
+      </span>
+      <button class="hide-btn" @click="toggleHidden(project)">{{ project.hidden ? "숨김 해제" : "숨김" }}</button>
     </li>
     <li v-if="projects.length === 0" class="muted">아직 프로젝트가 없습니다.</li>
   </ul>
@@ -124,6 +144,25 @@ h1 {
 }
 .list li:last-child {
   border-bottom: none;
+}
+.left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hidden-badge {
+  font-size: 11px;
+  background: #fbeee0;
+  color: #8a5a1a;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.hide-btn {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
 }
 .muted {
   color: #888;

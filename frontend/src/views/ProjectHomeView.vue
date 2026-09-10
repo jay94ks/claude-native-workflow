@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
-import MessagesPanel from "../components/MessagesPanel.vue";
 
 const props = defineProps<{ id: string }>();
 
@@ -10,6 +9,7 @@ interface PendingQuestion {
   documentTrackingCode: string;
   documentTitle: string;
   text: string;
+  status: string;
 }
 
 const pending = ref<PendingQuestion[]>([]);
@@ -20,7 +20,11 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    pending.value = await apiCall<PendingQuestion[]>(`/projects/${props.id}/pending`).catch(() => []);
+    const result = await apiCall<{ questions: PendingQuestion[] }>(`/projects/${props.id}/pending`).catch(() => ({ questions: [] }));
+    // "pending"(설계자 답변 완료, AI 확인 대기)은 AI가 처리할 몫이라
+    // 설계자 화면엔 노이즈로 안 얹는다 - "open"(설계자가 지금 답해야
+    // 할 것)만 보여준다.
+    pending.value = result.questions.filter((q) => q.status === "open");
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "정보를 불러오지 못했습니다";
   } finally {
@@ -34,8 +38,6 @@ onMounted(load);
 <template>
   <p v-if="error" class="error">{{ error }}</p>
 
-  <MessagesPanel :project-id="id" />
-
   <section v-if="!loading && pending.length > 0">
     <h2>답변 대기 질문</h2>
     <ul class="list">
@@ -46,6 +48,7 @@ onMounted(load);
       </li>
     </ul>
   </section>
+  <p v-else-if="!loading" class="muted">답변 대기 중인 질문이 없습니다. "메시지" 탭에서 메시지를 확인하세요.</p>
 </template>
 
 <style scoped>
@@ -89,6 +92,10 @@ section {
 }
 .error {
   color: #d1344b;
+  font-size: 13px;
+}
+.muted {
+  color: #888;
   font-size: 13px;
 }
 </style>

@@ -53,20 +53,28 @@ model TrackingCode {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  username     String   @unique
-  email        String?  @unique
-  passwordHash String
-  createdAt    DateTime @default(now())
+  id            String   @id @default(cuid())
+  username      String   @unique
+  email         String?  @unique
+  phone         String?
+  emailVisible  Boolean  @default(false)
+  phoneVisible  Boolean  @default(false)
+  passwordHash  String
+  createdAt     DateTime @default(now())
 
   gitCredentials    GitCredential[]
   refreshTokens     RefreshToken[]
   memberships       Member[]
   documentsCreated  Document[]         @relation("DocumentCreatedBy")
   revisionsEdited   DocumentRevision[] @relation("RevisionEditedBy")
+  questionsAsked    Question[]         @relation("QuestionAskedBy")
   answersGiven      Answer[]           @relation("AnswerAnsweredBy")
   comments          Comment[]          @relation("CommentAuthor")
   messagesSent      Message[]          @relation("MessageAuthor")
+  teamAdminships    TeamAdmin[]
+  accessOverrides   DocAccessOverride[]
+  foldersCreated    Folder[]
+  hiddenProjects    Project[]          @relation("ProjectHiddenBy")
 }
 
 model RefreshToken {
@@ -111,6 +119,24 @@ model Team {
   docTypes      DocType[]
   templateFiles TemplateFile[]
   trackingCodes TrackingCode[]
+  admins        TeamAdmin[]
+}
+
+// 팀 관리자("팀장") - 팀 소속 프로젝트 그룹 하위 프로젝트가 숨김 처리돼도
+// 계속 보고 해제할 수 있는 설계자(Project.hidden 참고). 팀 자체 쓰기가
+// 지금까지 authenticate만 요구해온 것과 같은 인가 수준을 그대로 따른다
+// (설치 단위 admin role 자체가 아직 없다는 기존 한계의 연장).
+model TeamAdmin {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([teamId, userId])
+  @@index([userId])
 }
 
 model ProjectGroup {
@@ -131,9 +157,12 @@ model Project {
   id             String   @id @default(cuid())
   projectGroupId String
   name           String
+  hidden         Boolean  @default(false)
+  hiddenBy       String?
   createdAt      DateTime @default(now())
 
   projectGroup    ProjectGroup     @relation(fields: [projectGroupId], references: [id])
+  hiddenByUser    User?            @relation("ProjectHiddenBy", fields: [hiddenBy], references: [id])
   gitRepo         ProjectGitRepo?
   members         Member[]
   docTypes        DocType[]
@@ -143,6 +172,8 @@ model Project {
   messages        Message[]
   templateFiles   TemplateFile[]
   trackingCodes   TrackingCode[]
+  folders         Folder[]
+  accessOverrides DocAccessOverride[]
 
   @@index([projectGroupId])
 }
@@ -192,9 +223,10 @@ model DocType {
   projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
   project      Project?      @relation(fields: [projectId], references: [id])
 
-  statuses    DocStatus[]
-  transitions DocStatusTransition[]
-  documents   Document[]
+  statuses        DocStatus[]
+  transitions     DocStatusTransition[]
+  documents       Document[]
+  accessOverrides DocAccessOverride[]
 
   @@index([teamId])
   @@index([projectGroupId])
@@ -206,6 +238,7 @@ model DocStatus {
   docTypeId  String
   code       String
   label      String
+  guideline  String? // 표준 상태 코드(draft/review/pending/approved/deprecated/archived)의 고정 의미 - core/docTypes.ts의 STANDARD_DOC_STATUSES에서 그대로 채워짐, 관리자가 수정 불가
   isTerminal Boolean @default(false)
 
   docType         DocType               @relation(fields: [docTypeId], references: [id])
@@ -236,6 +269,7 @@ model Document {
   id           String   @id @default(cuid())
   projectId    String
   docTypeId    String
+  folderId     String? // DB 전용 정리용 폴더(Folder) - null이면 최상단, AI(CLI/MCP)는 이 개념을 모름
   trackingCode String   @unique // "XX-XXXXXXXX"
   title        String
   body         String
@@ -246,18 +280,22 @@ model Document {
 
   project Project   @relation(fields: [projectId], references: [id])
   docType DocType   @relation(fields: [docTypeId], references: [id])
+  folder  Folder?   @relation(fields: [folderId], references: [id])
   status  DocStatus @relation(fields: [statusId], references: [id])
   creator User      @relation("DocumentCreatedBy", fields: [createdBy], references: [id])
 
-  revisions DocumentRevision[]
-  linksOut  DocumentLink[]           @relation("DocumentLinkSource")
-  linksIn   DocumentLink[]           @relation("DocumentLinkTarget")
-  questions Question[]
-  comments  Comment[]                @relation("DocumentComments")
+  revisions          DocumentRevision[]
+  linksOut           DocumentLink[]       @relation("DocumentLinkSource")
+  linksIn            DocumentLink[]       @relation("DocumentLinkTarget")
+  questions          Question[]
+  questionReferences QuestionReference[]
+  comments           Comment[]            @relation("DocumentComments")
+  accessOverrides    DocAccessOverride[]
 
   @@index([projectId])
   @@index([docTypeId])
   @@index([statusId])
+  @@index([folderId])
 }
 
 model DocumentRevision {
@@ -267,7 +305,7 @@ model DocumentRevision {
   editedBy   String
   editedAt   DateTime @default(now())
 
-  document Document @relation(fields: [documentId], references: [id])
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   editor   User     @relation("RevisionEditedBy", fields: [editedBy], references: [id])
 
   @@index([documentId])
@@ -281,8 +319,8 @@ model DocumentLink {
   toTrackingCode String
   linkType       String?
 
-  fromDocument Document @relation("DocumentLinkSource", fields: [fromDocumentId], references: [id])
-  toDocument   Document @relation("DocumentLinkTarget", fields: [toTrackingCode], references: [trackingCode])
+  fromDocument Document @relation("DocumentLinkSource", fields: [fromDocumentId], references: [id], onDelete: Cascade)
+  toDocument   Document @relation("DocumentLinkTarget", fields: [toTrackingCode], references: [trackingCode], onDelete: Cascade)
 
   @@index([fromDocumentId])
   @@index([toTrackingCode])
@@ -296,13 +334,31 @@ model Question {
   trackingCode String   @unique // "QU-XXXXXXXX"
   ordinal      Int
   text         String
-  status       String   @default("open") // open | answered
+  askedBy      String
+  status       String   @default("open") // open(AI 질의, 설계자 답변 대기) | pending(설계자 답변 완료, AI 확인 대기) | resolved(AI 확인 완료)
   createdAt    DateTime @default(now())
 
-  document Document @relation(fields: [documentId], references: [id])
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  asker    User     @relation("QuestionAskedBy", fields: [askedBy], references: [id])
   answer   Answer?
+  refs     QuestionReference[]
 
   @@index([documentId])
+}
+
+// AI가 질의를 등록할 때 판단에 참고한 문서들을 구조적으로 태깅(DocumentLink와
+// 같은 조인 테이블 패턴 - 본문 텍스트에 욱여넣지 않는다).
+model QuestionReference {
+  id           String   @id @default(cuid())
+  questionId   String
+  trackingCode String
+  createdAt    DateTime @default(now())
+
+  question           Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  referencedDocument Document @relation(fields: [trackingCode], references: [trackingCode], onDelete: Cascade)
+
+  @@unique([questionId, trackingCode])
+  @@index([trackingCode])
 }
 
 model Answer {
@@ -328,7 +384,7 @@ model Comment {
   resolvedAt   DateTime?
 
   project  Project  @relation(fields: [projectId], references: [id])
-  document Document @relation("DocumentComments", fields: [trackingCode], references: [trackingCode])
+  document Document @relation("DocumentComments", fields: [trackingCode], references: [trackingCode], onDelete: Cascade)
   author   User     @relation("CommentAuthor", fields: [authorId], references: [id])
 
   @@index([projectId])
@@ -370,11 +426,12 @@ model PushHookQueueEntry {
 // ---------------------------------------------------------------- 인스턴스 메시징
 
 model Message {
-  id        String   @id @default(cuid())
-  projectId String
-  authorId  String? // null이면 시스템 브로드캐스트
-  body      String
-  createdAt DateTime @default(now())
+  id          String    @id @default(cuid())
+  projectId   String
+  authorId    String? // null이면 시스템 브로드캐스트
+  body        String
+  deliveredAt DateTime? // null="대기"(AI가 아직 안 읽음), 값 있으면 "기록"(CLI/MCP가 읽어감)
+  createdAt   DateTime  @default(now())
 
   project Project @relation(fields: [projectId], references: [id])
   author  User?   @relation("MessageAuthor", fields: [authorId], references: [id])
@@ -405,4 +462,60 @@ model TemplateFile {
   @@index([teamId])
   @@index([projectGroupId])
   @@index([projectId])
+}
+
+// ---------------------------------------------------------------- 문서 정리용 폴더 (DB 전용, AI는 모름)
+// 실제 git 파일 트리와 무관하게 설계자의 문서 정리 편의만을 위해 존재.
+// CLI/MCP엔 이 모델 관련 명령/도구가 전혀 없고, 문서 조회 공용 라우트
+// 응답에도 folderId 외 정보를 얹지 않는다 - 웹 UI 전용 라우트로만 접근.
+model Folder {
+  id             String   @id @default(cuid())
+  projectId      String
+  parentFolderId String?
+  name           String
+  createdBy      String
+  createdAt      DateTime @default(now())
+
+  project         Project             @relation(fields: [projectId], references: [id])
+  parentFolder    Folder?             @relation("FolderChildren", fields: [parentFolderId], references: [id])
+  childFolders    Folder[]            @relation("FolderChildren")
+  documents       Document[]
+  creator         User                @relation(fields: [createdBy], references: [id])
+  accessOverrides DocAccessOverride[]
+
+  // 같은 부모 아래 동명 폴더 금지는 parentFolderId가 nullable이라(여러
+  // 드라이버가 NULL끼리는 유니크 위반으로 안 침) DB 제약이 아니라
+  // core/folders.ts의 애플리케이션 레벨 findFirst 검사로 강제한다.
+  @@index([projectId, parentFolderId])
+}
+
+// ---------------------------------------------------------------- 협업자별 세부 접근 권한
+// project 공통 / docType 스코프 / document 스코프 / folder 스코프 중
+// 정확히 하나만 채워짐(전부 null이면 "프로젝트 공통" 레벨) - 각 스코프
+// 값이 null인 필드는 "이 레벨에서 명시 안 함, 더 넓은 기본값을 따름".
+// null-스코프 유니크 문제(TemplateFile과 동일 이유)로 DB @@unique 대신
+// core/permissions.ts가 findFirst 후 update/create.
+model DocAccessOverride {
+  id         String   @id @default(cuid())
+  projectId  String
+  userId     String
+  docTypeId  String?
+  documentId String?
+  folderId   String?
+  canRead    Boolean?
+  canWrite   Boolean?
+  canDelete  Boolean?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  project  Project  @relation(fields: [projectId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+  docType  DocType? @relation(fields: [docTypeId], references: [id], onDelete: Cascade)
+  document Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  folder   Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, userId])
+  @@index([docTypeId])
+  @@index([documentId])
+  @@index([folderId])
 }

@@ -8,7 +8,15 @@ import { scanDirectory, applyManifest } from "./migrate.js";
 const program = new Command();
 program.name("docs").description("claude-native-workflow v2 문서 워크플로우 CLI").version("0.1.0");
 
+// AI 안내(prologue) - 응답에 notices 배열이 있으면 JSON을 찍기 전에
+// 각 줄을 먼저 출력한다(필드 자체는 JSON에도 그대로 남김 - 사람이 읽는
+// 출력과 파싱하는 코드 양쪽 다 신호를 받게).
 function printJson(value: unknown): void {
+  if (value && typeof value === "object" && Array.isArray((value as { notices?: unknown }).notices)) {
+    for (const notice of (value as { notices: string[] }).notices) {
+      console.log(`⚠ ${notice}`);
+    }
+  }
   console.log(JSON.stringify(value, null, 2));
 }
 
@@ -82,9 +90,53 @@ authCmd.command("whoami").action(() =>
   run(async () => {
     const creds = loadCredentials();
     if (!creds) { console.log("로그인되어 있지 않습니다"); return; }
-    printJson({ api_base: creds.api_base });
+    printJson(await apiCall("/api/auth/me"));
   }),
 );
+
+// ---------------------------------------------------------------- 프로필
+
+const profileCmd = program.command("profile").description("내 프로필 관리");
+
+profileCmd
+  .command("set")
+  .option("--email <e>")
+  .option("--phone <p>")
+  .option("--email-visible <bool>", "true|false")
+  .option("--phone-visible <bool>", "true|false")
+  .action((opts) =>
+    run(async () =>
+      printJson(
+        await apiCall("/api/auth/me", {
+          method: "PUT",
+          body: JSON.stringify({
+            email: opts.email,
+            phone: opts.phone,
+            emailVisible: opts.emailVisible !== undefined ? opts.emailVisible === "true" : undefined,
+            phoneVisible: opts.phoneVisible !== undefined ? opts.phoneVisible === "true" : undefined,
+          }),
+        }),
+      ),
+    ),
+  );
+
+// ---------------------------------------------------------------- 사용자 프로필 조회/활동 이력
+
+const userCmd = program.command("user").description("다른 설계자의 공개 프로필/활동 이력 조회");
+
+userCmd
+  .command("get <userId>")
+  .action((userId) => run(async () => printJson(await apiCall(`/api/users/${userId}`))));
+
+userCmd
+  .command("activity <userId>")
+  .option("--limit <n>", "최근 N건(기본 30)")
+  .action((userId, opts) =>
+    run(async () => {
+      const qs = opts.limit ? `?limit=${encodeURIComponent(opts.limit)}` : "";
+      printJson(await apiCall(`/api/users/${userId}/activity${qs}`));
+    }),
+  );
 
 // ---------------------------------------------------------------- git 자격증명
 
@@ -121,6 +173,24 @@ program
 program.command("teams").action(() => run(async () => printJson(await apiCall("/api/teams"))));
 
 program
+  .command("team-admin-add <teamId> <userId>")
+  .action((teamId, userId) =>
+    run(async () =>
+      printJson(await apiCall(`/api/teams/${teamId}/admins`, { method: "POST", body: JSON.stringify({ userId }) })),
+    ),
+  );
+
+program
+  .command("team-admin-remove <teamId> <userId>")
+  .action((teamId, userId) =>
+    run(async () => printJson(await apiCall(`/api/teams/${teamId}/admins/${userId}`, { method: "DELETE" }))),
+  );
+
+program
+  .command("team-admins <teamId>")
+  .action((teamId) => run(async () => printJson(await apiCall(`/api/teams/${teamId}/admins`))));
+
+program
   .command("group-create <name>")
   .option("--team <id>")
   .action((name, opts) =>
@@ -152,6 +222,20 @@ program.command("projects").action(() => run(async () => printJson(await apiCall
 program
   .command("project <projectId>")
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}`))));
+
+program
+  .command("project-hide <projectId>")
+  .requiredOption("--hidden <bool>", "true|false")
+  .action((projectId, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/hidden`, {
+          method: "PUT",
+          body: JSON.stringify({ hidden: opts.hidden === "true" }),
+        }),
+      ),
+    ),
+  );
 
 program
   .command("member-add <projectId> <userId>")
@@ -267,16 +351,25 @@ program
   );
 
 program
-  .command("doctype-status-add <projectId> <docTypeId> <code> <label>")
-  .option("--terminal", "이 상태가 종료 상태임을 표시")
-  .action((projectId, docTypeId, code, label, opts) =>
+  .command("doctype-status-add <projectId> <docTypeId> <code>")
+  .description("code는 draft/review/pending/approved/deprecated/archived 중 하나(라벨/지침/종료 여부는 표준값 고정)")
+  .action((projectId, docTypeId, code) =>
     run(async () =>
       printJson(
         await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/statuses`, {
           method: "POST",
-          body: JSON.stringify({ code, label, isTerminal: !!opts.terminal }),
+          body: JSON.stringify({ code }),
         }),
       ),
+    ),
+  );
+
+program
+  .command("doctype-apply-standard-flow <projectId> <docTypeId>")
+  .description("표준 상태 6개(draft/review/pending/approved/deprecated/archived) + 전이를 한 번에 세팅")
+  .action((projectId, docTypeId) =>
+    run(async () =>
+      printJson(await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/standard-flow`, { method: "POST" })),
     ),
   );
 
@@ -299,16 +392,23 @@ program
   .action((_projectId, docTypeId) => run(async () => printJson(await apiCall(`/api/doc-types/${docTypeId}/transitions`))));
 
 program
-  .command("team-doctype-status-add <teamId> <docTypeId> <code> <label>")
-  .option("--terminal", "이 상태가 종료 상태임을 표시")
-  .action((teamId, docTypeId, code, label, opts) =>
+  .command("team-doctype-status-add <teamId> <docTypeId> <code>")
+  .action((teamId, docTypeId, code) =>
     run(async () =>
       printJson(
         await apiCall(`/api/teams/${teamId}/doc-types/${docTypeId}/statuses`, {
           method: "POST",
-          body: JSON.stringify({ code, label, isTerminal: !!opts.terminal }),
+          body: JSON.stringify({ code }),
         }),
       ),
+    ),
+  );
+
+program
+  .command("team-doctype-apply-standard-flow <teamId> <docTypeId>")
+  .action((teamId, docTypeId) =>
+    run(async () =>
+      printJson(await apiCall(`/api/teams/${teamId}/doc-types/${docTypeId}/standard-flow`, { method: "POST" })),
     ),
   );
 
@@ -327,16 +427,23 @@ program
   );
 
 program
-  .command("group-doctype-status-add <groupId> <docTypeId> <code> <label>")
-  .option("--terminal", "이 상태가 종료 상태임을 표시")
-  .action((groupId, docTypeId, code, label, opts) =>
+  .command("group-doctype-status-add <groupId> <docTypeId> <code>")
+  .action((groupId, docTypeId, code) =>
     run(async () =>
       printJson(
         await apiCall(`/api/project-groups/${groupId}/doc-types/${docTypeId}/statuses`, {
           method: "POST",
-          body: JSON.stringify({ code, label, isTerminal: !!opts.terminal }),
+          body: JSON.stringify({ code }),
         }),
       ),
+    ),
+  );
+
+program
+  .command("group-doctype-apply-standard-flow <groupId> <docTypeId>")
+  .action((groupId, docTypeId) =>
+    run(async () =>
+      printJson(await apiCall(`/api/project-groups/${groupId}/doc-types/${docTypeId}/standard-flow`, { method: "POST" })),
     ),
   );
 
@@ -438,6 +545,54 @@ program
   .command("revisions <trackingCode>")
   .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/revisions`))));
 
+program
+  .command("delete <trackingCode>")
+  .description("문서를 삭제한다(리비전/링크/코멘트/질문+답변까지 함께 정리)")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}`, { method: "DELETE" }))));
+
+program
+  .command("next-statuses <trackingCode>")
+  .description("이 문서에서 지금 선택 가능한 다음 상태 목록(코드/라벨/지침)")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/next-statuses`))));
+
+// ---------------------------------------------------------------- 세부 접근 권한
+
+program
+  .command("access-set <projectId> <userId>")
+  .option("--doctype <id>", "문서 타입 스코프(문서/스코프 중 하나만)")
+  .option("--document <trackingCode>", "개별 문서 스코프")
+  .option("--read <bool>", "true|false")
+  .option("--write <bool>", "true|false")
+  .option("--delete <bool>", "true|false")
+  .action((projectId, userId, opts) =>
+    run(async () => {
+      const patch = {
+        userId,
+        canRead: opts.read !== undefined ? opts.read === "true" : undefined,
+        canWrite: opts.write !== undefined ? opts.write === "true" : undefined,
+        canDelete: opts.delete !== undefined ? opts.delete === "true" : undefined,
+      };
+      if (opts.document) {
+        printJson(
+          await apiCall(`/api/documents/${opts.document}/access`, { method: "PUT", body: JSON.stringify(patch) }),
+        );
+      } else if (opts.doctype) {
+        printJson(
+          await apiCall(`/api/projects/${projectId}/doc-types/${opts.doctype}/access`, {
+            method: "PUT",
+            body: JSON.stringify(patch),
+          }),
+        );
+      } else {
+        printJson(await apiCall(`/api/projects/${projectId}/access`, { method: "PUT", body: JSON.stringify(patch) }));
+      }
+    }),
+  );
+
+program
+  .command("access-list <projectId>")
+  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/access`))));
+
 // ---------------------------------------------------------------- 보고서
 
 program
@@ -463,12 +618,16 @@ program
 
 program
   .command("question <trackingCode> <text...>")
-  .action((trackingCode, textParts) =>
+  .option("--refs <codes>", "판단에 참고한 문서 trackingCode 목록(쉼표로 구분)")
+  .action((trackingCode, textParts, opts) =>
     run(async () =>
       printJson(
         await apiCall(`/api/documents/${trackingCode}/questions`, {
           method: "POST",
-          body: JSON.stringify({ text: textParts.join(" ") }),
+          body: JSON.stringify({
+            text: textParts.join(" "),
+            refs: opts.refs ? String(opts.refs).split(",").map((s: string) => s.trim()) : undefined,
+          }),
         }),
       ),
     ),
@@ -477,6 +636,13 @@ program
 program
   .command("questions <trackingCode>")
   .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/questions`))));
+
+program
+  .command("question-ack <trackingCode>")
+  .description("설계자가 답변한(pending) 질의를 확인 완료(resolved)로 표시")
+  .action((trackingCode) =>
+    run(async () => printJson(await apiCall(`/api/questions/${trackingCode}/ack`, { method: "POST" }))),
+  );
 
 program
   .command("pending <projectId>")
@@ -495,34 +661,9 @@ program
     ),
   );
 
-// ---------------------------------------------------------------- 코멘트
-
-const commentCmd = program.command("comment").description("문서 코멘트");
-
-commentCmd
-  .command("list <projectId> <trackingCode>")
-  .action((projectId, trackingCode) =>
-    run(async () => printJson(await apiCall(`/api/projects/${projectId}/documents/${trackingCode}/comments`))),
-  );
-
-commentCmd
-  .command("add <projectId> <trackingCode> <body...>")
-  .action((projectId, trackingCode, bodyParts) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/projects/${projectId}/documents/${trackingCode}/comments`, {
-          method: "POST",
-          body: JSON.stringify({ body: bodyParts.join(" ") }),
-        }),
-      ),
-    ),
-  );
-
-commentCmd
-  .command("resolve <projectId> <commentId>")
-  .action((projectId, commentId) =>
-    run(async () => printJson(await apiCall(`/api/projects/${projectId}/comments/${commentId}/resolve`, { method: "POST" }))),
-  );
+// 코멘트는 설계자들끼리만 쓰는 채널이다(웹 UI 전용) - AI의 참고 지표가
+// 될 수 없어 CLI/MCP엔 의도적으로 명령/도구를 두지 않는다("CLI/MCP
+// 명령어 완전성" 원칙의 세 번째 의도적 예외 - REST API/웹 UI는 그대로).
 
 // ---------------------------------------------------------------- 템플릿 (CLAUDE.md, SKILL.md 등)
 
@@ -777,8 +918,15 @@ hookCmd
     run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-queue/${id}/done`, { method: "POST" }))),
   );
 
-const messageCmd = program.command("message").description("인스턴스 메시징(Phase 4에서 구현)");
-messageCmd.command("list <projectId>").action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages`))));
+const messageCmd = program.command("message").description("인스턴스 메시징 - 대기(AI 미확인)/기록(AI 확인함) 상태 구분");
+messageCmd
+  .command("list <projectId>")
+  .option("--status <s>", "pending|delivered|all(기본 all)")
+  .description("CLI로 조회하면 대기 상태였던 메시지가 자동으로 기록 처리된다(AI가 읽어감의 정의)")
+  .action((projectId, opts) => {
+    const qs = new URLSearchParams({ markDelivered: "true", ...(opts.status ? { status: opts.status } : {}) });
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages?${qs}`)));
+  });
 messageCmd.command("send <projectId> <body...>").action((projectId, bodyParts) =>
   run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages`, { method: "POST", body: JSON.stringify({ body: bodyParts.join(" ") }) }))),
 );
@@ -786,6 +934,14 @@ messageCmd
   .command("wait <projectId>")
   .option("--timeout <sec>", "타임아웃(초)", "60")
   .action((projectId, opts) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages/wait?timeout=${opts.timeout}`))));
+messageCmd
+  .command("recent <projectId>")
+  .option("--limit <n>", "기본 20")
+  .description("장애 복구용 - 상태를 바꾸지 않는 순수 조회(반복 호출해도 안전), 대기/기록 구분 없이 최신순")
+  .action((projectId, opts) => {
+    const qs = opts.limit ? `?limit=${encodeURIComponent(opts.limit)}` : "";
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages/recent${qs}`)));
+  });
 
 // ---------------------------------------------------------------- 가이디드 마이그레이션 (Phase 6)
 
