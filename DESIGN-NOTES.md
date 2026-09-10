@@ -1424,3 +1424,53 @@ register/login까지 재현해서 무해함을 검증. 배포 시점 3단계 절
 현재 상태(clone+build) 그대로 유지 - 배포 확인되면 그때 반영. 상세는
 [DN-00001](docs/done/DN-00001.md) "DC-00003 답변 처리 + npm 공개 배포
 준비" 참고.
+
+### 2026-09-10 (계속 35) — QA: `docs/reply/index.md` 재생성 누락 + tier2 CRLF 정규식 버그 2건
+
+대시보드 트리 "주의 필요" 배지를 본문 스캔 기준으로 고치는 작업 중,
+`docs/reply/index.md`의 미답변 질문 표가 `tier1/tools/docs/server.py`의
+`answer_pending()` 안에서만(약 802번째 줄) 재생성되고, 문서를 새로
+만들거나 대시보드 편집기로 저장할 때는 전혀 갱신되지 않는 걸 발견.
+`docs/PROTOCOL.md`/`CLAUDE.md` 둘 다 "대화 시작 시 이 파일로 미답변
+항목을 확인"하라고 못박고 있어서, 조용히 틀린 정보를 줄 수 있는 실제
+버그였다. 이 세션에 만든 DC-00003/RV-00001이 실제로 이 상태로
+재현됐다(표는 "항목 없음"인데 `/api/pending`은 둘 다 미답변으로
+정확히 보여줌) - 다만 고치는 시점엔 이미 둘 다 답변 완료 상태라
+프론트매터/표를 손으로 되돌릴 필요는 없었다.
+
+수정: `save_doc_body()`/`saveDocBody()`가 저장 직후 재생성을 부르도록
+추가(tier1 Python + tier2 TS 대칭, tier3는 tier2 core를 그대로 써서
+자동 상속), `createDoc()`에도 방어적으로 추가. 그래도 Claude가
+대시보드/CLI 없이 `docs/*.md`를 직접 파일로 쓰는 경로(실제로 새 문서를
+만드는 방식 그 자체)는 코드 훅만으로 못 닿아서, 서버 기동 없이 표만
+재생성하는 독립 명령을 추가(`server.py --rebuild-reply-index`, tier2
+CLI `docs rebuild-reply-index`)하고 `docs/PROTOCOL.md`(이 저장소 것과
+`tier1/docs/PROTOCOL.md` 템플릿 둘 다, 원래 동일 내용이라 대칭 수정)
+4절에 "직접 편집 직후 반드시 이 명령 실행" 지시를 추가했다.
+
+검증 중 별도로 tier2에서 진짜 CRLF 버그 2건을 더 발견했다(이 머신의
+`core.autocrlf=true`가 `docs/*.md`를 실제 CRLF로 체크아웃하는 걸 확인 -
+이론이 아니라 이 저장소에서 지금 벌어지는 조건). JS의 `.`/비-멀티라인
+`$`는 줄 끝의 `\r`을 못 건너뛰어서 `scanPendingInText`/`extractSection`/
+`answerPending`의 질문 탐색 정규식이 CRLF 줄에서 전부 매치 실패(직접
+재현: 같은 입력이 LF면 매치, CRLF면 빈 배열) - Windows에서 체크아웃한
+tier2/tier3라면 답변 대기 질문을 사실상 하나도 못 찾았을 상태. 모든
+본문 읽기가 지나가는 `fsdocs.ts`의 `readDocSync()` 한 지점에서
+CRLF→LF 정규화로 고쳤다. 그런데 이걸 고친 뒤에도 `rebuildReplyIndex()`가
+여전히 표를 안 바꾸는 2차 버그가 남아 있었다 - `rebuildTable()`이
+`readDocSync()`를 안 거치는 별도 읽기 경로라 정규화를 못 받았고,
+`<!-- TABLE:START -->` 뒤에 리터럴 `\n`을 기대하는 정규식이 실제
+`\r\n`과 안 맞아 `.replace()`가 무매치로 원문을 그대로 돌려주고
+있었다 - 같은 정규화를 여기도 추가.
+
+스크래치 디렉터리에 이 저장소의 실제 CRLF `docs/`를 복사해 tier2 CLI
+빌드본으로 end-to-end 재현: 문서 직접 편집으로 새 질문 추가 →
+`docs pending`이 찾음 → `docs rebuild-reply-index`로 표 채워짐 → 표를
+비운 뒤 **무관한** 문서를 `docs save`로 저장하면 자동으로 다시
+채워짐(저장 훅 확인) → `docs reply`로 실제 답변까지 끝까지 재현. 이
+저장소 자신의 `docs/`에도 `--rebuild-reply-index`를 돌려 diff 없음(현재
+미답변 0개라 이미 정확했음) 확인, `--validate` 통과, tier2는
+`npx tsc --noEmit`/`npm run build` 둘 다 에러 없음. 상세는
+[DN-00001](docs/done/DN-00001.md) "QA: `docs/reply/index.md`가 답변
+처리 때만 재생성돼 새 질문이 누락 + tier2의 CRLF 정규식 버그 2건 연쇄
+발견" 참고.

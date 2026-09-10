@@ -822,6 +822,12 @@ def save_doc_body(doc_path_rel, new_body):
         raise ValueError("검증 실패: " + "; ".join(v["message"] for v in violations))
 
     doc_path.write_text(dump_frontmatter(meta, new_body), encoding="utf-8")
+    # QA로 발견: 이 함수가 rebuild_reply_index()를 부르지 않아서, 대시보드
+    # 편집기로 "## 답변 대기" 섹션을 새로 추가/수정해도 docs/reply/index.md가
+    # 갱신되지 않았다 - answer_pending()에서만 재생성이 호출되고 있었다.
+    # save_doc_body는 대시보드가 유일하게 본문을 프로그램적으로 바꾸는
+    # 경로라, 여기서도 재생성해야 문서 하나만 저장해도 표가 최신으로 남는다.
+    rebuild_reply_index()
     return {"path": doc_path_rel, "updated": meta["updated"]}
 
 
@@ -957,6 +963,10 @@ def main():
     parser.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
     parser.add_argument("--validate", action="store_true",
                          help="check docs/ structure (SP-00003 7절) and exit, no server")
+    parser.add_argument("--rebuild-reply-index", action="store_true",
+                         help="docs/reply/index.md를 본문 스캔 기준으로 재생성하고 종료, 서버 기동 없음"
+                              " - Claude가 대시보드를 거치지 않고 docs/*.md를 직접 써서 '## 답변 대기'"
+                              " 섹션을 추가/수정한 직후 이 표를 최신 상태로 맞추는 용도(docs/PROTOCOL.md 4절)")
     ARGS = parser.parse_args()
 
     if ARGS.validate:
@@ -967,6 +977,11 @@ def main():
         for v in violations:
             print(f"{v['path']}: [{v['rule']}] {v['field']} - {v['message']}")
         sys.exit(1)
+
+    if ARGS.rebuild_reply_index:
+        rebuild_reply_index()
+        print("docs/reply/index.md 재생성 완료.")
+        return
 
     server = ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)
     print(f"docs dashboard: http://127.0.0.1:{ARGS.port}  (root: {project_root()})")

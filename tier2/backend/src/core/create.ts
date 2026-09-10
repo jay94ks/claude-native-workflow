@@ -4,7 +4,7 @@ import { docsDir } from "./paths.js";
 import { dumpFrontmatter } from "./frontmatter.js";
 import { nextSeq, today } from "./tracking.js";
 import { validateDoc } from "./validate.js";
-import { invalidateCache } from "./docstore.js";
+import { invalidateCache, rebuildReplyIndex } from "./docstore.js";
 import { afterWrite } from "./git.js";
 import type { DocMeta } from "./types.js";
 
@@ -70,6 +70,11 @@ export async function createDoc(input: CreateDocInput): Promise<CreateDocResult>
 
   fs.writeFileSync(filePath, dumpFrontmatter(meta, body), "utf-8");
   appendIndexRow(folder, id, input.title, meta.status as string, meta.updated as string);
+  // 새 문서 본문은 지금 항상 "## 답변 대기"가 없는 빈 제목뿐이라 당장은
+  // 재생성해도 표가 안 바뀌지만, saveDocBody와 같은 이유로 문서 save/create
+  // 양쪽 다 reply index를 최신으로 유지하는 쪽이 안전하다(추후 create 흐름이
+  // 답변 대기 섹션을 포함한 본문을 받게 바뀌어도 이 지점에서 자동으로 맞는다).
+  rebuildReplyIndex();
 
   await afterWrite(`docs: new ${id}`);
   return { id, path: `${folder}/${id}.md` };

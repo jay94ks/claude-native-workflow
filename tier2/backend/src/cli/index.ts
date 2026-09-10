@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import { setProjectRoot } from "../core/paths.js";
-import { buildTree, listPending, listByTypes, getDoc, saveDocBody, searchDocs } from "../core/docstore.js";
+import { buildTree, listPending, listByTypes, getDoc, saveDocBody, searchDocs, rebuildReplyIndex } from "../core/docstore.js";
 import { validateAll } from "../core/validate.js";
 import { answerPending } from "../core/reply.js";
 import { createDoc } from "../core/create.js";
@@ -218,6 +218,16 @@ dbCmd
   .description("로컬 SQLite로 되돌리며 끄기 - 검증 실패 시 설정 파일은 건드리지 않음")
   .option("--drop", "서비스 DB 쪽 데이터도 삭제(기본은 보존)", false)
   .action(async (opts: { drop: boolean }) => printJson(await disableServiceDb(opts.drop)));
+
+program
+  .command("rebuild-reply-index")
+  .description("docs/reply/index.md를 본문 스캔 기준으로 재생성 - `docs save`/`docs new`를 거치지"
+    + " 않고 docs/*.md를 직접 써서 '## 답변 대기' 섹션을 추가/수정했을 때 동기화하는 용도"
+    + "(docs/PROTOCOL.md 4절)")
+  .action(() => {
+    rebuildReplyIndex();
+    console.log("docs/reply/index.md 재생성 완료.");
+  });
 
 program
   .command("validate")
