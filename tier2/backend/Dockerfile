@@ -1,8 +1,13 @@
 # SP-00001 7절 패키징. 단일 스테이지로 devDependencies까지 그대로 남겨둔다 -
 # `docs db enable/disable`(선택적 서비스 DB, PL-00001 2단계 8번)가 런타임에
-# `node_modules/prisma`(devDependency)의 CLI 진입점을 직접 실행하므로,
-# 실행 이미지에서 devDependencies를 잘라내면 그 기능이 컨테이너 안에서
-# 깨진다 - 로컬/자체 호스팅 도구라 이미지 크기보다 이 쪽을 우선했다.
+# `node_modules/prisma`의 CLI 진입점을 직접 실행하므로, 실행 이미지에서
+# devDependencies를 잘라내면 그 기능이 컨테이너 안에서 깨진다 - 로컬/자체
+# 호스팅 도구라 이미지 크기보다 이 쪽을 우선했다. (`prisma`는 이제
+# devDependencies가 아니라 dependencies에 있다 - npm 공개 배포 준비 중
+# `npm install -g`로 설치한 경우 devDependencies가 통째로 빠지는 걸 발견해
+# `dependencies`로 옮겼다. 그래도 이 설명은 여전히 유효 - 최소화된
+# 실행 이미지를 만드는 멀티스테이지였다면 프로덕션 전용 설치(`npm ci
+# --omit=dev`)로 정리하려 했을 텐데, 이젠 그래도 prisma는 남는다는 뜻.)
 FROM node:22-slim
 
 # Prisma의 쿼리 엔진(선택적 서비스 DB, PL-00001 2단계 8번)이 필요로 하는
@@ -21,10 +26,17 @@ RUN apt-get update -y && apt-get install -y openssl git && rm -rf /var/lib/apt/l
 WORKDIR /app
 
 COPY package.json package-lock.json ./
+# prisma/를 npm ci보다 먼저 복사해야 한다 - npm 공개 배포 준비 중 추가한
+# postinstall(`db:generate`)이 npm ci 중에 자동 실행되는데, 그 스크립트가
+# prisma/*.prisma 스키마 파일을 찾는다. 이전엔 devDependency였던 prisma를
+# 직접 스크립트로만 썼어서(`npm run build`가 별도로 db:generate를 부름)
+# 이 순서가 문제되지 않았지만, postinstall이 생기면서 npm ci 시점에 이미
+# prisma/가 있어야 하게 됐다 - 실제로 이 순서 그대로 빌드해보고서야
+# "npm error command failed / npm run db:generate"로 드러난 문제.
+COPY prisma ./prisma
 RUN npm ci
 
 COPY tsconfig.json ./
-COPY prisma ./prisma
 COPY src ./src
 
 RUN npm run build

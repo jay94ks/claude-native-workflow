@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import express, { type Request, type Response, type NextFunction, type RequestHandler } from "express";
 import path from "node:path";
 import { setProjectRoot, getProjectRoot } from "../core/paths.js";

@@ -1393,3 +1393,34 @@ tier1 대시보드에서 실제로 발견 - `isDocFile()` 조건을 배지에도
 이유로 stale해지는 더 넓은 문제는 범위를 넘어서 별도 후속 작업으로
 분리(task_41741419). 상세는 [DN-00001](docs/done/DN-00001.md) "RV-00001
 결합안 1번 적용" 참고.
+
+### 2026-09-10 (계속 34) — DC-00003: npm 배포 패키징 (실제 publish는 설계자 몫)
+
+설계자가 대시보드에서 DC-00003에 "이대로 진행하자"로 직접 답변, 대화로
+"npm 공개 배포로 진행" 확인. 실제 `npm login`/`npm publish`는 이
+세션이 대신 못 한다(자격 증명 대행 금지, 이 머신도 미로그인 확인) -
+그래서 "배포 가능한 상태로 패키징 + 정확한 배포 절차 문서화"까지가
+이번 범위.
+
+`tier2/backend`/`tier3/backend` package.json에서 `private:true` 제거,
+license/repository/author/publishConfig 채움, LICENSE(MIT)/README 신규
+추가. 가장 중요한 발견: Prisma 생성 클라이언트(`generated/`)는 빌드한
+플랫폼 전용 바이너리라 그대로 패키지에 담으면 다른 OS에 설치하는
+사람은 다 깨진다 - `prisma`를 dependencies로 옮기고 `postinstall`로
+설치 시점에 그 머신에서 직접 generate하게 바꿨다(부수적으로 `npm
+install -g`가 devDependencies를 건너뛰어서 `docs db enable/disable`
+런타임 의존성이 원래 빠졌을 버그도 같이 막음). tier3의
+`file:../../tier2/backend`는 로컬 개발용으로 그대로 두되, 실제로 격리
+설치해보니 그 경로가 조용히 생략된다는 걸 확인 - 다행히 `docs3` CLI가
+그 의존성을 아예 안 타는 걸 import 그래프로 확인하고 실제 서버로
+register/login까지 재현해서 무해함을 검증. 배포 시점 3단계 절차(임시로
+버전 바꿔 publish 후 되돌리기)는 README에 적어둠.
+
+`npm pack`으로 실제 tarball을 만들어 격리 설치까지 재현 검증하는
+과정에서 Docker 빌드가 실제로 깨지는 회귀도 발견 - `postinstall`이
+`npm ci` 중에 prisma 스키마를 찾는데 Dockerfile은 그걸 나중에
+복사하는 순서였다. COPY 순서를 고치고 재빌드+컨테이너 안 문서 생성까지
+재검증. 실제 npm publish는 아직 안 했으므로 README/Skill의 안내는
+현재 상태(clone+build) 그대로 유지 - 배포 확인되면 그때 반영. 상세는
+[DN-00001](docs/done/DN-00001.md) "DC-00003 답변 처리 + npm 공개 배포
+준비" 참고.

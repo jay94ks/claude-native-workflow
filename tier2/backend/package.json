@@ -1,11 +1,27 @@
 {
   "name": "@claude-native-workflow/tier2-backend",
   "version": "0.1.0",
-  "private": true,
+  "description": "claude-native-workflow Tier 2 (평범) backend - shared docs/ core consumed by the docs CLI, MCP server, REST API, and dashboard.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jay94ks/claude-native-workflow.git",
+    "directory": "tier2/backend"
+  },
+  "homepage": "https://github.com/jay94ks/claude-native-workflow/tree/main/tier2/backend#readme",
+  "author": "jay94ks",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "prisma"
+  ],
   "type": "module",
   "main": "dist/api/server.js",
   "bin": {
-    "docs": "dist/cli/index.js"
+    "docs": "dist/cli/index.js",
+    "docs-server": "dist/api/server.js"
   },
   "scripts": {
     "build": "npm run db:generate && tsc -p tsconfig.json",
@@ -14,20 +30,21 @@
     "cli": "tsx src/cli/index.ts",
     "mcp": "tsx src/mcp/server.ts",
     "validate": "tsx src/cli/index.ts validate",
-    "db:generate": "prisma generate --schema prisma/schema.mysql.prisma && prisma generate --schema prisma/schema.postgres.prisma && prisma generate --schema prisma/schema.sqlite.prisma"
+    "db:generate": "prisma generate --schema prisma/schema.mysql.prisma && prisma generate --schema prisma/schema.postgres.prisma && prisma generate --schema prisma/schema.sqlite.prisma",
+    "postinstall": "npm run db:generate"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@prisma/client": "^6.19.3",
     "commander": "^12.1.0",
     "express": "^4.21.1",
+    "prisma": "^6.19.3",
     "simple-git": "^3.27.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.9.0",
-    "prisma": "^6.19.3",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }
