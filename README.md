@@ -49,7 +49,10 @@ Bash로 직접 부르는 경로는 CLI(`docs` — [tier2/backend](tier2/backend)
 `bin`)이고, MCP 서버가 붙어있는 환경이면 그쪽을 우선한다 — 이 우선순위를
 Claude에게 안내하는 Skill이
 [tier2/skill/.claude/skills/docs-cli/SKILL.md](tier2/skill/.claude/skills/docs-cli/SKILL.md)에
-있다(설치는 [tier2/skill/README.md](tier2/skill/README.md)). 상세는
+있다. **Skill 설치와 함께, 위 컨테이너를 그대로 쓰는 CLI/MCP 연결 방법
+(로컬 설치 불필요)은 [tier2/skill/README.md](tier2/skill/README.md)에
+있다** — 새 프로젝트에서 Claude가 실제로 `docs` 명령을 쓸 수 있으려면
+이 단계까지 필요하다. 상세는
 [SP-00001](docs/spec/SP-00001.md), 구현 노트는
 [docs/done/DN-00001.md](docs/done/DN-00001.md) 2단계 참고.
 
@@ -71,7 +74,11 @@ docker compose up -d --build
 고정된다(로컬 파일을 직접 건드리지 않음) — 이 CLI 사용법을 Claude에게
 안내하는 Skill이
 [tier3/skill/.claude/skills/docs3-cli/SKILL.md](tier3/skill/.claude/skills/docs3-cli/SKILL.md)에
-있다(설치는 [tier3/skill/README.md](tier3/skill/README.md)). 상세는
+있다. **`docs3`는 서버가 아니라 설계자 자신의 머신에서 실행되는 REST
+클라이언트라 Skill 설치와 별개로 로컬에 빌드해 둬야 한다 —
+[tier3/skill/README.md](tier3/skill/README.md)에 그 절차가 있다**(현재는
+clone+build 필요, npm 공개 배포는 [DC-00003](docs/decision/DC-00003.md)로
+결정 대기 중). 상세는
 [SP-00002](docs/spec/SP-00002.md), 구현 노트는
 [docs/done/DN-00001.md](docs/done/DN-00001.md) 3단계 참고.
 

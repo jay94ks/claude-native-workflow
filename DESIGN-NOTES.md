@@ -1345,3 +1345,24 @@ Dockerfile 둘 다 openssl만 설치하고 git은 빠져 있었다(`node:22-slim
 이미지도 재빌드해 git 정상 동작 확인. 상세는
 [DN-00001](docs/done/DN-00001.md) "QA: tier2/tier3 Docker 이미지에
 git이 아예 없어 자동 commit이 실제로는 다 깨짐" 참고.
+
+### 2026-09-10 (계속 32) — 온보딩 문서 공백 메꿈 + npm 공개 배포는 DC-00003으로 등록
+
+같은 "새 프로젝트 흐름 불명확" 지적을 계속 조사. Tier 1엔
+`bootstrap-prompt.md` 같은 완결된 부트스트랩이 있는데 Tier 2/3엔
+없었고, `tier2/skill/README.md`/`tier3/skill/README.md`가 안내하던
+"`npm install -g`/`npx`"는 두 백엔드 패키지가 `"private": true`라
+실제로는 동작하지 않는 가짜 안내였다는 걸 확인.
+
+Tier 2는 이미 떠 있는 컨테이너의 빌드 산출물을 `docker compose exec`로
+그대로 쓰는 경로(로컬 설치 불필요)로 문서화 - 방금 발견한 git-미설치
+버그를 고친 이미지로 실제로 `docs new`까지 검증 완료. Tier 3의
+`docs3`는 REST 클라이언트라 설계자 자신의 머신에서 돌아가야 하므로
+Tier 2처럼 우회할 수 없어, clone + 2단계 build + `npm link`
+절차를 그대로 적었다. 두 Skill README와 루트 README의 Tier 2/3 절에
+반영. clone+build 임시책의 마찰을 알고 있어서, npm 정식 공개 배포
+여부는 [DC-00003](docs/decision/DC-00003.md)로 등록해 설계자 결정을
+기다린다(패키지명/계정/버전 정책까지 딸려오는 외부 영향 결정이라 QA
+수정처럼 바로 적용하지 않음). 상세는
+[DN-00001](docs/done/DN-00001.md) "QA: tier2/tier3 온보딩 문서 공백"
+참고.
