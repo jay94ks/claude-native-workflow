@@ -25,6 +25,21 @@ function assertInsideDocs(relPath: string): string {
   return abs;
 }
 
+// QA로 발견: sha를 검증 없이 그대로 `git show`의 argv 원소로 넘기면, git은
+// `-`로 시작하는 값을 리비전이 아니라 옵션으로 해석한다 - 예를 들어
+// `--output=/tmp/pwned.txt`를 sha로 보내면 diff 결과가 서버 파일시스템의
+// 임의 경로에 그대로 쓰인다(뒤에 `-- docsDir()`가 있어도 그 앞의
+// `--output=...`이 옵션으로 먼저 파싱되므로 막아주지 못함). 이 라우트는
+// Tier 3 기준 viewer 권한만 있어도 호출 가능해서 실제 위험도가 높다 -
+// 정상적인 sha는 항상 gitLog()가 돌려준 40자(축약 시 더 짧은) 16진수
+// 문자열뿐이므로, 그 형태가 아니면 아예 git에 넘기지 않는다.
+function assertValidSha(sha: string): string {
+  if (!/^[0-9a-f]{4,40}$/i.test(sha)) {
+    throw new NotFoundError(sha);
+  }
+  return sha;
+}
+
 export interface CommitSummary {
   sha: string;
   author: string;
@@ -55,7 +70,7 @@ export async function gitCommitDetail(sha: string): Promise<CommitDetail | null>
     // gitDiff와 같은 이유로 `-- docsDir()`을 붙인다 - 안 붙이면 그 커밋이
     // docs/ 밖 파일도 같이 바꿨을 때 그 파일명까지 "변경된 파일" 목록에
     // 새어나간다(내용은 아니지만 파일 경로 자체도 docs/ 밖 정보다).
-    raw = await git().show(["--stat", "--pretty=format:%H|%an|%ad|%s", "--date=iso", sha, "--", docsDir()]);
+    raw = await git().show(["--stat", "--pretty=format:%H|%an|%ad|%s", "--date=iso", assertValidSha(sha), "--", docsDir()]);
   } catch {
     return null;
   }
@@ -69,7 +84,7 @@ export async function gitCommitDetail(sha: string): Promise<CommitDetail | null>
 }
 
 export async function gitDiff(sha: string): Promise<string> {
-  return git().show([sha, "--", docsDir()]);
+  return git().show([assertValidSha(sha), "--", docsDir()]);
 }
 
 export async function gitBlame(relPath: string): Promise<string> {

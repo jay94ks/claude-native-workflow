@@ -11,6 +11,7 @@ Run:
 import argparse
 import datetime
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -128,6 +129,20 @@ def rel(path: Path):
     return str(path.relative_to(docs_dir())).replace("\\", "/")
 
 
+def _is_inside(p: Path, base: Path) -> bool:
+    """p가 base 안에 있는지 검사한다. QA로 발견: 기존 코드는 전부
+    str(p).startswith(str(base))라는 단순 문자열 접두사 비교였는데, 이건
+    경로 구분자 경계를 안 본다 - 예를 들어 base가 ".../docs"면
+    ".../docs-backup"도 접두사가 같다는 이유로 통과해버린다(TypeScript
+    쪽 isInsideDocs()는 이미 `resolved === base ||
+    resolved.startsWith(base + path.sep)`로 구분자 경계를 보고 있었는데,
+    여기 Python만 그 검사가 빠져 있었다). base와 정확히 같거나, base +
+    구분자로 시작할 때만 안쪽으로 인정한다."""
+    base_str = str(base.resolve())
+    p_str = str(p)
+    return p_str == base_str or p_str.startswith(base_str + os.sep)
+
+
 def resolve_in_docs_or_raise(rel_path: str) -> Path:
     """docs/ 밖 경로 접근을 막는 /api/doc 등과 같은 경계를 git 이력류
     함수에도 강제한다 - git_log/git_blame이 이 검사 없이 rel_path를 그대로
@@ -137,7 +152,7 @@ def resolve_in_docs_or_raise(rel_path: str) -> Path:
     먼저 찾아 고치고, 같은 문제가 여기 Python 구현에도 그대로 있다는 걸
     확인해서 대칭으로 고침."""
     p = (docs_dir() / rel_path).resolve()
-    if not str(p).startswith(str(docs_dir().resolve())):
+    if not _is_inside(p, docs_dir()):
         raise ValueError(f"docs/ 밖 경로입니다: {rel_path}")
     return p
 
@@ -476,7 +491,26 @@ def git_log(rel_path=None, limit=30):
     return commits
 
 
+_SHA_RE = re.compile(r"^[0-9a-f]{4,40}$", re.IGNORECASE)
+
+
+def _assert_valid_sha(sha):
+    # QA로 발견: sha를 검증 없이 `git show`의 argv 원소로 그대로 넘기면, git은
+    # "-"로 시작하는 값을 리비전이 아니라 옵션으로 해석한다 - 예를 들어
+    # "--output=/tmp/pwned.txt"를 sha로 보내면 결과가 서버 파일시스템의 임의
+    # 경로에 그대로 쓰인다(뒤에 "-- docs"가 있어도 그 앞의 옵션이 먼저 파싱돼
+    # 막아주지 못함). 정상 sha는 항상 git_log()가 돌려준 16진수 문자열뿐이라,
+    # 그 형태가 아니면 아예 git에 넘기지 않는다. tier2/backend의
+    # assertValidSha()와 동일한 검사.
+    if not _SHA_RE.match(sha or ""):
+        return None
+    return sha
+
+
 def git_commit_detail(sha):
+    sha = _assert_valid_sha(sha)
+    if sha is None:
+        return None
     # git_diff와 같은 이유로 "-- docs"를 붙인다 - 안 붙이면 그 커밋이 docs/
     # 밖 파일도 같이 바꿨을 때 그 파일명까지 "변경된 파일" 목록에 새어나간다.
     out = _git(["show", "--stat", "--pretty=format:%H|%an|%ad|%s", "--date=iso", sha, "--", "docs"])
@@ -495,6 +529,9 @@ def git_commit_detail(sha):
 
 
 def git_diff(sha):
+    sha = _assert_valid_sha(sha)
+    if sha is None:
+        return ""
     out = _git(["show", sha, "--", "docs"])
     return out.stdout
 
@@ -692,7 +729,7 @@ def answer_pending(doc_path_rel, question_id, answer_text):
     linking to that anchor instead of a separate RP file.
     """
     doc_path = (docs_dir() / doc_path_rel).resolve()
-    if not str(doc_path).startswith(str(docs_dir().resolve())) or not doc_path.exists():
+    if not _is_inside(doc_path, docs_dir()) or not doc_path.exists():
         raise FileNotFoundError(doc_path_rel)
 
     _, meta, body = read_doc(doc_path)
@@ -767,7 +804,7 @@ def save_doc_body(doc_path_rel, new_body):
     structure check as `docs validate` before writing, so a broken edit
     can't corrupt the file's frontmatter contract."""
     doc_path = (docs_dir() / doc_path_rel).resolve()
-    if not str(doc_path).startswith(str(docs_dir().resolve())) or not doc_path.exists():
+    if not _is_inside(doc_path, docs_dir()) or not doc_path.exists():
         raise FileNotFoundError(doc_path_rel)
 
     _, meta, _ = read_doc(doc_path)
@@ -845,7 +882,7 @@ class Handler(BaseHTTPRequestHandler):
                 rel_path = qs.get("path", [""])[0]
                 anchor = qs.get("anchor", [None])[0]
                 p = (docs_dir() / rel_path).resolve()
-                if not str(p).startswith(str(docs_dir().resolve())) or not p.exists():
+                if not _is_inside(p, docs_dir()) or not p.exists():
                     return self._json({"error": "not found"}, 404)
                 text, meta, body = read_doc(p)
                 if anchor:
@@ -895,7 +932,7 @@ class Handler(BaseHTTPRequestHandler):
             path = "/index.html"
         safe = path.lstrip("/")
         p = (STATIC_DIR / safe).resolve()
-        if not str(p).startswith(str(STATIC_DIR.resolve())) or not p.exists():
+        if not _is_inside(p, STATIC_DIR) or not p.exists():
             return self._json({"error": "not found"}, 404)
         ctype = "text/html; charset=utf-8"
         if p.suffix == ".js":

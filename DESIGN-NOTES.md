@@ -1294,3 +1294,32 @@ docker-compose.yml`의 backend가 MySQL에 root로 붙고 있던 최소 권한
 기동+회원가입/로그인까지 되는 것 둘 다 재현 확인. 상세는
 [DN-00001](docs/done/DN-00001.md) "QA: MySQL 컨테이너가 root로 붙는
 문제 + JWT_SECRET 최소 길이 미검증" 참고.
+
+### 2026-09-10 (계속 30) — QA: git sha 옵션 인젝션(HIGH) + 경로 경계 구분자 누락 + tier3 권한/에러노출
+
+배경 QA 서브에이전트를 돌려 "그 외 코드 영역"을 더 훑은 결과 - 가장
+심각한 건 `tier2/backend/src/core/gitlog.ts`의 `gitDiff`/`gitCommitDetail`이
+URL의 `sha`를 검증 없이 `git show`의 argv로 넘기던 것. git은
+`-`로 시작하는 인자를 옵션으로 해석하므로 `sha="--output=<경로>"`를
+보내면 diff 결과가 그 경로에 그대로 파일로 쓰인다 - Tier 3 기준
+viewer 권한만 있어도 되는 "읽기 전용" 라우트가 사실은 임의 파일 쓰기
+프리미티브였다. 같은 패턴이 tier1 Python `git_diff`/`git_commit_detail`에도
+있어서 같이 고침 - 정상 sha만 통과시키는 16진수 정규식 검사를 추가.
+스크래치 git 저장소로 실제 재현(`--output=...`, 슬래시 인코딩 변형
+둘 다) → 파일이 전혀 안 만들어지는 것 확인, 정상 sha는 그대로 동작.
+
+같이 훑다가 `tier1/tools/docs/server.py`의 모든 `docs/` 밖 차단 검사가
+구분자 경계 없는 단순 `startswith` 비교였던 것도 발견(`docs-backup`이
+`docs`의 접두사라는 이유로 통과할 수 있었음 - TS 쪽엔 이미 있던
+구분자 경계 검사가 Python에만 빠져 있었다) - `_is_inside()` 헬퍼로
+교체, 실제 `docs-backup/` 디렉터리를 만들어 재현·재검증.
+
+`tier3/backend/src/api/server.ts`에서도 두 건 발견: 코멘트 작성/resolve
+라우트가 `editor`가 아니라 `viewer` 권한으로 걸려 있어 조회 전용으로
+초대된 사람도 쓰기가 가능했던 버그(역할표와 불일치) - `editor`로 수정.
+공용 에러 핸들러가 알 수 없는 예외의 `.message`를 그대로 클라이언트에
+돌려주던 것도(서버 내부 경로 구조가 새어나갈 수 있음) 서버 로그로만
+남기고 응답은 일반화하도록 수정. 로그인 타이밍 사이드채널(계정 존재
+여부 추정 가능)은 확인만 하고 이번 범위에선 고치지 않기로 함(낮은
+우선순위, 별도 결정 없이 바로 적용 안 함). 상세는
+[DN-00001](docs/done/DN-00001.md) 해당 QA 절 참고.

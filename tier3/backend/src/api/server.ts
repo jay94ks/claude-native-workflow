@@ -252,13 +252,17 @@ export function createApp() {
     res.json(await listComments(req.params.projectId, req.params.docPath));
   }));
 
-  app.post("/api/projects/:projectId/docs/:docPath(.*)/comments", authenticate, requireProjectRole("viewer"), asyncRoute(async (req, res) => {
+  // QA로 발견: 아래 둘은 POST(쓰기)인데 requireProjectRole("viewer")로
+  // 걸려 있었다 - SP-00002의 역할표(viewer=조회만, editor=조회+쓰기)와
+  // 어긋나는 실제 버그. viewer로만 초대된 사람도 코멘트를 쓰고 남의
+  // 코멘트를 resolve 처리할 수 있었다.
+  app.post("/api/projects/:projectId/docs/:docPath(.*)/comments", authenticate, requireProjectRole("editor"), asyncRoute(async (req, res) => {
     const { body } = req.body as { body?: string };
     if (!body) { res.status(400).json({ error: "body required" }); return; }
     res.json({ id: await addComment(req.params.projectId, req.params.docPath, body) });
   }));
 
-  app.post("/api/projects/:projectId/docs/:docPath(.*)/comments/:id(\\d+)/resolve", authenticate, requireProjectRole("viewer"), asyncRoute(async (req, res) => {
+  app.post("/api/projects/:projectId/docs/:docPath(.*)/comments/:id(\\d+)/resolve", authenticate, requireProjectRole("editor"), asyncRoute(async (req, res) => {
     await resolveComment(req.params.projectId, req.params.docPath, Number(req.params.id));
     res.json({ ok: true });
   }));
@@ -320,8 +324,13 @@ export function createApp() {
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof AuthError) { res.status(400).json({ error: err.message }); return; }
     if (err instanceof NotFoundError) { res.status(404).json({ error: err.message }); return; }
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(400).json({ error: message });
+    // QA로 발견: 그 밖의 예외(fs ENOENT, Prisma 에러 등)는 .message를 그대로
+    // 클라이언트에 돌려주고 있었다 - 이런 에러는 서버의 절대 경로
+    // (TIER3_PROJECTS_DIR 아래 project-id 구조 등)나 쿼리 내부 정보를 그대로
+    // 담고 있는 경우가 많아, 인증된 클라이언트라도 내부 구조가 새어나간다.
+    // 서버 로그엔 그대로 남기되, 응답은 일반화된 메시지로 바꾼다.
+    console.error(err);
+    res.status(400).json({ error: "요청을 처리하지 못했습니다" });
   });
 
   return app;
