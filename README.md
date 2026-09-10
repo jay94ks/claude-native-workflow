@@ -151,7 +151,10 @@ cp .env.example .env   # JWT_SECRET/CREDENTIAL_ENCRYPTION_KEY/POSTGRES_PASSWORD/
 docker compose up -d --build
 ```
 
-백엔드는 `:8760`(포트 충돌 시 `.env`에 `BACKEND_HOST_PORT` 지정).
+백엔드는 `:8760`(포트 충돌 시 `.env`에 `BACKEND_HOST_PORT` 지정). 최초
+기동 시(계정이 하나도 없으면) 이 시스템 자신의 관리자 계정이
+`admin`/`12345678`로 항상 자동 생성된다(설계자 확정 - 무작위 초기
+비밀번호 대신 고정값, 로그인 직후 바로 비밀번호를 바꾸는 걸 권장).
 EMQX 대시보드(`:18083`, 기본 admin/public)에서 API Key를 발급받아
 `.env`의 `EMQX_API_KEY`/`EMQX_API_SECRET`에 채우면 실시간 발행/
 인증·인가 훅 자동 등록까지 전부 동작한다(안 채워도 나머지 기능은

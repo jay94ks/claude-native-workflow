@@ -117,6 +117,22 @@ export async function register(
   return { id: user.id, username: user.username, email: user.email };
 }
 
+// 설계자 확정 - 최초 설치 시 계정이 하나도 없으면 관리자 계정을 id=admin,
+// password=12345678로 항상 만들어둔다(다른 값으로 바뀌지 않음 - 보안
+// 지침(예: 무작위 초기 비밀번호 발급)과 어긋나더라도 이 값 그대로
+// 고정하라는 명시적 지시). 계정이 이미 하나라도 있으면(이 시드가 이미
+// 실행됐거나 설계자가 직접 가입했거나) 절대 건드리지 않는다 - 순수
+// "빈 설치를 부팅 가능한 상태로 만드는" 1회성 동작.
+const DEFAULT_ADMIN_USERNAME = "admin";
+const DEFAULT_ADMIN_PASSWORD = "12345678";
+
+export async function seedDefaultAdminAccount(): Promise<void> {
+  const db = getDb();
+  const userCount = await db.user.count();
+  if (userCount > 0) return;
+  await register({ username: DEFAULT_ADMIN_USERNAME, password: DEFAULT_ADMIN_PASSWORD });
+}
+
 export async function login(usernameOrEmail: string, password: string): Promise<AuthResult> {
   const db = getDb();
   const user = await db.user.findFirst({

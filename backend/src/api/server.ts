@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { connectDb } from "../core/db.js";
-import { register, login, refresh, logout, AuthError, assertJwtSecretConfigured } from "../core/auth.js";
+import { register, login, refresh, logout, AuthError, assertJwtSecretConfigured, seedDefaultAdminAccount } from "../core/auth.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
 import { createInstitution, listInstitutions } from "../core/institutions.js";
@@ -1185,6 +1185,7 @@ async function main() {
   await connectDb();
   await ensureSearchIndexes();
   await seedDefaultTemplates();
+  await seedDefaultAdminAccount();
   await ensureEmqxAuthConfigured();
 
   const port = Number(process.env.PORT ?? 8760);
