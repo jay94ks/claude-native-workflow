@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { apiCall, apiCallText, saveCredentials, loadCredentials, clearCredentials, credentialsPath } from "./apiclient.js";
+import { scanDirectory, applyManifest } from "./migrate.js";
 
 const program = new Command();
 program.name("docs").description("claude-native-workflow v2 문서 워크플로우 CLI").version("0.1.0");
@@ -546,5 +547,19 @@ messageCmd
   .command("wait <projectId>")
   .option("--timeout <sec>", "타임아웃(초)", "60")
   .action((projectId, opts) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages/wait?timeout=${opts.timeout}`))));
+
+// ---------------------------------------------------------------- 가이디드 마이그레이션 (Phase 6)
+
+const migrateCmd = program.command("migrate").description("파일 기반(concept 스타일) 프로젝트를 DB로 옮기기");
+
+migrateCmd
+  .command("scan <sourceDir>")
+  .description("sourceDir를 스캔해 후보 목록을 JSON으로 출력(리다이렉트해 매니페스트로 씀)")
+  .action((sourceDir) => run(async () => printJson(scanDirectory(sourceDir))));
+
+migrateCmd
+  .command("apply <projectId> <manifestFile>")
+  .description("검토·수정한 매니페스트를 실제로 반영")
+  .action((projectId, manifestFile) => run(async () => printJson(await applyManifest(projectId, manifestFile))));
 
 program.parse();

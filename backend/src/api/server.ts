@@ -48,8 +48,13 @@ const app = express();
 // verify로 원본 바이트를 req.rawBody에 보존 - 웹훅 서명 검증은 express가
 // 재직렬화한 JSON이 아니라 실제로 전송된 원본 바이트에 대해 계산해야
 // 한다(재직렬화 시 키 순서/공백 차이로 서명이 어긋날 수 있음).
+// limit 기본값(100kb)은 문서 본문(마크다운, 로그성 문서는 쉽게 넘김 -
+// 가이디드 마이그레이션(Phase 6) 실측 중 실제 concept 브랜치의
+// DN-00001.md(약 120KB)가 이 기본값에 막혀 "request entity too large"로
+// 실패하는 걸 직접 겪었다) 크기에 비해 너무 작다 - 넉넉히 올려둔다.
 app.use(
   express.json({
+    limit: "10mb",
     verify: (req, _res, buf) => {
       (req as Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
     },

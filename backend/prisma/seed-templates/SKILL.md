@@ -86,6 +86,25 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 | 인스턴스 메시지 목록 | `docs message list <projectId>` | `message_list` |
 | 인스턴스 메시지 전송 | `docs message send <projectId> <body...>` | `message_send` |
 | 새 메시지 대기 | `docs message wait <projectId> [--timeout <초>]` | `message_wait` |
+| 마이그레이션 후보 스캔 | `docs migrate scan <sourceDir>` | `migrate_scan` |
+| 마이그레이션 반영 | `docs migrate apply <projectId> <manifestFile>` | `migrate_apply` |
+
+## 가이디드 마이그레이션(옛 파일 기반 프로젝트 옮기기)
+
+`docs migrate scan <sourceDir>`는 YAML frontmatter(`id`/`type`/`title`/
+`status`/`links` 키)가 있는 옛 concept 스타일 마크다운 문서를 로컬
+`sourceDir`에서 찾아 후보 목록을 JSON으로 출력한다(순수 로컬 동작 -
+API 호출 없음). **이 출력을 바로 apply에 넘기지 않는다** - 먼저
+`> manifest.json`으로 리다이렉트해 로컬 스크래치 파일로 저장한 뒤,
+각 항목의 `docTypeCode`/`statusCode`가 대상 프로젝트에 실제로 존재하는
+코드인지 확인하고(`docs doctypes <projectId>`로 대조), 안 맞으면
+고치거나 `skip: true`로 제외한다 - 이게 "설계자가 확인할 기회"의
+핵심이다. 다 정리한 뒤 `docs migrate apply <projectId> manifest.json`으로
+반영한다. 결과의 `created`/`errors`/`warnings`를 그대로 설계자에게
+보고한다(상태 전이 실패·이번 배치 밖 문서를 가리키는 링크는 에러가
+아니라 경고로 옴 - 문서 자체는 만들어짐). **재실행은 멱등하지 않다** -
+같은 매니페스트를 두 번 `apply`하면 문서가 중복 생성되므로, 성공/실패
+여부를 확인하지 않고 재시도하지 않는다.
 
 `git log/diff/show`는 자체 호스팅(Gitea) 저장소가 연결된 프로젝트에서만
 동작한다 - 먼저 `git link`로 연결해야 하고, 외부 GitHub/GitLab로 연결한

@@ -9,7 +9,7 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 (대화 세션에서 작성, 저장소에는 아직 커밋 안 됨 - 진행 상황은
 [DESIGN-NOTES.md](DESIGN-NOTES.md) 참고)를 참고.
 
-## 지금 상태: Phase 5 완료 (전체 3개 설치)
+## 지금 상태: Phase 0~6 완료 (로드맵 전체)
 
 - Prisma 스키마(PostgreSQL/MySQL/SQLite 3드라이버, 완전 정규화 - JSON
   컬럼 없음)
@@ -64,6 +64,14 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
   `GET .../documents/:trackingCode/revisions` + `docs revisions`/
   `document_revisions`)를 새로고침 없이 갱신한다. 메시징 패널은 프로젝트
   상세 화면에 임베드돼 새 메시지를 즉시 반영한다.
+- **가이디드 마이그레이션**(`docs migrate scan/apply`) - `concept`
+  스타일 파일 기반 프로젝트(YAML frontmatter+마크다운)를 로컬에서
+  스캔해 후보 목록을 JSON으로 출력, 검토·수정한 매니페스트 파일을
+  `apply`로 반영한다(일괄 자동 임포트 아님 - 오탐지된 문서 타입/링크를
+  그 자리에서 고칠 기회를 줌). 새 백엔드 API 없이 기존 문서/링크
+  생성 엔드포인트만 순서대로 호출하는 CLI/MCP 전용 기능. 재실행은
+  멱등하지 않고, 옛 답변 대기 체크리스트는 Question/Answer로 자동
+  변환하지 않는다(아래 알려진 제한 참고).
 
 **알려진 제한**: `git blame`은 Gitea REST API 자체에 blame 엔드포인트가
 없어(1.27 기준, swagger로 직접 확인) 명확한 "지원하지 않음" 에러를
@@ -73,7 +81,13 @@ GitHub/GitLab 저장소는 `git log/diff/blame/show`를 지원하지 않는다
 웹훅 발송을 기본적으로 막으므로(SSRF 방지), Docker Compose 배포에서
 웹훅이 실제로 오려면 `docker-compose.yml`의 `GITEA__security__
 ALLOWED_HOST_LIST` 설정이 꼭 필요하다(이미 반영돼 있음 - 직접 겪고
-고친 문제).
+고친 문제). `migrate apply`는 재실행해도 안전하지 않다(같은 매니페스트를
+두 번 반영하면 문서가 중복 생성됨 - 실행 전 결과를 확인하고, 실패한
+항목만 다시 매니페스트에 남겨 재시도한다) - 대상 DocType/DocStatus가
+없으면 자동 생성하지 않고 그 항목만 에러로 보고하며, 옛 시스템의 답변
+대기 체크리스트(`reply_pending`)는 본문 텍스트로만 그대로 옮겨지고
+Question/Answer로 자동 변환되지 않는다(필요하면 `docs question`으로
+다시 등록).
 
 ## 실행 방법
 
@@ -144,13 +158,18 @@ npm link   # 전역에 docs/docs-mcp 명령 설치
 docs auth login --api http://localhost:8760 --username <u> --password <p>
 docs project-create <이름>
 docs new <projectId> SP --title "..." --body <로컬 파일>
+
+# 가이디드 마이그레이션(concept 스타일 파일 기반 프로젝트 옮기기)
+docs migrate scan ../concept/docs > manifest.json   # 로컬 스캔, API 호출 없음
+# manifest.json을 열어 docTypeCode/statusCode/skip을 검토·수정한 뒤:
+docs migrate apply <projectId> manifest.json
 ```
 
 ### MCP
 
 `docs auth login`으로 한 번 로그인해두면(`~/.claude-native-workflow/
 credentials.json` 공유), `docs-mcp`를 stdio MCP 서버로 등록해 CLI와
-동일한 52개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
+동일한 54개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
 비밀번호가 대화 컨텍스트에 남지 않도록 의도적으로 MCP 도구로 노출하지
 않는다(CLI 전용) - `auth_whoami`만 로그인 상태 확인용 예외.
 

@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { apiCall, apiCallText, loadCredentials } from "../cli/apiclient.js";
+import { scanDirectory, applyManifest } from "../cli/migrate.js";
 
 // cli/index.ts의 모든 명령을 1:1로 미러링한다("CLI/MCP 명령어 완전성"
 // 원칙 - 대칭이 깨지면 어느 한쪽에서만 되는 동작이 생긴다). CLI와 마찬가지로
@@ -377,18 +378,35 @@ async function main() {
     call(`/api/projects/${a.projectId}/push-hook-queue/${a.id}/done`, { method: "POST" }),
   );
 
-  tool("message_list", "인스턴스 메시지 목록(Phase 4)", "아직 미구현 - EMQX 구독 측 완성 후 사용 가능.", { projectId: z.string() }, async (a) =>
+  tool("message_list", "인스턴스 메시지 목록", "그 프로젝트의 지금까지의 메시지 기록을 조회한다.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/messages`),
   );
-  tool("message_send", "인스턴스 메시지 전송(Phase 4)", "아직 미구현 - EMQX 구독 측 완성 후 사용 가능.", { projectId: z.string(), body: z.string() }, async (a) =>
+  tool("message_send", "인스턴스 메시지 전송", "같은 프로젝트의 다른 세션/설계자에게 메시지를 남긴다.", { projectId: z.string(), body: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/messages`, { method: "POST", body: JSON.stringify({ body: a.body }) }),
   );
   tool(
     "message_wait",
-    "새 메시지 대기(Phase 4)",
-    "아직 미구현 - EMQX 구독 측 완성 후, 새 메시지가 오거나 타임아웃될 때까지 블로킹한다.",
+    "새 메시지 대기",
+    "새 메시지가 오거나 타임아웃될 때까지 블로킹한다(내부적으로 EMQX 구독 - 폴링 아님).",
     { projectId: z.string(), timeoutSec: z.number().optional() },
     async (a) => call(`/api/projects/${a.projectId}/messages/wait?timeout=${a.timeoutSec ?? 60}`),
+  );
+
+  // ---------------------------------------------------------------- 가이디드 마이그레이션 (Phase 6)
+
+  tool(
+    "migrate_scan",
+    "마이그레이션 후보 스캔",
+    "concept 스타일 파일 기반 프로젝트(YAML frontmatter+마크다운)를 로컬 sourceDir에서 스캔해 후보 목록을 반환한다 - 순수 로컬 동작, 이 결과를 검토·수정한 뒤 로컬 매니페스트 파일로 저장해 migrate_apply에 넘긴다.",
+    { sourceDir: z.string() },
+    async (a) => scanDirectory(String(a.sourceDir)),
+  );
+  tool(
+    "migrate_apply",
+    "마이그레이션 반영",
+    "검토·수정을 마친 로컬 매니페스트 파일(manifestFile)을 읽어 문서/링크를 실제로 생성한다.",
+    { projectId: z.string(), manifestFile: z.string() },
+    async (a) => applyManifest(String(a.projectId), String(a.manifestFile)),
   );
 
   const transport = new StdioServerTransport();
