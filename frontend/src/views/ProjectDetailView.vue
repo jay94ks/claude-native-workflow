@@ -25,11 +25,18 @@ interface GitRepo {
   provider: string;
   repoUrl: string;
 }
+interface PendingQuestion {
+  trackingCode: string;
+  documentTrackingCode: string;
+  documentTitle: string;
+  text: string;
+}
 
 const project = ref<Project | null>(null);
 const docTypes = ref<DocType[]>([]);
 const members = ref<Member[]>([]);
 const gitRepo = ref<GitRepo | null>(null);
+const pending = ref<PendingQuestion[]>([]);
 const loading = ref(true);
 const error = ref("");
 
@@ -50,6 +57,7 @@ async function load() {
     docTypes.value = types;
     members.value = memberList;
     gitRepo.value = await apiCall<GitRepo>(`/projects/${props.id}/git/repo`).catch(() => null);
+    pending.value = await apiCall<PendingQuestion[]>(`/projects/${props.id}/pending`).catch(() => []);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "프로젝트 정보를 불러오지 못했습니다";
   } finally {
@@ -88,6 +96,17 @@ onMounted(load);
     </div>
 
     <MessagesPanel :project-id="id" />
+
+    <section v-if="pending.length > 0">
+      <h2>답변 대기 질문</h2>
+      <ul class="list">
+        <li v-for="q in pending" :key="q.trackingCode">
+          <router-link :to="`/projects/${id}/documents/${q.documentTrackingCode}`">
+            <code>{{ q.trackingCode }}</code> {{ q.documentTitle }} - {{ q.text }}
+          </router-link>
+        </li>
+      </ul>
+    </section>
 
     <section>
       <h2>git 저장소</h2>
@@ -224,6 +243,20 @@ section {
 }
 .list li:last-child {
   border-bottom: none;
+}
+.list li a {
+  color: #1a1a2e;
+  text-decoration: none;
+  font-size: 13px;
+}
+.list li a code {
+  font-size: 11px;
+  background: #f0f1f5;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.list li a:hover {
+  text-decoration: underline;
 }
 .muted {
   color: #888;

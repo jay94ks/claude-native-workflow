@@ -31,7 +31,14 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
   insert로 예약(엔티티별 `@unique`만으로는 못 막는 타입 간 충돌 방지),
   유일성은 프로젝트 단위(기관·프로젝트 경계를 넘지 않음 - 서로 다른
   프로젝트는 같은 코드 문자열을 독립적으로 가질 수 있음)
-- 코멘트, 보고서 생성
+- 코멘트, 보고서 생성 - **질의/답변 + 코멘트 웹 UI**(`QAPanel.vue`/
+  `CommentsPanel.vue`) - 문서 에디터 화면에서 질문 등록/답변, 코멘트
+  등록/해결이 CLI 없이도 가능하다(다른 세션의 변경도 실시간 반영).
+  답변으로 문서 상태가 자동 전이되면 화면에 바로 안내되고 상태 배지도
+  즉시 갱신된다. `docs questions <trackingCode>`/MCP `question_list`로
+  문서 하나의 전체 질의/답변 스레드(열림+완료 전부)도 조회 가능.
+  프로젝트 상세 화면에는 "답변 대기 질문" 섹션이 있어 그 프로젝트의
+  미답변 질문을 한눈에 보고 바로 문서로 이동할 수 있다.
 - Meilisearch 기반 검색/캐시(모든 조회가 DB가 아니라 검색 엔진을 거침)
 - **인스턴스 메시징**(`message list/send/wait`) - 프로젝트 단위 세션 간
   소통. `message wait`는 백엔드가 내부적으로 EMQX를 구독해 새 메시지가
@@ -184,7 +191,7 @@ docs migrate apply <projectId> manifest.json
 
 `docs auth login`으로 한 번 로그인해두면(`~/.claude-native-workflow/
 credentials.json` 공유), `docs-mcp`를 stdio MCP 서버로 등록해 CLI와
-동일한 66개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
+동일한 67개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
 비밀번호가 대화 컨텍스트에 남지 않도록 의도적으로 MCP 도구로 노출하지
 않는다(CLI 전용) - `auth_whoami`만 로그인 상태 확인용 예외.
 

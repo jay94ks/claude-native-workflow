@@ -67,10 +67,15 @@ doctype-transitions <아무값> <docTypeId>`(`doctype_transitions`,
 설계자에게 확인이 필요한 사항은 문서 본문에 체크리스트로 묻어두지 않고
 `docs question <trackingCode> <질문 내용>`으로 정식 질의를 만든다 -
 `QU-XXXXXXXX` 추적 코드가 발급된다. 답변 대기 목록은 `docs pending
-<projectId>`, 답변 처리는 `docs reply <questionTrackingCode> <답변>`.
-문서의 모든 질의가 답변되면, 그 문서 타입에 유일하게 허용된 다음 상태가
-있을 경우 문서 상태가 자동으로 전이된다(모호하면 자동 전이하지 않고
-`docs transition`으로 직접 지정).
+<projectId>`, 답변 처리는 `docs reply <questionTrackingCode> <답변>`,
+문서 하나의 전체 질의/답변 스레드(열림+답변완료 전부)는 `docs questions
+<trackingCode>`로 조회한다. 문서의 모든 질의가 답변되면, 그 문서
+타입에 유일하게 허용된 다음 상태가 있을 경우 문서 상태가 자동으로
+전이된다(모호하면 자동 전이하지 않고 `docs transition`으로 직접
+지정). 웹 UI에서도 문서 에디터 화면(`/projects/:id/documents/
+:trackingCode`)에 질의/답변 + 코멘트 패널이 있어 CLI 없이도 이 루프를
+그대로 쓸 수 있다(질의/답변/코멘트 쓰기는 전부 editor 이상 권한 필요 -
+viewer는 조회만).
 
 ## 명령 요약 (CLI `docs` / MCP 도구 이름 병기)
 
@@ -87,6 +92,7 @@ doctype-transitions <아무값> <docTypeId>`(`doctype_transitions`,
 | 버전 이력 조회 | `docs revisions <trackingCode>` | `document_revisions` |
 | 보고서 생성 | `docs report-new <projectId> --title <t> --body <file>` | `report_new` |
 | 질의 등록 | `docs question <trackingCode> <text>` | `question_add` |
+| 문서의 전체 질의/답변 | `docs questions <trackingCode>` | `question_list` |
 | 답변 대기 목록 | `docs pending <projectId>` | `pending_list` |
 | 답변 | `docs reply <questionTrackingCode> <answer>` | `question_reply` |
 | 코멘트 | `docs comment list/add/resolve` | `comment_list/add/resolve` |

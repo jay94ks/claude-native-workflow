@@ -11,7 +11,7 @@ import { createInstitution, listInstitutions } from "../core/institutions.js";
 import { getInstallConfig } from "../core/installConfig.js";
 import { createProjectGroup, listProjectGroups } from "../core/projectGroups.js";
 import { createProject, getProject, listProjects } from "../core/projects.js";
-import { addMember, listMembers } from "../core/members.js";
+import { addMember, listMembers, getMemberRole, roleSatisfies } from "../core/members.js";
 import {
   createDocType,
   listDocTypes,
@@ -34,7 +34,7 @@ import {
   listDocumentRevisions,
 } from "../core/documents.js";
 import { createReport } from "../core/report.js";
-import { addQuestion, listPendingQuestions, answerQuestion } from "../core/questions.js";
+import { addQuestion, listPendingQuestions, answerQuestion, listQuestions, getQuestionProjectId } from "../core/questions.js";
 import { addComment, listComments, resolveComment } from "../core/comments.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
 import { ensureSearchIndexes } from "../core/search.js";
@@ -616,9 +616,25 @@ app.post(
   "/api/documents/:trackingCode/questions",
   authenticate,
   asyncRoute(async (req, res) => {
+    const document = await getDocument(req.params.trackingCode);
+    if (!document) { res.status(404).json({ error: "문서를 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(document.projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
     const { text } = req.body as { text?: string };
     if (!text) { res.status(400).json({ error: "text가 필요합니다" }); return; }
     res.json(await addQuestion(req.params.trackingCode, text));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/questions",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const document = await getDocument(req.params.trackingCode);
+    if (!document) { res.status(404).json({ error: "문서를 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(document.projectId, req.userId!);
+    if (!roleSatisfies(role, "viewer")) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
+    res.json(await listQuestions(req.params.trackingCode));
   }),
 );
 
@@ -635,6 +651,10 @@ app.post(
   "/api/questions/:trackingCode/answer",
   authenticate,
   asyncRoute(async (req, res) => {
+    const projectId = await getQuestionProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "질문을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
     const { body } = req.body as { body?: string };
     if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
     res.json(await answerQuestion(req.params.trackingCode, body, req.userId!));

@@ -758,8 +758,83 @@ WU가 실제로 나오는지, WU로 새 문서를 만들면 올바른 초기 상
 별도로 펼쳐 정상 렌더링 확인. 테스트 후 컨테이너/볼륨/이미지/스크래치
 `.env`/CLI 자격증명/브라우저 탭 전부 정리.
 
+## 질의/답변(Question/Answer) + 코멘트 웹 UI - 완료 (2026-09-10)
+
+로드맵/QA/DocType 확장까지 전부 끝난 뒤 "다음 기능"을 설계자에게
+물어 우선순위를 받았다 - CLI/MCP에는 있지만 웹 UI에 전혀 없던 영역 중
+질의/답변+코멘트를 선택받음(문서를 보다가 질문을 남기거나 답하려면
+지금까지 터미널로 전환해야 했음).
+
+코드를 보던 중 기존 버그 하나를 발견해 같이 고쳤다 - `POST
+/api/documents/:trackingCode/questions`(질문 등록)와 `POST
+/api/questions/:trackingCode/answer`(답변)가 `authenticate`만 검사하고
+프로젝트 멤버십/역할을 전혀 확인하지 않았다(바로 옆 동급 기능인
+코멘트 라우트는 `requireProjectRole("editor")`가 정확히 걸려 있었는데
+질문/답변만 누락 - `requireProjectRole` 미들웨어가 `req.params.
+projectId`를 요구하는데 이 두 라우트는 경로에 projectId가 없어서
+애초에 못 걸었던 것으로 보임). 두 핸들러 안에서 `getDocument()`/
+`getQuestionProjectId()`로 projectId를 구해 `getMemberRole`+
+`roleSatisfies("editor")`를 인라인으로 검사하도록 고쳤다(기존
+`requireOwnedDocType` 스타일의 인라인 체크 패턴 재사용). 실제 검증:
+viewer 역할(및 비멤버)이 질문 등록/답변을 시도하면 403(수정 전이었다면
+뚫렸을 것), owner는 여전히 정상 동작(브라우저로 전체 흐름을 실제
+완주해 확인).
+
+- `core/questions.ts`에 `listQuestions(documentTrackingCode)` 추가 -
+  문서 하나의 전체 질문(open+answered)을 답변과 함께 순서대로 반환
+  (기존 `listPendingQuestions`는 프로젝트 전체의 open만 봄). 새 라우트
+  `GET /api/documents/:trackingCode/questions` + CLI `docs questions
+  <trackingCode>` + MCP `question_list`(완전성 원칙 - 새 조회 경로라
+  CLI/MCP도 같이 추가). 기존 `question`/`pending`/`reply` 명령/도구는
+  시그니처 그대로.
+- `frontend/src/components/QAPanel.vue`/`CommentsPanel.vue`(신규,
+  `MessagesPanel.vue` 스타일 재사용) - 문서 에디터 화면
+  (`DocumentEditorView.vue`)에 임베드. QAPanel은 질문 등록/답변 폼 +
+  답변 시 `documentStatusTransitioned` 안내, `connectProjectRealtime`의
+  `onChange`(`entity === "question"/"answer"`)를 구독해 다른 세션의
+  변경도 반영. CommentsPanel도 같은 패턴(`entity === "comment"`).
+- **구현 중 발견해 같이 고친 두 번째 문제**: QAPanel에서 답변으로 자동
+  상태 전이가 일어나도 `DocumentEditorView.vue` 상단의 상태 배지가
+  갱신되지 않았다(별개 컴포넌트라 상태 공유가 안 됨) - 처음엔 QAPanel이
+  이벤트만 emit하고 부모가 문서를 다시 GET하는 방식으로 고쳤으나,
+  Meilisearch 색인 반영 지연(이 세션에서 반복 확인된 known quirk) 때문에
+  전이 직후 재조회하면 옛 상태가 잠깐 다시 보이는 걸 실측으로 확인 -
+  재조회 대신 답변 API 응답에 이미 있는 `documentStatusTransitioned`
+  값을 그대로 emit해 부모가 즉시 반영하도록 수정(재조회 자체를
+  없앰 - 지연에 영향받지 않음). 실제 브라우저로 답변 직후 새로고침
+  없이 배지가 바뀌는지 DOM 직접 조회로 확인.
+- `ProjectDetailView.vue`에 "답변 대기 질문" 섹션 추가(기존 `GET
+  /api/projects/:projectId/pending` 그대로 재사용, 백엔드 변경 없음) -
+  각 항목이 해당 문서로 링크. `docs pending <projectId>`가 프로젝트
+  전체를 보여주는 것과 대응되는 웹 화면이 지금까지 없었음.
+
+검증: CLI(`docs question`/`questions`/`reply`)·MCP(`question_list`
+stdio 직접 호출)·웹 UI 세 경로로 같은 질문/답변 스레드를 만들어
+결과가 동일한지 대조. 코멘트 등록·해결도 웹에서 실제 클릭으로 확인.
+`npx tsc --noEmit`(backend)/`vue-tsc -b`(frontend) 클린 확인.
+
 ## 다음 단계
 
-로드맵의 Phase 0~6, QA 2회 패스, 기관/그룹 스코프 DocType 생성+상태/
-전이(백엔드+웹 UI 전부)까지 완료됐다. 알려진 제한 없음 - 추가 요청이
-있을 때까지 대기.
+다음 라운드로 설계자에게 새로 요청받은 것 네 가지가 쌓여 있다(아직
+계획 단계 시작 전):
+1. **웹 UI에서 git 저장소 생성** - 프로젝트 상세 화면에서 "git 저장소
+   생성" 같은 동작을 실행하면 백그라운드에서 서버가 Gitea 저장소를
+   만들고 자동으로 연동까지 끝내야 함(지금은 `docs git link`로 CLI에서만
+   가능 - 기존 `POST /api/projects/:projectId/git/link`를 웹 UI 버튼으로
+   노출하는 완전성 작업).
+2. **DocType별 자연어 지침 필드** - "이 타입은 무엇을 하기 위한 것이다"를
+   적을 수 있는 설명/지침 칸을 DocType 자체에 추가(스키마 변경 필요 -
+   지금 `DocType`은 `code`/`label`만 있고 서술형 설명이 없음). 문서 타입
+   관리 UI(`DocTypeManager.vue`)에서 작성 가능해야 하고, CLI/MCP도
+   완전성 원칙에 따라 같이 노출.
+3. **좌측 사이드바를 문서 탐색기로 개편** - 지금은 사이드바가 기관/
+   프로젝트 그룹/프로젝트 목록 링크 3개뿐인데, 이걸 (분류 포함) 문서
+   탐색기로 바꾸고, 기관/그룹/프로젝트 목록 접근은 별도의 (작은) 메뉴로
+   옮긴다. 설계자가 스크린샷에 직접 주석을 달아 전달 - 상단에 "툴바"
+   영역도 필요하다고 표시함(현재 문서 목록 화면의 헤더가 그 역할을
+   해야 할 것으로 보임). 화면 전반(레이아웃 컴포넌트, 라우팅 구조)에
+   영향을 주는 change라 다른 세 항목보다 설계 범위가 크다.
+4. **"기관" 용어를 "팀"으로 변경** - 웹 UI 표시 텍스트 전반("기관" →
+   "팀")의 용어 교정. DB 컬럼/코드 식별자(institutionId 등)는 안 바꾸고
+   사용자에게 보이는 라벨만 교정하는 것으로 추정 - 범위를 다음 계획
+   단계에서 설계자와 확인 필요.

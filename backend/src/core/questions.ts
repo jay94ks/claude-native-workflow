@@ -60,6 +60,41 @@ export async function addQuestion(documentTrackingCode: string, text: string): P
   };
 }
 
+export interface QuestionWithAnswer extends QuestionDetail {
+  answer: AnswerDetail | null;
+}
+
+/** 문서 하나의 전체 질문(open+answered) 스레드 - `listPendingQuestions`는
+ * 프로젝트 전체의 open만 보므로, 문서 상세 화면(QAPanel)이 그 문서의
+ * 질문/답변 전체를 순서대로 보여주려면 이 함수가 필요하다. */
+export async function listQuestions(documentTrackingCode: string): Promise<QuestionWithAnswer[]> {
+  const db = getDb();
+  const document = await db.document.findUnique({ where: { trackingCode: documentTrackingCode } });
+  if (!document) throw new Error(`문서를 찾을 수 없습니다: ${documentTrackingCode}`);
+
+  const rows = await db.question.findMany({
+    where: { documentId: document.id },
+    include: { answer: true },
+    orderBy: { ordinal: "asc" },
+  });
+  return rows.map(
+    (r: {
+      trackingCode: string;
+      ordinal: number;
+      text: string;
+      status: string;
+      answer: { body: string; answeredBy: string; answeredAt: Date } | null;
+    }) => ({
+      trackingCode: r.trackingCode,
+      documentTrackingCode,
+      ordinal: r.ordinal,
+      text: r.text,
+      status: r.status,
+      answer: r.answer ? { body: r.answer.body, answeredBy: r.answer.answeredBy, answeredAt: r.answer.answeredAt } : null,
+    }),
+  );
+}
+
 export interface PendingQuestion extends QuestionDetail {
   documentTitle: string;
 }
@@ -87,6 +122,18 @@ export interface ReplyResult {
   question: QuestionDetail;
   answer: AnswerDetail;
   documentStatusTransitioned: string | null; // 자동 전이됐으면 새 상태 코드, 아니면 null
+}
+
+/** 질문 트래킹 코드로 그 질문이 속한 문서의 projectId를 구한다 - API
+ * 레이어가 답변 라우트의 인가(멤버 role)를 검사할 때 씀(경로에
+ * projectId가 없어 requireProjectRole 미들웨어를 못 쓰므로). */
+export async function getQuestionProjectId(questionTrackingCode: string): Promise<string | null> {
+  const db = getDb();
+  const question = await db.question.findUnique({
+    where: { trackingCode: questionTrackingCode },
+    include: { document: true },
+  });
+  return question?.document.projectId ?? null;
 }
 
 /** Answer insert + Question.status 갱신하는 평범한 쓰기 - 그 문서의

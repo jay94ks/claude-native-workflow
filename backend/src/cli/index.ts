@@ -428,6 +428,10 @@ program
   );
 
 program
+  .command("questions <trackingCode>")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/questions`))));
+
+program
   .command("pending <projectId>")
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/pending`))));
 

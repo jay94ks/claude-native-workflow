@@ -2,6 +2,8 @@
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
+import QAPanel from "../components/QAPanel.vue";
+import CommentsPanel from "../components/CommentsPanel.vue";
 
 const props = defineProps<{ id: string; trackingCode: string }>();
 
@@ -53,6 +55,16 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+// QAPanel에서 답변으로 인한 자동 상태 전이가 일어났을 때만 씀 - 전체
+// load()는 loading 플래그를 다시 세워 화면을 통째로 숨기고 편집 중인
+// body도 서버 값으로 덮어써버리므로, 상단 상태 배지만 조용히 갱신한다.
+// QAPanel의 답변 API 응답에 이미 새 상태 코드가 있으니 재조회하지 않고
+// 그대로 받아쓴다(재조회하면 Meilisearch 색인 반영 지연으로 옛 상태가
+// 잠깐 다시 보일 수 있음 - fetchDocument의 재시도 패턴과 같은 원인).
+function refreshStatus(statusCode: string) {
+  if (doc.value) doc.value.statusCode = statusCode;
 }
 
 async function save() {
@@ -112,6 +124,9 @@ onMounted(load);
       <button @click="transition">상태 전이</button>
       <span v-if="transitionError" class="error">{{ transitionError }}</span>
     </div>
+
+    <QAPanel :project-id="id" :tracking-code="trackingCode" class="qa" @status-transitioned="refreshStatus" />
+    <CommentsPanel :project-id="id" :tracking-code="trackingCode" />
   </template>
 </template>
 
@@ -168,6 +183,9 @@ button:disabled {
   padding: 8px 10px;
   border: 1px solid #d8dae0;
   border-radius: 6px;
+}
+.qa {
+  margin-top: 28px;
 }
 .error {
   color: #d1344b;

@@ -290,6 +290,9 @@ async function main() {
   tool("question_add", "질의 등록", "문서에 대한 질의를 등록하고 추적 코드를 발급받는다.", { trackingCode: z.string(), text: z.string() }, async (a) =>
     call(`/api/documents/${a.trackingCode}/questions`, { method: "POST", body: JSON.stringify({ text: a.text }) }),
   );
+  tool("question_list", "문서의 전체 질의/답변 조회", "한 문서의 질의 전체(미답변+답변완료)를 답변과 함께 순서대로 조회한다.", { trackingCode: z.string() }, async (a) =>
+    call(`/api/documents/${a.trackingCode}/questions`),
+  );
   tool("pending_list", "답변 대기 목록", "프로젝트의 미답변 질의 목록.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/pending`),
   );
