@@ -258,7 +258,15 @@ export function searchDocs(query: string): SearchResult[] {
 // ---------------------------------------------------------------- index table regen
 
 function rebuildTable(indexPath: string, rows: string[], header: [string, string]): void {
-  const text = fs.readFileSync(indexPath, "utf-8");
+  // QA로 발견: 아래 정규식이 "TABLE:START -->" 바로 뒤에 리터럴 `\n`이 오는
+  // 것을 기대하는데, CRLF로 체크아웃된 파일(core.autocrlf=true인 Windows -
+  // readDocSync에 준 것과 같은 이유)은 실제로 "TABLE:START -->\r\n"이라
+  // 마커 사이에 `\r`이 하나 더 끼어 있어 매치가 통째로 실패한다 - `.replace`가
+  // 매치 없이 원문을 그대로 반환해서 표가 조용히 갱신 안 된 것처럼 보인다
+  // (rebuild-reply-index를 직접 실행해도 파일이 안 바뀌는 걸로 재현). 이
+  // 함수는 fsdocs.ts의 readDocSync를 거치지 않는 별도 읽기 경로라 그쪽의
+  // CRLF 정규화를 못 받는다 - 여기서도 같은 정규화를 해준다.
+  const text = fs.readFileSync(indexPath, "utf-8").replace(/\r\n/g, "\n");
   const lines = [header[0], header[1], ...(rows.length ? rows : ["| _(항목 없음)_ | | | |"])];
   const tableMd = lines.join("\n");
   const newText = text.replace(
@@ -345,5 +353,13 @@ export function saveDocBody(relPath: string, newBody: string): { path: string; u
   }
   fs.writeFileSync(p, dumpFrontmatter(meta, newBody), "utf-8");
   invalidateCache(p);
+  // QA로 발견: 이 함수가 rebuildReplyIndex()를 부르지 않아서, `docs save`
+  // CLI나 대시보드 편집기로 "## 답변 대기" 섹션을 새로 추가/수정해도
+  // docs/reply/index.md가 갱신되지 않았다 - answerPending()에서만 재생성이
+  // 호출되고 있었다(tier1/tools/docs/server.py의 save_doc_body에서 같은
+  // 문제를 먼저 발견해 대칭으로 고침). saveDocBody는 본문을 프로그램적으로
+  // 바꾸는 경로 중 하나라, 여기서도 재생성해야 문서 하나만 저장해도 표가
+  // 최신으로 남는다.
+  rebuildReplyIndex();
   return { path: relPath, updated: meta.updated as string };
 }
