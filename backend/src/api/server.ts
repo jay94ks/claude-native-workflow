@@ -36,6 +36,8 @@ import {
   acknowledgeQueueEntry,
   completeQueueEntry,
 } from "../core/pushHookPrompts.js";
+import { sendMessage, listMessages, waitForMessage } from "../core/messages.js";
+import { checkConnect, checkAcl, ensureEmqxAuthConfigured } from "../core/emqxAuth.js";
 
 const app = express();
 // verify로 원본 바이트를 req.rawBody에 보존 - 웹훅 서명 검증은 express가
@@ -475,9 +477,57 @@ function notImplemented(feature: string, phase: string) {
   };
 }
 
-app.get("/api/projects/:projectId/messages", authenticate, notImplemented("message list/read", "Phase 4 (EMQX 구독 측)"));
-app.post("/api/projects/:projectId/messages", authenticate, notImplemented("message send", "Phase 4 (EMQX 구독 측)"));
-app.get("/api/projects/:projectId/messages/wait", authenticate, notImplemented("message wait", "Phase 4 (EMQX 구독 측)"));
+// ---------------------------------------------------------------- 인스턴스 메시징 (Phase 4)
+
+app.get(
+  "/api/projects/:projectId/messages",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listMessages(req.params.projectId));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/messages",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { body } = req.body as { body?: string };
+    if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
+    res.json(await sendMessage(req.params.projectId, req.userId!, body));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/messages/wait",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const timeoutSec = Number(req.query.timeout ?? 60);
+    res.json(await waitForMessage(req.params.projectId, timeoutSec));
+  }),
+);
+
+// ---------------------------------------------------------------- EMQX 클라이언트 인증/인가 (Phase 4 - 인증 미들웨어 없음, EMQX가 직접 호출)
+
+app.post(
+  "/api/emqx/authn",
+  asyncRoute(async (req, res) => {
+    const { username, password } = req.body as { username?: string; password?: string };
+    const result = checkConnect(username, password);
+    res.json({ result });
+  }),
+);
+
+app.post(
+  "/api/emqx/authz",
+  asyncRoute(async (req, res) => {
+    const { username, topic } = req.body as { username?: string; topic?: string };
+    const result = await checkAcl(username, topic);
+    res.json({ result });
+  }),
+);
 
 // ---------------------------------------------------------------- git 저장소 연결 + 이력 조회 (Phase 2)
 
@@ -692,6 +742,7 @@ async function main() {
   await connectDb();
   await ensureSearchIndexes();
   await seedDefaultTemplates();
+  await ensureEmqxAuthConfigured();
 
   const port = Number(process.env.PORT ?? 8760);
   const host = process.env.HOST ?? "127.0.0.1";

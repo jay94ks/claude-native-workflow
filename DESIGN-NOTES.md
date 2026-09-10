@@ -178,8 +178,64 @@ Question 생성도 회귀 없이 동작하는지 확인 → `TrackingCode` 행�
 institutionId/projectId/which/location이 실제로 올바르게 채워지는지
 대조.
 
+## Phase 4 - 완료 (2026-09-10)
+
+EMQX 구독 측 완성 - `message list/send/wait` 실제 구현 + JWT 기반 EMQX
+클라이언트 인증/인가(미래 웹 UI가 MQTT-over-WebSocket으로 직접 붙을 때
+쓸 인프라).
+
+- 로드맵 원문의 "MCP의 MQTT 장기 연결"은 Phase 1에서 확정한 "CLI/MCP는
+  REST만 호출하는 순수 클라이언트" 원칙보다 먼저 쓰인 낡은 문구라 실제
+  구현 위치를 바꿨다 - CLI/MCP가 직접 MQTT를 붙들지 않고, `GET
+  /api/projects/:projectId/messages/wait` 자체를 **백엔드가 내부적으로
+  EMQX를 구독하는 롱폴**로 구현(`core/messages.ts`의
+  `waitForMessage()`, `mqtt` npm 패키지 신규 추가). 매 호출마다 새로
+  연결(개인/소규모 설치 규모에서 커넥션 풀링은 과함).
+- `core/emqxAuth.ts`: **인증**은 EMQX 내장 JWT 검증기 대신, 이미
+  검증된 `verifyAccessToken()`(Phase 0)을 그대로 쓰는 HTTP 훅(`POST
+  /api/emqx/authn`)으로 구현 - MQTT CONNECT의 username=userId,
+  password=JWT 액세스 토큰이 전제, `sub`와 username이 일치해야 허용.
+  **인가**도 HTTP 훅(`POST /api/emqx/authz`)으로 `project/{projectId}/
+  (changes|messages)` 패턴에서 projectId를 뽑아 `Member` 존재 여부로
+  판정. 백엔드 자신의 내부 연결(`message wait`용)은 고정
+  `EMQX_SERVICE_USERNAME`/`PASSWORD`로 두 훅 다 즉시 우회.
+- `ensureEmqxAuthConfigured()`가 서버 기동 시 EMQX Admin API로 위 두
+  HTTP 소스를 없으면 등록(Gitea PAT처럼 수동 설정 단계를 늘리지 않음).
+- `realtimePublish()`를 `ChangeEvent` 고정 타입에서 제네릭으로 완화 -
+  메시지 페이로드(본문 텍스트 포함)를 같은 함수로 발행하기 위해.
+
+**실측 중 확인한 사실(추측 아님)**:
+- EMQX Admin API 등록 요청 형식(`POST /api/v5/authentication`
+  `{mechanism, backend, method, url, headers, body}`, `POST
+  /api/v5/authorization/sources` `{type, enable, method, url, headers,
+  body}`, 플레이스홀더 `${username}`/`${password}`/`${clientid}`/
+  `${topic}`/`${action}`)은 실제 EMQX 5.8.6 컨테이너에 등록해보고
+  확정 - 첫 시도에 그대로 맞아떨어졌다(Gitea 때와 달리 이번엔 추측이
+  적중).
+- EMQX 5.8.6 이미지의 `POST /api/v5/api_key`는 대시보드 로그인 토큰으로
+  직접 호출하면 `expired_at` 값과 무관하게 항상 `badmatch` 내부 에러가
+  난다(실제 Erlang 스택트레이스까지 확인) - 실제 대시보드 UI를 통해
+  키를 발급하면 정상 동작(UI가 같은 엔드포인트를 다르게 호출하는 듯) -
+  이건 이 이미지 버전의 결함으로 보이고 내 코드와는 무관(설계자용
+  EMQX API Key 발급 안내가 이미 "대시보드에서 발급"으로 돼 있어 실제
+  사용 흐름엔 영향 없음).
+- raw MQTT 테스트 클라이언트로 4가지 시나리오 전부 직접 확인: 유효한
+  JWT+자기 프로젝트 → CONNECT 성공+SUBSCRIBE 승인, 유효한 JWT+비멤버
+  프로젝트 → SUBSCRIBE 거부(코드 128), 위조된 password → CONNECT
+  자체 거부, JWT의 sub와 다른 username → CONNECT 자체 거부.
+
+검증: 실제 EMQX 5.8.6 컨테이너(+Meilisearch)로 end-to-end 실측 -
+authn/authz 소스가 실제로 등록됐는지 EMQX Admin API로 대조, 위 raw
+MQTT 4가지 시나리오, `message send`→`message list`에 나오는지,
+`message wait`를 백그라운드로 걸어두고 다른 프로세스에서 `message
+send`를 호출했을 때 ~3초 만에(20초 타임아웃 중) 그 메시지를 받고
+즉시 반환하는지, 메시지가 안 오면 지정한 타임아웃만큼 정확히 기다리다
+빈 응답(`timedOut:true`)으로 반환하는지 둘 다 확인. 테스트 후
+컨테이너/스크래치 DB/자격증명 파일 전부 정리.
+
 ## 다음 단계
 
-Phase 4(EMQX 구독 측 완성 - JWT 기반 클라이언트 인증, HTTP ACL 훅,
-MCP의 MQTT 장기 연결, `message list/read` 실제 구현)는 아직 착수 전 -
+Phase 5(웹 인터페이스 - 관리 화면 → 문서/코드 에디터 → 변경 추적 뷰
+순으로 점진 구현, Phase 4에서 마련한 EMQX 인증/ACL 인프라에 바로
+얹으면 됨)는 아직 착수 전 -
 설계자 승인 후 시작한다.

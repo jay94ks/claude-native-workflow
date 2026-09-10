@@ -9,7 +9,7 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 (대화 세션에서 작성, 저장소에는 아직 커밋 안 됨 - 진행 상황은
 [DESIGN-NOTES.md](DESIGN-NOTES.md) 참고)를 참고.
 
-## 지금 상태: Phase 3 완료
+## 지금 상태: Phase 4 완료
 
 - Prisma 스키마(PostgreSQL/MySQL/SQLite 3드라이버, 완전 정규화 - JSON
   컬럼 없음)
@@ -25,7 +25,15 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
   프로젝트는 같은 코드 문자열을 독립적으로 가질 수 있음)
 - 코멘트, 보고서 생성
 - Meilisearch 기반 검색/캐시(모든 조회가 DB가 아니라 검색 엔진을 거침)
-- EMQX 기반 실시간 이벤트 발행(구독 측은 Phase 4)
+- **인스턴스 메시징**(`message list/send/wait`) - 프로젝트 단위 세션 간
+  소통. `message wait`는 백엔드가 내부적으로 EMQX를 구독해 새 메시지가
+  오거나 타임아웃될 때까지 응답을 들고 있는 롱폴(폴링 아님 - CLI/MCP는
+  여전히 REST만 호출).
+- **JWT 기반 EMQX 클라이언트 인증 + Member 기준 topic ACL** - 설치
+  전역 JWT를 그대로 MQTT 인증에 재사용(HTTP 훅으로 `verifyAccessToken`
+  재사용), `project/{id}/(changes|messages)` topic은 그 프로젝트
+  멤버만 구독/발행 가능(미래 웹 인터페이스가 MQTT-over-WebSocket으로
+  직접 붙을 때 쓸 인프라 - 지금은 raw MQTT 클라이언트로 직접 검증함).
 - CLI(`docs`) + MCP 서버(`docs-mcp`) - 둘 다 REST API만 호출하는 순수
   클라이언트, 도구/명령이 1:1 대칭
 - CLAUDE.md/SKILL.md 템플릿 관리(기관/그룹/프로젝트 override) +
@@ -50,9 +58,6 @@ GitHub/GitLab 저장소는 `git log/diff/blame/show`를 지원하지 않는다
 ALLOWED_HOST_LIST` 설정이 꼭 필요하다(이미 반영돼 있음 - 직접 겪고
 고친 문제).
 
-인스턴스 메시징 송수신/대기는 자리만 등록되어 있고 Phase 4에서 실제로
-구현된다(호출하면 명확한 501을 반환).
-
 ## 실행 방법
 
 ### Docker Compose (권장)
@@ -65,14 +70,16 @@ docker compose up -d --build
 
 백엔드는 `:8760`(포트 충돌 시 `.env`에 `BACKEND_HOST_PORT` 지정).
 EMQX 대시보드(`:18083`, 기본 admin/public)에서 API Key를 발급받아
-`.env`의 `EMQX_API_KEY`/`EMQX_API_SECRET`에 채우면 실시간 발행까지
-전부 동작한다(안 채워도 나머지 기능은 정상 동작 - 발행만 조용히
-스킵됨). Gitea(`:3001`)도 같은 패턴 - 최초 기동 후 설치 마법사 완료 →
-관리자 계정 생성 → Personal Access Token 발급 →
+`.env`의 `EMQX_API_KEY`/`EMQX_API_SECRET`에 채우면 실시간 발행/
+인증·인가 훅 자동 등록까지 전부 동작한다(안 채워도 나머지 기능은
+정상 동작 - 발행/구독만 조용히 스킵됨). `EMQX_SERVICE_USERNAME`/
+`PASSWORD`(무작위 값)도 함께 채워야 `message wait`가 동작한다. Gitea
+(`:3001`)도 같은 패턴 - 최초 기동 후 설치 마법사 완료 → 관리자 계정
+생성 → Personal Access Token 발급 →
 `GITEA_ADMIN_USERNAME`/`GITEA_API_TOKEN`에 채워야 git 저장소 연결
 기능이 동작한다(`.env.example` 참고). `PUBLIC_BACKEND_URL`을 채우면
-`git link` 시 웹훅도 자동 등록된다(로컬 전용 개발 환경이면 비워둬도
-나머지 기능엔 지장 없음 - 웹훅 등록만 건너뜀).
+`git link` 시 웹훅과 EMQX 인증/인가 훅이 자동 등록된다(로컬 전용 개발
+환경이면 비워둬도 나머지 기능엔 지장 없음 - 웹훅/훅 등록만 건너뜀).
 
 ### 호스트에 직접 설치
 
@@ -84,6 +91,7 @@ DB_DRIVER=sqlite DATABASE_URL=file:./data.db \
 JWT_SECRET=<32자 이상> CREDENTIAL_ENCRYPTION_KEY=<64자 hex> \
 MEILISEARCH_HOST=<...> MEILISEARCH_API_KEY=<...> \
 EMQX_API_URL=<...> EMQX_API_KEY=<...> EMQX_API_SECRET=<...> \
+EMQX_MQTT_URL=<...> EMQX_SERVICE_USERNAME=<...> EMQX_SERVICE_PASSWORD=<...> \
 npx prisma db push --schema prisma/schema.sqlite.prisma --skip-generate
 node dist/api/server.js
 ```

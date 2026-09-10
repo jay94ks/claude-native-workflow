@@ -79,6 +79,9 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 | 훅 프롬프트 목록/삭제 | `docs hook list/delete <projectId> [<id>]` | `hook_list`/`hook_delete` |
 | 훅 대기열 조회 | `docs hook queue <projectId> [--status <s>]` | `hook_queue_list` |
 | 훅 처리 시작/완료 | `docs hook ack/done <projectId> <id>` | `hook_ack`/`hook_done` |
+| 인스턴스 메시지 목록 | `docs message list <projectId>` | `message_list` |
+| 인스턴스 메시지 전송 | `docs message send <projectId> <body...>` | `message_send` |
+| 새 메시지 대기 | `docs message wait <projectId> [--timeout <초>]` | `message_wait` |
 
 `git log/diff/show`는 자체 호스팅(Gitea) 저장소가 연결된 프로젝트에서만
 동작한다 - 먼저 `git link`로 연결해야 하고, 외부 GitHub/GitLab로 연결한
@@ -88,10 +91,18 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 인스턴스에 대고 확인함) 호출하면 그 사실을 알리는 명확한 에러가 온다 -
 파일의 변경 이력은 `git log`/`git diff`/`git show`로 대신 확인한다.
 
-`message list/send/wait` 명령은 CLI/MCP 양쪽에 이름은 등록돼 있지만
-아직 미구현 상태(EMQX 구독 인프라 도입 이후) - 호출하면 "아직 구현되지
-않았습니다"라는 명확한 에러가 온다. 조용히 실패한 게 아니라 다음 단계에
-채워질 자리라는 뜻이다.
+## 인스턴스 메시지로 다른 세션/설계자와 소통하기
+
+`message send`는 같은 프로젝트를 다루는 다른 클로드 세션이나 설계자에게
+메시지를 남긴다. `message list`는 지금까지의 메시지 기록을 조회한다.
+**설계자가 "답변을 추적하면서 처리해줘"처럼 지시했을 때는, 답을 기다리는
+동안 `message wait <projectId> [--timeout <초>]`를 호출한다** - 새
+메시지가 오거나 타임아웃될 때까지 그 툴 호출 하나가 반환하지 않고
+블로킹한다(내부적으로 EMQX 구독을 걸어두고 있다가 반환 - 폴링이
+아니다). 반환되면 그 메시지를 보고 워크플로우대로 처리를 이어간다 -
+클로드는 상시 이벤트 루프를 못 돌리니, "이벤트가 올 때까지 막혀 있다가
+돌아오는 한 번의 툴 호출"로 실시간성과 턴 기반 실행 모델을 이어붙이는
+패턴이다.
 
 ## 인증
 
