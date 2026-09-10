@@ -9,7 +9,7 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 (대화 세션에서 작성, 저장소에는 아직 커밋 안 됨 - 진행 상황은
 [DESIGN-NOTES.md](DESIGN-NOTES.md) 참고)를 참고.
 
-## 지금 상태: Phase 4 완료
+## 지금 상태: Phase 5 (1/3) 완료
 
 - Prisma 스키마(PostgreSQL/MySQL/SQLite 3드라이버, 완전 정규화 - JSON
   컬럼 없음)
@@ -47,6 +47,11 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
   `hook queue`에 항목이 쌓인다. 서버가 클로드 세션을 직접 스폰하지
   않으므로, 그 프로젝트를 다음에 여는 세션이 대기열을 확인·처리
   (`hook ack`/`hook done`)한다.
+- **웹 인터페이스**(`frontend/`, Vue 3 + Vite) - 관리 화면 첫 조각:
+  로그인/회원가입, 기관/프로젝트 그룹/프로젝트 목록+생성, 프로젝트
+  상세(git 저장소 상태·문서 타입·멤버). backend가 빌드 결과물을 같은
+  오리진에서 정적 서빙(별도 컨테이너/포트 없음). Monaco 에디터/실시간
+  갱신/변경 추적 뷰는 다음 설치들에서.
 
 **알려진 제한**: `git blame`은 Gitea REST API 자체에 blame 엔드포인트가
 없어(1.27 기준, swagger로 직접 확인) 명확한 "지원하지 않음" 에러를
@@ -84,6 +89,7 @@ EMQX 대시보드(`:18083`, 기본 admin/public)에서 API Key를 발급받아
 ### 호스트에 직접 설치
 
 ```bash
+cd frontend && npm install && npm run build && cd ..   # backend가 이 dist/를 정적 서빙
 cd backend
 npm install
 npm run build
@@ -97,7 +103,19 @@ node dist/api/server.js
 ```
 
 Meilisearch/EMQX는 별도로 떠 있어야 한다(각자 공식 바이너리/Docker
-이미지로 로컬 실행 가능).
+이미지로 로컬 실행 가능). `frontend/dist`가 없으면 backend는 정상
+기동하되 웹 UI 없이 API만 서빙한다(CLI/MCP는 지장 없음).
+
+### 프런트엔드 개발
+
+```bash
+cd frontend
+npm install
+npm run dev   # :5173, /api를 backend(:8760)로 프록시
+```
+
+backend를 먼저(다른 터미널에서) 띄워둔 상태로 위 명령을 실행하면
+핫 리로드로 화면을 바로 확인할 수 있다.
 
 ### CLI
 

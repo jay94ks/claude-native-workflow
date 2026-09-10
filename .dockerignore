@@ -1,0 +1,13 @@
+# backend Dockerfile의 빌드 컨텍스트가 저장소 루트다(Phase 5부터 -
+# frontend/도 같은 이미지에 넣어야 해서). 각 하위 프로젝트 자체의
+# .dockerignore(backend/.dockerignore)는 컨텍스트가 바뀌면서 더는
+# 적용되지 않으므로, 여기 루트에 필요한 항목을 합쳐 둔다.
+.git
+node_modules
+dist
+generated
+*.db
+*.db-journal
+.env
+.env.*
+!.env.example

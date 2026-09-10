@@ -1,10 +1,14 @@
 #!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { connectDb } from "../core/db.js";
 import { register, login, refresh, logout, AuthError, assertJwtSecretConfigured } from "../core/auth.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
 import { createInstitution, listInstitutions } from "../core/institutions.js";
+import { getInstallConfig } from "../core/installConfig.js";
 import { createProjectGroup, listProjectGroups } from "../core/projectGroups.js";
 import { createProject, getProject, listProjects } from "../core/projects.js";
 import { addMember, listMembers } from "../core/members.js";
@@ -139,6 +143,16 @@ app.delete(
   asyncRoute(async (req, res) => {
     await removeGitCredential(req.userId!, req.params.id);
     res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- 설치 전역 설정
+
+app.get(
+  "/api/install-config",
+  authenticate,
+  asyncRoute(async (_req, res) => {
+    res.json(await getInstallConfig());
   }),
 );
 
@@ -723,6 +737,19 @@ app.post(
     res.json({ ok: true, deployed });
   }),
 );
+
+// ---------------------------------------------------------------- 프런트엔드 정적 서빙 (Phase 5)
+// 별도 컨테이너/포트를 안 띄운다 - "단일 설치형" 원칙에 맞춰 backend가
+// frontend/dist 빌드 결과물을 그대로 서빙한다. 모든 /api 라우트보다
+// 뒤에 등록해야 한다(SPA 폴백이 /api/* 404를 가로채면 안 됨). frontend가
+// 아직 빌드 안 됐으면(로컬 API 전용 개발 등) 조용히 건너뛴다.
+const frontendDist = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "frontend", "dist");
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get(/^(?!\/api\/).*/, (_req, res) => {
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
+}
 
 // ---------------------------------------------------------------- 에러 핸들러
 
