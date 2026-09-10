@@ -75,7 +75,7 @@ authCmd
 authCmd.command("logout").action(() =>
   run(async () => {
     const creds = loadCredentials();
-    if (creds) {
+    if (creds?.refresh_token) {
       await apiCall("/api/auth/logout", {
         method: "POST",
         body: JSON.stringify({ refresh_token: creds.refresh_token }),
@@ -85,6 +85,18 @@ authCmd.command("logout").action(() =>
     console.log("로그아웃 완료.");
   }),
 );
+
+authCmd
+  .command("use-key")
+  .description("API 키로 인증(로그인 왕복 없이 바로 저장 - `docs key create`로 발급받은 값)")
+  .requiredOption("--api <url>", "서버 주소")
+  .requiredOption("--key <k>", "cnwk_로 시작하는 API 키")
+  .action((opts) =>
+    run(async () => {
+      saveCredentials({ api_base: opts.api, api_key: opts.key });
+      console.log(`API 키를 ${credentialsPath}에 저장했습니다(권한 600).`);
+    }),
+  );
 
 authCmd.command("whoami").action(() =>
   run(async () => {
@@ -137,6 +149,51 @@ userCmd
       printJson(await apiCall(`/api/users/${userId}/activity${qs}`));
     }),
   );
+
+// ---------------------------------------------------------------- API 키(신원 위임 인증, 3종)
+// MCP 도구는 의도적으로 없음(auth register/login과 같은 급의 신원
+// 관리 동작 - CLI 전용, 사람이 터미널에서 직접 하는 동작으로 제한).
+
+const keyCmd = program.command("key").description("API 키 관리(팀 관리 키/프로젝트 개인 키/개인 키)");
+
+keyCmd
+  .command("create")
+  .requiredOption("--scope <s>", "personal|project|team")
+  .option("--project <id>", "scope=project일 때 필요")
+  .option("--team <id>", "scope=team일 때 필요")
+  .option("--label <text>", "식별용 라벨(선택)")
+  .action((opts) =>
+    run(async () => {
+      const result = await apiCall<{ key: unknown; secret: string }>(
+        opts.scope === "project"
+          ? `/api/projects/${opts.project}/api-keys`
+          : opts.scope === "team"
+            ? `/api/teams/${opts.team}/api-keys`
+            : "/api/api-keys/personal",
+        { method: "POST", body: JSON.stringify({ label: opts.label }) },
+      );
+      printJson(result.key);
+      console.log(`\n⚠ 이 값은 지금 한 번만 표시됩니다 - 안전한 곳에 저장하세요:\n${result.secret}\n`);
+    }),
+  );
+
+keyCmd
+  .command("list")
+  .option("--project <id>")
+  .option("--team <id>")
+  .option("--mine", "개인 키(전체 프로젝트 접근) 목록")
+  .action((opts) =>
+    run(async () => {
+      if (opts.project) { printJson(await apiCall(`/api/projects/${opts.project}/api-keys`)); return; }
+      if (opts.team) { printJson(await apiCall(`/api/teams/${opts.team}/api-keys`)); return; }
+      if (opts.mine) { printJson(await apiCall("/api/api-keys/personal")); return; }
+      throw new Error("--project <id> | --team <id> | --mine 중 하나가 필요합니다");
+    }),
+  );
+
+keyCmd
+  .command("revoke <keyId>")
+  .action((keyId) => run(async () => printJson(await apiCall(`/api/api-keys/${keyId}`, { method: "DELETE" }))));
 
 // ---------------------------------------------------------------- git 자격증명
 

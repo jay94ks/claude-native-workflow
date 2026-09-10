@@ -66,7 +66,16 @@ import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../c
 import { ensureSearchIndexes } from "../core/search.js";
 import { resolveEffectivePermission, setAccessOverride, listAccessOverrides } from "../core/permissions.js";
 import { createFolder, renameFolder, deleteFolder, listFolders, listFolderDocuments, moveDocumentToFolder, getFolderById } from "../core/folders.js";
-import { authenticate, requireProjectRole, type AuthedRequest } from "../middleware/auth.js";
+import {
+  createApiKey,
+  listProjectKeys,
+  listTeamKeys,
+  listMyPersonalKeys,
+  getApiKeyById,
+  revokeApiKey,
+  ApiKeyError,
+} from "../core/apiKeys.js";
+import { authenticate, requireProjectRole, requireUnrestrictedScope, type AuthedRequest } from "../middleware/auth.js";
 import {
   linkSelfHostedRepo,
   linkExternalAsPrimary,
@@ -168,6 +177,7 @@ app.post(
 app.post(
   "/api/credentials",
   authenticate,
+  requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
     const { credentialType, value, hostPattern } = req.body as {
       credentialType?: string;
@@ -185,6 +195,7 @@ app.post(
 app.get(
   "/api/credentials",
   authenticate,
+  requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
     res.json(await listGitCredentials(req.userId!));
   }),
@@ -193,6 +204,7 @@ app.get(
 app.delete(
   "/api/credentials/:id",
   authenticate,
+  requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
     await removeGitCredential(req.userId!, req.params.id);
     res.json({ ok: true });
@@ -236,6 +248,7 @@ app.get(
 app.put(
   "/api/auth/me",
   authenticate,
+  requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
     const { email, phone, emailVisible, phoneVisible } = req.body as {
       email?: string;
@@ -269,6 +282,7 @@ app.get(
 app.post(
   "/api/teams",
   authenticate,
+  requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
     const { name } = req.body as { name?: string };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
@@ -314,9 +328,114 @@ app.get(
   }),
 );
 
+// ---------------------------------------------------------------- API 키(신원 위임 인증, 3종)
+// 세 종류 다 "그 키를 만든 설계자의 신원 인증을 대행"하고 스코프만
+// 다르다(core/apiKeys.ts). 키 발급/배제는 위험도가 커서(위 팀장 관리
+// 라우트의 "authenticate만" 선례를 안 따르고) 명시적으로 권한을
+// 확인하고, requireUnrestrictedScope로 스코프가 있는 키로는 키 관리
+// 자체를 못 하게 막는다(권한 상승 방지).
+
+app.post(
+  "/api/projects/:projectId/api-keys",
+  authenticate,
+  requireUnrestrictedScope,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { label } = req.body as { label?: string };
+    res.json(await createApiKey(req.userId!, { scope: "project", projectId: req.params.projectId, label }));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/api-keys",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listProjectKeys(req.params.projectId, req.userId!));
+  }),
+);
+
+app.post(
+  "/api/teams/:teamId/api-keys",
+  authenticate,
+  requireUnrestrictedScope,
+  asyncRoute(async (req, res) => {
+    const { label } = req.body as { label?: string };
+    try {
+      res.json(await createApiKey(req.userId!, { scope: "team", teamId: req.params.teamId, label }));
+    } catch (err) {
+      if (err instanceof ApiKeyError) { res.status(403).json({ error: err.message }); return; }
+      throw err;
+    }
+  }),
+);
+
+app.get(
+  "/api/teams/:teamId/api-keys",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    try {
+      res.json(await listTeamKeys(req.params.teamId, req.userId!));
+    } catch (err) {
+      if (err instanceof ApiKeyError) { res.status(403).json({ error: err.message }); return; }
+      throw err;
+    }
+  }),
+);
+
+app.post(
+  "/api/api-keys/personal",
+  authenticate,
+  requireUnrestrictedScope,
+  asyncRoute(async (req, res) => {
+    const { label } = req.body as { label?: string };
+    res.json(await createApiKey(req.userId!, { scope: "personal", label }));
+  }),
+);
+
+app.get(
+  "/api/api-keys/personal",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listMyPersonalKeys(req.userId!));
+  }),
+);
+
+// 배제 권한: personal은 본인만, project는 본인 또는 그 프로젝트
+// owner, team은 본인 또는 그 팀의 팀장 - "각자의 단위에 해당하는 키를
+// 관리"한다는 요구를 그대로 반영(core/apiKeys.ts의 revokeApiKey는 상태
+// 갱신만 하고, 권한 판정은 이 저장소의 기존 관례대로 라우트에서 한다).
+app.delete(
+  "/api/api-keys/:keyId",
+  authenticate,
+  requireUnrestrictedScope,
+  asyncRoute(async (req, res) => {
+    const key = await getApiKeyById(req.params.keyId);
+    if (!key) { res.status(404).json({ error: "not found" }); return; }
+    let authorized = key.ownerId === req.userId;
+    if (!authorized && key.scope === "project" && key.projectId) {
+      authorized = (await getMemberRole(key.projectId, req.userId!)) === "owner";
+    }
+    if (!authorized && key.scope === "team" && key.teamId) {
+      authorized = await isTeamAdmin(key.teamId, req.userId!);
+    }
+    if (!authorized) {
+      res.status(403).json({ error: "이 키를 배제할 권한이 없습니다" });
+      return;
+    }
+    try {
+      res.json(await revokeApiKey(req.params.keyId, req.userId!));
+    } catch (err) {
+      if (err instanceof ApiKeyError) { res.status(400).json({ error: err.message }); return; }
+      throw err;
+    }
+  }),
+);
+
 app.post(
   "/api/project-groups",
   authenticate,
+  requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
     const { name, teamId } = req.body as { name?: string; teamId?: string };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
@@ -335,6 +454,7 @@ app.get(
 app.post(
   "/api/projects",
   authenticate,
+  requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
     const { name, projectGroupId } = req.body as { name?: string; projectGroupId?: string };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }

@@ -4,6 +4,7 @@ import { apiCall, ApiError } from "../api/client";
 import { useAuthStore } from "../stores/auth";
 import UserRef from "../components/UserRef.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
+import PersonalKeysManager from "../components/PersonalKeysManager.vue";
 
 const props = defineProps<{ id: string }>();
 const auth = useAuthStore();
@@ -118,6 +119,8 @@ watch(() => props.id, load);
         <p v-if="saveError" class="error">{{ saveError }}</p>
       </template>
     </section>
+
+    <PersonalKeysManager v-if="isSelf" />
 
     <section class="card">
       <h2>최근 활동</h2>

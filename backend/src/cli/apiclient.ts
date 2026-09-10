@@ -11,8 +11,9 @@ const CREDENTIALS_PATH = path.join(CREDENTIALS_DIR, "credentials.json");
 
 interface StoredCredentials {
   api_base: string;
-  access_token: string;
-  refresh_token: string;
+  access_token?: string;
+  refresh_token?: string;
+  api_key?: string; // docs auth use-key로 저장 - 있으면 access_token보다 우선
 }
 
 export function loadCredentials(): StoredCredentials | null {
@@ -46,7 +47,8 @@ async function apiFetch(pathSuffix: string, init?: RequestInit): Promise<Respons
     throw new Error("API 주소를 모릅니다 - 먼저 `docs login --api <서버 주소> ...`로 로그인하세요");
   }
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> ?? {}) };
-  if (creds?.access_token) headers.Authorization = `Bearer ${creds.access_token}`;
+  const token = creds?.api_key ?? creds?.access_token;
+  if (token) headers.Authorization = `Bearer ${token}`;
   return fetch(`${apiBase}${pathSuffix}`, { ...init, headers });
 }
 

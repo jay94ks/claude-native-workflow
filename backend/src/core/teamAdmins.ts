@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { getActiveKeyScope } from "./requestScope.js";
 
 export interface TeamAdmin {
   id: string;
@@ -31,6 +32,13 @@ export async function listTeamAdmins(teamId: string): Promise<TeamAdmin[]> {
 
 export async function isTeamAdmin(teamId: string | null, userId: string): Promise<boolean> {
   if (!teamId) return false;
+  // 프로젝트 단위 키는 팀장 권한을 절대 대행하지 않는다(그 키의
+  // 스코프가 프로젝트 하나로 좁혀져 있으므로). 팀 단위 키는 자기
+  // 팀에 대해서만 - 다른 팀의 teamId를 겨냥하면 실제로 그 사람이
+  // 그 팀 팀장이라도 이 키로는 대행 못 함.
+  const scope = getActiveKeyScope();
+  if (scope.type === "project") return false;
+  if (scope.type === "team" && scope.teamId !== teamId) return false;
   const db = getDb();
   const row = await db.teamAdmin.findUnique({ where: { teamId_userId: { teamId, userId } } });
   return row !== null;

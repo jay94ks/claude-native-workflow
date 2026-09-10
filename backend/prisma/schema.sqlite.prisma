@@ -73,6 +73,8 @@ model User {
   accessOverrides   DocAccessOverride[]
   foldersCreated    Folder[]
   hiddenProjects    Project[]          @relation("ProjectHiddenBy")
+  apiKeysOwned      ApiKey[]           @relation("ApiKeyOwner")
+  apiKeysRevoked    ApiKey[]           @relation("ApiKeyRevoker")
 }
 
 model RefreshToken {
@@ -118,6 +120,7 @@ model Team {
   templateFiles TemplateFile[]
   trackingCodes TrackingCode[]
   admins        TeamAdmin[]
+  apiKeys       ApiKey[]
 }
 
 model TeamAdmin {
@@ -168,6 +171,7 @@ model Project {
   trackingCodes   TrackingCode[]
   folders         Folder[]
   accessOverrides DocAccessOverride[]
+  apiKeys         ApiKey[]
 
   @@index([projectGroupId])
 }
@@ -499,4 +503,35 @@ model DocAccessOverride {
   @@index([docTypeId])
   @@index([documentId])
   @@index([folderId])
+}
+
+// ---------------------------------------------------------------- API 키(신원 위임 인증)
+// scope="personal"이면 projectId/teamId 둘 다 null(그 설계자가 접근
+// 가능한 모든 프로젝트), "project"면 projectId만, "team"이면 teamId만
+// 채워진다 - 셋 다 ownerId가 대행하는 신원이고, 스코프만 다르다.
+// 원문(secret)은 저장하지 않는다(keyHash만) - "생성 시 1회만 노출,
+// 이후엔 본인도 마스킹"을 구조적으로 강제하기 위함.
+model ApiKey {
+  id         String    @id @default(cuid())
+  ownerId    String
+  scope      String // personal | project | team
+  projectId  String?
+  teamId     String?
+  label      String?
+  keyPrefix  String
+  keyHash    String    @unique
+  status     String    @default("active") // active | revoked
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  revokedBy  String?
+
+  owner   User     @relation("ApiKeyOwner", fields: [ownerId], references: [id])
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  team    Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  revoker User?    @relation("ApiKeyRevoker", fields: [revokedBy], references: [id])
+
+  @@index([ownerId])
+  @@index([projectId])
+  @@index([teamId])
 }

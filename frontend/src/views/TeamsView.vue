@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import DocTypeManager from "../components/DocTypeManager.vue";
 import TeamAdminManager from "../components/TeamAdminManager.vue";
+import TeamKeysManager from "../components/TeamKeysManager.vue";
 
 interface Team {
   id: string;
@@ -16,6 +17,7 @@ const error = ref("");
 const loading = ref(true);
 const expandedId = ref<string | null>(null);
 const expandedAdminsId = ref<string | null>(null);
+const expandedKeysId = ref<string | null>(null);
 
 async function load() {
   loading.value = true;
@@ -48,6 +50,10 @@ function toggleAdmins(id: string) {
   expandedAdminsId.value = expandedAdminsId.value === id ? null : id;
 }
 
+function toggleKeys(id: string) {
+  expandedKeysId.value = expandedKeysId.value === id ? null : id;
+}
+
 onMounted(load);
 </script>
 
@@ -70,12 +76,18 @@ onMounted(load);
         <button class="manage-btn" @click="toggleAdmins(team.id)">
           {{ expandedAdminsId === team.id ? "팀장 관리 닫기" : "팀장 관리" }}
         </button>
+        <button class="manage-btn" @click="toggleKeys(team.id)">
+          {{ expandedKeysId === team.id ? "키 관리 닫기" : "키 관리" }}
+        </button>
       </div>
       <div v-if="expandedId === team.id" class="manage-panel">
         <DocTypeManager scope="team" :scope-id="team.id" />
       </div>
       <div v-if="expandedAdminsId === team.id" class="manage-panel">
         <TeamAdminManager :team-id="team.id" />
+      </div>
+      <div v-if="expandedKeysId === team.id" class="manage-panel">
+        <TeamKeysManager :team-id="team.id" />
       </div>
     </li>
     <li v-if="teams.length === 0" class="muted">아직 팀이 없습니다.</li>

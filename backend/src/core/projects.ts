@@ -1,6 +1,6 @@
 import { getDb } from "./db.js";
 import { seedDefaultDocTypes } from "./docTypes.js";
-import { getMemberRole } from "./members.js";
+import { getMemberRole, isProjectAllowedByActiveScope } from "./members.js";
 import { isTeamAdmin } from "./teamAdmins.js";
 
 const DEFAULT_GROUP_NAME = "기본";
@@ -91,6 +91,7 @@ export async function listProjects(projectGroupId: string | undefined, viewerId:
   });
   const visible: Project[] = [];
   for (const r of rows as { id: string; projectGroupId: string; name: string; hidden: boolean; hiddenBy: string | null }[]) {
+    if (!(await isProjectAllowedByActiveScope(r.id))) continue; // 스코프 밖 프로젝트는 존재 자체를 목록에서 숨김
     if (r.hidden && !(await canSeeHiddenProject(r.id, viewerId))) continue;
     visible.push({ id: r.id, projectGroupId: r.projectGroupId, name: r.name, hidden: r.hidden, hiddenBy: r.hiddenBy });
   }

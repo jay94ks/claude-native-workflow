@@ -29,6 +29,7 @@ const router = createRouter({
         { path: "source", name: "source", component: () => import("../views/SourceBrowserView.vue"), props: true },
         { path: "changes", name: "changes", component: () => import("../views/ChangeTrackingView.vue"), props: true },
         { path: "settings", name: "project-settings", component: () => import("../views/ProjectSettingsView.vue"), props: true },
+        { path: "keys", name: "project-keys", component: () => import("../views/ProjectKeysView.vue"), props: true },
       ],
     },
   ],

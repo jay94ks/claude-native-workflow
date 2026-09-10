@@ -1,5 +1,5 @@
 import { getDb } from "./db.js";
-import { getMemberRole } from "./members.js";
+import { getMemberRole, isProjectAllowedByActiveScope } from "./members.js";
 
 export interface EffectivePermission {
   read: boolean;
@@ -36,6 +36,14 @@ export async function resolveEffectivePermission(
   userId: string,
   scope: { docTypeId?: string; documentId?: string },
 ): Promise<EffectivePermission> {
+  // 방어적 이중 장치 - getMemberRole()도 스코프를 확인해 out-of-scope면
+  // role을 null로 주지만, 그 경우에도 아래 오버라이드 조회는 멤버십과
+  // 무관하게(비멤버에게도 걸 수 있는 설계) 돌아갈 수 있다. 스코프
+  // 밖이면 오버라이드 조회 자체를 건너뛰어, "다른 프로젝트 전용" 키가
+  // 그 프로젝트의 비멤버-오버라이드를 통해 접근하는 우회를 원천 차단.
+  if (!(await isProjectAllowedByActiveScope(projectId))) {
+    return { read: false, write: false, delete: false, overridden: false, notice: null };
+  }
   const db = getDb();
   const role = await getMemberRole(projectId, userId);
   const base = roleDefault(role);
@@ -93,6 +101,7 @@ function applyOverride(
  * 스코프가 아니므로 project-common과 합성하지 않고 폴더 단위 오버라이드
  * 하나만 본다 - 없으면 프로젝트 기본 role의 write). */
 export async function resolveFolderWritePermission(projectId: string, userId: string, folderId: string | null): Promise<boolean> {
+  if (!(await isProjectAllowedByActiveScope(projectId))) return false;
   const db = getDb();
   const role = await getMemberRole(projectId, userId);
   const base = roleDefault(role).write;
