@@ -79,6 +79,11 @@ onMounted(load);
     <h1>{{ project.name }}</h1>
     <p v-if="error" class="error">{{ error }}</p>
 
+    <div class="nav-links">
+      <router-link :to="`/projects/${id}/documents`">문서 보기</router-link>
+      <router-link :to="`/projects/${id}/source`">소스 코드 보기</router-link>
+    </div>
+
     <section>
       <h2>git 저장소</h2>
       <p v-if="gitRepo">{{ gitRepo.provider }} - {{ gitRepo.repoUrl }}</p>
@@ -130,6 +135,23 @@ h2 {
 }
 section {
   margin-bottom: 28px;
+}
+.nav-links {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+.nav-links a {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-decoration: none;
+  color: #1a1a2e;
+}
+.nav-links a:hover {
+  background: #eef0f6;
 }
 .chips {
   list-style: none;

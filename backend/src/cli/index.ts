@@ -445,6 +445,43 @@ gitCmd
   .command("show <projectId> <sha>")
   .action((projectId, sha) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/show/${sha}`))));
 
+gitCmd
+  .command("tree <projectId>")
+  .option("--path <path>", "디렉터리 경로(생략하면 루트)", "")
+  .option("--ref <ref>")
+  .action((projectId, opts) => {
+    const qs = new URLSearchParams({ path: opts.path, ...(opts.ref ? { ref: opts.ref } : {}) });
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/tree?${qs}`)));
+  });
+
+gitCmd
+  .command("cat <projectId> <path>")
+  .option("--ref <ref>")
+  .action((projectId, path, opts) => {
+    const qs = new URLSearchParams({ path, ...(opts.ref ? { ref: opts.ref } : {}) });
+    return run(async () => {
+      const file = await apiCall<{ content: string }>(`/api/projects/${projectId}/git/file?${qs}`);
+      console.log(file.content);
+    });
+  });
+
+gitCmd
+  .command("put <projectId> <path> <localFile>")
+  .option("--message <m>", "커밋 메시지")
+  .action((projectId, path, localFile, opts) =>
+    run(async () => {
+      const fs = await import("node:fs");
+      const content = fs.readFileSync(localFile, "utf-8");
+      const qs = new URLSearchParams({ path });
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/file?${qs}`, {
+          method: "PUT",
+          body: JSON.stringify({ content, message: opts.message }),
+        }),
+      );
+    }),
+  );
+
 // ---------------------------------------------------------------- git push 훅 프롬프트 자동화 (Phase 3 - 대기열 방식)
 
 const hookCmd = program.command("hook").description("git push 훅 프롬프트 자동화(대기열)");

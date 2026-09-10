@@ -11,6 +11,14 @@ const router = createRouter({
     { path: "/groups", name: "groups", component: () => import("../views/ProjectGroupsView.vue") },
     { path: "/projects", name: "projects", component: () => import("../views/ProjectsView.vue") },
     { path: "/projects/:id", name: "project-detail", component: () => import("../views/ProjectDetailView.vue"), props: true },
+    { path: "/projects/:id/documents", name: "documents", component: () => import("../views/DocumentsView.vue"), props: true },
+    {
+      path: "/projects/:id/documents/:trackingCode",
+      name: "document-editor",
+      component: () => import("../views/DocumentEditorView.vue"),
+      props: true,
+    },
+    { path: "/projects/:id/source", name: "source", component: () => import("../views/SourceBrowserView.vue"), props: true },
   ],
 });
 

@@ -299,6 +299,40 @@ async function main() {
     },
   );
 
+  tool(
+    "git_tree",
+    "git 디렉터리 조회",
+    "저장소의 디렉터리 목록을 조회한다(path 생략하면 루트).",
+    { projectId: z.string(), path: z.string().optional(), ref: z.string().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({ path: String(a.path ?? ""), ...(a.ref ? { ref: String(a.ref) } : {}) });
+      return call(`/api/projects/${a.projectId}/git/tree?${qs}`);
+    },
+  );
+  tool(
+    "git_cat",
+    "git 파일 조회",
+    "저장소의 파일 1건 내용을 조회한다.",
+    { projectId: z.string(), path: z.string(), ref: z.string().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({ path: String(a.path), ...(a.ref ? { ref: String(a.ref) } : {}) });
+      return call(`/api/projects/${a.projectId}/git/file?${qs}`);
+    },
+  );
+  tool(
+    "git_put",
+    "git 파일 저장",
+    "저장소에 파일을 커밋한다(있으면 갱신, 없으면 생성).",
+    { projectId: z.string(), path: z.string(), content: z.string(), message: z.string().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({ path: String(a.path) });
+      return call(`/api/projects/${a.projectId}/git/file?${qs}`, {
+        method: "PUT",
+        body: JSON.stringify({ content: a.content, message: a.message }),
+      });
+    },
+  );
+
   // ---------------------------------------------------------------- git push 훅 프롬프트 자동화 (Phase 3 - 대기열 방식)
 
   tool(

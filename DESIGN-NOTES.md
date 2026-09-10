@@ -280,7 +280,57 @@ Monaco 에디터/실시간 MQTT-over-WebSocket/변경 추적 뷰는 각각 별�
 `/frontend/dist`와 `/app/dist/api/server.js`가 기대한 경로에 있는지
 대조. 테스트 후 컨테이너/이미지/스크래치 DB 전부 정리.
 
+## Phase 5 (2/3) - 완료 (2026-09-10)
+
+문서 브라우저 + Monaco 마크다운 에디터, 소스 코드 브라우저 + Monaco
+코드 에디터.
+
+- 신규 백엔드: `core/gitea.ts`에 `listTree`/`getFileContent` 추가(기존
+  Gitea Contents API 래퍼 위에 - 디렉터리면 배열/파일이면 객체 하나를
+  돌려주는 같은 엔드포인트를 타입 있는 두 함수로 분리). `GET .../git/
+  tree`, `GET .../git/file`, `PUT .../git/file` API + `docs git tree/
+  cat/put` CLI + `git_tree`/`git_cat`/`git_put` MCP 도구(완전성 원칙 -
+  웹 UI만 되고 CLI/MCP는 안 되는 비대칭을 안 만듦).
+- 문서 쪽은 새 백엔드가 전혀 필요 없었음 - Phase 0 엔드포인트
+  그대로(`GET/PUT /api/documents/:trackingCode`) 목록+에디터 화면만
+  새로 만듦. 상태 전이는 CLI와 동일한 수준(상태 코드 직접 입력) -
+  "허용된 다음 상태 목록" API는 CLI에도 없어서 새로 안 만듦(비대칭
+  방지 원칙을 반대 방향으로도 적용 - 웹 UI가 CLI보다 더 똑똑해지지
+  않게).
+- Monaco 통합에서 실측 중 겪은 문제(둘 다 실제로 빌드해보고 발견 -
+  추측으로 넘어가지 않음):
+  1. Vite 공식 문서의 수동 `?worker` import 패턴(`monaco-editor/esm/
+     vs/editor/editor.worker?worker`)이 이 Vite 6.4 + monaco-editor
+     조합에서 `vite build`(프로덕션)만 "Rollup failed to resolve
+     import"로 실패했다(개발 서버는 됨) - `optimizeDeps.exclude`/
+     `worker.format` 조정으로도 안 풀려서, 유지보수되는 전용 플러그인
+     (`vite-plugin-monaco-editor-esm`)으로 교체.
+  2. 그 플러그인 최신 버전(2.0.3)을 monaco-editor 최신 버전(0.56.0)과
+     같이 쓰면 워커 경로가 `esm/vs/esm/vs/editor/editor.worker.js`로
+     중복돼 빌드가 깨졌다(플러그인이 이 monaco-editor 버전의
+     package.json exports 맵 변경을 아직 못 따라간 것으로 보임) -
+     monaco-editor를 0.52.0으로 낮춰서 해결(그 플러그인이 이미 검증된
+     조합).
+- **실측 중 발견한 진짜 버그(수정함)**: 문서를 만들자마자 그 에디터로
+  바로 이동하면 `GET /api/documents/:trackingCode`가 간헐적으로 404를
+  냈다 - Phase 0에서 이미 관찰했던 "Meilisearch 쓰기 직후 읽기
+  일시적 지연"(그때는 DB 커밋 자체엔 문제 없고 재조회하면 항상
+  해결되는 걸 확인하고 "실제 앱 버그 아님"으로 결론지었던 것)이 이번엔
+  실제 사용자 흐름(생성 직후 에디터로 바로 이동)에서 터진 것 - 논리는
+  같지만 이번엔 실제로 사용자가 마주치는 경로라 고쳤다.
+  `DocumentEditorView.vue`가 최초 404에서만 500ms 대기 후 한 번 재조회
+  하도록 수정(재시도로도 안 되면 진짜 에러로 표시).
+
+검증: 실제 Gitea 컨테이너로 `docs git tree/cat/put` 왕복(Gitea
+Contents API로 직접 대조) + Gitea 커밋 로그에 실제 3개 커밋이 순서대로
+쌓이는지 확인. 실제 브라우저로 문서 생성→에디터 진입(404 재시도 로직
+실제 발동 확인)→Monaco에서 마크다운 편집→저장→상태 전이(draft→active
+배지 변화)까지, 소스 코드 화면에서 디렉터리 탐색→파일 열기→Monaco에서
+수정→저장(커밋)→Gitea 쪽 raw 파일로 직접 대조, git 저장소 미연결
+프로젝트에서 소스 코드 화면이 안내 문구만 보여주고 안 깨지는지까지
+전부 확인. 테스트 후 컨테이너/스크래치 DB/자격증명 파일 전부 정리.
+
 ## 다음 단계
 
-Phase 5 (2/3)(Monaco 문서/소스 코드 에디터)는 아직 착수 전 - 설계자
-승인 후 시작한다.
+Phase 5 (3/3)(변경 추적 뷰 + 메시징 패널, EMQX MQTT-over-WebSocket
+실시간 갱신)은 아직 착수 전 - 설계자 승인 후 시작한다.

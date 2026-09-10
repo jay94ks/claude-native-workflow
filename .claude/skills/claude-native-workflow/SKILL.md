@@ -74,6 +74,9 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 | git 로그 | `docs git log <projectId>` | `git_log` |
 | git diff | `docs git diff <projectId> <sha>` | `git_diff` |
 | git show | `docs git show <projectId> <sha>` | `git_show` |
+| 디렉터리 목록 | `docs git tree <projectId> [--path <p>] [--ref <r>]` | `git_tree` |
+| 파일 내용 조회 | `docs git cat <projectId> <path> [--ref <r>]` | `git_cat` |
+| 파일 저장(커밋) | `docs git put <projectId> <path> <localFile> [--message <m>]` | `git_put` |
 | 템플릿 배포 | `docs template deploy <projectId>` | `template_deploy` |
 | 훅 프롬프트 생성 | `docs hook create <projectId> --prompt <file> [--branch <b>]` | `hook_create` |
 | 훅 프롬프트 목록/삭제 | `docs hook list/delete <projectId> [<id>]` | `hook_list`/`hook_delete` |

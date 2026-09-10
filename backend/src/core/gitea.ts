@@ -102,6 +102,50 @@ export async function getBlame(_slug: string, _filepath: string, _ref?: string):
   );
 }
 
+async function getContentsRaw(slug: string, path: string, ref?: string): Promise<unknown> {
+  const { owner } = config();
+  const encodedPath = path ? path.split("/").map(encodeURIComponent).join("/") : "";
+  const qs = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/contents/${encodedPath}${qs}`);
+  return res.json();
+}
+
+export interface TreeEntry {
+  name: string;
+  path: string;
+  type: "file" | "dir";
+}
+
+/** Gitea Contents API는 디렉터리면 배열, 파일이면 객체 하나를 돌려준다 -
+ * 이 함수는 디렉터리 조회 전용(배열이 아니면 명확한 에러). path 빈
+ * 문자열이면 루트. */
+export async function listTree(slug: string, dirPath: string, ref?: string): Promise<TreeEntry[]> {
+  const raw = await getContentsRaw(slug, dirPath, ref);
+  if (!Array.isArray(raw)) {
+    throw new Error(`${dirPath || "/"}는 디렉터리가 아닙니다`);
+  }
+  return (raw as { name: string; path: string; type: string }[]).map((e) => ({
+    name: e.name,
+    path: e.path,
+    type: e.type === "dir" ? "dir" : "file",
+  }));
+}
+
+export interface FileContent {
+  path: string;
+  content: string;
+  sha: string;
+}
+
+export async function getFileContent(slug: string, filePath: string, ref?: string): Promise<FileContent> {
+  const raw = await getContentsRaw(slug, filePath, ref);
+  if (Array.isArray(raw)) {
+    throw new Error(`${filePath}는 파일이 아니라 디렉터리입니다`);
+  }
+  const file = raw as { path: string; content: string; sha: string };
+  return { path: file.path, content: Buffer.from(file.content, "base64").toString("utf-8"), sha: file.sha };
+}
+
 /** 파일이 있으면 갱신, 없으면 생성 - CLAUDE.md/SKILL.md 템플릿 배포용. */
 export async function putFileContent(slug: string, filepath: string, content: string, message: string): Promise<void> {
   const { apiUrl, token, owner } = config();

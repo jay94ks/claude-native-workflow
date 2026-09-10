@@ -628,6 +628,46 @@ app.get(
   }),
 );
 
+// ---------------------------------------------------------------- git 트리/파일 조회·저장 (Phase 5(2/3) - 소스 코드 브라우저용)
+
+app.get(
+  "/api/projects/:projectId/git/tree",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    await requireSelfHostedRepo(req.params.projectId);
+    const dirPath = (req.query.path as string | undefined) ?? "";
+    res.json(await gitea.listTree(slugForProject(req.params.projectId), dirPath, req.query.ref as string | undefined));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/file",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    await requireSelfHostedRepo(req.params.projectId);
+    const filePath = req.query.path as string | undefined;
+    if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
+    res.json(await gitea.getFileContent(slugForProject(req.params.projectId), filePath, req.query.ref as string | undefined));
+  }),
+);
+
+app.put(
+  "/api/projects/:projectId/git/file",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    await requireSelfHostedRepo(req.params.projectId);
+    const filePath = req.query.path as string | undefined;
+    if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
+    const { content, message } = req.body as { content?: string; message?: string };
+    if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
+    await gitea.putFileContent(slugForProject(req.params.projectId), filePath, content, message || `docs: update ${filePath}`);
+    res.json({ ok: true });
+  }),
+);
+
 // ---------------------------------------------------------------- 웹훅 수신 (인증 미들웨어 없음 - Gitea/GitHub/GitLab이 직접 호출, 서명/토큰으로 검증)
 
 app.post(
