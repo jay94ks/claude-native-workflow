@@ -25,9 +25,21 @@ import { addComment, listComments, resolveComment } from "../core/comments.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
 import { ensureSearchIndexes } from "../core/search.js";
 import { authenticate, requireProjectRole, type AuthedRequest } from "../middleware/auth.js";
+import { linkSelfHostedRepo, linkExternalRepo, getProjectGitRepo, getWebhookSecret, requireSelfHostedRepo, slugForProject } from "../core/gitRepos.js";
+import * as gitea from "../core/gitea.js";
+import { verifyAndParseWebhook, recordPushEvent } from "../core/pushHooks.js";
 
 const app = express();
-app.use(express.json());
+// verify로 원본 바이트를 req.rawBody에 보존 - 웹훅 서명 검증은 express가
+// 재직렬화한 JSON이 아니라 실제로 전송된 원본 바이트에 대해 계산해야
+// 한다(재직렬화 시 키 순서/공백 차이로 서명이 어긋날 수 있음).
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      (req as Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+    },
+  }),
+);
 
 function asyncRoute(
   fn: (req: AuthedRequest, res: Response) => Promise<void>,
@@ -455,19 +467,142 @@ function notImplemented(feature: string, phase: string) {
   };
 }
 
-app.get("/api/projects/:projectId/git/log", authenticate, notImplemented("git log", "Phase 2 (Gitea 통합)"));
-app.get("/api/projects/:projectId/git/diff/:sha", authenticate, notImplemented("git diff", "Phase 2 (Gitea 통합)"));
-app.get("/api/projects/:projectId/git/blame", authenticate, notImplemented("git blame", "Phase 2 (Gitea 통합)"));
-app.get("/api/projects/:projectId/git/show/:sha", authenticate, notImplemented("git show", "Phase 2 (Gitea 통합)"));
-
 app.get("/api/projects/:projectId/messages", authenticate, notImplemented("message list/read", "Phase 4 (EMQX 구독 측)"));
 app.post("/api/projects/:projectId/messages", authenticate, notImplemented("message send", "Phase 4 (EMQX 구독 측)"));
 app.get("/api/projects/:projectId/messages/wait", authenticate, notImplemented("message wait", "Phase 4 (EMQX 구독 측)"));
 
+// ---------------------------------------------------------------- git 저장소 연결 + 이력 조회 (Phase 2)
+
+app.post(
+  "/api/projects/:projectId/git/link",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    res.json(await linkSelfHostedRepo(req.params.projectId));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/link-external",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const { provider, repoUrl, gitCredentialId } = req.body as {
+      provider?: string;
+      repoUrl?: string;
+      gitCredentialId?: string;
+    };
+    if (provider !== "github" && provider !== "gitlab") {
+      res.status(400).json({ error: "provider는 github|gitlab이어야 합니다" });
+      return;
+    }
+    if (!repoUrl) { res.status(400).json({ error: "repoUrl이 필요합니다" }); return; }
+    res.json(await linkExternalRepo(req.params.projectId, provider, repoUrl, gitCredentialId));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/repo",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const repo = await getProjectGitRepo(req.params.projectId);
+    if (!repo) { res.status(404).json({ error: "연결된 git 저장소가 없습니다" }); return; }
+    res.json(repo);
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/log",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    await requireSelfHostedRepo(req.params.projectId);
+    const ref = req.query.ref as string | undefined;
+    res.json(await gitea.listCommits(slugForProject(req.params.projectId), { ref }));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/diff/:sha",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    await requireSelfHostedRepo(req.params.projectId);
+    const diff = await gitea.getCommitDiff(slugForProject(req.params.projectId), req.params.sha);
+    res.type("text/plain").send(diff);
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/blame",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    await requireSelfHostedRepo(req.params.projectId);
+    const filepath = req.query.path as string | undefined;
+    if (!filepath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
+    res.json(await gitea.getBlame(slugForProject(req.params.projectId), filepath, req.query.ref as string | undefined));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/show/:sha",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    await requireSelfHostedRepo(req.params.projectId);
+    res.json(await gitea.getCommit(slugForProject(req.params.projectId), req.params.sha));
+  }),
+);
+
+// ---------------------------------------------------------------- 웹훅 수신 (인증 미들웨어 없음 - Gitea/GitHub/GitLab이 직접 호출, 서명/토큰으로 검증)
+
+app.post(
+  "/api/webhooks/:provider/:projectId",
+  asyncRoute(async (req, res) => {
+    const { provider, projectId } = req.params;
+    const secret = await getWebhookSecret(projectId);
+    if (!secret) { res.status(404).json({ error: "연결된 git 저장소가 없습니다" }); return; }
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body));
+    let parsed;
+    try {
+      parsed = verifyAndParseWebhook(provider, req.headers as Record<string, string | string[] | undefined>, rawBody, secret);
+    } catch (err) {
+      res.status(401).json({ error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    const queued = await recordPushEvent(projectId, parsed);
+    res.json({ ok: true, queued });
+  }),
+);
+
+// ---------------------------------------------------------------- 템플릿 배포 (Phase 2 - Gitea 저장소 루트에 실제 커밋)
+
 app.post(
   "/api/projects/:projectId/templates/deploy",
   authenticate,
-  notImplemented("template deploy(프로젝트 git 저장소에 커밋)", "Phase 2 (Gitea 통합)"),
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const projectId = req.params.projectId;
+    await requireSelfHostedRepo(projectId);
+    const slug = slugForProject(projectId);
+    const deployed: string[] = [];
+
+    const claudeMd = await resolveTemplate("CLAUDE.md", projectId);
+    if (claudeMd) {
+      await gitea.putFileContent(slug, "CLAUDE.md", claudeMd.content, "docs: deploy CLAUDE.md template");
+      deployed.push("CLAUDE.md");
+    }
+    const skillFilename = ".claude/skills/claude-native-workflow/SKILL.md";
+    const skillMd = await resolveTemplate(skillFilename, projectId);
+    if (skillMd) {
+      await gitea.putFileContent(slug, skillFilename, skillMd.content, "docs: deploy SKILL.md template");
+      deployed.push(skillFilename);
+    }
+
+    res.json({ ok: true, deployed });
+  }),
 );
 
 // ---------------------------------------------------------------- 에러 핸들러

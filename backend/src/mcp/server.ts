@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { apiCall, loadCredentials } from "../cli/apiclient.js";
+import { apiCall, apiCallText, loadCredentials } from "../cli/apiclient.js";
 
 // cli/index.ts의 모든 명령을 1:1로 미러링한다("CLI/MCP 명령어 완전성"
 // 원칙 - 대칭이 깨지면 어느 한쪽에서만 되는 동작이 생긴다). CLI와 마찬가지로
@@ -241,20 +241,62 @@ async function main() {
       });
     },
   );
+  tool(
+    "template_deploy",
+    "템플릿 배포",
+    "CLAUDE.md/SKILL.md를 해석해 프로젝트의 자체 호스팅 git 저장소 루트에 실제로 커밋한다.",
+    { projectId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/templates/deploy`, { method: "POST" }),
+  );
 
-  // ---------------------------------------------------------------- diff / message (Phase 2/4 전까지 501 그대로 통과)
+  // ---------------------------------------------------------------- git 저장소 연결 + 이력 조회 (Phase 2)
 
-  tool("git_log", "git 로그 조회(Phase 2)", "아직 미구현 - Gitea 통합 후 사용 가능.", { projectId: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/git/log`),
+  tool(
+    "git_link",
+    "git 저장소 연결(자체 호스팅)",
+    "Gitea에 저장소를 만들고 프로젝트에 연결한다.",
+    { projectId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/link`, { method: "POST" }),
   );
-  tool("git_diff", "git diff 조회(Phase 2)", "아직 미구현 - Gitea 통합 후 사용 가능.", { projectId: z.string(), sha: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/git/diff/${a.sha}`),
+  tool(
+    "git_link_external",
+    "git 저장소 연결(외부)",
+    "이미 존재하는 외부 GitHub/GitLab 저장소를 프로젝트에 연결한다.",
+    { projectId: z.string(), provider: z.enum(["github", "gitlab"]), repoUrl: z.string(), gitCredentialId: z.string().optional() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/link-external`, {
+        method: "POST",
+        body: JSON.stringify({ provider: a.provider, repoUrl: a.repoUrl, gitCredentialId: a.gitCredentialId }),
+      }),
   );
-  tool("git_blame", "git blame 조회(Phase 2)", "아직 미구현 - Gitea 통합 후 사용 가능.", { projectId: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/git/blame`),
+  tool("git_repo", "연결된 git 저장소 조회", "프로젝트에 연결된 git 저장소 정보를 반환한다.", { projectId: z.string() }, async (a) =>
+    call(`/api/projects/${a.projectId}/git/repo`),
   );
-  tool("git_show", "git show 조회(Phase 2)", "아직 미구현 - Gitea 통합 후 사용 가능.", { projectId: z.string(), sha: z.string() }, async (a) =>
+  tool("git_log", "git 로그 조회", "자체 호스팅 저장소의 커밋 로그.", { projectId: z.string(), ref: z.string().optional() }, async (a) => {
+    const qs = a.ref ? `?ref=${encodeURIComponent(String(a.ref))}` : "";
+    return call(`/api/projects/${a.projectId}/git/log${qs}`);
+  });
+  tool("git_blame", "git blame 조회", "파일의 라인별 최종 수정 커밋.", { projectId: z.string(), path: z.string(), ref: z.string().optional() }, async (a) => {
+    const qs = new URLSearchParams({ path: String(a.path), ...(a.ref ? { ref: String(a.ref) } : {}) });
+    return call(`/api/projects/${a.projectId}/git/blame?${qs}`);
+  });
+  tool("git_show", "git show 조회", "커밋 1건의 메타데이터.", { projectId: z.string(), sha: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/git/show/${a.sha}`),
+  );
+
+  // git_diff는 응답이 JSON이 아니라 순수 텍스트(unified diff)라 다른
+  // 도구처럼 JSON.stringify로 감싸지 않고 원문 그대로 반환한다.
+  server.registerTool(
+    "git_diff",
+    { title: "git diff 조회", description: "커밋 1건의 unified diff 원문.", inputSchema: { projectId: z.string(), sha: z.string() } },
+    async (a: Record<string, unknown>) => {
+      try {
+        const diff = await apiCallText(`/api/projects/${a.projectId}/git/diff/${a.sha}`);
+        return { content: [{ type: "text" as const, text: diff }] };
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
   );
 
   tool("message_list", "인스턴스 메시지 목록(Phase 4)", "아직 미구현 - EMQX 구독 측 완성 후 사용 가능.", { projectId: z.string() }, async (a) =>

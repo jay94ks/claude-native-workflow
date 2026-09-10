@@ -1,6 +1,5 @@
-# Phase 0 최소 구성: backend + postgres(기본 DB) + meilisearch + emqx.
-# Gitea(Phase 2)는 아직 없음. 시크릿은 이 폴더의 .env(.env.example 참고,
-# 커밋 안 함)에서 읽는다.
+# backend + postgres(기본 DB) + meilisearch + emqx + gitea. 시크릿은 이
+# 폴더의 .env(.env.example 참고, 커밋 안 함)에서 읽는다.
 services:
   postgres:
     image: postgres:16-alpine
@@ -38,6 +37,23 @@ services:
       - "18083:18083" # 대시보드/REST API - API 키 발급 때만 필요, 평소엔 안 열어도 됨
     restart: unless-stopped
 
+  # Gitea 자체 메타데이터는 내장 SQLite로 충분(설치용 Postgres와 섞지
+  # 않음). SSH는 노출하지 않는다 - git clone/push는 설계자가 Gitea의
+  # HTTP(S) git 프로토콜로 직접 하고, 백엔드는 REST API로 저장소 생성/
+  # 웹훅 등록/파일 커밋만 한다. 웹 UI 포트만 호스트에 노출해서 설치
+  # 마법사+관리자 계정 생성+PAT 발급을 1회 수동으로 할 수 있게 한다
+  # (EMQX API Key 발급과 같은 패턴).
+  gitea:
+    image: gitea/gitea:latest
+    environment:
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__ROOT_URL: http://localhost:${GITEA_HOST_PORT:-3001}/
+    volumes:
+      - gitea-data:/data
+    ports:
+      - "${GITEA_HOST_PORT:-3001}:3000"
+    restart: unless-stopped
+
   backend:
     build:
       context: ..
@@ -54,6 +70,10 @@ services:
       EMQX_API_URL: http://emqx:18083
       EMQX_API_KEY: ${EMQX_API_KEY}
       EMQX_API_SECRET: ${EMQX_API_SECRET}
+      GITEA_API_URL: http://gitea:3000
+      GITEA_ADMIN_USERNAME: ${GITEA_ADMIN_USERNAME}
+      GITEA_API_TOKEN: ${GITEA_API_TOKEN}
+      PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL}
     ports:
       - "${BACKEND_HOST_PORT:-8760}:8760"
     depends_on:
@@ -65,3 +85,4 @@ volumes:
   postgres-data:
   meili-data:
   emqx-data:
+  gitea-data:

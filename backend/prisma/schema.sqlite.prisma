@@ -114,12 +114,13 @@ model Project {
 }
 
 model ProjectGitRepo {
-  id              String  @id @default(cuid())
-  projectId       String  @unique
-  provider        String // self_hosted | github | gitlab
-  repoUrl         String
-  externalRepoId  String?
-  gitCredentialId String?
+  id                     String  @id @default(cuid())
+  projectId              String  @unique
+  provider               String // self_hosted | github | gitlab
+  repoUrl                String
+  externalRepoId         String?
+  gitCredentialId        String?
+  webhookSecretEncrypted Bytes? // AES-256-GCM - 수신 웹훅 서명/토큰 검증용
 
   project       Project        @relation(fields: [projectId], references: [id])
   gitCredential GitCredential? @relation(fields: [gitCredentialId], references: [id])

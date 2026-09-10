@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { apiCall, saveCredentials, loadCredentials, clearCredentials, credentialsPath } from "./apiclient.js";
+import { apiCall, apiCallText, saveCredentials, loadCredentials, clearCredentials, credentialsPath } from "./apiclient.js";
 
 const program = new Command();
 program.name("docs").description("claude-native-workflow v2 문서 워크플로우 CLI").version("0.1.0");
@@ -390,13 +390,60 @@ templateCmd
     run(async () => printJson(await apiCall(`/api/projects/${projectId}/templates/deploy`, { method: "POST" }))),
   );
 
-// ---------------------------------------------------------------- diff / message (Phase 0 - 자리만, Phase 2/4에서 구현)
+// ---------------------------------------------------------------- git 저장소 연결 + 이력 조회 (Phase 2)
 
-const gitCmd = program.command("git").description("git 이력(Phase 2에서 구현)");
-gitCmd.command("log <projectId>").action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/log`))));
-gitCmd.command("diff <projectId> <sha>").action((projectId, sha) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/diff/${sha}`))));
-gitCmd.command("blame <projectId>").action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/blame`))));
-gitCmd.command("show <projectId> <sha>").action((projectId, sha) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/show/${sha}`))));
+const gitCmd = program.command("git").description("git 저장소 연결/이력 조회");
+
+gitCmd
+  .command("link <projectId>")
+  .description("자체 호스팅(Gitea)에 저장소를 만들고 연결한다")
+  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/link`, { method: "POST" }))));
+
+gitCmd
+  .command("link-external <projectId>")
+  .requiredOption("--provider <p>", "github|gitlab")
+  .requiredOption("--url <url>", "기존 저장소 URL")
+  .option("--credential <id>", "자동 웹훅 등록에 쓸 git 자격증명 id(선택)")
+  .description("이미 존재하는 외부 GitHub/GitLab 저장소를 연결한다")
+  .action((projectId, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/link-external`, {
+          method: "POST",
+          body: JSON.stringify({ provider: opts.provider, repoUrl: opts.url, gitCredentialId: opts.credential }),
+        }),
+      ),
+    ),
+  );
+
+gitCmd
+  .command("repo <projectId>")
+  .description("연결된 git 저장소 정보를 조회한다")
+  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/repo`))));
+
+gitCmd
+  .command("log <projectId>")
+  .option("--ref <ref>", "브랜치/커밋 ref(생략하면 기본 브랜치)")
+  .action((projectId, opts) => {
+    const qs = opts.ref ? `?ref=${encodeURIComponent(opts.ref)}` : "";
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/log${qs}`)));
+  });
+
+gitCmd
+  .command("diff <projectId> <sha>")
+  .action((projectId, sha) => run(async () => console.log(await apiCallText(`/api/projects/${projectId}/git/diff/${sha}`))));
+
+gitCmd
+  .command("blame <projectId> <path>")
+  .option("--ref <ref>")
+  .action((projectId, path, opts) => {
+    const qs = new URLSearchParams({ path, ...(opts.ref ? { ref: opts.ref } : {}) });
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/blame?${qs}`)));
+  });
+
+gitCmd
+  .command("show <projectId> <sha>")
+  .action((projectId, sha) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/show/${sha}`))));
 
 const messageCmd = program.command("message").description("인스턴스 메시징(Phase 4에서 구현)");
 messageCmd.command("list <projectId>").action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages`))));

@@ -9,7 +9,7 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 (대화 세션에서 작성, 저장소에는 아직 커밋 안 됨 - 진행 상황은
 [DESIGN-NOTES.md](DESIGN-NOTES.md) 참고)를 참고.
 
-## 지금 상태: Phase 1 완료
+## 지금 상태: Phase 2 완료
 
 - Prisma 스키마(PostgreSQL/MySQL/SQLite 3드라이버, 완전 정규화 - JSON
   컬럼 없음)
@@ -24,11 +24,23 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 - EMQX 기반 실시간 이벤트 발행(구독 측은 Phase 4)
 - CLI(`docs`) + MCP 서버(`docs-mcp`) - 둘 다 REST API만 호출하는 순수
   클라이언트, 도구/명령이 1:1 대칭
-- CLAUDE.md/SKILL.md 템플릿 관리(기관/그룹/프로젝트 override, 프로젝트
-  git 저장소에 실제 커밋하는 `template deploy`는 Phase 2에서)
+- CLAUDE.md/SKILL.md 템플릿 관리(기관/그룹/프로젝트 override) +
+  `template deploy`(해석된 템플릿을 프로젝트의 자체 호스팅 저장소
+  루트에 실제 커밋)
+- Gitea 자체 호스팅 git 통합(저장소 자동 생성, 웹훅 자동 등록,
+  `git log/diff/show` 실제 구현) + 외부 GitHub/GitLab 저장소 연결(자격
+  증명이 있으면 웹훅도 자동 등록, 없으면 수동 설정 안내)
+- 웹훅 수신 인프라(서명/토큰 검증 - Gitea/GitHub/GitLab 전부) - 실제
+  `PushHookPrompt` 매칭 규칙을 만드는 CLI/API는 Phase 3에서
 
-diff 계열(git 이력)과 인스턴스 메시징 송수신/대기는 자리만 등록되어
-있고 Phase 2/4에서 실제로 구현된다(호출하면 명확한 501을 반환).
+**알려진 제한**: `git blame`은 Gitea REST API 자체에 blame 엔드포인트가
+없어(1.27 기준, swagger로 직접 확인) 명확한 "지원하지 않음" 에러를
+반환한다 - `git log/diff/show`로 변경 이력을 대신 확인한다. 외부
+GitHub/GitLab 저장소는 이번 Phase에서도 `git log/diff/blame/show`를
+지원하지 않는다(자체 호스팅만) - 명확한 400을 반환.
+
+인스턴스 메시징 송수신/대기는 자리만 등록되어 있고 Phase 4에서 실제로
+구현된다(호출하면 명확한 501을 반환).
 
 ## 실행 방법
 
@@ -44,7 +56,12 @@ docker compose up -d --build
 EMQX 대시보드(`:18083`, 기본 admin/public)에서 API Key를 발급받아
 `.env`의 `EMQX_API_KEY`/`EMQX_API_SECRET`에 채우면 실시간 발행까지
 전부 동작한다(안 채워도 나머지 기능은 정상 동작 - 발행만 조용히
-스킵됨).
+스킵됨). Gitea(`:3001`)도 같은 패턴 - 최초 기동 후 설치 마법사 완료 →
+관리자 계정 생성 → Personal Access Token 발급 →
+`GITEA_ADMIN_USERNAME`/`GITEA_API_TOKEN`에 채워야 git 저장소 연결
+기능이 동작한다(`.env.example` 참고). `PUBLIC_BACKEND_URL`을 채우면
+`git link` 시 웹훅도 자동 등록된다(로컬 전용 개발 환경이면 비워둬도
+나머지 기능엔 지장 없음 - 웹훅 등록만 건너뜀).
 
 ### 호스트에 직접 설치
 
@@ -77,7 +94,7 @@ docs new <projectId> SP --title "..." --body <로컬 파일>
 
 `docs auth login`으로 한 번 로그인해두면(`~/.claude-native-workflow/
 credentials.json` 공유), `docs-mcp`를 stdio MCP 서버로 등록해 CLI와
-동일한 39개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
+동일한 43개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
 비밀번호가 대화 컨텍스트에 남지 않도록 의도적으로 MCP 도구로 노출하지
 않는다(CLI 전용) - `auth_whoami`만 로그인 상태 확인용 예외.
 

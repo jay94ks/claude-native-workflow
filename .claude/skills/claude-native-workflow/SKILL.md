@@ -58,10 +58,24 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 | 답변 대기 목록 | `docs pending <projectId>` | `pending_list` |
 | 답변 | `docs reply <questionTrackingCode> <answer>` | `question_reply` |
 | 코멘트 | `docs comment list/add/resolve` | `comment_list/add/resolve` |
+| 저장소 연결(자체 호스팅) | `docs git link <projectId>` | `git_link` |
+| 저장소 연결(외부) | `docs git link-external <projectId> --provider <github\|gitlab> --url <url>` | `git_link_external` |
+| 연결 정보 조회 | `docs git repo <projectId>` | `git_repo` |
+| git 로그 | `docs git log <projectId>` | `git_log` |
+| git diff | `docs git diff <projectId> <sha>` | `git_diff` |
+| git show | `docs git show <projectId> <sha>` | `git_show` |
+| 템플릿 배포 | `docs template deploy <projectId>` | `template_deploy` |
 
-`git log/diff/blame/show`, `message list/send/wait` 명령은 CLI/MCP
-양쪽에 이름은 등록돼 있지만 아직 미구현 상태(git 이력은 Gitea 통합,
-메시징 송수신은 EMQX 구독 인프라 도입 이후) - 호출하면 "아직 구현되지
+`git log/diff/show`는 자체 호스팅(Gitea) 저장소가 연결된 프로젝트에서만
+동작한다 - 먼저 `git link`로 연결해야 하고, 외부 GitHub/GitLab로 연결한
+프로젝트에서는 "자체 호스팅만 지원"이라는 명확한 400이 온다.
+**`git blame`은 지원하지 않는다** - Gitea REST API 자체에 blame
+엔드포인트가 없어서(알려진 플랫폼 제한, 임의 추측이 아니라 실제 Gitea
+인스턴스에 대고 확인함) 호출하면 그 사실을 알리는 명확한 에러가 온다 -
+파일의 변경 이력은 `git log`/`git diff`/`git show`로 대신 확인한다.
+
+`message list/send/wait` 명령은 CLI/MCP 양쪽에 이름은 등록돼 있지만
+아직 미구현 상태(EMQX 구독 인프라 도입 이후) - 호출하면 "아직 구현되지
 않았습니다"라는 명확한 에러가 온다. 조용히 실패한 게 아니라 다음 단계에
 채워질 자리라는 뜻이다.
 

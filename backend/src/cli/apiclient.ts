@@ -58,3 +58,13 @@ export async function apiCall<T>(pathSuffix: string, init?: RequestInit): Promis
   }
   return res.json() as Promise<T>;
 }
+
+// git diff처럼 응답이 JSON이 아니라 순수 텍스트(unified diff)인 엔드포인트용.
+export async function apiCallText(pathSuffix: string, init?: RequestInit): Promise<string> {
+  const res = await apiFetch(pathSuffix, init);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return res.text();
+}
