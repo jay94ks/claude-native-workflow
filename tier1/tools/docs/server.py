@@ -725,6 +725,36 @@ def find_lg_by_target(doc_id):
     return None, None, None
 
 
+# Type -> docs/<folder>/ mapping (docs/index.md 1절의 타입 분류표와 동일).
+# tier2/backend의 create.ts TYPE_FOLDER와 대칭 - tier1은 docs new를 서버가
+# 대신 해주지 않지만(Claude가 직접 파일을 씀), answer_pending()이 색인 표의
+# 상태 칸을 갱신할 때 어느 폴더의 index.md를 고칠지는 알아야 한다.
+TYPE_FOLDER = {
+    "SP": "spec", "PL": "plan", "DN": "done", "DS": "design", "RM": "remind",
+    "TP": "temp", "DC": "decision", "RV": "review", "FX": "fix", "LG": "logs",
+}
+
+
+def update_index_row(folder, doc_id, status, updated):
+    """QA로 발견: answer_pending()이 문서 자신의 프론트매터 status는
+    open->answered로 바꾸면서도, docs/<folder>/index.md의 해당 행은 그대로
+    둬서 색인 표에서 계속 "open"으로 보이는 채 남는다(tier2/backend의
+    reply.ts에서 같은 문제를 먼저 발견해 대칭으로 고침 - 상세 이유는 그쪽
+    주석 참고). id로 행을 찾아 status/updated 칸만 갈아끼운다(제목은 보존)."""
+    index_path = docs_dir() / folder / "index.md"
+    if not index_path.exists():
+        return
+    text = index_path.read_text(encoding="utf-8")
+    row_re = re.compile(r"\|\s*\[" + re.escape(doc_id) + r"\]\([^)]*\)\s*\|([^|]*)\|[^|]*\|[^|]*\|")
+    m = row_re.search(text)
+    if not m:
+        return
+    title = m.group(1).strip()
+    new_row = f"| [{doc_id}]({doc_id}.md) | {title} | {status} | {updated} |"
+    new_text = text[:m.start()] + new_row + text[m.end():]
+    index_path.write_text(new_text, encoding="utf-8")
+
+
 def answer_pending(doc_path_rel, question_id, answer_text):
     """Answer one (Qn) item of a DC/RV/FX document.
 
@@ -741,6 +771,18 @@ def answer_pending(doc_path_rel, question_id, answer_text):
         raise FileNotFoundError(doc_path_rel)
 
     _, meta, body = read_doc(doc_path)
+    # QA로 발견: 이 함수는 원래 meta.get("type")을 전혀 안 보고 "- [ ] (Qn) ..."
+    # 패턴만 매치되면 무조건 답변 처리했다 - docs/PROTOCOL.md 4절은 "## 답변
+    # 대기"를 DC/RV/FX 문서에서만 쓰라고 정해뒀는데, PROTOCOL.md 자신도 그
+    # 형식을 설명하는 예시로 똑같은 패턴을 코드블록 안에 그대로 담고 있어서,
+    # 실제로 answer_pending(PROTOCOL.md, 1, ...)을 부르면 PROTOCOL.md에 진짜
+    # 프론트매터/답변 기록이 그대로 쓰여버린다 - 실제로 이 저장소 자신의
+    # docs/PROTOCOL.md가 이 경로로 오염된 걸 발견해서 복구하며 고침
+    # (tier2/backend의 reply.ts에서 같은 문제를 먼저 발견해 대칭으로 고침).
+    if meta.get("type") not in ("DC", "RV", "FX"):
+        raise ValueError(
+            f"답변 대기 처리는 DC/RV/FX 문서에서만 가능합니다(대상: {doc_path_rel}, 타입: {meta.get('type') or '없음'})"
+        )
     pattern = re.compile(r"^- \[ \] \(Q" + re.escape(question_id) + r"\) (.+)$", re.MULTILINE)
     m = pattern.search(body)
     if not m:
@@ -775,6 +817,7 @@ def answer_pending(doc_path_rel, question_id, answer_text):
     if not remaining and meta.get("status") == "open":
         meta["status"] = "answered"
     doc_path.write_text(dump_frontmatter(meta, new_body), encoding="utf-8")
+    update_index_row(TYPE_FOLDER.get(meta.get("type")), doc_id, meta.get("status"), meta.get("updated"))
 
     # one LG file per target document: find it, or mint a new number.
     lg_path, lg_meta, lg_body = find_lg_by_target(doc_id)

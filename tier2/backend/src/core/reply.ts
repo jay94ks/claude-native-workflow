@@ -4,6 +4,7 @@ import { readDocSync } from "./fsdocs.js";
 import { dumpFrontmatter } from "./frontmatter.js";
 import { nextSeq, today } from "./tracking.js";
 import { findLgByTarget, rebuildLogsIndex, rebuildReplyIndex, invalidateCache, NotFoundError } from "./docstore.js";
+import { TYPE_FOLDER, updateIndexRow } from "./create.js";
 import { afterWrite } from "./git.js";
 import type { DocMeta } from "./types.js";
 
@@ -32,6 +33,19 @@ export async function answerPending(docPathRel: string, questionId: string, answ
   }
 
   const { meta, body } = readDocSync(docPath);
+  // QA로 발견: 이 함수는 원래 meta.type을 전혀 안 보고 "- [ ] (Qn) ..."
+  // 패턴만 매치되면 무조건 답변 처리했다 - docs/PROTOCOL.md 4절은 "## 답변
+  // 대기"를 DC/RV/FX 문서에서만 쓰라고 정해뒀는데, PROTOCOL.md 자신도 그
+  // 형식을 설명하는 예시로 똑같은 패턴("- [ ] (Q1) ...")을 코드블록 안에
+  // 그대로 담고 있어서, 실제로 `answerPending(PROTOCOL, 1, ...)`을 호출하면
+  // PROTOCOL.md에 진짜 프론트매터/답변 기록이 그대로 쓰여버린다 - 실제로
+  // 이 저장소 자신의 docs/PROTOCOL.md가 이 경로로 오염된 걸 발견해서
+  // (frontmatter가 새로 생기고 예시 두 개가 진짜 RP로 둔갑) 복구하며 고침.
+  if (meta.type !== "DC" && meta.type !== "RV" && meta.type !== "FX") {
+    throw new Error(
+      `답변 대기 처리는 DC/RV/FX 문서에서만 가능합니다(대상: ${docPathRel}, 타입: ${meta.type || "없음"})`,
+    );
+  }
   const pattern = new RegExp(`^- \\[ \\] \\(Q${questionId}\\) (.+)$`, "m");
   const m = pattern.exec(body);
   if (!m) {
@@ -70,6 +84,7 @@ export async function answerPending(docPathRel: string, questionId: string, answ
   }
   fs.writeFileSync(docPath, dumpFrontmatter(meta, newBody), "utf-8");
   invalidateCache(docPath);
+  updateIndexRow(TYPE_FOLDER[meta.type as string], docId, meta.status as string, meta.updated as string);
 
   const found = findLgByTarget(docId);
   let lgPath: string;

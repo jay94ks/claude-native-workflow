@@ -1474,3 +1474,32 @@ CRLF→LF 정규화로 고쳤다. 그런데 이걸 고친 뒤에도 `rebuildRepl
 [DN-00001](docs/done/DN-00001.md) "QA: `docs/reply/index.md`가 답변
 처리 때만 재생성돼 새 질문이 누락 + tier2의 CRLF 정규식 버그 2건 연쇄
 발견" 참고.
+
+### 2026-09-10 (계속 35) — 문서 정비: PROTOCOL.md 실제 오염 복구 + answerPending 타입 검사 + 타입 색인 staleness
+
+"문서 정비 시작" 지시로 각 타입 색인을 다시 훑다가 두 가지를 발견.
+
+1. 방금 머지된 PR이 자기 검증 도중 이 저장소 자신의 실제
+   `docs/PROTOCOL.md`를 진짜로 오염시킨 채(미커밋 상태로) 남겨뒀다 -
+   4절의 표기법 설명 예시 두 개가 진짜 `[x]`+RP 앵커로 바뀌고, 있어선
+   안 될 프론트매터와 가짜 "### RP-00013/00014" 답변 기록까지 생겼다.
+   원인은 `answerPending()`/`answer_pending()`이 `meta.type`을 전혀
+   안 보고 "- [ ] (Qn) ..." 패턴만 매치되면 아무 문서나 답변 처리했기
+   때문 - PROTOCOL.md 자신이 그 패턴을 예시로 담고 있다 보니 실제로
+   뚫렸다. `tier1/docs/PROTOCOL.md`(오염 안 된 원본, byte-identical
+   불변식 덕에 바로 복구 기준으로 씀)로 덮어써 복구하고, `meta.type`이
+   DC/RV/FX가 아니면 거부하는 근본 수정을 tier2/tier1 양쪽에 추가 -
+   재현해서 이제 PROTOCOL.md를 답변 처리하려 하면 에러로 막히고 파일이
+   안 바뀌는 것까지 확인. 미커밋 상태로 같이 생겼던 `LG-00011.md`/
+   카운터 증가분도 정리.
+2. `docs/decision/index.md`/`docs/review/index.md`가 실제 답변된
+   DC-00003/RV-00001을 여전히 "open"으로 보여주고 있었다 -
+   `answerPending`이 문서 자신의 status는 갱신하면서 타입 색인 행은
+   전혀 안 건드렸던 것(`appendIndexRow`는 생성 시 한 번만 호출됨).
+   `updateIndexRow()`를 새로 추가해 답변 처리 직후 호출하도록
+   연결(tier2/tier1 대칭 - tier1은 애초에 `TYPE_FOLDER` 매핑 자체가
+   없어서 새로 추가). 스크래치 프로젝트로 양쪽 다 재현·검증, 이
+   저장소 자신의 stale 행 두 개도 직접 갱신해서 해소.
+
+`validate` 통과, tsc/py_compile 클린. 상세는
+[DN-00001](docs/done/DN-00001.md) 해당 두 "문서 정비" 절 참고.

@@ -11,7 +11,8 @@ import type { DocMeta } from "./types.js";
 // Type -> docs/<folder>/ mapping (tier1/docs/index.md 1절의 타입 분류표와 동일).
 // IX/RP are excluded: IX is docs/index.md itself (no per-doc folder), RP has
 // no file of its own (docs/PROTOCOL.md 6절 - answerPending in reply.ts owns it).
-const TYPE_FOLDER: Record<string, string> = {
+// reply.ts도 답변 처리 후 상태 갱신에 이 매핑을 그대로 재사용한다(export).
+export const TYPE_FOLDER: Record<string, string> = {
   SP: "spec", PL: "plan", DN: "done", DS: "design", RM: "remind",
   TP: "temp", DC: "decision", RV: "review", FX: "fix", LG: "logs",
 };
@@ -98,4 +99,28 @@ function appendIndexRow(folder: string, id: string, title: string, status: strin
   invalidateCache(indexPath); // scanMeta already cached this from an earlier
   // tree/list read - without this, the next read sees a stale-vs-real diff
   // and logs a change_notice about our own write (SP-00003 5절 self-spam).
+}
+
+/** QA로 발견: answerPending()이 문서 자신의 프론트매터 status는
+ * open→answered로 바꾸면서도, docs/<folder>/index.md의 해당 행은 그대로
+ * 둬서(appendIndexRow는 "새로 만들 때" 한 번만 불림) 색인 표에서 계속 "open"
+ * 으로 보이는 채 남는다 - 실제로 이 저장소 자신의 DC-00003/RV-00001이 둘 다
+ * 답변된 뒤에도 docs/decision/index.md·docs/review/index.md에서 "open"으로
+ * 표시된 채였다. docs/PROTOCOL.md 7절이 "관련 타입 색인에서 기존 문서를
+ * 먼저 확인한다"고 못박고 있어, 이 색인이 stale하면 Claude가 이미 답변된
+ * 결정을 다시 미답변으로 오인할 수 있다. id로 행을 찾아 status/updated
+ * 칸만 갈아끼운다(제목은 보존) - appendIndexRow와 달리 CRLF에 영향받는
+ * `^`/`$`/`.` 앵커를 전혀 안 써서 별도 정규화가 필요 없다. */
+export function updateIndexRow(folder: string, id: string, status: string, updated: string): void {
+  const indexPath = path.join(docsDir(), folder, "index.md");
+  if (!fs.existsSync(indexPath)) return;
+  const text = fs.readFileSync(indexPath, "utf-8");
+  const rowRe = new RegExp(`\\|\\s*\\[${id}\\]\\([^)]*\\)\\s*\\|([^|]*)\\|[^|]*\\|[^|]*\\|`);
+  const m = rowRe.exec(text);
+  if (!m) return; // 색인에 이 id의 행이 없으면(있어야 정상이지만) 조용히 무시
+  const title = m[1].trim();
+  const newRow = `| [${id}](${id}.md) | ${title} | ${status} | ${updated} |`;
+  const newText = text.slice(0, m.index) + newRow + text.slice(m.index + m[0].length);
+  fs.writeFileSync(indexPath, newText, "utf-8");
+  invalidateCache(indexPath);
 }
