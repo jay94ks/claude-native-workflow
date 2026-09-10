@@ -179,8 +179,6 @@ onUnmounted(() => disconnect?.());
 </script>
 
 <template>
-  <h1>변경 추적</h1>
-
   <section>
     <h2>git 커밋 로그</h2>
     <p v-if="hasRepo === false" class="muted">
@@ -243,10 +241,6 @@ onUnmounted(() => disconnect?.());
 </template>
 
 <style scoped>
-h1 {
-  font-size: 20px;
-  margin-bottom: 16px;
-}
 h2 {
   font-size: 15px;
   margin: 0 0 10px;

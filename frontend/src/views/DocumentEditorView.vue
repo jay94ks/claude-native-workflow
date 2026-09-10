@@ -103,6 +103,7 @@ onMounted(load);
 
 <template>
   <p v-if="loading">불러오는 중...</p>
+  <p v-else-if="error && !doc" class="error">{{ error }}</p>
   <template v-else-if="doc">
     <div class="header">
       <div>

@@ -69,7 +69,6 @@ watch(filterTypeId, load);
 </script>
 
 <template>
-  <h1>문서</h1>
   <div class="filter-row">
     <select v-model="filterTypeId">
       <option value="">전체 타입</option>
@@ -99,10 +98,6 @@ watch(filterTypeId, load);
 </template>
 
 <style scoped>
-h1 {
-  font-size: 20px;
-  margin-bottom: 16px;
-}
 .filter-row {
   margin-bottom: 12px;
 }

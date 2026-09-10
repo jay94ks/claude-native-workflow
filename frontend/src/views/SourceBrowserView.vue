@@ -114,7 +114,6 @@ onMounted(async () => {
 </script>
 
 <template>
-  <h1>소스 코드</h1>
   <p v-if="hasRepo === false" class="muted">
     연결된 git 저장소가 없습니다 - 프로젝트 상세 화면에서 <code>docs git link</code>로 먼저 연결하세요.
   </p>
@@ -153,10 +152,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-h1 {
-  font-size: 20px;
-  margin-bottom: 16px;
-}
 .layout {
   display: flex;
   gap: 16px;

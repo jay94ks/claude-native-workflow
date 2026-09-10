@@ -1,16 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
-import MessagesPanel from "../components/MessagesPanel.vue";
 import DocTypeManager from "../components/DocTypeManager.vue";
 
 const props = defineProps<{ id: string }>();
 
-interface Project {
-  id: string;
-  name: string;
-  projectGroupId: string;
-}
 interface DocType {
   id: string;
   code: string;
@@ -25,18 +19,10 @@ interface GitRepo {
   provider: string;
   repoUrl: string;
 }
-interface PendingQuestion {
-  trackingCode: string;
-  documentTrackingCode: string;
-  documentTitle: string;
-  text: string;
-}
 
-const project = ref<Project | null>(null);
 const docTypes = ref<DocType[]>([]);
 const members = ref<Member[]>([]);
 const gitRepo = ref<GitRepo | null>(null);
-const pending = ref<PendingQuestion[]>([]);
 const loading = ref(true);
 const error = ref("");
 
@@ -48,16 +34,13 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [proj, types, memberList] = await Promise.all([
-      apiCall<Project>(`/projects/${props.id}`),
+    const [types, memberList] = await Promise.all([
       apiCall<DocType[]>(`/projects/${props.id}/doc-types`),
       apiCall<Member[]>(`/projects/${props.id}/members`),
     ]);
-    project.value = proj;
     docTypes.value = types;
     members.value = memberList;
     gitRepo.value = await apiCall<GitRepo>(`/projects/${props.id}/git/repo`).catch(() => null);
-    pending.value = await apiCall<PendingQuestion[]>(`/projects/${props.id}/pending`).catch(() => []);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "프로젝트 정보를 불러오지 못했습니다";
   } finally {
@@ -85,28 +68,8 @@ onMounted(load);
 
 <template>
   <p v-if="loading">불러오는 중...</p>
-  <template v-else-if="project">
-    <h1>{{ project.name }}</h1>
+  <template v-else>
     <p v-if="error" class="error">{{ error }}</p>
-
-    <div class="nav-links">
-      <router-link :to="`/projects/${id}/documents`">문서 보기</router-link>
-      <router-link :to="`/projects/${id}/source`">소스 코드 보기</router-link>
-      <router-link :to="`/projects/${id}/changes`">변경 추적</router-link>
-    </div>
-
-    <MessagesPanel :project-id="id" />
-
-    <section v-if="pending.length > 0">
-      <h2>답변 대기 질문</h2>
-      <ul class="list">
-        <li v-for="q in pending" :key="q.trackingCode">
-          <router-link :to="`/projects/${id}/documents/${q.documentTrackingCode}`">
-            <code>{{ q.trackingCode }}</code> {{ q.documentTitle }} - {{ q.text }}
-          </router-link>
-        </li>
-      </ul>
-    </section>
 
     <section>
       <h2>git 저장소</h2>
@@ -156,33 +119,12 @@ onMounted(load);
 </template>
 
 <style scoped>
-h1 {
-  font-size: 20px;
-  margin-bottom: 20px;
-}
 h2 {
   font-size: 15px;
   margin: 0 0 10px;
 }
 section {
   margin-bottom: 28px;
-}
-.nav-links {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 24px;
-}
-.nav-links a {
-  background: #fff;
-  border: 1px solid #d8dae0;
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  text-decoration: none;
-  color: #1a1a2e;
-}
-.nav-links a:hover {
-  background: #eef0f6;
 }
 .chips {
   list-style: none;
@@ -243,20 +185,6 @@ section {
 }
 .list li:last-child {
   border-bottom: none;
-}
-.list li a {
-  color: #1a1a2e;
-  text-decoration: none;
-  font-size: 13px;
-}
-.list li a code {
-  font-size: 11px;
-  background: #f0f1f5;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-.list li a:hover {
-  text-decoration: underline;
 }
 .muted {
   color: #888;

@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import { apiCall } from "../api/client";
+import DocumentExplorer from "./DocumentExplorer.vue";
 
 const router = useRouter();
+const route = useRoute();
 const auth = useAuthStore();
 const institutionsEnabled = ref(true);
+
+const activeProjectId = computed(() => (typeof route.params.id === "string" ? route.params.id : null));
 
 onMounted(async () => {
   try {
@@ -28,7 +32,11 @@ function handleLogout() {
   <div class="layout">
     <aside class="sidebar">
       <div class="brand">claude-native-workflow</div>
-      <nav>
+      <template v-if="activeProjectId">
+        <router-link to="/projects" class="back-link">← 전체 프로젝트</router-link>
+        <DocumentExplorer :project-id="activeProjectId" />
+      </template>
+      <nav v-else>
         <router-link v-if="institutionsEnabled" to="/institutions">기관</router-link>
         <router-link to="/groups">프로젝트 그룹</router-link>
         <router-link to="/projects">프로젝트</router-link>
@@ -76,6 +84,19 @@ nav a {
 }
 nav a:hover,
 nav a.router-link-active {
+  background: #2e2f4d;
+  color: #fff;
+}
+.back-link {
+  display: block;
+  color: #c7c9e8;
+  text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.back-link:hover {
   background: #2e2f4d;
   color: #fff;
 }
