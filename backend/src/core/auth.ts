@@ -88,10 +88,18 @@ export interface RegisterInput {
   password: string;
 }
 
+const MIN_PASSWORD_LENGTH = 8;
+
 export async function register(
   input: RegisterInput,
 ): Promise<{ id: string; username: string; email: string | null }> {
   const db = getDb();
+  // 실측 중 발견 - 길이 검증이 전혀 없어 1글자 비밀번호도 그대로
+  // 통과했다. 이 시스템은 개인 PC뿐 아니라 서버/클라우드 배포도
+  // 대상이라(README 참고) 최소 길이는 있어야 한다.
+  if (input.password.length < MIN_PASSWORD_LENGTH) {
+    throw new AuthError(`비밀번호는 최소 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다`);
+  }
   const existing = await db.user.findFirst({
     where: {
       OR: [{ username: input.username }, ...(input.email ? [{ email: input.email }] : [])],

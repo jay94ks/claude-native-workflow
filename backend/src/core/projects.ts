@@ -26,6 +26,10 @@ export interface Project {
 
 export async function createProject(name: string, projectGroupId?: string): Promise<Project> {
   const db = getDb();
+  // createProjectGroup()과 같은 이유로 빈 문자열을 "안 넘김"으로
+  // 정규화한다 - 안 그러면 검증을 다 건너뛰고 Prisma FK 에러가 그대로
+  // 노출된다.
+  projectGroupId = projectGroupId || undefined;
   const groupId = projectGroupId ?? (await defaultProjectGroupId());
   if (projectGroupId) {
     const group = await db.projectGroup.findUnique({ where: { id: projectGroupId } });
