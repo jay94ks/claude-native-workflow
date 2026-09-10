@@ -251,6 +251,62 @@ program
   .command("doctype-transitions <projectId> <docTypeId>")
   .action((_projectId, docTypeId) => run(async () => printJson(await apiCall(`/api/doc-types/${docTypeId}/transitions`))));
 
+program
+  .command("institution-doctype-status-add <institutionId> <docTypeId> <code> <label>")
+  .option("--terminal", "이 상태가 종료 상태임을 표시")
+  .action((institutionId, docTypeId, code, label, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/institutions/${institutionId}/doc-types/${docTypeId}/statuses`, {
+          method: "POST",
+          body: JSON.stringify({ code, label, isTerminal: !!opts.terminal }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("institution-doctype-transition-add <institutionId> <docTypeId> <fromCode> <toCode>")
+  .option("--label <l>", "전이 라벨(선택)")
+  .action((institutionId, docTypeId, fromCode, toCode, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/institutions/${institutionId}/doc-types/${docTypeId}/transitions`, {
+          method: "POST",
+          body: JSON.stringify({ fromStatusCode: fromCode, toStatusCode: toCode, label: opts.label }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("group-doctype-status-add <groupId> <docTypeId> <code> <label>")
+  .option("--terminal", "이 상태가 종료 상태임을 표시")
+  .action((groupId, docTypeId, code, label, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/project-groups/${groupId}/doc-types/${docTypeId}/statuses`, {
+          method: "POST",
+          body: JSON.stringify({ code, label, isTerminal: !!opts.terminal }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("group-doctype-transition-add <groupId> <docTypeId> <fromCode> <toCode>")
+  .option("--label <l>", "전이 라벨(선택)")
+  .action((groupId, docTypeId, fromCode, toCode, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/project-groups/${groupId}/doc-types/${docTypeId}/transitions`, {
+          method: "POST",
+          body: JSON.stringify({ fromStatusCode: fromCode, toStatusCode: toCode, label: opts.label }),
+        }),
+      ),
+    ),
+  );
+
 // ---------------------------------------------------------------- 문서
 
 program

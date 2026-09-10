@@ -170,6 +170,50 @@ async function main() {
     { docTypeId: z.string() },
     async (a) => call(`/api/doc-types/${a.docTypeId}/transitions`),
   );
+  tool(
+    "doctype_status_add_institution",
+    "기관 스코프 문서 타입 상태 추가",
+    "기관 스코프 문서 타입이 가질 수 있는 상태를 하나 정의한다.",
+    { institutionId: z.string(), docTypeId: z.string(), code: z.string(), label: z.string(), isTerminal: z.boolean().optional() },
+    async (a) =>
+      call(`/api/institutions/${a.institutionId}/doc-types/${a.docTypeId}/statuses`, {
+        method: "POST",
+        body: JSON.stringify({ code: a.code, label: a.label, isTerminal: a.isTerminal ?? false }),
+      }),
+  );
+  tool(
+    "doctype_transition_add_institution",
+    "기관 스코프 문서 타입 상태 전이 추가",
+    "기관 스코프 문서 타입의 두 상태(코드로 지정) 사이 허용된 전이를 정의한다.",
+    { institutionId: z.string(), docTypeId: z.string(), fromStatusCode: z.string(), toStatusCode: z.string(), label: z.string().optional() },
+    async (a) =>
+      call(`/api/institutions/${a.institutionId}/doc-types/${a.docTypeId}/transitions`, {
+        method: "POST",
+        body: JSON.stringify({ fromStatusCode: a.fromStatusCode, toStatusCode: a.toStatusCode, label: a.label }),
+      }),
+  );
+  tool(
+    "doctype_status_add_group",
+    "그룹 스코프 문서 타입 상태 추가",
+    "프로젝트 그룹 스코프 문서 타입이 가질 수 있는 상태를 하나 정의한다.",
+    { groupId: z.string(), docTypeId: z.string(), code: z.string(), label: z.string(), isTerminal: z.boolean().optional() },
+    async (a) =>
+      call(`/api/project-groups/${a.groupId}/doc-types/${a.docTypeId}/statuses`, {
+        method: "POST",
+        body: JSON.stringify({ code: a.code, label: a.label, isTerminal: a.isTerminal ?? false }),
+      }),
+  );
+  tool(
+    "doctype_transition_add_group",
+    "그룹 스코프 문서 타입 상태 전이 추가",
+    "프로젝트 그룹 스코프 문서 타입의 두 상태(코드로 지정) 사이 허용된 전이를 정의한다.",
+    { groupId: z.string(), docTypeId: z.string(), fromStatusCode: z.string(), toStatusCode: z.string(), label: z.string().optional() },
+    async (a) =>
+      call(`/api/project-groups/${a.groupId}/doc-types/${a.docTypeId}/transitions`, {
+        method: "POST",
+        body: JSON.stringify({ fromStatusCode: a.fromStatusCode, toStatusCode: a.toStatusCode, label: a.label }),
+      }),
+  );
 
   // ---------------------------------------------------------------- 문서
 

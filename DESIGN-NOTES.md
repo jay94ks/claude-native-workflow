@@ -682,9 +682,44 @@ GX + 기관의 IX까지 5개를 전부 보여주는지 확인. **체인 조회 �
 직접 호출해 CLI와 동일한 결과 확인. 테스트 후 컨테이너/볼륨/이미지/
 스크래치 `.env`/CLI 자격증명 전부 정리.
 
+## 그룹/기관 스코프 DocType 상태/전이 지원 - 완료 (2026-09-10)
+
+직전 라운드에서 의도적으로 남겨둔 마지막 조각 - 그룹/기관 스코프
+DocType은 생성·조회·상속까진 됐지만 `doctype-status-add`/
+`doctype-transition-add`가 프로젝트 스코프 전용이라 상태를 못 붙여서
+실제 문서 생성엔 못 썼다. 설계자가 이어서 확장해달라고 요청 - 이걸로
+그룹/기관 스코프 DocType이 생성부터 문서 생성까지 완전히 동작한다.
+
+- 직전 라운드(생성/목록)와 정확히 같은 패턴을 그대로 반복 -
+  `getDocTypeById()`가 institutionId/projectGroupId도 같이 반환하도록
+  확장, `requireOwnedDocType`과 같은 모양의
+  `requireOwnedDocTypeByInstitution`/`requireOwnedDocTypeByGroup` 추가,
+  새 라우트 4개(`POST /api/institutions/:institutionId/doc-types/
+  :docTypeId/statuses`+`/transitions`, `POST /api/project-groups/
+  :groupId/doc-types/:docTypeId/statuses`+`/transitions` - 인가는
+  `authenticate`만, 직전 라운드의 생성/목록 라우트와 동일한 수준),
+  CLI 4개(`institution-doctype-status-add`/
+  `institution-doctype-transition-add`/`group-doctype-status-add`/
+  `group-doctype-transition-add`) + MCP 4개. 기존 프로젝트 스코프
+  라우트/CLI/MCP는 전혀 안 건드림.
+- SKILL.md(양쪽 사본)의 "알려진 제한" 문구를 지우고 새 명령 안내로
+  교체.
+
+검증: 기관→그룹→프로젝트 계층 준비(직전 라운드와 같은 구조) →
+`institution-doctype-status-add`로 기관 스코프 타입에 상태 2개(하나는
+`--terminal`) → `institution-doctype-transition-add`로 전이 연결 →
+**이번엔 실제로 `docs new`로 그 프로젝트에서 그 타입의 문서를 만들어**
+올바른 초기 상태(진입점)로 생성되는지, `docs transition`이 정의한
+경로를 실제로 따라가는지, 정의 안 된 전이는 거부되는지까지 끝까지
+확인(직전 라운드는 "타입은 찾지만 상태가 없어 막힘"까지만 확인했던
+것과 달리, 이번엔 문서 생성 → 상태 전이까지 완주). 그룹 스코프도
+동일하게 한 번 더 반복 확인. 다른 기관 id로 남의 docTypeId를 겨냥하면
+404(소유권 우회 불가) 확인. 기존 프로젝트 스코프 `doctype-status-add`
+회귀 없음 확인. MCP 도구 stdio 직접 호출로 CLI와 대조. 테스트 후
+컨테이너/볼륨/이미지/스크래치 `.env`/CLI 자격증명 전부 정리.
+
 ## 다음 단계
 
-로드맵의 Phase 0~6, QA 2회 패스, 기관/그룹 스코프 DocType까지 전부
-완료됐다. 알려진 제한 1건(그룹/기관 스코프 타입에 상태/전이를 못 붙임)은
-위 항목에 기록 - 필요해지면 후속 요청으로. 그 외 추가 요청이 있을 때까지
-대기.
+로드맵의 Phase 0~6, QA 2회 패스, 기관/그룹 스코프 DocType 생성+상태/
+전이까지 전부 완료됐다. 알려진 제한은 더 이상 없음 - 추가 요청이 있을
+때까지 대기.

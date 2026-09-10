@@ -37,19 +37,20 @@ new <projectId> <code> ...`나 `docs doctypes <projectId>`에서 프로젝트
 transition <trackingCode> <toStatusCode>`를 쓰되, 그 문서 타입에
 정의된 전이만 허용된다.
 
-**알려진 제한**: 그룹/기관 스코프 타입에 상태를 추가하는 명령은 아직
-없다(`doctype-status-add`는 프로젝트 스코프 전용) - 그룹/기관 스코프
-타입을 실제로 문서 생성에 쓰려면 당분간 프로젝트 스코프로 같은 타입을
-따로 만들어 상태를 붙이거나, 이 제한이 풀리길 기다려야 한다.
-
 **새로 만든 타입은 상태가 0개라 그대로는 문서를 만들 수 없다** -
-`doctype-create` 직후 최소 하나는 `docs doctype-status-add <projectId>
-<docTypeId> <code> <label> [--terminal]`(`doctype_status_add`)로
-상태를 추가해야 한다. 상태 사이 이동을 허용하려면 `docs
-doctype-transition-add <projectId> <docTypeId> <fromCode> <toCode>
-[--label <l>]`(`doctype_transition_add`)로 전이를 정의한다(정의 안 한
-전이는 `docs transition`이 거부한다). 지금까지 만든 전이를 확인하려면
-`docs doctype-transitions <projectId> <docTypeId>`(`doctype_transitions`).
+`*-doctype-create` 직후 최소 하나는 상태 추가 명령으로 상태를 붙여야
+한다: 프로젝트 스코프는 `docs doctype-status-add <projectId>
+<docTypeId> <code> <label> [--terminal]`(`doctype_status_add`), 그룹
+스코프는 `docs group-doctype-status-add <groupId> <docTypeId> <code>
+<label> [--terminal]`(`doctype_status_add_group`), 기관 스코프는 `docs
+institution-doctype-status-add <institutionId> <docTypeId> <code>
+<label> [--terminal]`(`doctype_status_add_institution`). 상태 사이
+이동을 허용하려면 같은 스코프 짝의 `*-doctype-transition-add
+<...스코프id> <docTypeId> <fromCode> <toCode> [--label <l>]`로 전이를
+정의한다(정의 안 한 전이는 `docs transition`이 거부한다 - 스코프와
+무관하게 항상 같은 명령). 지금까지 만든 전이를 확인하려면 `docs
+doctype-transitions <아무값> <docTypeId>`(`doctype_transitions`,
+첫 인자는 안 쓰임 - docTypeId만으로 스코프 상관없이 조회됨).
 
 ## 세션을 시작하거나 이 프로젝트를 다시 열 때
 

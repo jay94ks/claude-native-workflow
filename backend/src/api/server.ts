@@ -354,6 +354,16 @@ async function requireOwnedDocType(projectId: string, docTypeId: string): Promis
   return docType !== null && docType.projectId === projectId;
 }
 
+async function requireOwnedDocTypeByInstitution(institutionId: string, docTypeId: string): Promise<boolean> {
+  const docType = await getDocTypeById(docTypeId);
+  return docType !== null && docType.institutionId === institutionId;
+}
+
+async function requireOwnedDocTypeByGroup(groupId: string, docTypeId: string): Promise<boolean> {
+  const docType = await getDocTypeById(docTypeId);
+  return docType !== null && docType.projectGroupId === groupId;
+}
+
 app.post(
   "/api/projects/:projectId/doc-types/:docTypeId/statuses",
   authenticate,
@@ -376,6 +386,79 @@ app.post(
   asyncRoute(async (req, res) => {
     if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { fromStatusCode, toStatusCode, label } = req.body as {
+      fromStatusCode?: string;
+      toStatusCode?: string;
+      label?: string;
+    };
+    if (!fromStatusCode || !toStatusCode) {
+      res.status(400).json({ error: "fromStatusCode/toStatusCode가 필요합니다" });
+      return;
+    }
+    res.json(await addDocStatusTransitionByCode(req.params.docTypeId, fromStatusCode, toStatusCode, label));
+  }),
+);
+
+// 기관/그룹 스코프 DocType에 상태/전이 붙이기 - 생성/목록 라우트와 같은
+// 인가 수준(authenticate만, 기관/그룹 단위 관리자 역할이 아직 없다는
+// 이미 문서화된 한계를 그대로 따름 - PUT /api/templates와 동일).
+app.post(
+  "/api/institutions/:institutionId/doc-types/:docTypeId/statuses",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocTypeByInstitution(req.params.institutionId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 기관에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { code, label, isTerminal } = req.body as { code?: string; label?: string; isTerminal?: boolean };
+    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
+    res.json(await addDocStatus(req.params.docTypeId, code, label, isTerminal ?? false));
+  }),
+);
+
+app.post(
+  "/api/institutions/:institutionId/doc-types/:docTypeId/transitions",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocTypeByInstitution(req.params.institutionId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 기관에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { fromStatusCode, toStatusCode, label } = req.body as {
+      fromStatusCode?: string;
+      toStatusCode?: string;
+      label?: string;
+    };
+    if (!fromStatusCode || !toStatusCode) {
+      res.status(400).json({ error: "fromStatusCode/toStatusCode가 필요합니다" });
+      return;
+    }
+    res.json(await addDocStatusTransitionByCode(req.params.docTypeId, fromStatusCode, toStatusCode, label));
+  }),
+);
+
+app.post(
+  "/api/project-groups/:groupId/doc-types/:docTypeId/statuses",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { code, label, isTerminal } = req.body as { code?: string; label?: string; isTerminal?: boolean };
+    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
+    res.json(await addDocStatus(req.params.docTypeId, code, label, isTerminal ?? false));
+  }),
+);
+
+app.post(
+  "/api/project-groups/:groupId/doc-types/:docTypeId/transitions",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
       return;
     }
     const { fromStatusCode, toStatusCode, label } = req.body as {
