@@ -279,7 +279,7 @@ const DEFAULT_TYPES: SeedSpec[] = [
   {
     code: "SP",
     label: "설계 명세",
-    guideline: "설계 결정과 그 근거를 기록한다 - 왜 이렇게 만들기로 했는지 나중에 되짚어볼 수 있도록.",
+    guideline: "지금 만들고 있는 것이 무엇인지, 어떻게 동작해야 하는지 명세한다.",
     statuses: [
       { code: "draft", label: "초안" },
       { code: "active", label: "적용 중" },
@@ -292,7 +292,7 @@ const DEFAULT_TYPES: SeedSpec[] = [
   },
   {
     code: "DC",
-    label: "결정 요청",
+    label: "결정 요구사항 및 요청",
     guideline: "설계자의 확인/선택이 필요한 사항을 등록한다 - 답변되면 반영 완료까지 추적한다.",
     statuses: [
       { code: "open", label: "미답변" },
@@ -305,11 +305,45 @@ const DEFAULT_TYPES: SeedSpec[] = [
     ],
   },
   {
-    code: "DN",
-    label: "결과 보고",
+    code: "PL",
+    label: "실행 계획",
+    guideline: "무엇을, 어떤 순서로 할지 계획을 기록한다.",
+    statuses: [
+      { code: "draft", label: "초안" },
+      { code: "active", label: "진행 중" },
+      { code: "done", label: "완료", isTerminal: true },
+    ],
+    transitions: [
+      ["draft", "active"],
+      ["active", "done"],
+    ],
+  },
+  {
+    code: "PD",
+    label: "실행 결과 보고",
     guideline: "작업을 마친 뒤 무엇을 했는지, 어떻게 검증했는지 요약해 남긴다.",
     statuses: [{ code: "final", label: "완료", isTerminal: true }],
     transitions: [],
+  },
+  {
+    code: "RM",
+    label: "지시 사항/지침",
+    guideline: "설계자가 내린 지시나 지켜야 할 지침을 기록한다 - 필요 없어지면 보관 처리한다.",
+    statuses: [
+      { code: "active", label: "적용 중" },
+      { code: "archived", label: "보관", isTerminal: true },
+    ],
+    transitions: [["active", "archived"]],
+  },
+  {
+    code: "DS",
+    label: "설계 결정",
+    guideline: "설계 결정과 그 근거를 기록한다 - 왜 이렇게 만들기로 했는지 나중에 되짚어볼 수 있도록.",
+    statuses: [
+      { code: "open", label: "검토 중" },
+      { code: "decided", label: "확정", isTerminal: true },
+    ],
+    transitions: [["open", "decided"]],
   },
 ];
 

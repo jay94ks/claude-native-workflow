@@ -14,8 +14,9 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 
 1. **추적 코드 명시**: 문서, 질의(Question), 답변을 언급하거나 제안할
    때는 항상 정확한 추적 코드(`XX-XXXXXXXX` - 영문 2글자 + hex 8글자)를
-   함께 적는다. 문서 종류: `SP`(설계 명세), `DC`(결정 요청),
-   `DN`(결과 보고), 질의는 `QU`. 예: "QU-B2C3D4E5에 대한 답변으로
+   함께 적는다. 기본 문서 종류: `SP`(설계 명세), `DC`(결정 요구사항 및
+   요청), `PL`(실행 계획), `PD`(실행 결과 보고), `RM`(지시 사항/지침),
+   `DS`(설계 결정), 질의는 `QU`. 예: "QU-B2C3D4E5에 대한 답변으로
    SP-A1B2C3D4를 갱신했다."
 2. **로컬 스크래치 사본은 git 커밋 금지**: 문서를 편집할 때 로컬 임시
    파일로 복사해 Edit/Write 도구로 다듬은 뒤 `docs save`로 다시 올리는
@@ -24,10 +25,17 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 
 ## 문서 타입 / 상태 흐름
 
-새 프로젝트는 기본으로 `SP`(설계 명세: draft→active→archived),
-`DC`(결정 요청: open→answered→applied), `DN`(결과 보고: 단일 종료
-상태) 세 타입을 갖고 시작한다 - 코드에 고정된 목록이 아니라 관리자가
-자유롭게 추가할 수 있다. `doctype-create <projectId> <code> <label>`은
+새 프로젝트는 기본으로 여섯 타입을 갖고 시작한다 - 코드에 고정된
+목록이 아니라 관리자가 자유롭게 추가/수정할 수 있다:
+
+| 코드 | 이름 | 상태 흐름 |
+|---|---|---|
+| `SP` | 설계 명세 | draft → active → archived(종료) |
+| `DC` | 결정 요구사항 및 요청 | open → answered → applied(종료) |
+| `PL` | 실행 계획 | draft → active → done(종료) |
+| `PD` | 실행 결과 보고 | final(단일 종료 상태) |
+| `RM` | 지시 사항/지침 | active → archived(종료) |
+| `DS` | 설계 결정 | open → decided(종료) | `doctype-create <projectId> <code> <label>`은
 프로젝트 스코프, `group-doctype-create <groupId> <code> <label>`/
 `institution-doctype-create <institutionId> <code> <label>`은 그
 그룹/기관 소속 모든 프로젝트가 상속받는 공용 타입을 만든다(`docs
