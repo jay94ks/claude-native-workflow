@@ -445,6 +445,57 @@ gitCmd
   .command("show <projectId> <sha>")
   .action((projectId, sha) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/show/${sha}`))));
 
+// ---------------------------------------------------------------- git push 훅 프롬프트 자동화 (Phase 3 - 대기열 방식)
+
+const hookCmd = program.command("hook").description("git push 훅 프롬프트 자동화(대기열)");
+
+hookCmd
+  .command("create <projectId>")
+  .requiredOption("--prompt <file>", "프롬프트 내용이 담긴 로컬 파일")
+  .option("--branch <branch>", "이 브랜치로 push될 때만 매칭(생략하면 모든 브랜치)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const fs = await import("node:fs");
+      const promptTemplate = fs.readFileSync(opts.prompt, "utf-8");
+      printJson(
+        await apiCall(`/api/projects/${projectId}/push-hook-prompts`, {
+          method: "POST",
+          body: JSON.stringify({ promptTemplate, triggerBranch: opts.branch }),
+        }),
+      );
+    }),
+  );
+
+hookCmd
+  .command("list <projectId>")
+  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-prompts`))));
+
+hookCmd
+  .command("delete <projectId> <id>")
+  .action((projectId, id) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-prompts/${id}`, { method: "DELETE" }))),
+  );
+
+hookCmd
+  .command("queue <projectId>")
+  .option("--status <s>", "pending|acknowledged|done(생략하면 전체)")
+  .action((projectId, opts) => {
+    const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-queue${qs}`)));
+  });
+
+hookCmd
+  .command("ack <projectId> <id>")
+  .action((projectId, id) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-queue/${id}/ack`, { method: "POST" }))),
+  );
+
+hookCmd
+  .command("done <projectId> <id>")
+  .action((projectId, id) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-queue/${id}/done`, { method: "POST" }))),
+  );
+
 const messageCmd = program.command("message").description("인스턴스 메시징(Phase 4에서 구현)");
 messageCmd.command("list <projectId>").action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages`))));
 messageCmd.command("send <projectId> <body...>").action((projectId, bodyParts) =>

@@ -31,6 +31,16 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 아니다. 문서 상태를 바꿀 땐 `docs transition <trackingCode>
 <toStatusCode>`를 쓰되, 그 문서 타입에 정의된 전이만 허용된다.
 
+## 세션을 시작하거나 이 프로젝트를 다시 열 때
+
+`docs hook queue <projectId> --status pending`으로 대기 중인 push 훅이
+있는지 먼저 확인한다. 설계자가 git push 훅 프롬프트를 등록해뒀다면
+(`docs hook create`), push가 있을 때마다 이 대기열에 항목이 쌓인다 -
+서버가 알아서 세션을 실행해주지 않으므로, 다음에 그 프로젝트를 여는
+세션이 직접 확인하고 처리해야 한다. 처리를 시작할 땐 `docs hook ack
+<projectId> <id>`, 끝나면 `docs hook done <projectId> <id>`로 상태를
+갱신한다.
+
 ## 질의/답변(Question/Answer) 루프
 
 설계자에게 확인이 필요한 사항은 문서 본문에 체크리스트로 묻어두지 않고
@@ -65,6 +75,10 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 | git diff | `docs git diff <projectId> <sha>` | `git_diff` |
 | git show | `docs git show <projectId> <sha>` | `git_show` |
 | 템플릿 배포 | `docs template deploy <projectId>` | `template_deploy` |
+| 훅 프롬프트 생성 | `docs hook create <projectId> --prompt <file> [--branch <b>]` | `hook_create` |
+| 훅 프롬프트 목록/삭제 | `docs hook list/delete <projectId> [<id>]` | `hook_list`/`hook_delete` |
+| 훅 대기열 조회 | `docs hook queue <projectId> [--status <s>]` | `hook_queue_list` |
+| 훅 처리 시작/완료 | `docs hook ack/done <projectId> <id>` | `hook_ack`/`hook_done` |
 
 `git log/diff/show`는 자체 호스팅(Gitea) 저장소가 연결된 프로젝트에서만
 동작한다 - 먼저 `git link`로 연결해야 하고, 외부 GitHub/GitLab로 연결한

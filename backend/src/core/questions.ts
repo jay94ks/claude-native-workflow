@@ -31,7 +31,7 @@ export async function addQuestion(documentTrackingCode: string, text: string): P
 
   const count = await db.question.count({ where: { documentId: document.id } });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const row = await withTrackingCode<any>(QUESTION_TYPE_CODE, (trackingCode) =>
+  const row = await withTrackingCode<any>(document.projectId, QUESTION_TYPE_CODE, "question", (trackingCode) =>
     db.question.create({
       data: {
         documentId: document.id,

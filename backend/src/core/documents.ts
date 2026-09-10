@@ -76,7 +76,7 @@ export async function createDocument(input: CreateDocumentInput): Promise<Docume
   const status = await initialStatusFor(docType.id);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const row = await withTrackingCode<any>(input.docTypeCode, (trackingCode) =>
+  const row = await withTrackingCode<any>(input.projectId, input.docTypeCode, "document", (trackingCode) =>
     db.document.create({
       data: {
         projectId: input.projectId,

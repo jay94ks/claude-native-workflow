@@ -105,7 +105,81 @@ API로 커밋 1개를 만들어 `git log/show/diff`가 실제 데이터를 반�
 + git 이력 조회 거부 메시지까지 전부 실측. 테스트 후 컨테이너/스크래치
 DB/자격증명 파일 전부 정리.
 
+## Phase 3 - 완료 (2026-09-10)
+
+git push 훅 프롬프트 자동화(대기열 방식) + 추적 코드 발급 체계 전면
+재설계(설계자 지시로 Phase 3 진행 중 끼어든 변경 - 아래 별도 항목).
+
+- `core/pushHookPrompts.ts`: `PushHookPrompt` CRUD(create/list/delete,
+  소유 프로젝트 확인 후 삭제) + `PushHookQueueEntry` 조회(join으로
+  promptTemplate/triggerBranch까지 같이 반환 - 읽는 쪽이 프롬프트를
+  또 조회할 필요 없게)/상태 전이(`acknowledgeQueueEntry`:
+  pending→acknowledged, `completeQueueEntry`: pending/acknowledged→done,
+  잘못된 전이는 명확한 에러). 변수 치환 템플릿 엔진은 만들지 않음 -
+  큐 응답에 원문 그대로 담아 읽는 쪽(클로드 세션)이 조합.
+- API/CLI/MCP: `hook create/list/delete`, `hook queue`, `hook ack/done`
+  (+ MCP `hook_*`). 큐 라우트는 계획 문서의 `/api/push-hook-queue/:id/...`
+  대신 `/api/projects/:projectId/push-hook-queue/:id/...`로
+  구현(기존 `comments/:id/resolve` 패턴과 통일, `requireProjectRole`가
+  projectId를 필요로 함).
+- SKILL.md에 "세션을 시작하거나 프로젝트를 다시 열 때 `docs hook queue
+  --status pending`을 먼저 확인한다" 절 추가 - 원래 브리핑의 "다음에
+  그 프로젝트를 여는 세션이 대기열을 확인해서 실행한다"를 실제 행동
+  지침으로 명문화.
+- **실측 중 발견한 버그 2건(둘 다 수정)**:
+  1. `PushHookQueueEntry.pushHookPrompt` FK에 `onDelete: Cascade`가
+     없어서, 큐 항목이 있는 프롬프트를 `hook delete`하면 FK violation으로
+     그냥 실패했다(3드라이버 스키마 전부 수정 - 실제 삭제를 시도하다가
+     발견, 이론으로 짐작한 게 아님).
+  2. **Gitea의 기본 SSRF 방지(`security.ALLOWED_HOST_LIST`)가 사설
+     네트워크 호스트로의 웹훅 발송을 막는다** - `docker-compose.yml`의
+     `gitea`와 `backend`는 같은 compose 네트워크 안에 있어도 이 설정이
+     없으면 웹훅이 조용히(앱 레벨 에러 없이, Gitea 로그에만) 실패한다.
+     Phase 2 검증은 웹훅 수신 라우트를 curl로 직접 두드리기만 했지
+     Gitea가 실제로 발사하는 웹훅을 받아본 적이 없어서 이번에야
+     드러났다 - `docker-compose.yml`의 gitea 서비스에
+     `GITEA__security__ALLOWED_HOST_LIST: backend` 추가, `.env.example`의
+     `PUBLIC_BACKEND_URL` 기본값을 컨테이너 내부 호스트명
+     (`http://backend:8760`)으로 변경.
+
+### 추적 코드 발급 체계 재설계 (설계자 지시)
+
+Phase 3 작업 도중 설계자가 Phase 0의 트래킹 코드 설계에 피드백을 줬다 -
+"순번 증가를 랜덤으로 한다는 게 아니다", "중앙 추적코드 DB를 만들고
+발급 처리 + 사용처 태깅", "ProjectId/OrganizationId를 넣어서 기관·
+프로젝트 경계를 못 넘게", "각 기관과 프로젝트의 추적코드는 서로 별도".
+`backend/src/core/tracking.ts`를 다음과 같이 바꿨다:
+
+- 신규 `TrackingCode` 모델(3드라이버 스키마 전부) -
+  `{ id(cuid), code, institutionId?, projectId, which, location,
+  createdAt }`, `@@unique([projectId, code])`. 코드 문자열의 유일성이
+  더는 전역이 아니라 **프로젝트 단위**다 - 서로 다른 프로젝트는 같은
+  코드 문자열을 독립적으로 가질 수 있다(직접 검증: 같은 코드를 두
+  프로젝트에 각각 insert → 둘 다 성공, 같은 프로젝트에 두 번 insert →
+  두 번째는 P2002로 실패).
+- `Document`/`Question`은 지금처럼 자기 테이블에 `trackingCode` 컬럼을
+  그대로 유지(레지스트리 전용 스코프로 확정 - `DocumentLink`/`Comment`가
+  `Document.trackingCode`를 직접 가리키는 기존 FK는 안 건드림).
+- 발급은 여전히 "영문 2글자+hex 8글자" 랜덤이지만, 이제 `TrackingCode`
+  테이블에 원자적 insert로 먼저 예약한 뒤(엔티티별 `@unique`만으로는
+  Document/Question처럼 서로 다른 테이블 간 충돌을 못 막았던 문제 해소)
+  실제 엔티티를 만들고, 그 엔티티의 id를 레지스트리의 `location`에
+  채운다 - 순번 카운터로 되돌아간 게 아니라 "예약 단계 자체가 원자적"
+  이라는 게 핵심(옛 `.tracking.json` 순번 증가가 non-atomic이라 겪었던
+  문제의 재발 방지 원칙은 그대로 유지).
+- `withTrackingCode()`가 `projectId`/`which` 파라미터를 새로 받음 -
+  `documents.ts`/`questions.ts` 호출부 갱신(둘 다 이미 `projectId`를
+  갖고 있어서 큰 변경 없음).
+
+검증: SQLite+Meilisearch 로컬 기동 → 서로 다른 두 프로젝트에서 문서
+생성(각자 정상 발급) → 같은 코드를 두 프로젝트에 각각 insert(성공)/같은
+프로젝트에 두 번 insert(P2002로 실패)로 스코프 경계 직접 확인 →
+Question 생성도 회귀 없이 동작하는지 확인 → `TrackingCode` 행의
+institutionId/projectId/which/location이 실제로 올바르게 채워지는지
+대조.
+
 ## 다음 단계
 
-Phase 3(git push 훅 프롬프트 자동화 - `PushHookPrompt` CRUD/CLI, 대기열
-방식 확정)는 아직 착수 전 - 설계자 승인 후 시작한다.
+Phase 4(EMQX 구독 측 완성 - JWT 기반 클라이언트 인증, HTTP ACL 훅,
+MCP의 MQTT 장기 연결, `message list/read` 실제 구현)는 아직 착수 전 -
+설계자 승인 후 시작한다.

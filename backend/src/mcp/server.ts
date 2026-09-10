@@ -299,6 +299,42 @@ async function main() {
     },
   );
 
+  // ---------------------------------------------------------------- git push 훅 프롬프트 자동화 (Phase 3 - 대기열 방식)
+
+  tool(
+    "hook_create",
+    "push 훅 프롬프트 생성",
+    "지정한 브랜치(생략하면 전체)로 push될 때 대기열에 쌓일 프롬프트를 등록한다.",
+    { projectId: z.string(), promptTemplate: z.string(), triggerBranch: z.string().optional() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/push-hook-prompts`, {
+        method: "POST",
+        body: JSON.stringify({ promptTemplate: a.promptTemplate, triggerBranch: a.triggerBranch }),
+      }),
+  );
+  tool("hook_list", "push 훅 프롬프트 목록", "프로젝트에 등록된 프롬프트 목록.", { projectId: z.string() }, async (a) =>
+    call(`/api/projects/${a.projectId}/push-hook-prompts`),
+  );
+  tool("hook_delete", "push 훅 프롬프트 삭제", "프롬프트를 삭제한다(이후 push에 더는 매칭되지 않음).", { projectId: z.string(), id: z.string() }, async (a) =>
+    call(`/api/projects/${a.projectId}/push-hook-prompts/${a.id}`, { method: "DELETE" }),
+  );
+  tool(
+    "hook_queue_list",
+    "push 훅 대기열 조회",
+    "이 프로젝트를 열 때 먼저 확인해야 할 대기 중인 push 훅 목록(세션 시작 시 pending으로 확인 권장).",
+    { projectId: z.string(), status: z.string().optional() },
+    async (a) => {
+      const qs = a.status ? `?status=${encodeURIComponent(String(a.status))}` : "";
+      return call(`/api/projects/${a.projectId}/push-hook-queue${qs}`);
+    },
+  );
+  tool("hook_ack", "push 훅 처리 시작", "대기열 항목을 acknowledged로 표시한다(처리를 막 시작했을 때).", { projectId: z.string(), id: z.string() }, async (a) =>
+    call(`/api/projects/${a.projectId}/push-hook-queue/${a.id}/ack`, { method: "POST" }),
+  );
+  tool("hook_done", "push 훅 처리 완료", "대기열 항목을 done으로 표시한다(처리를 끝냈을 때).", { projectId: z.string(), id: z.string() }, async (a) =>
+    call(`/api/projects/${a.projectId}/push-hook-queue/${a.id}/done`, { method: "POST" }),
+  );
+
   tool("message_list", "인스턴스 메시지 목록(Phase 4)", "아직 미구현 - EMQX 구독 측 완성 후 사용 가능.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/messages`),
   );

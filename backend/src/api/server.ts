@@ -28,6 +28,14 @@ import { authenticate, requireProjectRole, type AuthedRequest } from "../middlew
 import { linkSelfHostedRepo, linkExternalRepo, getProjectGitRepo, getWebhookSecret, requireSelfHostedRepo, slugForProject } from "../core/gitRepos.js";
 import * as gitea from "../core/gitea.js";
 import { verifyAndParseWebhook, recordPushEvent } from "../core/pushHooks.js";
+import {
+  createPushHookPrompt,
+  listPushHookPrompts,
+  deletePushHookPrompt,
+  listQueueEntries,
+  acknowledgeQueueEntry,
+  completeQueueEntry,
+} from "../core/pushHookPrompts.js";
 
 const app = express();
 // verify로 원본 바이트를 req.rawBody에 보존 - 웹훅 서명 검증은 express가
@@ -574,6 +582,67 @@ app.post(
     }
     const queued = await recordPushEvent(projectId, parsed);
     res.json({ ok: true, queued });
+  }),
+);
+
+// ---------------------------------------------------------------- git push 훅 프롬프트 자동화 (Phase 3 - 대기열 방식)
+
+app.post(
+  "/api/projects/:projectId/push-hook-prompts",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const { triggerBranch, promptTemplate } = req.body as { triggerBranch?: string; promptTemplate?: string };
+    if (!promptTemplate) { res.status(400).json({ error: "promptTemplate이 필요합니다" }); return; }
+    res.json(await createPushHookPrompt(req.params.projectId, { triggerBranch, promptTemplate }));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/push-hook-prompts",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listPushHookPrompts(req.params.projectId));
+  }),
+);
+
+app.delete(
+  "/api/projects/:projectId/push-hook-prompts/:id",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    await deletePushHookPrompt(req.params.id, req.params.projectId);
+    res.json({ ok: true });
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/push-hook-queue",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listQueueEntries(req.params.projectId, req.query.status as string | undefined));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/push-hook-queue/:id/ack",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    await acknowledgeQueueEntry(req.params.id);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/push-hook-queue/:id/done",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    await completeQueueEntry(req.params.id);
+    res.json({ ok: true });
   }),
 );
 

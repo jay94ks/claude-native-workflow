@@ -22,6 +22,36 @@ model InstallConfig {
   institutionsEnabled Boolean @default(true)
 }
 
+// 추적 코드 중앙 레지스트리 - 원자적 insert로 발급을 예약한다(엔티티
+// 테이블별 @unique만으로는 서로 다른 엔티티 타입 간 충돌을 못 막음 -
+// 예: Document와 Question이 우연히 같은 문자열을 가질 수 있었음).
+// **기관/프로젝트 경계를 넘지 않는다** - 코드 문자열의 유일성은 전역이
+// 아니라 프로젝트 단위(`@@unique([projectId, code])`)라, 서로 다른
+// 프로젝트는 같은 코드 문자열을 독립적으로 가질 수 있다(설계자 확인 -
+// "각 기관과 프로젝트의 추적코드는 서로 별도"). institutionId는
+// Project→ProjectGroup을 거치지 않고 바로 경계를 확인할 수 있도록
+// 복제해 저장(DocType/TemplateFile과 같은 스코프 패턴). which로 어떤
+// 엔티티 타입인지, location으로 그 엔티티 자신의 내부 id를 가리킨다.
+// 각 엔티티는 지금처럼 자기 테이블에도 trackingCode 컬럼을 그대로
+// 유지한다(DocumentLink/Comment가 Document.trackingCode를 직접 가리키는
+// 기존 FK 관계를 건드리지 않음 - 이 테이블은 발급/조회 전용 레지스트리).
+model TrackingCode {
+  id            String   @id @default(cuid())
+  code          String // 추적 코드 문자열("XX-XXXXXXXX") - 프로젝트 안에서만 유일
+  institutionId String?
+  projectId     String
+  which         String // "document" | "question"
+  location      String // 그 엔티티의 내부 id(Document.id / Question.id) - 발급 직후 잠깐 빈 문자열
+  createdAt     DateTime @default(now())
+
+  institution Institution? @relation(fields: [institutionId], references: [id])
+  project     Project      @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, code])
+  @@index([institutionId])
+  @@index([which])
+}
+
 model User {
   id           String   @id @default(cuid())
   username     String   @unique
@@ -80,6 +110,7 @@ model Institution {
   projectGroups ProjectGroup[]
   docTypes      DocType[]
   templateFiles TemplateFile[]
+  trackingCodes TrackingCode[]
 }
 
 model ProjectGroup {
@@ -111,6 +142,7 @@ model Project {
   pushHookPrompts PushHookPrompt[]
   messages        Message[]
   templateFiles   TemplateFile[]
+  trackingCodes   TrackingCode[]
 
   @@index([projectGroupId])
 }
@@ -324,7 +356,12 @@ model PushHookQueueEntry {
   status           String   @default("pending") // pending | acknowledged | done
   triggeredAt      DateTime @default(now())
 
-  pushHookPrompt PushHookPrompt @relation(fields: [pushHookPromptId], references: [id])
+  // 프롬프트 설정이 삭제되면 그 프롬프트가 쌓은 큐 항목도 같이 정리한다
+  // (큐 항목은 프롬프트의 promptTemplate/triggerBranch를 join으로
+  // 참고하므로, 프롬프트가 사라지면 맥락 없는 고아 레코드가 된다 -
+  // deletePushHookPrompt()가 FK 위반 없이 항상 삭제되게 하는 실질적
+  // 이유이기도 함, 실제 테스트에서 FK violation을 직접 겪고 수정함).
+  pushHookPrompt PushHookPrompt @relation(fields: [pushHookPromptId], references: [id], onDelete: Cascade)
 
   @@index([pushHookPromptId])
 }
