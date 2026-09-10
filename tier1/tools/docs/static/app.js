@@ -11,6 +11,7 @@ const state = {
   tab: "all",
   idIndex: {},       // id -> {path, type, title}
   currentDoc: null,  // {path, meta, body}
+  changedPaths: new Set(),  // doc_path들 - 확인 안 된 변경 큐(RV-00001 결합안 1번, 트리 배지용)
 };
 
 // ---------------------------------------------------------------- helpers
@@ -179,19 +180,52 @@ function indexTree(node) {
   for (const c of node.children || []) indexTree(c);
 }
 
+// index.md(폴더별 색인)/PROTOCOL.md는 실제 설계 문서가 아니라 항상 존재하는
+// 뼈대 파일이라, 이 둘만 빼고 세면 "문서가 하나도 없는 타입 폴더"를 정확히
+// 판별할 수 있다(tier2/dashboard의 DocTree.vue isDocFile()과 동일한 기준).
+function isDocFile(node) {
+  return node.type === "file" && node.name !== "index.md" && node.name !== "PROTOCOL.md";
+}
+
+function countDocs(node) {
+  if (isDocFile(node)) return 1;
+  if (node.type !== "dir") return 0;
+  return (node.children || []).reduce((sum, c) => sum + countDocs(c), 0);
+}
+
 function renderTreeNode(node, isRoot) {
   const wrap = document.createElement("div");
   if (node.type === "dir") {
-    if (!isRoot) wrap.appendChild(el("div", { class: "tree-dir" }, node.name));
+    // RV-00001 결합안 1번: 문서가 하나도 없는 타입 폴더는 렌더링하지 않는다
+    // (이 저장소 자신의 docs/도 11개 타입 폴더 중 7개가 비어 있었음).
+    const count = countDocs(node);
+    if (!isRoot && count === 0) return null;
+    if (!isRoot) wrap.appendChild(el("div", { class: "tree-dir" }, `${node.name} (${count})`));
     const kids = el("div", { class: isRoot ? "" : "tree-children" });
-    for (const c of node.children) kids.appendChild(renderTreeNode(c, false));
+    for (const c of node.children) {
+      const rendered = renderTreeNode(c, false);
+      if (rendered) kids.appendChild(rendered);
+    }
     wrap.appendChild(kids);
   } else {
     const label = node.title ? `${node.id} · ${node.title}` : node.name;
-    wrap.appendChild(el("div", {
+    // isDocFile()로 걸러야 한다 - QA로 발견: PROTOCOL.md 본문이 "답변 대기"
+    // 형식 예시를 문서화 목적으로 그대로 담고 있어서(`- [ ] (Q1) ...`류),
+    // reply_pending을 본문 스캔으로 바꾸면서 PROTOCOL.md도 "답변 대기 중"으로
+    // 잘못 표시되는 걸 실제로 확인(iter_doc_files()가 PROTOCOL.md/index.md를
+    // 원래부터 답변 대기 목록에서 빼는 것과 같은 이유 - build_tree()는 그
+    // 제외를 안 해서 트리 표시에서만 새어나갔다). tier2/dashboard의
+    // DocTree.vue는 애초에 index.md/PROTOCOL.md를 파일 행 자체로 렌더링하지
+    // 않아 이 문제가 없다.
+    const needsAttention = isDocFile(node) && (!!node.reply_pending || state.changedPaths.has(node.path));
+    const fileEl = el("div", {
       class: "tree-file", title: label,
       onclick: () => openDoc(node.path),
-    }, label));
+    }, label);
+    if (needsAttention) {
+      fileEl.appendChild(el("span", { class: "tree-attn", title: "답변 대기 중이거나 최근 변경됨" }, "⚠"));
+    }
+    wrap.appendChild(fileEl);
   }
   return wrap;
 }
@@ -586,6 +620,9 @@ async function loadChangeBanner() {
   } catch (e) {
     return;
   }
+  state.changedPaths = new Set(notices.map((n) => n.doc_path));
+  loadTree();  // 트리의 "주의 필요" 배지가 이 변경 큐를 반영하도록 다시 그린다
+
   holder.innerHTML = "";
   if (!notices.length) { holder.hidden = true; return; }
   holder.hidden = false;

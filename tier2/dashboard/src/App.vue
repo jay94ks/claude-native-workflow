@@ -13,6 +13,7 @@ const designList = ref<DocListItem[]>([]);
 const logsList = ref<DocListItem[]>([]);
 const allPending = ref<PendingItem[]>([]);
 const changes = ref<ChangeNotice[]>([]);
+const changedPaths = computed(() => new Set(changes.value.map((c) => c.doc_path)));
 
 const searchQuery = ref("");
 const searchResults = ref<SearchResult[] | null>(null);
@@ -163,7 +164,7 @@ onMounted(async () => {
         <q-separator />
         <q-tab-panels v-model="tab" animated class="bg-transparent">
           <q-tab-panel name="tree" class="q-pa-none">
-            <DocTree v-if="tree" :node="tree" :selected-path="selectedPath ?? undefined" @select="select" />
+            <DocTree v-if="tree" :node="tree" :selected-path="selectedPath ?? undefined" :changed-paths="changedPaths" @select="select" />
           </q-tab-panel>
           <q-tab-panel name="design" class="q-pa-none">
             <q-list separator>

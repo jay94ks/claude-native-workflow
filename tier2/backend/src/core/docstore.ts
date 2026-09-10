@@ -123,7 +123,7 @@ export function buildTree(): TreeNode {
       if (entry.isDirectory()) {
         node.children!.push(walk(full));
       } else if (entry.name.endsWith(".md")) {
-        const { meta } = scanMeta(full);
+        const { meta, pending } = scanMeta(full);
         node.children!.push({
           name: entry.name,
           type: "file",
@@ -132,6 +132,16 @@ export function buildTree(): TreeNode {
           title: meta.title ?? "",
           doc_type: meta.type ?? "",
           status: meta.status ?? "",
+          // 프론트매터 reply_pending이 아니라 본문을 직접 스캔한 결과를 쓴다 -
+          // QA로 발견: reply_pending 프론트매터는 답변 처리(/api/reply) 경로
+          // 에서만 갱신되고, 문서를 새로 만들면서 "## 답변 대기" 섹션에 질문을
+          // 바로 적어 넣는 경로(docs/PROTOCOL.md 4절)는 이 필드를 건드리지
+          // 않는다 - 그래서 한 번도 답변된 적 없는 새 DC/RV/FX는 실제로 질문이
+          // 있어도 프론트매터상 reply_pending이 계속 false로 남는다(이
+          // 저장소 자신의 DC-00003/RV-00001에서 실제로 재현). 이미 계산해 둔
+          // pending(본문 스캔 결과, listPending()이 쓰는 것과 같은 소스)이
+          // 항상 정확하므로 그걸 신뢰한다.
+          reply_pending: pending.length > 0,
         });
       }
     }
@@ -163,7 +173,7 @@ export function listPending(): PendingItem[] {
 export function listByTypes(types: Set<string>): DocListItem[] {
   const out: DocListItem[] = [];
   for (const p of iterDocFiles()) {
-    const { meta } = scanMeta(p);
+    const { meta, pending } = scanMeta(p);
     const t = meta.type ?? "";
     if (types.has(t)) {
       out.push({
@@ -173,7 +183,8 @@ export function listByTypes(types: Set<string>): DocListItem[] {
         type: t,
         status: meta.status ?? "",
         updated: meta.updated ?? "",
-        reply_pending: Boolean(meta.reply_pending ?? false),
+        // buildTree()와 같은 이유로 프론트매터가 아니라 본문 스캔 결과를 쓴다.
+        reply_pending: pending.length > 0,
         target: meta.target ?? "",
       });
     }

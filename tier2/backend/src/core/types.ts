@@ -61,6 +61,7 @@ export interface TreeNode {
   title?: string;
   doc_type?: string;
   status?: string;
+  reply_pending?: boolean;
 }
 
 export const TYPE_NAMES: Record<string, string> = {

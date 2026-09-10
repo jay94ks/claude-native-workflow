@@ -230,7 +230,7 @@ def build_tree():
             if entry.is_dir():
                 node["children"].append(walk(entry))
             elif entry.suffix == ".md":
-                meta, _ = scan_meta(entry)
+                meta, pending = scan_meta(entry)
                 node["children"].append({
                     "name": entry.name,
                     "type": "file",
@@ -239,6 +239,12 @@ def build_tree():
                     "title": meta.get("title", ""),
                     "doc_type": meta.get("type", ""),
                     "status": meta.get("status", ""),
+                    # QA로 발견: 프론트매터 reply_pending은 답변 처리 경로에서만
+                    # 갱신되고, "## 답변 대기" 섹션에 질문을 막 적어 넣은
+                    # 새 문서는 한 번도 답변된 적이 없어 이 필드가 계속 false로
+                    # 남는다(tier2/backend의 docstore.ts에서 먼저 발견하고
+                    # 대칭으로 고침). 본문을 직접 스캔한 pending을 대신 쓴다.
+                    "reply_pending": bool(pending),
                 })
         return node
 
@@ -295,7 +301,7 @@ def list_pending():
 def list_by_types(types):
     out = []
     for p in iter_doc_files():
-        meta, _ = scan_meta(p)
+        meta, pending = scan_meta(p)
         t = meta.get("type", "")
         if t in types:
             out.append({
@@ -305,7 +311,9 @@ def list_by_types(types):
                 "type": t,
                 "status": meta.get("status", ""),
                 "updated": meta.get("updated", ""),
-                "reply_pending": bool(meta.get("reply_pending", False)),
+                # build_tree()와 같은 이유로 프론트매터가 아니라 본문 스캔
+                # 결과(pending)를 쓴다.
+                "reply_pending": bool(pending),
                 "target": meta.get("target", ""),
                 "rp": meta.get("rp", ""),
             })

@@ -110,6 +110,7 @@ body {
 }
 .tree-file:hover { background: var(--accent-bg); }
 .tree-children { margin-left: 8px; border-left: 1px solid var(--border); padding-left: 4px; }
+.tree-attn { margin-left: 6px; color: #d97706; font-size: 11px; }
 
 .doc-card {
   border: 1px solid var(--border);
