@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 
@@ -16,6 +16,7 @@ interface DocType {
   id: string;
   code: string;
   label: string;
+  guideline: string | null;
 }
 
 const documents = ref<DocumentSummary[]>([]);
@@ -64,6 +65,8 @@ watch(docTypes, (types) => {
   if (types.length > 0 && !newTypeCode.value) newTypeCode.value = types[0].code;
 });
 
+const selectedTypeGuideline = computed(() => docTypes.value.find((t) => t.code === newTypeCode.value)?.guideline ?? null);
+
 onMounted(load);
 watch(filterTypeId, load);
 </script>
@@ -83,6 +86,7 @@ watch(filterTypeId, load);
     </select>
     <button type="submit">만들기</button>
   </form>
+  <p v-if="selectedTypeGuideline" class="guideline-hint">{{ selectedTypeGuideline }}</p>
 
   <p v-if="error" class="error">{{ error }}</p>
   <p v-if="loading">불러오는 중...</p>
@@ -129,6 +133,11 @@ watch(filterTypeId, load);
   padding: 8px 16px;
   border-radius: 6px;
   font-weight: 600;
+}
+.guideline-hint {
+  font-size: 12px;
+  color: #888;
+  margin: -12px 0 16px;
 }
 .list {
   list-style: none;

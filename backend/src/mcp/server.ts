@@ -115,31 +115,52 @@ async function main() {
     "doctype_create",
     "문서 타입 생성",
     "프로젝트 스코프로 새 문서 타입을 정의한다(code는 영문 2글자).",
-    { projectId: z.string(), code: z.string(), label: z.string() },
-    async (a) => call(`/api/projects/${a.projectId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label }) }),
+    { projectId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
+    async (a) => call(`/api/projects/${a.projectId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
   );
   tool("doctype_list", "문서 타입 목록", "프로젝트에서 쓸 수 있는 문서 타입 목록(프로젝트 자신 + 소속 group/institution에서 상속된 것 포함).", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/doc-types`),
   );
   tool(
+    "doctype_guideline_set",
+    "프로젝트 스코프 문서 타입 지침 설정",
+    "그 문서 타입이 무엇을 하기 위한 것인지 자연어 설명을 쓰거나 수정한다(빈 문자열이면 지움).",
+    { projectId: z.string(), docTypeId: z.string(), guideline: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
+  );
+  tool(
     "doctype_create_institution",
     "기관 스코프 문서 타입 생성",
     "그 기관 소속 모든 프로젝트가 상속받는 문서 타입을 정의한다(code는 영문 2글자).",
-    { institutionId: z.string(), code: z.string(), label: z.string() },
-    async (a) => call(`/api/institutions/${a.institutionId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label }) }),
+    { institutionId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
+    async (a) => call(`/api/institutions/${a.institutionId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
   );
   tool("doctype_list_institution", "기관 스코프 문서 타입 목록", "그 기관에 직접 정의된 문서 타입 목록.", { institutionId: z.string() }, async (a) =>
     call(`/api/institutions/${a.institutionId}/doc-types`),
   );
   tool(
+    "doctype_guideline_set_institution",
+    "기관 스코프 문서 타입 지침 설정",
+    "그 문서 타입이 무엇을 하기 위한 것인지 자연어 설명을 쓰거나 수정한다(빈 문자열이면 지움).",
+    { institutionId: z.string(), docTypeId: z.string(), guideline: z.string() },
+    async (a) => call(`/api/institutions/${a.institutionId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
+  );
+  tool(
     "doctype_create_group",
     "그룹 스코프 문서 타입 생성",
     "그 프로젝트 그룹 소속 모든 프로젝트가 상속받는 문서 타입을 정의한다(code는 영문 2글자).",
-    { groupId: z.string(), code: z.string(), label: z.string() },
-    async (a) => call(`/api/project-groups/${a.groupId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label }) }),
+    { groupId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
+    async (a) => call(`/api/project-groups/${a.groupId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
   );
   tool("doctype_list_group", "그룹 스코프 문서 타입 목록", "그 프로젝트 그룹에 직접 정의된 문서 타입 목록.", { groupId: z.string() }, async (a) =>
     call(`/api/project-groups/${a.groupId}/doc-types`),
+  );
+  tool(
+    "doctype_guideline_set_group",
+    "그룹 스코프 문서 타입 지침 설정",
+    "그 문서 타입이 무엇을 하기 위한 것인지 자연어 설명을 쓰거나 수정한다(빈 문자열이면 지움).",
+    { groupId: z.string(), docTypeId: z.string(), guideline: z.string() },
+    async (a) => call(`/api/project-groups/${a.groupId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
   );
   tool(
     "doctype_status_add",
@@ -359,14 +380,18 @@ async function main() {
   tool(
     "git_link",
     "git 저장소 연결(자체 호스팅)",
-    "Gitea에 저장소를 만들고 프로젝트에 연결한다.",
-    { projectId: z.string() },
-    async (a) => call(`/api/projects/${a.projectId}/git/link`, { method: "POST" }),
+    "Gitea에 저장소를 만들고 프로젝트에 연결한다 - importFromUrl을 주면 그 저장소의 히스토리를 통째로 가져와 시작한다(완전 이주).",
+    { projectId: z.string(), importFromUrl: z.string().optional(), gitCredentialId: z.string().optional() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/link`, {
+        method: "POST",
+        body: JSON.stringify(a.importFromUrl ? { importFrom: { repoUrl: a.importFromUrl, gitCredentialId: a.gitCredentialId } } : {}),
+      }),
   );
   tool(
     "git_link_external",
-    "git 저장소 연결(외부)",
-    "이미 존재하는 외부 GitHub/GitLab 저장소를 프로젝트에 연결한다.",
+    "git 저장소 연동(외부를 주된 저장소로)",
+    "외부 GitHub/GitLab 저장소를 주된(authoritative) 저장소로 연동한다 - 관리 편의를 위해 Gitea에 미러(읽기 전용)와 작업 저장소(이 시스템이 커밋하는 곳)를 같이 만든다.",
     { projectId: z.string(), provider: z.enum(["github", "gitlab"]), repoUrl: z.string(), gitCredentialId: z.string().optional() },
     async (a) =>
       call(`/api/projects/${a.projectId}/git/link-external`, {
@@ -376,6 +401,27 @@ async function main() {
   );
   tool("git_repo", "연결된 git 저장소 조회", "프로젝트에 연결된 git 저장소 정보를 반환한다.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/git/repo`),
+  );
+  tool(
+    "git_sync_status",
+    "동기화 상태 확인",
+    "외부 연동(git_link_external) 프로젝트의 미러 대비 작업 저장소 변경 현황(added/changed/removedFromWork)을 확인한다 - Gitea의 미러 동기화가 비동기라 요청 후 완료될 때까지 기다렸다가 결과를 반환한다(이미 다른 요청이 진행 중이면 그 결과를 그대로 기다림).",
+    { projectId: z.string() },
+    async (a) => {
+      await call(`/api/projects/${a.projectId}/git/sync-status`, { method: "POST" });
+      for (;;) {
+        const state = await call<{ status: string }>(`/api/projects/${a.projectId}/git/sync-status`);
+        if (state.status === "ready") return state;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    },
+  );
+  tool(
+    "git_sync_proposal",
+    "동기화 제안 내용 조회",
+    "외부 연동 프로젝트에서 달라진 파일들의 실제 내용을 가져온다 - 외부(권위) 저장소로 반영하는 건 설계자 몫.",
+    { projectId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/sync-proposal`),
   );
   tool("git_log", "git 로그 조회", "자체 호스팅 저장소의 커밋 로그.", { projectId: z.string(), ref: z.string().optional() }, async (a) => {
     const qs = a.ref ? `?ref=${encodeURIComponent(String(a.ref))}` : "";

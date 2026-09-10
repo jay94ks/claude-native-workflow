@@ -53,6 +53,107 @@ export async function createRepo(slug: string): Promise<CreatedRepo> {
   return { cloneUrl: json.clone_url, externalRepoId: String(json.id) };
 }
 
+/** migrateRepo()가 clone 실패로 던진 뒤(특히 GitAuthRequiredError -
+ * 자격증명 입력 후 재시도가 실제 사용 경로) 남은 빈 stub 저장소를
+ * 지운다. 실측으로 발견: Gitea의 migrate API는 저장소 레코드를 먼저
+ * 만들고 그다음 clone을 시도하므로, clone이 인증 실패로 죽으면 빈
+ * 저장소만 남는다 - 이 상태로 같은 slug를 또 migrate하면 "저장소가
+ * 이미 존재합니다"로 막혀서 자격증명을 새로 넣고 재시도해도 영원히
+ * 실패한다(설계자 확인 필요 없이 명백한 버그 - deleteRepo로 정리해야
+ * 재시도가 실제로 성립함). */
+export async function deleteRepo(slug: string): Promise<void> {
+  const { owner } = config();
+  await giteaFetch(`/api/v1/repos/${owner}/${slug}`, { method: "DELETE" });
+}
+
+/** migrateRepo()가 "인증이 필요해서 실패"를 다른 실패와 구분해 던질 때
+ * 쓴다 - 호출부(gitRepos.ts)가 이 타입만 잡아서 "자격증명 입력 후
+ * 재시도" 흐름으로 안내할 수 있게. */
+export class GitAuthRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GitAuthRequiredError";
+  }
+}
+
+export interface MigrateOptions {
+  mirror: boolean;
+  authToken?: string;
+  description?: string;
+}
+
+/** 외부 저장소를 Gitea로 가져온다 - mirror:false면 그 시점 스냅샷을
+ * 독립된 일반 저장소로(완전 이주), mirror:true면 Gitea가 주기적으로
+ * 원본에서 pull해 최신 상태를 유지하는 읽기 전용 사본으로(연동용 미러).
+ * 실패가 인증 문제로 보이면 GitAuthRequiredError로 구분해 던진다 -
+ * Gitea가 정확히 어떤 상태/본문으로 인증 실패를 알리는지는 실제
+ * 인스턴스로 검증해 확정 예정(지금은 401/403과 본문의 인증 관련
+ * 문구를 폭넓게 잡는다 - Phase 2에서 webhook/blame 응답 형식을 실제
+ * 컨테이너로 확정했던 것과 같은 방식). */
+export async function migrateRepo(slug: string, cloneAddr: string, opts: MigrateOptions): Promise<CreatedRepo> {
+  const { apiUrl, token } = config();
+  const res = await fetch(`${apiUrl}/api/v1/repos/migrate`, {
+    method: "POST",
+    headers: { Authorization: `token ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      repo_name: slug,
+      clone_addr: cloneAddr,
+      mirror: opts.mirror,
+      private: true,
+      auth_token: opts.authToken,
+      description: opts.description,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    if (res.status === 401 || res.status === 403 || /auth|credential|unauthorized/i.test(body)) {
+      throw new GitAuthRequiredError(`외부 저장소 인증이 필요합니다: HTTP ${res.status} ${body}`);
+    }
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
+  const json = (await res.json()) as { clone_url: string; id: number };
+  return { cloneUrl: json.clone_url, externalRepoId: String(json.id) };
+}
+
+/** 미러 저장소의 pull 동기화를 큐에 넣는다(Gitea 내부 작업 큐가 처리 -
+ * 이 호출 자체는 완료를 기다리지 않고 즉시 반환된다). 호출부가 실제
+ * 완료 시점을 알려면 getMirrorUpdatedAt()으로 타임스탬프 변화를
+ * 폴링해야 한다. */
+export async function forceMirrorSync(slug: string): Promise<void> {
+  const { owner } = config();
+  await giteaFetch(`/api/v1/repos/${owner}/${slug}/mirror-sync`, { method: "POST" });
+}
+
+/** 미러가 마지막으로 실제 동기화된 시각(ISO 문자열) - forceMirrorSync()
+ * 트리거 전후로 이 값을 비교해 "이번 트리거로 인한 pull이 실제로
+ * 끝났는지" 판단하는 데 쓴다(mirror-sync 자체가 비동기 큐잉이라 트리거
+ * 직후 바로 비교하면 옛 상태를 읽을 수 있음). */
+export async function getMirrorUpdatedAt(slug: string): Promise<string | null> {
+  const { owner } = config();
+  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}`);
+  const json = (await res.json()) as { mirror_updated?: string };
+  return json.mirror_updated ?? null;
+}
+
+export interface FullTreeEntry {
+  path: string;
+  sha: string;
+  type: "blob" | "tree";
+}
+
+/** 재귀 전체 blob 목록(path+sha) - listTree()(Contents API, 1단계씩만
+ * 봄)로는 두 저장소 전체를 비교할 수 없어서 필요(동기화 상태 비교용).
+ * 기본 브랜치의 최신 커밋(ref 생략 시 Gitea가 기본 브랜치로 해석)
+ * 트리를 재귀 조회한다. */
+export async function getFullTree(slug: string, ref = "HEAD"): Promise<FullTreeEntry[]> {
+  const { owner } = config();
+  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/git/trees/${ref}?recursive=true`);
+  const json = (await res.json()) as { tree: { path: string; sha: string; type: string }[] };
+  return json.tree
+    .filter((e) => e.type === "blob")
+    .map((e) => ({ path: e.path, sha: e.sha, type: "blob" as const }));
+}
+
 export async function createWebhook(slug: string, targetUrl: string, secret: string): Promise<void> {
   const { owner } = config();
   await giteaFetch(`/api/v1/repos/${owner}/${slug}/hooks`, {

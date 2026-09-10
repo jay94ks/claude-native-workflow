@@ -54,9 +54,23 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 - CLAUDE.md/SKILL.md 템플릿 관리(기관/그룹/프로젝트 override) +
   `template deploy`(해석된 템플릿을 프로젝트의 자체 호스팅 저장소
   루트에 실제 커밋)
-- Gitea 자체 호스팅 git 통합(저장소 자동 생성, 웹훅 자동 등록,
-  `git log/diff/show` 실제 구현) + 외부 GitHub/GitLab 저장소 연결(자격
-  증명이 있으면 웹훅도 자동 등록, 없으면 수동 설정 안내)
+- **git 저장소 연결(3가지 방식)** - 웹 UI(프로젝트 "설정" 탭)와 CLI/MCP
+  둘 다에서 선택 가능: ① **새 저장소 생성**(Gitea에 빈 저장소, `docs
+  git link`) ② **외부 저장소 이주**(기존 저장소의 히스토리를 통째로
+  가져와 Gitea 저장소로 독립적으로 시작 - 1회성, `docs git link
+  --import-from <url>`) ③ **외부 저장소 연동**(외부 저장소가 계속
+  권위를 갖고, 관리 편의를 위해 Gitea에 미러(읽기 전용 pull 사본)와
+  작업 저장소(이 시스템이 실제로 커밋하는 곳) 두 개를 만듦 - `docs git
+  link-external`, `git log/diff/show`/소스 에디터가 전부 작업 저장소
+  기준으로 동작). 외부 저장소가 비공개라 인증이 필요하면 그 자리에서
+  자격증명을 입력받아 저장(AES-256-GCM 암호화, 재사용 가능)한 뒤 자동
+  재시도한다. **동기화 제안**(외부 연동 프로젝트 전용) - "설정" 탭에서
+  미러 대비 작업 저장소가 뭐가 달라졌는지 확인(`docs git sync-status`,
+  Gitea의 미러 동기화가 비동기라 요청 후 완료될 때까지 대기하는 방식)
+  하고, 달라진 파일 내용을 내보낼 수 있다(`docs git sync-proposal
+  --out <dir>`) - 실제로 외부(권위) 저장소에 반영(브랜치·PR)하는 건
+  설계자가 직접 한다(자동 PR 생성은 범위 밖 - 항상 사람이 검토 후
+  반영).
 - **git push 훅 프롬프트 자동화**(대기열 방식) - `hook create/list/
   delete`로 프로젝트별 트리거 규칙을 정의하면, 매칭되는 push마다
   `hook queue`에 항목이 쌓인다. 서버가 클로드 세션을 직접 스폰하지
@@ -95,7 +109,10 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
   관리"에서). 프로젝트 설정 탭의 "문서 타입" 섹션은 상속 병합된 전체
   목록(읽기 전용), "문서 타입 관리" 섹션은 이 프로젝트가 직접 정의한
   것만(편집 가능) - 상속된 타입은 실제로 정의된 그룹/기관 화면에서
-  관리한다.
+  관리한다. **DocType 자연어 지침**(`guideline`) - "이 타입은 무엇을
+  하기 위한 것인지"를 생성 시점 또는 나중에(`docs doctype-guideline-
+  set`) 적을 수 있다 - 문서 생성 화면(사이드바 탐색기의 "+",
+  `DocumentsView.vue`)에서 타입 선택 시 힌트로 같이 보여준다.
 - **가이디드 마이그레이션**(`docs migrate scan/apply`) - `concept`
   스타일 파일 기반 프로젝트(YAML frontmatter+마크다운)를 로컬에서
   스캔해 후보 목록을 JSON으로 출력, 검토·수정한 매니페스트 파일을
@@ -107,9 +124,12 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 
 **알려진 제한**: `git blame`은 Gitea REST API 자체에 blame 엔드포인트가
 없어(1.27 기준, swagger로 직접 확인) 명확한 "지원하지 않음" 에러를
-반환한다 - `git log/diff/show`로 변경 이력을 대신 확인한다. 외부
-GitHub/GitLab 저장소는 `git log/diff/blame/show`를 지원하지 않는다
-(자체 호스팅만) - 명확한 400을 반환. Gitea는 사설 네트워크 호스트로의
+반환한다 - `git log/diff/show`로 변경 이력을 대신 확인한다(자체
+호스팅·외부 연동 둘 다 동일 - blame만 플랫폼 자체 한계). "동기화
+제안"은 외부(권위) 저장소로 브랜치·PR을 자동으로 열어주지 않는다 -
+달라진 파일 내용을 보여주고 내보내는 것까지만 지원, 실제 반영은
+설계자가 직접 한다(매 반영이 항상 사람 검토를 거치게 하려는 의도적
+설계 - 다음 단계로 자동 PR 생성을 고려할 수 있음). Gitea는 사설 네트워크 호스트로의
 웹훅 발송을 기본적으로 막으므로(SSRF 방지), Docker Compose 배포에서
 웹훅이 실제로 오려면 `docker-compose.yml`의 `GITEA__security__
 ALLOWED_HOST_LIST` 설정이 꼭 필요하다(이미 반영돼 있음 - 직접 겪고
@@ -201,7 +221,7 @@ docs migrate apply <projectId> manifest.json
 
 `docs auth login`으로 한 번 로그인해두면(`~/.claude-native-workflow/
 credentials.json` 공유), `docs-mcp`를 stdio MCP 서버로 등록해 CLI와
-동일한 67개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
+동일한 72개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
 비밀번호가 대화 컨텍스트에 남지 않도록 의도적으로 MCP 도구로 노출하지
 않는다(CLI 전용) - `auth_whoami`만 로그인 상태 확인용 예외.
 

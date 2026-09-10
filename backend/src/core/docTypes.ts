@@ -12,6 +12,7 @@ export interface DocType {
   id: string;
   code: string;
   label: string;
+  guideline: string | null;
 }
 
 export interface DocStatus {
@@ -41,7 +42,7 @@ function assertExactlyOneScope(scope: ScopeInput): void {
   }
 }
 
-export async function createDocType(scope: ScopeInput, code: string, label: string): Promise<DocType> {
+export async function createDocType(scope: ScopeInput, code: string, label: string, guideline?: string): Promise<DocType> {
   // 빈 문자열은 "안 넘김"으로 정규화 - createProjectGroup/createProject와
   // 같은 이유(QA 2회차에서 발견) - 안 그러면 assertExactlyOneScope의
   // truthy 체크를 통과해버려서 검증 없이 Prisma에 그대로 들어간다.
@@ -74,9 +75,21 @@ export async function createDocType(scope: ScopeInput, code: string, label: stri
       projectId: scope.projectId ?? null,
       code: code.toUpperCase(),
       label,
+      guideline: guideline?.trim() || null,
     },
   });
-  return { id: row.id, code: row.code, label: row.label };
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline };
+}
+
+/** DocType 생성 후 지침을 새로 쓰거나 수정한다 - 빈 문자열은 "지침
+ * 지우기"로 취급(null 정규화, createDocType과 같은 관례). */
+export async function setDocTypeGuideline(docTypeId: string, guideline: string): Promise<DocType> {
+  const db = getDb();
+  const row = await db.docType.update({
+    where: { id: docTypeId },
+    data: { guideline: guideline.trim() || null },
+  });
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline };
 }
 
 export async function addDocStatus(
@@ -112,7 +125,7 @@ export async function listDocTypes(scope: ScopeInput): Promise<DocType[]> {
       projectId: scope.projectId ?? undefined,
     },
   });
-  return rows.map((r: DocType) => ({ id: r.id, code: r.code, label: r.label }));
+  return rows.map((r: DocType) => ({ id: r.id, code: r.code, label: r.label, guideline: r.guideline }));
 }
 
 export async function listDocStatuses(docTypeId: string): Promise<DocStatus[]> {
@@ -132,18 +145,20 @@ export async function findDocTypeByCode(projectId: string, code: string): Promis
   const upperCode = code.toUpperCase();
 
   const projectRow = await db.docType.findFirst({ where: { projectId, code: upperCode } });
-  if (projectRow) return { id: projectRow.id, code: projectRow.code, label: projectRow.label };
+  if (projectRow) return { id: projectRow.id, code: projectRow.code, label: projectRow.label, guideline: projectRow.guideline };
 
   const project = await db.project.findUnique({ where: { id: projectId } });
   if (!project) return null;
 
   const groupRow = await db.docType.findFirst({ where: { projectGroupId: project.projectGroupId, code: upperCode } });
-  if (groupRow) return { id: groupRow.id, code: groupRow.code, label: groupRow.label };
+  if (groupRow) return { id: groupRow.id, code: groupRow.code, label: groupRow.label, guideline: groupRow.guideline };
 
   const group = await db.projectGroup.findUnique({ where: { id: project.projectGroupId } });
   if (group?.institutionId) {
     const institutionRow = await db.docType.findFirst({ where: { institutionId: group.institutionId, code: upperCode } });
-    if (institutionRow) return { id: institutionRow.id, code: institutionRow.code, label: institutionRow.label };
+    if (institutionRow) {
+      return { id: institutionRow.id, code: institutionRow.code, label: institutionRow.label, guideline: institutionRow.guideline };
+    }
   }
 
   return null;
@@ -189,6 +204,7 @@ export async function getDocTypeById(
     id: row.id,
     code: row.code,
     label: row.label,
+    guideline: row.guideline,
     institutionId: row.institutionId,
     projectGroupId: row.projectGroupId,
     projectId: row.projectId,
@@ -254,6 +270,7 @@ export async function initialStatusFor(docTypeId: string): Promise<DocStatus> {
 interface SeedSpec {
   code: string;
   label: string;
+  guideline: string;
   statuses: { code: string; label: string; isTerminal?: boolean }[];
   transitions: [string, string][]; // [fromCode, toCode]
 }
@@ -262,6 +279,7 @@ const DEFAULT_TYPES: SeedSpec[] = [
   {
     code: "SP",
     label: "설계 명세",
+    guideline: "설계 결정과 그 근거를 기록한다 - 왜 이렇게 만들기로 했는지 나중에 되짚어볼 수 있도록.",
     statuses: [
       { code: "draft", label: "초안" },
       { code: "active", label: "적용 중" },
@@ -275,6 +293,7 @@ const DEFAULT_TYPES: SeedSpec[] = [
   {
     code: "DC",
     label: "결정 요청",
+    guideline: "설계자의 확인/선택이 필요한 사항을 등록한다 - 답변되면 반영 완료까지 추적한다.",
     statuses: [
       { code: "open", label: "미답변" },
       { code: "answered", label: "답변됨" },
@@ -288,6 +307,7 @@ const DEFAULT_TYPES: SeedSpec[] = [
   {
     code: "DN",
     label: "결과 보고",
+    guideline: "작업을 마친 뒤 무엇을 했는지, 어떻게 검증했는지 요약해 남긴다.",
     statuses: [{ code: "final", label: "완료", isTerminal: true }],
     transitions: [],
   },
@@ -298,7 +318,7 @@ const DEFAULT_TYPES: SeedSpec[] = [
  * 이후 자유롭게 추가/수정 가능(하드코딩 아님, 그냥 첫 데이터). */
 export async function seedDefaultDocTypes(projectId: string): Promise<void> {
   for (const spec of DEFAULT_TYPES) {
-    const docType = await createDocType({ projectId }, spec.code, spec.label);
+    const docType = await createDocType({ projectId }, spec.code, spec.label, spec.guideline);
     const statusIdByCode = new Map<string, string>();
     for (const s of spec.statuses) {
       const status = await addDocStatus(docType.id, s.code, s.label, s.isTerminal ?? false);

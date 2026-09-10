@@ -183,6 +183,7 @@ model DocType {
   projectId      String?
   code           String // 영문 2글자
   label          String
+  guideline      String? // "이 타입은 무엇을 하기 위한 것인가" 자연어 설명(선택)
   createdAt      DateTime @default(now())
 
   institution  Institution?  @relation(fields: [institutionId], references: [id])

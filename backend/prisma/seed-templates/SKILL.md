@@ -52,6 +52,13 @@ institution-doctype-status-add <institutionId> <docTypeId> <code>
 doctype-transitions <아무값> <docTypeId>`(`doctype_transitions`,
 첫 인자는 안 쓰임 - docTypeId만으로 스코프 상관없이 조회됨).
 
+타입 생성 시(`*-doctype-create ... --guideline "<설명>"`) 또는 나중에
+(`docs doctype-guideline-set <projectId> <docTypeId> <설명...>`, 그룹/
+기관 스코프는 `group-doctype-guideline-set`/`institution-doctype-
+guideline-set`) 그 타입이 "무엇을 하기 위한 것인지" 자연어 설명을
+붙일 수 있다 - `docs doctypes <projectId>` 응답의 `guideline` 필드로
+조회되며, 웹 UI 문서 생성 화면에서 힌트로도 보인다.
+
 ## 세션을 시작하거나 이 프로젝트를 다시 열 때
 
 `docs hook queue <projectId> --status pending`으로 대기 중인 push 훅이
@@ -96,9 +103,11 @@ viewer는 조회만).
 | 답변 대기 목록 | `docs pending <projectId>` | `pending_list` |
 | 답변 | `docs reply <questionTrackingCode> <answer>` | `question_reply` |
 | 코멘트 | `docs comment list/add/resolve` | `comment_list/add/resolve` |
-| 저장소 연결(자체 호스팅) | `docs git link <projectId>` | `git_link` |
-| 저장소 연결(외부) | `docs git link-external <projectId> --provider <github\|gitlab> --url <url>` | `git_link_external` |
+| 저장소 연결(생성/이주) | `docs git link <projectId> [--import-from <url>] [--credential <id>]` | `git_link` |
+| 저장소 연결(외부 연동) | `docs git link-external <projectId> --provider <github\|gitlab> --url <url> [--credential <id>]` | `git_link_external` |
 | 연결 정보 조회 | `docs git repo <projectId>` | `git_repo` |
+| 동기화 상태 확인 | `docs git sync-status <projectId>` | `git_sync_status` |
+| 동기화 제안 내보내기 | `docs git sync-proposal <projectId> [--out <dir>]` | `git_sync_proposal` |
 | git 로그 | `docs git log <projectId>` | `git_log` |
 | git diff | `docs git diff <projectId> <sha>` | `git_diff` |
 | git show | `docs git show <projectId> <sha>` | `git_show` |
@@ -133,9 +142,41 @@ API 호출 없음). **이 출력을 바로 apply에 넘기지 않는다** - 먼�
 같은 매니페스트를 두 번 `apply`하면 문서가 중복 생성되므로, 성공/실패
 여부를 확인하지 않고 재시도하지 않는다.
 
-`git log/diff/show`는 자체 호스팅(Gitea) 저장소가 연결된 프로젝트에서만
-동작한다 - 먼저 `git link`로 연결해야 하고, 외부 GitHub/GitLab로 연결한
-프로젝트에서는 "자체 호스팅만 지원"이라는 명확한 400이 온다.
+## git 저장소 연결(3가지 방식) + 동기화 제안
+
+프로젝트에 git 저장소를 연결하는 방법은 세 가지다 - 전부 웹 UI(프로젝트
+"설정" 탭)와 CLI/MCP 양쪽에서 가능:
+
+1. **새 저장소 생성**: `docs git link <projectId>` - Gitea에 빈 저장소를
+   만들고 연결한다.
+2. **외부 저장소 완전 이주**: `docs git link <projectId> --import-from
+   <url> [--credential <id>]` - 기존 저장소의 히스토리를 통째로 가져와
+   Gitea 저장소로 독립적으로 시작한다(1회성 - 이후 원본과 관계 없음).
+3. **외부 저장소 연동**: `docs git link-external <projectId> --provider
+   <github|gitlab> --url <url> [--credential <id>]` - 외부 저장소가
+   계속 권위(authoritative)를 갖는다. 관리 편의를 위해 Gitea에 미러
+   (읽기 전용 pull 사본)와 작업 저장소(이 시스템이 실제로 커밋하는 곳)
+   두 개를 만든다 - `git log/diff/show`/소스 에디터는 전부 작업
+   저장소 기준으로 동작한다.
+
+외부 저장소가 비공개라 인증이 필요하면 API가 명확한 에러로 알린다 -
+`docs credential add --type token --value <토큰> [--host <패턴>]`로
+자격증명을 먼저 등록해두고 `--credential <id>`로 넘기면 된다(웹 UI는
+이 과정을 자동화 - 인증 실패 시 그 자리에서 자격증명을 입력받아 저장한
+뒤 자동 재시도한다).
+
+**동기화 제안**(옵션 3으로 연동한 프로젝트 전용) - 이 시스템의 편집은
+작업 저장소에 쌓일 뿐 외부(권위) 저장소에 자동으로 반영되지 않는다.
+`docs git sync-status <projectId>`로 미러 대비 작업 저장소가 뭐가
+달라졌는지 확인한다(Gitea의 미러 동기화가 비동기라 요청 후 완료될 때
+까지 명령이 자동으로 기다렸다가 결과를 보여준다). 달라진 파일을 실제로
+가져오려면 `docs git sync-proposal <projectId> --out <dir>`로 로컬
+디렉터리에 받아, 거기서 직접 커밋·PR을 진행한다(자동 PR 생성은 지원
+안 함 - 항상 설계자 검토를 거치도록 의도한 설계).
+
+`git log/diff/show`는 자체 호스팅 저장소(옵션 1/2) 또는 외부 연동
+(옵션 3)이 연결된 프로젝트에서 동작한다 - 아직 연결 안 된 프로젝트는
+먼저 위 세 방법 중 하나로 연결해야 한다.
 **`git blame`은 지원하지 않는다** - Gitea REST API 자체에 blame
 엔드포인트가 없어서(알려진 플랫폼 제한, 임의 추측이 아니라 실제 Gitea
 인스턴스에 대고 확인함) 호출하면 그 사실을 알리는 명확한 에러가 온다 -

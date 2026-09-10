@@ -8,6 +8,7 @@ interface DocType {
   id: string;
   code: string;
   label: string;
+  guideline: string | null;
 }
 interface DocStatus {
   id: string;
@@ -42,6 +43,7 @@ const error = ref("");
 
 const newCode = ref("");
 const newLabel = ref("");
+const newGuideline = ref("");
 const createError = ref("");
 
 async function loadTypes() {
@@ -62,10 +64,11 @@ async function createType() {
   try {
     await apiCall(basePath.value, {
       method: "POST",
-      body: JSON.stringify({ code: newCode.value.trim(), label: newLabel.value.trim() }),
+      body: JSON.stringify({ code: newCode.value.trim(), label: newLabel.value.trim(), guideline: newGuideline.value.trim() || undefined }),
     });
     newCode.value = "";
     newLabel.value = "";
+    newGuideline.value = "";
     await loadTypes();
   } catch (err) {
     createError.value = err instanceof ApiError ? err.message : "생성에 실패했습니다";
@@ -94,6 +97,39 @@ function statusCode(statusId: string): string {
   return statuses.value.find((s) => s.id === statusId)?.code ?? statusId;
 }
 
+// ---------------------------------------------------------------- 지침(guideline) 보기/수정
+
+const editingGuideline = ref(false);
+const guidelineDraft = ref("");
+const guidelineSaving = ref(false);
+const guidelineSaveError = ref("");
+
+const expandedType = computed(() => types.value.find((t) => t.id === expandedId.value) ?? null);
+
+function startEditGuideline() {
+  guidelineDraft.value = expandedType.value?.guideline ?? "";
+  guidelineSaveError.value = "";
+  editingGuideline.value = true;
+}
+
+async function saveGuideline() {
+  if (!expandedId.value) return;
+  guidelineSaving.value = true;
+  guidelineSaveError.value = "";
+  try {
+    await apiCall(`${basePath.value}/${expandedId.value}/guideline`, {
+      method: "PUT",
+      body: JSON.stringify({ guideline: guidelineDraft.value }),
+    });
+    editingGuideline.value = false;
+    await loadTypes();
+  } catch (err) {
+    guidelineSaveError.value = err instanceof ApiError ? err.message : "지침 저장에 실패했습니다";
+  } finally {
+    guidelineSaving.value = false;
+  }
+}
+
 async function loadDetail(docTypeId: string) {
   detailLoading.value = true;
   detailError.value = "";
@@ -119,6 +155,7 @@ async function toggleExpand(docTypeId: string) {
   expandedId.value = docTypeId;
   statusAddError.value = "";
   transitionAddError.value = "";
+  editingGuideline.value = false;
   await loadDetail(docTypeId);
 }
 
@@ -175,6 +212,12 @@ onMounted(loadTypes);
       <input v-model="newLabel" type="text" placeholder="라벨" />
       <button type="submit">타입 만들기</button>
     </form>
+    <textarea
+      v-model="newGuideline"
+      class="guideline-input"
+      rows="2"
+      placeholder="이 타입은 무엇을 하기 위한 것인지(선택)"
+    ></textarea>
     <p v-if="createError" class="error">{{ createError }}</p>
 
     <p v-if="loading" class="muted">불러오는 중...</p>
@@ -189,6 +232,21 @@ onMounted(loadTypes);
           <p v-if="detailError" class="error">{{ detailError }}</p>
           <p v-if="detailLoading" class="muted">불러오는 중...</p>
           <template v-else>
+            <h4>지침</h4>
+            <div v-if="!editingGuideline" class="guideline-view">
+              <p v-if="expandedType?.guideline" class="guideline-text">{{ expandedType.guideline }}</p>
+              <p v-else class="muted">지침 없음</p>
+              <button class="edit-btn" @click="startEditGuideline">수정</button>
+            </div>
+            <div v-else class="guideline-edit">
+              <textarea v-model="guidelineDraft" rows="2" placeholder="이 타입은 무엇을 하기 위한 것인지"></textarea>
+              <div class="guideline-edit-actions">
+                <button :disabled="guidelineSaving" @click="saveGuideline">저장</button>
+                <button type="button" class="cancel-btn" @click="editingGuideline = false">취소</button>
+              </div>
+              <p v-if="guidelineSaveError" class="error">{{ guidelineSaveError }}</p>
+            </div>
+
             <h4>상태</h4>
             <ul class="statuses">
               <li v-for="s in statuses" :key="s.id">
@@ -255,6 +313,57 @@ onMounted(loadTypes);
   border: 1px solid #d8dae0;
   border-radius: 6px;
   font-size: 13px;
+}
+.guideline-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  margin-bottom: 4px;
+}
+.guideline-view {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.guideline-text {
+  flex: 1;
+  font-size: 13px;
+  margin: 0;
+  white-space: pre-wrap;
+}
+.edit-btn,
+.guideline-edit-actions button {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.edit-btn:hover {
+  background: #eef0f6;
+}
+.guideline-edit textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+.guideline-edit-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.guideline-edit-actions .cancel-btn {
+  color: #888;
 }
 .create-row button {
   background: #3454d1;

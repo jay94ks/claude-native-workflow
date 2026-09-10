@@ -866,21 +866,119 @@ institutionsEnabled`를 DB에서 직접 껐다 켜서 기관 메뉴 숨김/복�
 레이아웃에서도 정상 렌더링 재확인. `vue-tsc -b`/`npm run build`
 클린 확인.
 
+## 웹 UI git 저장소 연결(3가지 방식) + DocType 자연어 지침 - 완료 (2026-09-10)
+
+"다음 단계" 1번(웹 UI git 저장소 생성)과 2번(DocType 지침 필드)을
+같이 진행해달라는 요청 - 1번은 대화 중 피드백으로 범위가 "생성 버튼
+하나"에서 "연결 방식 3가지(생성/이주/연동) + 인증 필요 시 자동
+재시도 + 외부-권위 저장소와의 동기화 제안" 전체 재설계로 크게
+넓어졌다.
+
+### git 저장소 연결 3가지 방식
+
+- **옵션 1(새 저장소 생성)**: 기존 `linkSelfHostedRepo` 그대로(빈
+  Gitea 저장소).
+- **옵션 2(외부 저장소 완전 이주)**: `linkSelfHostedRepo`에
+  `importFrom` 파라미터 추가 - `gitea.migrateRepo(slug, url,
+  {mirror:false})`로 히스토리를 통째로 가져온 독립 저장소로 시작.
+  결과는 옵션 1과 똑같이 `provider:"self_hosted"`(연결 시점 한 번의
+  선택일 뿐 그 이후 동작은 완전히 동일하므로 구분 저장 안 함).
+- **옵션 3(외부 저장소를 주된 저장소로 연동)**: 신규
+  `linkExternalAsPrimary()`(기존 `linkExternalRepo` 대체) - Gitea에
+  미러(`${slug}-mirror`, `mirror:true` - 외부를 주기적으로 pull하는
+  읽기 전용 사본)와 작업 저장소(`${slug}-work`, `mirror:false` - 이
+  시스템이 실제로 커밋하는 곳) 두 개를 만든다. 두 슬러그는 새 DB
+  컬럼 없이 `slugForProject()`에서 결정론적으로 파생. `provider`에
+  새 값 `"external_linked"` 추가. 신규 `requireGiteaWorkingSlug()`
+  (기존 `requireSelfHostedRepo` 대체)가 provider별로 실제 슬러그를
+  돌려줘서, git log/diff/show/tree/file(GET·PUT)/template-deploy
+  9개 라우트 전부가 `external_linked` 프로젝트에서도 동작하게 됨
+  (예전엔 "외부 호스팅 미지원" 400이었음 - 이번에 해소된 기존 한계).
+
+### 인증이 필요한 외부 저장소
+
+옵션 2/3에서 비공개 저장소를 자격증명 없이 시도하면 Gitea의 migrate
+API가 실패한다 - `gitea.ts`에 `GitAuthRequiredError`를 신설해 401/403/
+인증 관련 본문 패턴을 구분해서 던지고, API 레이어(`POST .../git/link`,
+`.../git/link-external`)가 이걸 `422 {error:"git_auth_required",
+hostPattern}`으로 응답한다(401이 아니라 422를 쓴 이유 - `client.ts`의
+`callWithRefresh()`가 모든 401을 "액세스 토큰 만료"로 해석해 리프레시를
+시도하는 기존 인터셉터와 충돌하는 걸 피하려고, 구현 중 발견). 웹 UI
+(`GitRepoPanel.vue`, 신규)는 이 응답을 보면 그 자리에 자격증명 입력
+폼을 띄우고, 저장(`POST /credentials` - 기존 `addGitCredential`,
+AES-256-GCM 암호화 재사용) 후 같은 요청을 자동 재시도한다.
+
+**구현 중 발견해 같이 고친 버그**: Gitea의 migrate API는 저장소 레코드를
+먼저 만들고 그다음 clone을 시도한다 - clone이 인증 실패로 죽으면 빈
+stub 저장소만 남는다. 이 상태로 같은 slug(프로젝트당 결정론적이라
+항상 같음)를 재시도하면 "이미 존재합니다"로 막혀서, 자격증명을 새로
+넣고 재시도해도 **영원히 실패**하는 심각한 버그였다(자격증명 프롬프트
+전체 UX가 사실상 못 쓰는 상태). `gitea.deleteRepo()` 신설 +
+`migrateRepoOrCleanUp()` 래퍼로 실패 시 stub을 지우고 원래 에러를
+던지도록 고침 - 옵션 3은 미러/작업 두 저장소 중 하나만 실패해도 둘 다
+정리(절반만 연결된 상태 방지). 실제 Gitea 컨테이너에 비공개 저장소를
+대상으로(같은 Gitea 인스턴스를 임시로 "외부"인 척 가리키는 방식 -
+`GITEA__migrations__ALLOW_LOCALNETWORKS`를 검증 중에만 켰다가 원복)
+"인증 없이 시도 → 422 확인 → stub 정리 확인 → 자격증명 저장 → 재시도
+→ 성공"까지 웹 브라우저로 전체 흐름을 실측했다.
+
+### 동기화 상태 확인 - 큐 메커니즘
+
+**설계자 지적으로 재설계**: Gitea의 mirror-sync 트리거는 비동기
+큐잉이다(호출이 성공해도 실제 pull은 아직 안 끝났을 수 있음) - 처음엔
+"트리거 → 즉시 비교"로 구현했는데, 이러면 옛 상태를 읽을 위험이 있다는
+지적을 받고 요청/조회를 분리했다: `POST .../git/sync-status`가 트리거만
+하고 즉시 반환(`scheduled`/`already-scheduled` - 이미 진행 중이면 새로
+트리거 안 함, 메모리 맵 `syncStateByProject`로 프로젝트당 하나만
+추적), 백그라운드에서 `mirror_updated` 타임스탬프가 실제로 바뀔 때까지
+짧게 폴링(최대 20초)한 뒤 미러/작업 저장소 전체 트리(`gitea.
+getFullTree()` - 재귀 blob 목록, 신규) 비교 결과를 캐시. `GET .../git/
+sync-status`가 그 캐시를 조회(`none`/`pending`/`ready`). 웹 UI 버튼은
+`pending`이면 "동기화 확인 예정됨..."으로 비활성화되고 1.5초 간격으로
+자동 폴링, 화면 진입 시에도 이미 진행 중인 요청이 있으면 처음부터
+비활성 상태로 보여준다. CLI(`docs git sync-status`)/MCP
+(`git_sync_status`)는 트리거 후 `ready`가 될 때까지 명령 자체가
+대기했다가 결과를 반환(`docs message wait`와 같은 "한 번의 호출로
+비동기를 기다리는" 패턴). `docs git sync-proposal --out <dir>`는 달라진
+파일을 로컬에 그대로 써준다(직접 커밋·PR은 설계자 몫 - 자동 PR 생성은
+범위 밖, 항상 사람 검토를 거치게 하려는 의도).
+
+### DocType 자연어 지침
+
+`DocType`에 nullable `guideline` 컬럼 추가(3드라이버 스키마) -
+`createDocType()`에 선택 파라미터로, 신규 `setDocTypeGuideline()`으로
+나중에 수정도 가능(빈 문자열은 지우기). 세 스코프 생성 라우트/CLI(
+`--guideline` 옵션)/MCP에 전부 반영, 새 PUT 라우트 3개(스코프별) +
+CLI(`*-doctype-guideline-set`)/MCP(`doctype_guideline_set*`) 3개씩.
+`DocTypeManager.vue`에 생성 폼 textarea + 펼침 패널에 보기/수정 UI.
+기본 시드 타입(SP/DC/DN) 세 개에도 예시 지침을 채워 새 프로젝트를
+만들자마자 기능을 보여줌. 실제로 쓸모 있으려면 생성 시점에 보여야
+하므로 `DocumentsView.vue`/`DocumentExplorer.vue`(사이드바 인라인
+생성)에 선택한 타입의 지침을 힌트로 노출.
+
+**구현 중 발견해 같이 고친 버그**: 옵션 3 연동 성공 후 보여주는
+"`docs migrate scan`으로 가져올 수 있습니다" 안내 문구가 템플릿상
+"연결 안 됨" 분기 안에만 있어서, 연결이 실제로 성공하는 순간
+`v-else-if="gitRepo"` 분기로 바뀌며 안내가 아예 안 보이는 죽은
+코드였다 - 연결됨 분기로 옮겨서 고침(실제 브라우저로 옵션 3 연동을
+왕복하다 발견).
+
+검증: 실제 Gitea 컨테이너 + 공개 GitHub 저장소(octocat/Hello-World)로
+옵션 1/2/3 전부 실측(옵션 2는 실제 커밋 히스토리 3개가 그대로
+들어왔는지, 옵션 3은 미러/작업 저장소 둘 다 실제로 생성됐는지 Gitea
+API로 대조) → 소스 에디터로 작업 저장소 파일 수정·커밋 → 동기화 상태
+확인이 실제로 `changed`를 잡아내는지 → 동기화 제안이 수정한 내용
+그대로를 반환하는지 → CLI `sync-status`/`sync-proposal --out`, MCP
+`git_sync_status`/`git_sync_proposal`이 웹과 동일한 결과를 내는지
+대조. 인증 필요 케이스 전체 흐름(422 → stub 정리 확인 → 자격증명 저장 →
+자동 재시도 → 성공)을 옵션 2/3 둘 다 curl과 실제 브라우저 양쪽으로
+왕복 실측. `npx tsc --noEmit`(backend), `vue-tsc -b`+`npm run
+build`(frontend) 클린 확인.
+
 ## 다음 단계
 
-설계자에게 요청받은 것 세 가지가 다음 라운드로 남아 있다(아직 계획
-단계 시작 전):
-1. **웹 UI에서 git 저장소 생성** - 프로젝트 "설정" 탭에서 "git 저장소
-   생성" 같은 동작을 실행하면 백그라운드에서 서버가 Gitea 저장소를
-   만들고 자동으로 연동까지 끝내야 함(지금은 `docs git link`로 CLI에서만
-   가능 - 기존 `POST /api/projects/:projectId/git/link`를 웹 UI 버튼으로
-   노출하는 완전성 작업).
-2. **DocType별 자연어 지침 필드** - "이 타입은 무엇을 하기 위한 것이다"를
-   적을 수 있는 설명/지침 칸을 DocType 자체에 추가(스키마 변경 필요 -
-   지금 `DocType`은 `code`/`label`만 있고 서술형 설명이 없음). 문서 타입
-   관리 UI(`DocTypeManager.vue`)에서 작성 가능해야 하고, CLI/MCP도
-   완전성 원칙에 따라 같이 노출.
-3. **"기관" 용어를 "팀"으로 변경** - 웹 UI 표시 텍스트 전반("기관" →
-   "팀")의 용어 교정. DB 컬럼/코드 식별자(institutionId 등)는 안 바꾸고
-   사용자에게 보이는 라벨만 교정하는 것으로 추정 - 범위를 다음 계획
-   단계에서 설계자와 확인 필요.
+설계자가 다음 단계로 요청한 것 하나가 남아 있다(아직 계획 단계 시작
+전): **"기관" 용어를 "팀"으로 변경** - 웹 UI 표시 텍스트 전반("기관" →
+"팀")의 용어 교정. DB 컬럼/코드 식별자(institutionId 등)는 안 바꾸고
+사용자에게 보이는 라벨만 교정하는 것으로 추정 - 범위를 다음 계획
+단계에서 설계자와 확인 필요.

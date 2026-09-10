@@ -21,6 +21,7 @@ import {
   getDocTypeById,
   addDocStatusTransitionByCode,
   listDocStatusTransitions,
+  setDocTypeGuideline,
 } from "../core/docTypes.js";
 import {
   createDocument,
@@ -39,7 +40,17 @@ import { addComment, listComments, resolveComment } from "../core/comments.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
 import { ensureSearchIndexes } from "../core/search.js";
 import { authenticate, requireProjectRole, type AuthedRequest } from "../middleware/auth.js";
-import { linkSelfHostedRepo, linkExternalRepo, getProjectGitRepo, getWebhookSecret, requireSelfHostedRepo, slugForProject } from "../core/gitRepos.js";
+import {
+  linkSelfHostedRepo,
+  linkExternalAsPrimary,
+  getProjectGitRepo,
+  getWebhookSecret,
+  requireGiteaWorkingSlug,
+  requestGitSyncStatus,
+  getCachedGitSyncStatus,
+  getGitSyncProposal,
+  GitAuthRequiredError,
+} from "../core/gitRepos.js";
 import * as gitea from "../core/gitea.js";
 import { verifyAndParseWebhook, recordPushEvent } from "../core/pushHooks.js";
 import {
@@ -281,9 +292,9 @@ app.post(
   authenticate,
   requireProjectRole("owner"),
   asyncRoute(async (req, res) => {
-    const { code, label } = req.body as { code?: string; label?: string };
+    const { code, label, guideline } = req.body as { code?: string; label?: string; guideline?: string };
     if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await createDocType({ projectId: req.params.projectId }, code, label));
+    res.json(await createDocType({ projectId: req.params.projectId }, code, label, guideline));
   }),
 );
 
@@ -320,9 +331,9 @@ app.post(
   "/api/institutions/:institutionId/doc-types",
   authenticate,
   asyncRoute(async (req, res) => {
-    const { code, label } = req.body as { code?: string; label?: string };
+    const { code, label, guideline } = req.body as { code?: string; label?: string; guideline?: string };
     if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await createDocType({ institutionId: req.params.institutionId }, code, label));
+    res.json(await createDocType({ institutionId: req.params.institutionId }, code, label, guideline));
   }),
 );
 
@@ -338,9 +349,9 @@ app.post(
   "/api/project-groups/:groupId/doc-types",
   authenticate,
   asyncRoute(async (req, res) => {
-    const { code, label } = req.body as { code?: string; label?: string };
+    const { code, label, guideline } = req.body as { code?: string; label?: string; guideline?: string };
     if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await createDocType({ projectGroupId: req.params.groupId }, code, label));
+    res.json(await createDocType({ projectGroupId: req.params.groupId }, code, label, guideline));
   }),
 );
 
@@ -414,6 +425,21 @@ app.post(
   }),
 );
 
+app.put(
+  "/api/projects/:projectId/doc-types/:docTypeId/guideline",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { guideline } = req.body as { guideline?: string };
+    if (guideline === undefined) { res.status(400).json({ error: "guideline이 필요합니다" }); return; }
+    res.json(await setDocTypeGuideline(req.params.docTypeId, guideline));
+  }),
+);
+
 // 기관/그룹 스코프 DocType에 상태/전이 붙이기 - 생성/목록 라우트와 같은
 // 인가 수준(authenticate만, 기관/그룹 단위 관리자 역할이 아직 없다는
 // 이미 문서화된 한계를 그대로 따름 - PUT /api/templates와 동일).
@@ -452,6 +478,20 @@ app.post(
   }),
 );
 
+app.put(
+  "/api/institutions/:institutionId/doc-types/:docTypeId/guideline",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocTypeByInstitution(req.params.institutionId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 기관에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { guideline } = req.body as { guideline?: string };
+    if (guideline === undefined) { res.status(400).json({ error: "guideline이 필요합니다" }); return; }
+    res.json(await setDocTypeGuideline(req.params.docTypeId, guideline));
+  }),
+);
+
 app.post(
   "/api/project-groups/:groupId/doc-types/:docTypeId/statuses",
   authenticate,
@@ -484,6 +524,20 @@ app.post(
       return;
     }
     res.json(await addDocStatusTransitionByCode(req.params.docTypeId, fromStatusCode, toStatusCode, label));
+  }),
+);
+
+app.put(
+  "/api/project-groups/:groupId/doc-types/:docTypeId/guideline",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { guideline } = req.body as { guideline?: string };
+    if (guideline === undefined) { res.status(400).json({ error: "guideline이 필요합니다" }); return; }
+    res.json(await setDocTypeGuideline(req.params.docTypeId, guideline));
   }),
 );
 
@@ -793,12 +847,46 @@ app.post(
 
 // ---------------------------------------------------------------- git 저장소 연결 + 이력 조회 (Phase 2)
 
+// importFrom.repoUrl이 인증을 요구해 실패하면(비공개 저장소인데 자격증명
+// 없음/틀림) 일반 400이 아니라 422 + git_auth_required로 응답한다 -
+// 프런트가 그 자리에서 자격증명 입력 폼을 띄우고 저장 후 재시도할 수
+// 있게(설계자 확인 - "인증이 필요한 외부 저장소" 흐름). hostPattern은
+// 입력받은 URL의 host를 그대로 - 자격증명 입력 폼의 host 필드를 미리
+// 채우는 데 씀. 401이 아니라 422를 쓰는 이유 - frontend/src/api/
+// client.ts의 callWithRefresh()가 모든 401을 "액세스 토큰 만료"로
+// 해석해 리프레시 토큰 갱신을 시도한다(그 자체는 무해하게 성공하고
+// 재시도해도 이 라우트는 또 같은 이유로 실패하지만, 만약 그 순간
+// 리프레시 토큰마저 만료돼 있으면 설계자의 로그인 세션 자체가
+// 로그아웃되는 무관한 부작용이 생길 수 있다 - 이 라우트의 401은
+// "설계자 세션" 문제가 전혀 아니므로 그 인터셉터와 충돌하지 않는
+// 상태 코드를 쓴다).
+function hostOf(url: string): string | undefined {
+  try {
+    return new URL(url).host;
+  } catch {
+    return undefined;
+  }
+}
+
 app.post(
   "/api/projects/:projectId/git/link",
   authenticate,
   requireProjectRole("owner"),
   asyncRoute(async (req, res) => {
-    res.json(await linkSelfHostedRepo(req.params.projectId));
+    const { importFrom } = req.body as { importFrom?: { repoUrl?: string; gitCredentialId?: string } };
+    try {
+      const result = await linkSelfHostedRepo(
+        req.params.projectId,
+        importFrom?.repoUrl ? { repoUrl: importFrom.repoUrl, gitCredentialId: importFrom.gitCredentialId } : undefined,
+      );
+      res.json(result);
+    } catch (err) {
+      if (err instanceof GitAuthRequiredError) {
+        res.status(422).json({ error: "git_auth_required", hostPattern: importFrom?.repoUrl ? hostOf(importFrom.repoUrl) : undefined });
+        return;
+      }
+      throw err;
+    }
   }),
 );
 
@@ -817,7 +905,15 @@ app.post(
       return;
     }
     if (!repoUrl) { res.status(400).json({ error: "repoUrl이 필요합니다" }); return; }
-    res.json(await linkExternalRepo(req.params.projectId, provider, repoUrl, gitCredentialId));
+    try {
+      res.json(await linkExternalAsPrimary(req.params.projectId, provider, repoUrl, gitCredentialId));
+    } catch (err) {
+      if (err instanceof GitAuthRequiredError) {
+        res.status(422).json({ error: "git_auth_required", hostPattern: hostOf(repoUrl) });
+        return;
+      }
+      throw err;
+    }
   }),
 );
 
@@ -837,9 +933,9 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    await requireSelfHostedRepo(req.params.projectId);
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
     const ref = req.query.ref as string | undefined;
-    res.json(await gitea.listCommits(slugForProject(req.params.projectId), { ref }));
+    res.json(await gitea.listCommits(slug, { ref }));
   }),
 );
 
@@ -848,8 +944,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    await requireSelfHostedRepo(req.params.projectId);
-    const diff = await gitea.getCommitDiff(slugForProject(req.params.projectId), req.params.sha);
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const diff = await gitea.getCommitDiff(slug, req.params.sha);
     res.type("text/plain").send(diff);
   }),
 );
@@ -859,10 +955,10 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    await requireSelfHostedRepo(req.params.projectId);
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
     const filepath = req.query.path as string | undefined;
     if (!filepath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
-    res.json(await gitea.getBlame(slugForProject(req.params.projectId), filepath, req.query.ref as string | undefined));
+    res.json(await gitea.getBlame(slug, filepath, req.query.ref as string | undefined));
   }),
 );
 
@@ -871,8 +967,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    await requireSelfHostedRepo(req.params.projectId);
-    res.json(await gitea.getCommit(slugForProject(req.params.projectId), req.params.sha));
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    res.json(await gitea.getCommit(slug, req.params.sha));
   }),
 );
 
@@ -883,9 +979,9 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    await requireSelfHostedRepo(req.params.projectId);
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
     const dirPath = (req.query.path as string | undefined) ?? "";
-    res.json(await gitea.listTree(slugForProject(req.params.projectId), dirPath, req.query.ref as string | undefined));
+    res.json(await gitea.listTree(slug, dirPath, req.query.ref as string | undefined));
   }),
 );
 
@@ -894,10 +990,10 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    await requireSelfHostedRepo(req.params.projectId);
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
     const filePath = req.query.path as string | undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
-    res.json(await gitea.getFileContent(slugForProject(req.params.projectId), filePath, req.query.ref as string | undefined));
+    res.json(await gitea.getFileContent(slug, filePath, req.query.ref as string | undefined));
   }),
 );
 
@@ -906,13 +1002,46 @@ app.put(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    await requireSelfHostedRepo(req.params.projectId);
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
     const filePath = req.query.path as string | undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const { content, message } = req.body as { content?: string; message?: string };
     if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
-    await gitea.putFileContent(slugForProject(req.params.projectId), filePath, content, message || `docs: update ${filePath}`);
+    await gitea.putFileContent(slug, filePath, content, message || `docs: update ${filePath}`);
     res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- 동기화 제안 (외부 연동 전용 - 미러 vs 작업 저장소)
+// Gitea의 mirror-sync 트리거가 비동기 큐잉이라(즉시 완료 안 됨) 요청/조회를
+// 분리한다 - POST가 트리거(즉시 "예정됨"/"이미 예정됨" 반환), GET이
+// 그 결과를 폴링(pending/ready/none). 이미 진행 중일 때 POST를 또
+// 호출해도 새로 트리거하지 않는다(requestGitSyncStatus 내부에서 처리).
+
+app.post(
+  "/api/projects/:projectId/git/sync-status",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await requestGitSyncStatus(req.params.projectId));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/sync-status",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await getCachedGitSyncStatus(req.params.projectId));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/sync-proposal",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await getGitSyncProposal(req.params.projectId));
   }),
 );
 
@@ -1006,8 +1135,7 @@ app.post(
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
     const projectId = req.params.projectId;
-    await requireSelfHostedRepo(projectId);
-    const slug = slugForProject(projectId);
+    const slug = await requireGiteaWorkingSlug(projectId);
     const deployed: string[] = [];
 
     const claudeMd = await resolveTemplate("CLAUDE.md", projectId);

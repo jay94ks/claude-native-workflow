@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import DocTypeManager from "../components/DocTypeManager.vue";
+import GitRepoPanel from "../components/GitRepoPanel.vue";
 
 const props = defineProps<{ id: string }>();
 
@@ -15,14 +16,9 @@ interface Member {
   userId: string;
   role: string;
 }
-interface GitRepo {
-  provider: string;
-  repoUrl: string;
-}
 
 const docTypes = ref<DocType[]>([]);
 const members = ref<Member[]>([]);
-const gitRepo = ref<GitRepo | null>(null);
 const loading = ref(true);
 const error = ref("");
 
@@ -40,7 +36,6 @@ async function load() {
     ]);
     docTypes.value = types;
     members.value = memberList;
-    gitRepo.value = await apiCall<GitRepo>(`/projects/${props.id}/git/repo`).catch(() => null);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "프로젝트 정보를 불러오지 못했습니다";
   } finally {
@@ -73,8 +68,7 @@ onMounted(load);
 
     <section>
       <h2>git 저장소</h2>
-      <p v-if="gitRepo">{{ gitRepo.provider }} - {{ gitRepo.repoUrl }}</p>
-      <p v-else class="muted">연결된 git 저장소가 없습니다(`docs git link`로 연결).</p>
+      <GitRepoPanel :project-id="id" />
     </section>
 
     <section>

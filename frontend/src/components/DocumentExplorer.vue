@@ -12,6 +12,7 @@ interface DocType {
   id: string;
   code: string;
   label: string;
+  guideline: string | null;
 }
 interface DocumentSummary {
   trackingCode: string;
@@ -112,10 +113,13 @@ onUnmounted(() => disconnect?.());
           <button class="add-btn" title="새 문서" @click.stop="startCreate(g.type.id)">+</button>
         </div>
         <div v-if="!collapsedTypeIds.has(g.type.id)" class="group-body">
-          <form v-if="creatingTypeId === g.type.id" class="create-row" @submit.prevent="submitCreate(g.type)">
-            <input v-model="newTitle" type="text" placeholder="새 문서 제목" autofocus />
-            <button type="submit" :disabled="creating">만들기</button>
-          </form>
+          <template v-if="creatingTypeId === g.type.id">
+            <p v-if="g.type.guideline" class="guideline-hint">{{ g.type.guideline }}</p>
+            <form class="create-row" @submit.prevent="submitCreate(g.type)">
+              <input v-model="newTitle" type="text" placeholder="새 문서 제목" autofocus />
+              <button type="submit" :disabled="creating">만들기</button>
+            </form>
+          </template>
           <ul class="docs">
             <li v-for="d in g.docs" :key="d.trackingCode">
               <router-link
@@ -184,6 +188,11 @@ onUnmounted(() => disconnect?.());
 }
 .group-body {
   padding-left: 18px;
+}
+.guideline-hint {
+  font-size: 11px;
+  color: #8688a8;
+  margin: 4px 0 0;
 }
 .create-row {
   display: flex;
