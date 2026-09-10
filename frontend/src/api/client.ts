@@ -60,7 +60,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiCall<T>(pathSuffix: string, init: RequestInit = {}): Promise<T> {
+async function callWithRefresh(pathSuffix: string, init: RequestInit): Promise<Response> {
   let res = await rawFetch(pathSuffix, init);
   if (res.status === 401 && getAccessToken()) {
     const refreshed = await refreshAccessToken();
@@ -70,10 +70,27 @@ export async function apiCall<T>(pathSuffix: string, init: RequestInit = {}): Pr
       clearTokens();
     }
   }
+  return res;
+}
+
+export async function apiCall<T>(pathSuffix: string, init: RequestInit = {}): Promise<T> {
+  const res = await callWithRefresh(pathSuffix, init);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new ApiError(res.status, (body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+// git/diff/:sha처럼 text/plain을 반환하는 엔드포인트용(unified diff 텍스트
+// - JSON이 아니므로 apiCall의 res.json()을 타면 안 됨). CLI의
+// apiclient.ts apiCallText와 같은 이유.
+export async function apiCallText(pathSuffix: string, init: RequestInit = {}): Promise<string> {
+  const res = await callWithRefresh(pathSuffix, init);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new ApiError(res.status, (body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return res.text();
 }

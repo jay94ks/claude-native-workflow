@@ -19,6 +19,7 @@ const router = createRouter({
       props: true,
     },
     { path: "/projects/:id/source", name: "source", component: () => import("../views/SourceBrowserView.vue"), props: true },
+    { path: "/projects/:id/changes", name: "changes", component: () => import("../views/ChangeTrackingView.vue"), props: true },
   ],
 });
 

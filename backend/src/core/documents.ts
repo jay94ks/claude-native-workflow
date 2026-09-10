@@ -121,6 +121,33 @@ export async function searchProjectDocuments(
   return searchDocuments(query, { projectId });
 }
 
+export interface DocumentRevisionSummary {
+  id: string;
+  body: string;
+  editedBy: string;
+  editedAt: string;
+}
+
+// saveDocumentBody()가 수정 직전 스냅샷을 매번 여기 쌓아왔다(Phase 0부터) -
+// 지금까지 조회 API가 없었다. 가장 최신 상태는 이 테이블이 아니라
+// Document.body 자체이므로(리비전 = "그 시점까지의" 스냅샷), 호출부가
+// 현재 본문(GET /api/documents/:trackingCode)과 합쳐서 타임라인을 구성한다.
+export async function listDocumentRevisions(trackingCode: string): Promise<DocumentRevisionSummary[]> {
+  const db = getDb();
+  const doc = await db.document.findUnique({ where: { trackingCode } });
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const revisions = await db.documentRevision.findMany({
+    where: { documentId: doc.id },
+    orderBy: { editedAt: "asc" },
+  });
+  return (revisions as { id: string; body: string; editedBy: string; editedAt: Date }[]).map((r) => ({
+    id: r.id,
+    body: r.body,
+    editedBy: r.editedBy,
+    editedAt: r.editedAt.toISOString(),
+  }));
+}
+
 export async function saveDocumentBody(
   trackingCode: string,
   newBody: string,

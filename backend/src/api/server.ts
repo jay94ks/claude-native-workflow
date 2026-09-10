@@ -22,6 +22,7 @@ import {
   transitionDocumentStatus,
   addDocumentLink,
   listBacklinks,
+  listDocumentRevisions,
 } from "../core/documents.js";
 import { createReport } from "../core/report.js";
 import { addQuestion, listPendingQuestions, answerQuestion } from "../core/questions.js";
@@ -153,6 +154,20 @@ app.get(
   authenticate,
   asyncRoute(async (_req, res) => {
     res.json(await getInstallConfig());
+  }),
+);
+
+// 웹 UI가 EMQX에 MQTT-over-WebSocket으로 직접 붙을 때 쓸 접속 주소 조회 -
+// PUBLIC_BACKEND_URL과 같은 이유로 브라우저는 docker 네트워크 밖에 있어
+// emqx:8083이 아니라 호스트에 노출된 주소가 필요하다. 미설정이면 null -
+// 다른 모든 EMQX 통합 지점과 같은 fail-soft 원칙(실시간 갱신만 조용히
+// 꺼짐). 문서/워크플로우 상태 조회가 아니라 브라우저의 런타임 접속
+// 정보라 CLI/MCP 미러는 불필요(install-config와 같은 판단).
+app.get(
+  "/api/realtime-config",
+  authenticate,
+  asyncRoute(async (_req, res) => {
+    res.json({ mqttWsUrl: process.env.PUBLIC_EMQX_WS_URL ?? null });
   }),
 );
 
@@ -364,6 +379,14 @@ app.get(
   authenticate,
   asyncRoute(async (req, res) => {
     res.json(await listBacklinks(req.params.trackingCode));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/revisions",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listDocumentRevisions(req.params.trackingCode));
   }),
 );
 

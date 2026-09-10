@@ -330,7 +330,68 @@ Contents API로 직접 대조) + Gitea 커밋 로그에 실제 3개 커밋이 �
 프로젝트에서 소스 코드 화면이 안내 문구만 보여주고 안 깨지는지까지
 전부 확인. 테스트 후 컨테이너/스크래치 DB/자격증명 파일 전부 정리.
 
+## Phase 5 (3/3) - 완료 (2026-09-10)
+
+변경 추적 뷰(git 커밋 로그+diff, 문서 버전 이력 diff) + 메시징
+패널(프로젝트 상세 화면에 임베드) - 전부 브라우저가 EMQX에
+MQTT-over-WebSocket으로 직접 붙어 실시간 갱신. Phase 4가 마련해둔 JWT
+기반 authn/Member 기준 authz 인프라의 첫 실제 소비자.
+
+- **실시간 인프라**: EMQX 기본 WS 리스너(8083)를 `EMQX_WS_HOST_PORT`로
+  호스트에 노출 + 새 환경변수 `PUBLIC_EMQX_WS_URL`(브라우저가 docker
+  네트워크 밖에 있어 `PUBLIC_BACKEND_URL`과 같은 이유로 필요) + 새
+  `GET /api/realtime-config`(웹 UI 전용 설정 조회 - `install-config`와
+  같은 성격, CLI/MCP 미러 불필요). `frontend/src/realtime.ts`의
+  `connectProjectRealtime()`이 `mqtt` 패키지로 접속(username=userId,
+  password=JWT 액세스 토큰 - `core/emqxAuth.ts`가 그대로 검증), `project/
+  {id}/changes`+`.../messages` 구독. EMQX WS 미노출/미설정이면 조용히
+  비활성화(다른 모든 EMQX 통합 지점과 같은 fail-soft 원칙).
+- **메시징 패널**: 백엔드 변경 없음(Phase 4 엔드포인트 재사용) -
+  `MessagesPanel.vue`를 `ProjectDetailView`에 임베드, 실시간 수신
+  메시지를 목록에 즉시 append.
+- **변경 추적 뷰**(`/projects/:id/changes`): git 커밋 로그(기존 `git/
+  log`+`git/diff/:sha` 재사용, Gitea가 이미 주는 unified diff 텍스트를
+  줄 단위로 색만 입혀 렌더링) + 문서 버전 이력(신규 `GET .../documents/
+  :trackingCode/revisions` + `docs revisions`/`document_revisions`
+  CLI/MCP - `DocumentRevision`은 Phase 0부터 쌓여왔지만 조회 API가
+  없었음). 리비전 두 개를 골라 `diff`(jsdiff) 패키지로 줄 단위 diff.
+  `core/pushHooks.ts`의 `recordPushEvent()`에 `realtimePublish` 한 줄을
+  추가해(`ChangeEvent`의 `"project"` entity - 지금까지 정의만 되고 아무도
+  안 쓰던 값) push가 들어올 때마다 발행, git 로그 섹션도 새로고침 없이
+  갱신되게 함.
+- **실측 중 발견한 진짜 버그(수정함)**: 문서를 수정한 직후 그 변경이
+  실시간 이벤트로 다른 브라우저 탭에 도달해 변경 추적 뷰가 즉시
+  재조회하면, 문서 "현재" 본문(`GET /api/documents/:trackingCode`,
+  Meilisearch 색인 경유)이 방금 반영된 내용이 아니라 그 직전 값으로
+  조용히(200 OK로, 에러 없이) 돌아오는 경우가 있었다 - Phase 5(2/3)에서
+  겪은 것과 같은 Meilisearch 쓰기-직후-읽기 지연이지만, 그때는 404로
+  터져서 재시도가 자연스러웠던 반면 이번엔 실패 신호 자체가 없어(200 +
+  낡은 데이터) 더 찾기 어려웠다 - 실제로 두 브라우저 탭(알림 수신 쪽 +
+  API로 수정한 쪽)을 띄워 diff가 "변경 없음"으로 잘못 뜨는 걸 직접
+  재현한 뒤에야 확인. `ChangeTrackingView.vue`의 실시간 핸들러가 해당
+  문서의 변경 이벤트를 받으면 색인이 따라잡을 500ms를 기다린 뒤
+  재조회하도록 수정 - 수정 후 같은 시나리오를 재현해 diff가 실제 수정
+  내용(삭제/추가 줄)을 정확히 보여주는 것까지 확인.
+
+검증: 실제 Docker Compose 스택(Postgres+Meilisearch+EMQX+Gitea+backend,
+EMQX는 WS 포트까지 새로 노출) 전체를 기동, EMQX 대시보드에서 API
+Key(WS 포트와는 별개로 Admin REST API용) 발급 + Gitea 관리자 계정/PAT
+(repository+user 쓰기 권한 - 처음엔 user 스코프를 안 줘서 저장소 생성이
+403으로 막히는 걸 겪고 다시 발급) 1회 수동 설정. 계정 3개(alice/bob/
+carol)로: alice가 만든 프로젝트에 bob을 editor로 추가하고 carol은 비
+멤버로 남김. 브라우저에 alice로 로그인해 프로젝트 상세/변경 추적 화면을
+띄워두고, bob의 메시지 전송·문서 저장을 REST API로 별도 실행해 alice의
+화면이 새로고침 없이 갱신되는지 실측(메시징 패널 즉시 append, 리비전
+타임라인 즉시 갱신, 위 버그 수정 전/후 diff 결과 대조). `POST /api/emqx/
+authn`/`authz`를 실제 EMQX가 호출하는 것과 같은 입력으로 직접 호출해
+carol(비멤버)은 인증은 되지만 그 프로젝트 topic 구독은 거부되고,
+alice(owner)는 허용되고, 틀린 비밀번호는 인증 자체가 거부되는 세 경우
+모두 확인. `docs revisions`/MCP `document_revisions`가 실제 리비전
+이력과 일치하는지 CLI/stdio로 직접 호출해 대조. Phase 5(2/3)의 문서
+에디터/소스 브라우저 화면도 회귀 확인(정상). 테스트 후 컨테이너/볼륨/
+이미지/스크래치 `.env`/CLI 자격증명 파일 전부 정리.
+
 ## 다음 단계
 
-Phase 5 (3/3)(변경 추적 뷰 + 메시징 패널, EMQX MQTT-over-WebSocket
-실시간 갱신)은 아직 착수 전 - 설계자 승인 후 시작한다.
+Phase 5의 3개 설치가 모두 완료됐다 - 로드맵의 마지막 단계인 Phase
+6(가이디드 마이그레이션 도구)은 아직 착수 전, 설계자 승인 후 시작한다.

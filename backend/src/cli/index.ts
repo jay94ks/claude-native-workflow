@@ -264,6 +264,10 @@ program
   .command("backlinks <trackingCode>")
   .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/backlinks`))));
 
+program
+  .command("revisions <trackingCode>")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/revisions`))));
+
 // ---------------------------------------------------------------- 보고서
 
 program

@@ -9,7 +9,7 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 (대화 세션에서 작성, 저장소에는 아직 커밋 안 됨 - 진행 상황은
 [DESIGN-NOTES.md](DESIGN-NOTES.md) 참고)를 참고.
 
-## 지금 상태: Phase 5 (2/3) 완료
+## 지금 상태: Phase 5 완료 (전체 3개 설치)
 
 - Prisma 스키마(PostgreSQL/MySQL/SQLite 3드라이버, 완전 정규화 - JSON
   컬럼 없음)
@@ -32,8 +32,8 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 - **JWT 기반 EMQX 클라이언트 인증 + Member 기준 topic ACL** - 설치
   전역 JWT를 그대로 MQTT 인증에 재사용(HTTP 훅으로 `verifyAccessToken`
   재사용), `project/{id}/(changes|messages)` topic은 그 프로젝트
-  멤버만 구독/발행 가능(미래 웹 인터페이스가 MQTT-over-WebSocket으로
-  직접 붙을 때 쓸 인프라 - 지금은 raw MQTT 클라이언트로 직접 검증함).
+  멤버만 구독/발행 가능. 웹 UI가 이 인프라를 MQTT-over-WebSocket으로
+  직접 소비한다(아래 변경 추적 뷰/메시징 패널).
 - CLI(`docs`) + MCP 서버(`docs-mcp`) - 둘 다 REST API만 호출하는 순수
   클라이언트, 도구/명령이 1:1 대칭
 - CLAUDE.md/SKILL.md 템플릿 관리(기관/그룹/프로젝트 override) +
@@ -55,7 +55,15 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
   Monaco 마크다운 에디터(문서 본문 편집·저장·상태 전이), 소스 코드
   브라우저(디렉터리 트리) + Monaco 코드 에디터(파일 열람·편집·커밋).
   자체 호스팅 저장소가 연결 안 된 프로젝트는 소스 코드 화면 대신 안내
-  문구만 표시. 실시간 갱신/변경 추적 뷰는 다음 설치에서.
+  문구만 표시.
+- **실시간 변경 추적 뷰 + 메시징 패널**(`frontend/`) - 브라우저가 EMQX에
+  MQTT-over-WebSocket으로 직접 붙어(`GET /api/realtime-config`로 접속
+  주소 조회, 미설정이면 실시간 갱신만 조용히 꺼짐) `project/{id}/
+  (changes|messages)`를 구독한다. 변경 추적 뷰(`/projects/:id/changes`)는
+  git 커밋 로그+diff(기존 엔드포인트 재사용)와 문서 버전 이력 diff(신규
+  `GET .../documents/:trackingCode/revisions` + `docs revisions`/
+  `document_revisions`)를 새로고침 없이 갱신한다. 메시징 패널은 프로젝트
+  상세 화면에 임베드돼 새 메시지를 즉시 반영한다.
 
 **알려진 제한**: `git blame`은 Gitea REST API 자체에 blame 엔드포인트가
 없어(1.27 기준, swagger로 직접 확인) 명확한 "지원하지 않음" 에러를
@@ -86,9 +94,16 @@ EMQX 대시보드(`:18083`, 기본 admin/public)에서 API Key를 발급받아
 (`:3001`)도 같은 패턴 - 최초 기동 후 설치 마법사 완료 → 관리자 계정
 생성 → Personal Access Token 발급 →
 `GITEA_ADMIN_USERNAME`/`GITEA_API_TOKEN`에 채워야 git 저장소 연결
-기능이 동작한다(`.env.example` 참고). `PUBLIC_BACKEND_URL`을 채우면
-`git link` 시 웹훅과 EMQX 인증/인가 훅이 자동 등록된다(로컬 전용 개발
-환경이면 비워둬도 나머지 기능엔 지장 없음 - 웹훅/훅 등록만 건너뜀).
+기능이 동작한다(`.env.example` 참고 - PAT 발급 시 repository뿐 아니라
+user 스코프도 읽기/쓰기로 줘야 한다, repository만 주면 저장소 생성이
+403으로 막힌다). `PUBLIC_BACKEND_URL`을 채우면 `git link` 시 웹훅과
+EMQX 인증/인가 훅이 자동 등록된다(로컬 전용 개발 환경이면 비워둬도
+나머지 기능엔 지장 없음 - 웹훅/훅 등록만 건너뜀). 웹 UI의 실시간 변경
+추적/메시징 패널 갱신을 쓰려면 `PUBLIC_EMQX_WS_URL`도 채운다(예:
+`ws://localhost:8083/mqtt` - 8083 포트가 이미 다른 걸로 쓰이고 있으면
+`EMQX_WS_HOST_PORT`로 호스트 노출 포트를 바꾸고 URL도 맞춰준다). 비워두면
+`GET /api/realtime-config`가 `null`을 반환해 웹 UI가 실시간 갱신만 조용히
+꺼진 상태로 동작한다.
 
 ### 호스트에 직접 설치
 
@@ -135,7 +150,7 @@ docs new <projectId> SP --title "..." --body <로컬 파일>
 
 `docs auth login`으로 한 번 로그인해두면(`~/.claude-native-workflow/
 credentials.json` 공유), `docs-mcp`를 stdio MCP 서버로 등록해 CLI와
-동일한 49개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
+동일한 52개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
 비밀번호가 대화 컨텍스트에 남지 않도록 의도적으로 MCP 도구로 노출하지
 않는다(CLI 전용) - `auth_whoami`만 로그인 상태 확인용 예외.
 

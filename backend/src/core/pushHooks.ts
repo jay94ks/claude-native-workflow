@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { getDb } from "./db.js";
+import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 
 // 웹훅 수신 인프라(Phase 2 범위) - PushHookPrompt를 만들고 매칭 규칙을
 // 관리하는 CRUD/CLI는 아직 없다(Phase 3 몫). 지금은 이미 존재하는
@@ -79,5 +80,11 @@ export async function recordPushEvent(projectId: string, parsed: ParsedPush): Pr
       data: { pushHookPromptId: prompt.id, commitSha: parsed.headSha, status: "pending" },
     });
   }
+  // 변경 추적 뷰(Phase 5 3/3)의 git 로그 섹션이 새로고침 없이 갱신되도록,
+  // 매칭 여부와 무관하게 push가 들어올 때마다 발행한다(문서/코멘트와 같은
+  // write-through 원칙 - "project" entity는 ChangeEvent 타입에 이미 있었지만
+  // 지금까지 아무도 안 썼다).
+  const event: ChangeEvent = { entity: "project", action: "update", id: projectId, at: new Date().toISOString() };
+  await realtimePublish(projectChangesTopic(projectId), event);
   return prompts.length;
 }

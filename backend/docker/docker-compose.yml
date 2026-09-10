@@ -35,6 +35,10 @@ services:
       - emqx-data:/opt/emqx/data
     ports:
       - "18083:18083" # 대시보드/REST API - API 키 발급 때만 필요, 평소엔 안 열어도 됨
+      # MQTT-over-WebSocket(8083) - 이미지 기본 리스너, 별도 설정 없이 이미
+      # 켜져 있다. 웹 UI(Phase 5 3/3)가 변경 추적 뷰/메시징 패널 실시간
+      # 갱신을 위해 브라우저에서 직접 붙는 통로 - PUBLIC_EMQX_WS_URL과 짝.
+      - "${EMQX_WS_HOST_PORT:-8083}:8083"
     restart: unless-stopped
 
   # Gitea 자체 메타데이터는 내장 SQLite로 충분(설치용 Postgres와 섞지
@@ -86,6 +90,7 @@ services:
       GITEA_ADMIN_USERNAME: ${GITEA_ADMIN_USERNAME}
       GITEA_API_TOKEN: ${GITEA_API_TOKEN}
       PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL}
+      PUBLIC_EMQX_WS_URL: ${PUBLIC_EMQX_WS_URL}
     ports:
       - "${BACKEND_HOST_PORT:-8760}:8760"
     depends_on:

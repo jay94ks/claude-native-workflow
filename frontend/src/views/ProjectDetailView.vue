@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
+import MessagesPanel from "../components/MessagesPanel.vue";
 
 const props = defineProps<{ id: string }>();
 
@@ -82,7 +83,10 @@ onMounted(load);
     <div class="nav-links">
       <router-link :to="`/projects/${id}/documents`">문서 보기</router-link>
       <router-link :to="`/projects/${id}/source`">소스 코드 보기</router-link>
+      <router-link :to="`/projects/${id}/changes`">변경 추적</router-link>
     </div>
+
+    <MessagesPanel :project-id="id" />
 
     <section>
       <h2>git 저장소</h2>

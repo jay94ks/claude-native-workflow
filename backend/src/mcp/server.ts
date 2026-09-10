@@ -169,6 +169,14 @@ async function main() {
     call(`/api/documents/${a.trackingCode}/backlinks`),
   );
 
+  tool(
+    "document_revisions",
+    "버전 이력 조회",
+    "문서의 수정 이력(리비전) 목록 - 각 항목은 그 시점까지의 본문 스냅샷.",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/documents/${a.trackingCode}/revisions`),
+  );
+
   // ---------------------------------------------------------------- 보고서
 
   tool(

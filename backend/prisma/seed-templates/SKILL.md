@@ -63,6 +63,7 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 | 상태 전이 | `docs transition <trackingCode> <toStatusCode>` | `document_transition` |
 | 문서 링크 | `docs link <from> <to>` | `document_link` |
 | 역참조 조회 | `docs backlinks <trackingCode>` | `document_backlinks` |
+| 버전 이력 조회 | `docs revisions <trackingCode>` | `document_revisions` |
 | 보고서 생성 | `docs report-new <projectId> --title <t> --body <file>` | `report_new` |
 | 질의 등록 | `docs question <trackingCode> <text>` | `question_add` |
 | 답변 대기 목록 | `docs pending <projectId>` | `pending_list` |
