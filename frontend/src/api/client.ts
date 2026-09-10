@@ -36,8 +36,7 @@ async function rawFetch(pathSuffix: string, init: RequestInit): Promise<Response
 }
 
 /** access 토큰(15분 단명)이 만료돼 401이 오면 refresh 토큰으로 한 번
- * 갱신을 시도한 뒤 원래 요청을 재시도한다 - 실패하면 로그인 화면으로
- * 보내도록 호출부가 처리할 수 있게 에러를 그대로 던진다. */
+ * 갱신을 시도한 뒤 원래 요청을 재시도한다. */
 async function refreshAccessToken(): Promise<boolean> {
   const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
   if (!refreshToken) return false;
@@ -60,6 +59,17 @@ export class ApiError extends Error {
   }
 }
 
+// 세션이 만료됐을 때(refresh도 실패) 각 화면이 "Authorization 헤더가
+// 필요합니다" 같은 날것의 백엔드 에러를 표시한 채 인증된 화면 뼈대에
+// 갇혀 있지 않도록, 여기서 한 곳에서만 로그인 화면으로 보낸다 - 화면마다
+// 이 처리를 반복하지 않게(실제로 이 리다이렉트가 어디서도 구현돼 있지
+// 않아 세션 만료 시 고장난 화면에 머무는 문제를 실측 중 발견해서 고침).
+function redirectToLogin(): void {
+  if (window.location.pathname !== "/login") {
+    window.location.href = "/login";
+  }
+}
+
 async function callWithRefresh(pathSuffix: string, init: RequestInit): Promise<Response> {
   let res = await rawFetch(pathSuffix, init);
   if (res.status === 401 && getAccessToken()) {
@@ -68,6 +78,7 @@ async function callWithRefresh(pathSuffix: string, init: RequestInit): Promise<R
       res = await rawFetch(pathSuffix, init);
     } else {
       clearTokens();
+      redirectToLogin();
     }
   }
   return res;
