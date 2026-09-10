@@ -1,0 +1,361 @@
+// claude-native-workflow v2 - SQLite 스키마 (개인 PC 제로 설정 설치용).
+// schema.postgres.prisma와 모델이 완전히 동일하다 - datasource/generator
+// output만 다르다(SQLite는 MySQL의 VARCHAR(191) 문제가 없어서
+// @db.LongText 같은 어노테이션도 필요 없음).
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/sqlite"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- 설치 전역
+
+model InstallConfig {
+  id                  String  @id @default("singleton")
+  institutionsEnabled Boolean @default(true)
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  email        String?  @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  gitCredentials    GitCredential[]
+  refreshTokens     RefreshToken[]
+  memberships       Member[]
+  documentsCreated  Document[]         @relation("DocumentCreatedBy")
+  revisionsEdited   DocumentRevision[] @relation("RevisionEditedBy")
+  answersGiven      Answer[]           @relation("AnswerAnsweredBy")
+  comments          Comment[]          @relation("CommentAuthor")
+  messagesSent      Message[]          @relation("MessageAuthor")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// QA로 발견(concept 세션): hostPattern으로 재사용을 "제안"만 하고 실제
+// 적용은 설계자 확인 후 - 자동으로 아무 프로젝트에나 재사용하지 않는다
+// (자격증명 자동 유출 방지).
+model GitCredential {
+  id               String   @id @default(cuid())
+  userId           String
+  hostPattern      String?
+  credentialType   String // token | username_password | ssh_key
+  encryptedPayload Bytes // AES-256-GCM 암호문(+ nonce/태그 포함해서 저장)
+  createdAt        DateTime @default(now())
+
+  user            User             @relation(fields: [userId], references: [id])
+  projectGitRepos ProjectGitRepo[]
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------- 계층: 기관/그룹/프로젝트
+
+model Institution {
+  id        String   @id @default(cuid())
+  name      String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  projectGroups             ProjectGroup[]
+  docTypes                  DocType[]
+  claudeMdTemplateOverrides ClaudeMdTemplateOverride[]
+}
+
+model ProjectGroup {
+  id            String   @id @default(cuid())
+  institutionId String?
+  name          String
+  createdAt     DateTime @default(now())
+
+  institution               Institution? @relation(fields: [institutionId], references: [id])
+  projects                  Project[]
+  docTypes                  DocType[]
+  claudeMdTemplateOverrides ClaudeMdTemplateOverride[]
+
+  @@index([institutionId])
+}
+
+model Project {
+  id             String   @id @default(cuid())
+  projectGroupId String
+  name           String
+  createdAt      DateTime @default(now())
+
+  projectGroup              ProjectGroup     @relation(fields: [projectGroupId], references: [id])
+  gitRepo                   ProjectGitRepo?
+  members                   Member[]
+  docTypes                  DocType[]
+  documents                 Document[]
+  comments                  Comment[]
+  pushHookPrompts           PushHookPrompt[]
+  messages                  Message[]
+  claudeMdTemplateOverrides ClaudeMdTemplateOverride[]
+
+  @@index([projectGroupId])
+}
+
+model ProjectGitRepo {
+  id              String  @id @default(cuid())
+  projectId       String  @unique
+  provider        String // self_hosted | github | gitlab
+  repoUrl         String
+  externalRepoId  String?
+  gitCredentialId String?
+
+  project       Project        @relation(fields: [projectId], references: [id])
+  gitCredential GitCredential? @relation(fields: [gitCredentialId], references: [id])
+
+  @@index([gitCredentialId])
+}
+
+model Member {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  role      String // owner | editor | viewer
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------- 문서 체계 (정규화된 타입/상태/전이)
+
+model DocType {
+  id             String  @id @default(cuid())
+  institutionId  String?
+  projectGroupId String?
+  projectId      String?
+  code           String // 영문 2글자
+  label          String
+  createdAt      DateTime @default(now())
+
+  institution  Institution?  @relation(fields: [institutionId], references: [id])
+  projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
+  project      Project?      @relation(fields: [projectId], references: [id])
+
+  statuses    DocStatus[]
+  transitions DocStatusTransition[]
+  documents   Document[]
+
+  @@index([institutionId])
+  @@index([projectGroupId])
+  @@index([projectId])
+}
+
+model DocStatus {
+  id         String  @id @default(cuid())
+  docTypeId  String
+  code       String
+  label      String
+  isTerminal Boolean @default(false)
+
+  docType         DocType               @relation(fields: [docTypeId], references: [id])
+  documents       Document[]
+  transitionsFrom DocStatusTransition[] @relation("TransitionFrom")
+  transitionsTo   DocStatusTransition[] @relation("TransitionTo")
+
+  @@unique([docTypeId, code])
+}
+
+model DocStatusTransition {
+  id           String  @id @default(cuid())
+  docTypeId    String
+  fromStatusId String
+  toStatusId   String
+  label        String?
+
+  docType    DocType   @relation(fields: [docTypeId], references: [id])
+  fromStatus DocStatus @relation("TransitionFrom", fields: [fromStatusId], references: [id])
+  toStatus   DocStatus @relation("TransitionTo", fields: [toStatusId], references: [id])
+
+  @@index([docTypeId])
+}
+
+// ---------------------------------------------------------------- 문서/링크/버전이력
+
+model Document {
+  id           String   @id @default(cuid())
+  projectId    String
+  docTypeId    String
+  trackingCode String   @unique // "XX-XXXXXXXX"
+  title        String
+  body         String
+  statusId     String
+  createdBy    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project Project   @relation(fields: [projectId], references: [id])
+  docType DocType   @relation(fields: [docTypeId], references: [id])
+  status  DocStatus @relation(fields: [statusId], references: [id])
+  creator User      @relation("DocumentCreatedBy", fields: [createdBy], references: [id])
+
+  revisions DocumentRevision[]
+  linksOut  DocumentLink[]           @relation("DocumentLinkSource")
+  linksIn   DocumentLink[]           @relation("DocumentLinkTarget")
+  questions Question[]
+  comments  Comment[]                @relation("DocumentComments")
+
+  @@index([projectId])
+  @@index([docTypeId])
+  @@index([statusId])
+}
+
+model DocumentRevision {
+  id         String   @id @default(cuid())
+  documentId String
+  body       String
+  editedBy   String
+  editedAt   DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id])
+  editor   User     @relation("RevisionEditedBy", fields: [editedBy], references: [id])
+
+  @@index([documentId])
+}
+
+// toTrackingCode를 Document.trackingCode로 향한 실제 FK로 걸어서
+// (문자열 느슨한 매칭이 아니라) 역참조 join이 자연스럽게 되게 한다.
+model DocumentLink {
+  id             String  @id @default(cuid())
+  fromDocumentId String
+  toTrackingCode String
+  linkType       String?
+
+  fromDocument Document @relation("DocumentLinkSource", fields: [fromDocumentId], references: [id])
+  toDocument   Document @relation("DocumentLinkTarget", fields: [toTrackingCode], references: [trackingCode])
+
+  @@index([fromDocumentId])
+  @@index([toTrackingCode])
+}
+
+// ---------------------------------------------------------------- 질의/답변 (Question/Answer)
+
+model Question {
+  id           String   @id @default(cuid())
+  documentId   String
+  trackingCode String   @unique // "QU-XXXXXXXX"
+  ordinal      Int
+  text         String
+  status       String   @default("open") // open | answered
+  createdAt    DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id])
+  answer   Answer?
+
+  @@index([documentId])
+}
+
+model Answer {
+  id         String   @id @default(cuid())
+  questionId String   @unique
+  body       String
+  answeredBy String
+  answeredAt DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id])
+  author   User     @relation("AnswerAnsweredBy", fields: [answeredBy], references: [id])
+}
+
+// ---------------------------------------------------------------- 코멘트
+
+model Comment {
+  id           String    @id @default(cuid())
+  projectId    String
+  trackingCode String
+  body         String
+  authorId     String
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+
+  project  Project  @relation(fields: [projectId], references: [id])
+  document Document @relation("DocumentComments", fields: [trackingCode], references: [trackingCode])
+  author   User     @relation("CommentAuthor", fields: [authorId], references: [id])
+
+  @@index([projectId])
+  @@index([trackingCode])
+}
+
+// ---------------------------------------------------------------- git push 훅 프롬프트 자동화
+
+model PushHookPrompt {
+  id             String  @id @default(cuid())
+  projectId      String
+  triggerBranch  String?
+  promptTemplate String
+  createdAt      DateTime @default(now())
+
+  project     Project              @relation(fields: [projectId], references: [id])
+  queueEntries PushHookQueueEntry[]
+
+  @@index([projectId])
+}
+
+model PushHookQueueEntry {
+  id               String   @id @default(cuid())
+  pushHookPromptId String
+  commitSha        String
+  status           String   @default("pending") // pending | acknowledged | done
+  triggeredAt      DateTime @default(now())
+
+  pushHookPrompt PushHookPrompt @relation(fields: [pushHookPromptId], references: [id])
+
+  @@index([pushHookPromptId])
+}
+
+// ---------------------------------------------------------------- 인스턴스 메시징
+
+model Message {
+  id        String   @id @default(cuid())
+  projectId String
+  authorId  String? // null이면 시스템 브로드캐스트
+  body      String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+  author  User?   @relation("MessageAuthor", fields: [authorId], references: [id])
+
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------- CLAUDE.md 템플릿
+
+model ClaudeMdTemplateOverride {
+  id             String  @id @default(cuid())
+  institutionId  String?
+  projectGroupId String?
+  projectId      String?
+  content        String
+  createdAt      DateTime @default(now())
+
+  institution  Institution?  @relation(fields: [institutionId], references: [id])
+  projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
+  project      Project?      @relation(fields: [projectId], references: [id])
+
+  @@index([institutionId])
+  @@index([projectGroupId])
+  @@index([projectId])
+}

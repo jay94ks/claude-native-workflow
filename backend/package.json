@@ -1,0 +1,36 @@
+{
+  "name": "@claude-native-workflow/backend",
+  "version": "0.1.0",
+  "description": "claude-native-workflow v2 - single installable system (DB-backed docs, Meilisearch, EMQX).",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "dist/api/server.js",
+  "bin": {
+    "docs": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "npm run db:generate && tsc -p tsconfig.json",
+    "dev": "tsx src/api/server.ts",
+    "start": "node dist/api/server.js",
+    "cli": "tsx src/cli/index.ts",
+    "db:generate": "prisma generate --schema prisma/schema.postgres.prisma && prisma generate --schema prisma/schema.mysql.prisma && prisma generate --schema prisma/schema.sqlite.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "argon2": "^0.45.1",
+    "commander": "^12.1.0",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.3",
+    "meilisearch": "^0.51.0",
+    "prisma": "^6.19.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

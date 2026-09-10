@@ -1,0 +1,67 @@
+# Phase 0 최소 구성: backend + postgres(기본 DB) + meilisearch + emqx.
+# Gitea(Phase 2)는 아직 없음. 시크릿은 이 폴더의 .env(.env.example 참고,
+# 커밋 안 함)에서 읽는다.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: claude_native_workflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meili-data:/meili_data
+    restart: unless-stopped
+
+  # EMQX REST API 키는 이미지가 기본으로 만들어주지 않는다 - 최초
+  # 기동 후 대시보드(http://localhost:18083, 기본 admin/public)에
+  # 로그인해서 API Key 하나를 발급받아 .env의 EMQX_API_KEY/
+  # EMQX_API_SECRET에 채워 넣어야 한다(1회성 수동 단계 - JWT_SECRET
+  # 같은 다른 시크릿과 동일하게 설치 시 직접 채우는 항목).
+  emqx:
+    image: emqx/emqx:5.8
+    volumes:
+      - emqx-data:/opt/emqx/data
+    ports:
+      - "18083:18083" # 대시보드/REST API - API 키 발급 때만 필요, 평소엔 안 열어도 됨
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      PORT: 8760
+      HOST: 0.0.0.0
+      DB_DRIVER: postgres
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/claude_native_workflow
+      JWT_SECRET: ${JWT_SECRET}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY}
+      EMQX_API_URL: http://emqx:18083
+      EMQX_API_KEY: ${EMQX_API_KEY}
+      EMQX_API_SECRET: ${EMQX_API_SECRET}
+    ports:
+      - "${BACKEND_HOST_PORT:-8760}:8760"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  meili-data:
+  emqx-data:
