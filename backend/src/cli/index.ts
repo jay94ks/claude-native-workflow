@@ -186,6 +186,40 @@ program
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/doc-types`))));
 
 program
+  .command("institution-doctype-create <institutionId> <code> <label>")
+  .action((institutionId, code, label) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/institutions/${institutionId}/doc-types`, {
+          method: "POST",
+          body: JSON.stringify({ code, label }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("institution-doctypes <institutionId>")
+  .action((institutionId) => run(async () => printJson(await apiCall(`/api/institutions/${institutionId}/doc-types`))));
+
+program
+  .command("group-doctype-create <groupId> <code> <label>")
+  .action((groupId, code, label) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/project-groups/${groupId}/doc-types`, {
+          method: "POST",
+          body: JSON.stringify({ code, label }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("group-doctypes <groupId>")
+  .action((groupId) => run(async () => printJson(await apiCall(`/api/project-groups/${groupId}/doc-types`))));
+
+program
   .command("doctype-status-add <projectId> <docTypeId> <code> <label>")
   .option("--terminal", "이 상태가 종료 상태임을 표시")
   .action((projectId, docTypeId, code, label, opts) =>

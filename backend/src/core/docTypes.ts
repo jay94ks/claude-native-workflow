@@ -42,11 +42,31 @@ function assertExactlyOneScope(scope: ScopeInput): void {
 }
 
 export async function createDocType(scope: ScopeInput, code: string, label: string): Promise<DocType> {
+  // 빈 문자열은 "안 넘김"으로 정규화 - createProjectGroup/createProject와
+  // 같은 이유(QA 2회차에서 발견) - 안 그러면 assertExactlyOneScope의
+  // truthy 체크를 통과해버려서 검증 없이 Prisma에 그대로 들어간다.
+  scope = {
+    institutionId: scope.institutionId || undefined,
+    projectGroupId: scope.projectGroupId || undefined,
+    projectId: scope.projectId || undefined,
+  };
   assertExactlyOneScope(scope);
   if (!/^[A-Za-z]{2}$/.test(code)) {
     throw new Error(`타입 코드는 영문 2글자여야 합니다: ${code}`);
   }
   const db = getDb();
+  if (scope.institutionId) {
+    const inst = await db.institution.findUnique({ where: { id: scope.institutionId } });
+    if (!inst) throw new Error(`institution을 찾을 수 없습니다: ${scope.institutionId}`);
+  }
+  if (scope.projectGroupId) {
+    const group = await db.projectGroup.findUnique({ where: { id: scope.projectGroupId } });
+    if (!group) throw new Error(`projectGroup을 찾을 수 없습니다: ${scope.projectGroupId}`);
+  }
+  if (scope.projectId) {
+    const project = await db.project.findUnique({ where: { id: scope.projectId } });
+    if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${scope.projectId}`);
+  }
   const row = await db.docType.create({
     data: {
       institutionId: scope.institutionId ?? null,
@@ -101,11 +121,52 @@ export async function listDocStatuses(docTypeId: string): Promise<DocStatus[]> {
   return rows.map((r: DocStatus) => ({ id: r.id, code: r.code, label: r.label, isTerminal: r.isTerminal }));
 }
 
+/** 프로젝트 스코프에 없으면 그 프로젝트의 group, 없으면 그 group의
+ * institution 순으로 찾는다(resolveTemplate()의 override 체인과 같은
+ * 방식 - 구체적인 스코프가 우선). TemplateFile과 달리 DocType엔
+ * "스코프 없는 전역 기본값" 개념이 없어 체인 끝에 전역 폴백은 없다 -
+ * 셋 다 없으면 그냥 null. 유일한 호출부(documents.ts의
+ * createDocument())가 자동으로 상속된 타입을 인식하게 된다. */
 export async function findDocTypeByCode(projectId: string, code: string): Promise<DocType | null> {
   const db = getDb();
-  const row = await db.docType.findFirst({ where: { projectId, code: code.toUpperCase() } });
-  if (!row) return null;
-  return { id: row.id, code: row.code, label: row.label };
+  const upperCode = code.toUpperCase();
+
+  const projectRow = await db.docType.findFirst({ where: { projectId, code: upperCode } });
+  if (projectRow) return { id: projectRow.id, code: projectRow.code, label: projectRow.label };
+
+  const project = await db.project.findUnique({ where: { id: projectId } });
+  if (!project) return null;
+
+  const groupRow = await db.docType.findFirst({ where: { projectGroupId: project.projectGroupId, code: upperCode } });
+  if (groupRow) return { id: groupRow.id, code: groupRow.code, label: groupRow.label };
+
+  const group = await db.projectGroup.findUnique({ where: { id: project.projectGroupId } });
+  if (group?.institutionId) {
+    const institutionRow = await db.docType.findFirst({ where: { institutionId: group.institutionId, code: upperCode } });
+    if (institutionRow) return { id: institutionRow.id, code: institutionRow.code, label: institutionRow.label };
+  }
+
+  return null;
+}
+
+/** "이 프로젝트에서 실제로 쓸 수 있는 타입 전체" - project 자신 +
+ * 소속 group + 그 group의 institution에 정의된 타입을 전부 모아
+ * 반환한다(findDocTypeByCode()와 같은 체인, 목록 버전). 같은 코드가
+ * 여러 스코프에 동시에 있어도 중복 제거하지 않는다 - 그건 설계자가
+ * 알아야 할 데이터 정합성 문제지 이 함수가 조용히 감출 일이 아니다. */
+export async function listDocTypesForProject(projectId: string): Promise<DocType[]> {
+  const db = getDb();
+  const project = await db.project.findUnique({ where: { id: projectId } });
+  if (!project) return [];
+
+  const group = await db.projectGroup.findUnique({ where: { id: project.projectGroupId } });
+
+  const [projectTypes, groupTypes, institutionTypes] = await Promise.all([
+    listDocTypes({ projectId }),
+    listDocTypes({ projectGroupId: project.projectGroupId }),
+    group?.institutionId ? listDocTypes({ institutionId: group.institutionId }) : Promise.resolve([]),
+  ]);
+  return [...projectTypes, ...groupTypes, ...institutionTypes];
 }
 
 export async function findDocStatusByCode(docTypeId: string, code: string): Promise<DocStatus | null> {

@@ -622,8 +622,69 @@ doc-types`) + CLI 플래그 + MCP 인자 설계가 필요해 QA 중 즉석에서
 테스트 후 컨테이너/볼륨/이미지/스크래치 `.env`/CLI 자격증명/브라우저
 탭 전부 정리.
 
+## 기관/그룹 스코프 DocType 생성 지원 - 완료 (2026-09-10)
+
+QA 2회차에서 보고만 하고 안 고쳤던 항목 - 설계자가 이어서 만들어달라고
+요청. `core/docTypes.ts`의 `createDocType()`/`listDocTypes()`는
+institution/projectGroup/project 세 스코프를 스키마상 다 지원하도록
+설계돼 있었지만, API/CLI/MCP엔 프로젝트 스코프 생성만 노출돼 있었다.
+
+- **생성만으론 부족했다** - 라우트를 추가하는 것만으로는 실제로
+  못 쓰는 반쪽짜리 기능이 된다는 걸 구현 전에 확인했다:
+  `documents.ts`의 `createDocument()`가 쓰는 `findDocTypeByCode
+  (projectId, code)`가 `WHERE projectId = X`로만 조회해서, 기관/그룹
+  스코프 타입을 만들어도 그 프로젝트에서 `docs new`로 쓸 방법이
+  없었다. `templates.ts`의 `resolveTemplate()`이 이미 하던 체인
+  (project → 그 project의 group → 그 group의 institution, 구체적인
+  쪽이 우선)을 `findDocTypeByCode()`에 그대로 옮겨왔다(같은 함수/
+  시그니처라 유일한 호출부가 자동으로 혜택을 받음). `GET /api/projects/
+  :projectId/doc-types`(문서 생성 화면 드롭다운이 쓰는 목록)도 새
+  `listDocTypesForProject()`로 바꿔 상속된 타입까지 같이 보여주게
+  했다 - TemplateFile과 달리 DocType엔 스코프 없는 전역 기본값
+  개념이 없어 체인 끝에 전역 폴백은 없음.
+- **인가는 templates.ts의 기존 선례를 그대로 따름** - 프로젝트
+  Member는 projectId에만 연결되고 기관/그룹 단위 "관리자" 역할
+  개념이 아직 없다(설치 단위 admin role은 범위 밖, 이미 Phase 1부터
+  문서화된 한계). `PUT /api/templates`가 기관/그룹 스코프에
+  `authenticate`만 요구하는 것과 똑같이 새 라우트도 그렇게 했다 -
+  기존 프로젝트 스코프 라우트(`requireProjectRole("owner")`)는 전혀
+  안 건드림.
+- 새 라우트: `POST/GET /api/institutions/:institutionId/doc-types`,
+  `POST/GET /api/project-groups/:groupId/doc-types`. 새 CLI
+  `institution-doctype-create`/`institution-doctypes`/
+  `group-doctype-create`/`group-doctypes` + 대응 MCP 4종.
+- **실측 중 발견한 또 다른 버그(같이 고침)**: `createDocType()`도
+  QA 2회차에서 `createProjectGroup`/`createProject`에 있던 것과 똑같은
+  문제(빈 문자열 스코프 id가 검증을 건너뛰고 원본 Prisma FK 에러로
+  샘)를 그대로 갖고 있었다 - 존재하지 않는 institutionId/
+  projectGroupId를 만들기 전에 검증하도록 같이 고침.
+
+**의도적으로 이번 범위 밖으로 둔 것**: `doctype-status-add`/
+`doctype-transition-add`는 여전히 프로젝트 스코프 전용이다 - 그룹/기관
+스코프 타입에 상태를 못 붙이므로, 만들어도 당장은 실제 문서 생성엔
+못 쓴다(실측으로 확인 - 상태 없이 `docs new`를 시도하면 "정의된 상태가
+없습니다"). 무한정 범위를 넓히지 않기 위한 판단 - SKILL.md에 알려진
+제한으로 명시했다. 상태/전이까지 스코프 확장이 필요해지면 별도 라운드로.
+
+검증: 기관 생성 → `institution-doctype-create`로 타입 생성 →
+`institution-doctypes`로 조회. 그룹 생성(그 기관 소속) →
+`group-doctype-create` → `group-doctypes` 조회. 그 그룹 소속 프로젝트를
+새로 만들어 `doctypes <projectId>`가 프로젝트 자신의 SP/DC/DN + 그룹의
+GX + 기관의 IX까지 5개를 전부 보여주는지 확인. **체인 조회 자체는
+간접적으로 확실하게 검증**: 상태가 없는 그룹/기관 스코프 타입 코드로
+`docs new`를 시도해 "타입을 찾을 수 없습니다"가 아니라 "정의된 상태가
+없습니다"가 나오는지 확인(전자면 체인 조회 실패, 후자면 타입은 찾았고
+그다음 단계에서만 막힌 것 - 실제로 후자가 나와 체인이 정확히 동작함을
+확인) - 존재하지 않는 코드로는 실제로 "타입을 찾을 수 없습니다"가
+나오는 것도 대조 확인. 존재하지 않는 institutionId/groupId로 생성
+시도 시 원본 Prisma 에러가 아니라 명확한 에러 확인. 기존 프로젝트
+스코프 문서 생성이 회귀 없이 그대로 동작하는지 확인. MCP 도구도 stdio로
+직접 호출해 CLI와 동일한 결과 확인. 테스트 후 컨테이너/볼륨/이미지/
+스크래치 `.env`/CLI 자격증명 전부 정리.
+
 ## 다음 단계
 
-로드맵의 Phase 0~6과 위 보완·QA 2회 패스까지 전부 완료됐다. 보류 중인
-설계 판단 1건(기관/그룹 스코프 DocType 생성 API 노출)은 위 QA 2회차
-항목에 기록 - 설계자 확인 대기. 그 외 추가 요청이 있을 때까지 대기.
+로드맵의 Phase 0~6, QA 2회 패스, 기관/그룹 스코프 DocType까지 전부
+완료됐다. 알려진 제한 1건(그룹/기관 스코프 타입에 상태/전이를 못 붙임)은
+위 항목에 기록 - 필요해지면 후속 요청으로. 그 외 추가 요청이 있을 때까지
+대기.

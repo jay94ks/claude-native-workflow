@@ -26,10 +26,21 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 
 새 프로젝트는 기본으로 `SP`(설계 명세: draft→active→archived),
 `DC`(결정 요청: open→answered→applied), `DN`(결과 보고: 단일 종료
-상태) 세 타입을 갖고 시작한다. 관리자가 `doctype-create`로 프로젝트/
-그룹/기관 단위 타입을 자유롭게 추가할 수 있다 - 코드에 고정된 목록이
-아니다. 문서 상태를 바꿀 땐 `docs transition <trackingCode>
-<toStatusCode>`를 쓰되, 그 문서 타입에 정의된 전이만 허용된다.
+상태) 세 타입을 갖고 시작한다 - 코드에 고정된 목록이 아니라 관리자가
+자유롭게 추가할 수 있다. `doctype-create <projectId> <code> <label>`은
+프로젝트 스코프, `group-doctype-create <groupId> <code> <label>`/
+`institution-doctype-create <institutionId> <code> <label>`은 그
+그룹/기관 소속 모든 프로젝트가 상속받는 공용 타입을 만든다(`docs
+new <projectId> <code> ...`나 `docs doctypes <projectId>`에서 프로젝트
+자신의 타입과 구분 없이 그대로 쓰인다 - project → group → institution
+순으로 찾음, 더 구체적인 스코프가 우선). 문서 상태를 바꿀 땐 `docs
+transition <trackingCode> <toStatusCode>`를 쓰되, 그 문서 타입에
+정의된 전이만 허용된다.
+
+**알려진 제한**: 그룹/기관 스코프 타입에 상태를 추가하는 명령은 아직
+없다(`doctype-status-add`는 프로젝트 스코프 전용) - 그룹/기관 스코프
+타입을 실제로 문서 생성에 쓰려면 당분간 프로젝트 스코프로 같은 타입을
+따로 만들어 상태를 붙이거나, 이 제한이 풀리길 기다려야 한다.
 
 **새로 만든 타입은 상태가 0개라 그대로는 문서를 만들 수 없다** -
 `doctype-create` 직후 최소 하나는 `docs doctype-status-add <projectId>

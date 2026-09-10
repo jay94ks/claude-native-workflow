@@ -15,6 +15,7 @@ import { addMember, listMembers } from "../core/members.js";
 import {
   createDocType,
   listDocTypes,
+  listDocTypesForProject,
   listDocStatuses,
   addDocStatus,
   getDocTypeById,
@@ -291,7 +292,50 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    res.json(await listDocTypes({ projectId: req.params.projectId }));
+    // 이 프로젝트 스코프뿐 아니라 소속 group/institution에 상속된 타입도
+    // 같이 보여준다 - "이 프로젝트에서 실제로 쓸 수 있는 타입 전체"가
+    // 이 라우트의 실제 의미(문서 생성 화면 드롭다운이 이걸 씀).
+    res.json(await listDocTypesForProject(req.params.projectId));
+  }),
+);
+
+// 기관/그룹 스코프 DocType - Member는 projectId에만 연결되고 기관/그룹
+// 단위 "관리자" 역할 개념이 아직 없다(설치 단위 admin role은 범위 밖 -
+// PUT /api/templates가 기관/그룹 스코프에 authenticate만 요구하는 것과
+// 같은, 이미 문서화된 한계를 그대로 따른다).
+app.post(
+  "/api/institutions/:institutionId/doc-types",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { code, label } = req.body as { code?: string; label?: string };
+    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
+    res.json(await createDocType({ institutionId: req.params.institutionId }, code, label));
+  }),
+);
+
+app.get(
+  "/api/institutions/:institutionId/doc-types",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listDocTypes({ institutionId: req.params.institutionId }));
+  }),
+);
+
+app.post(
+  "/api/project-groups/:groupId/doc-types",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { code, label } = req.body as { code?: string; label?: string };
+    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
+    res.json(await createDocType({ projectGroupId: req.params.groupId }, code, label));
+  }),
+);
+
+app.get(
+  "/api/project-groups/:groupId/doc-types",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listDocTypes({ projectGroupId: req.params.groupId }));
   }),
 );
 

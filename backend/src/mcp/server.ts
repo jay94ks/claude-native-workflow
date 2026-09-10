@@ -118,8 +118,28 @@ async function main() {
     { projectId: z.string(), code: z.string(), label: z.string() },
     async (a) => call(`/api/projects/${a.projectId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label }) }),
   );
-  tool("doctype_list", "문서 타입 목록", "프로젝트의 문서 타입 목록.", { projectId: z.string() }, async (a) =>
+  tool("doctype_list", "문서 타입 목록", "프로젝트에서 쓸 수 있는 문서 타입 목록(프로젝트 자신 + 소속 group/institution에서 상속된 것 포함).", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/doc-types`),
+  );
+  tool(
+    "doctype_create_institution",
+    "기관 스코프 문서 타입 생성",
+    "그 기관 소속 모든 프로젝트가 상속받는 문서 타입을 정의한다(code는 영문 2글자).",
+    { institutionId: z.string(), code: z.string(), label: z.string() },
+    async (a) => call(`/api/institutions/${a.institutionId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label }) }),
+  );
+  tool("doctype_list_institution", "기관 스코프 문서 타입 목록", "그 기관에 직접 정의된 문서 타입 목록.", { institutionId: z.string() }, async (a) =>
+    call(`/api/institutions/${a.institutionId}/doc-types`),
+  );
+  tool(
+    "doctype_create_group",
+    "그룹 스코프 문서 타입 생성",
+    "그 프로젝트 그룹 소속 모든 프로젝트가 상속받는 문서 타입을 정의한다(code는 영문 2글자).",
+    { groupId: z.string(), code: z.string(), label: z.string() },
+    async (a) => call(`/api/project-groups/${a.groupId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label }) }),
+  );
+  tool("doctype_list_group", "그룹 스코프 문서 타입 목록", "그 프로젝트 그룹에 직접 정의된 문서 타입 목록.", { groupId: z.string() }, async (a) =>
+    call(`/api/project-groups/${a.groupId}/doc-types`),
   );
   tool(
     "doctype_status_add",
