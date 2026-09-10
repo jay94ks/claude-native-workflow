@@ -30,15 +30,15 @@ export interface DocStatusTransition {
 }
 
 export interface ScopeInput {
-  institutionId?: string;
+  teamId?: string;
   projectGroupId?: string;
   projectId?: string;
 }
 
 function assertExactlyOneScope(scope: ScopeInput): void {
-  const set = [scope.institutionId, scope.projectGroupId, scope.projectId].filter(Boolean);
+  const set = [scope.teamId, scope.projectGroupId, scope.projectId].filter(Boolean);
   if (set.length !== 1) {
-    throw new Error("institutionId/projectGroupId/projectId 중 정확히 하나만 지정해야 합니다");
+    throw new Error("teamId/projectGroupId/projectId 중 정확히 하나만 지정해야 합니다");
   }
 }
 
@@ -47,7 +47,7 @@ export async function createDocType(scope: ScopeInput, code: string, label: stri
   // 같은 이유(QA 2회차에서 발견) - 안 그러면 assertExactlyOneScope의
   // truthy 체크를 통과해버려서 검증 없이 Prisma에 그대로 들어간다.
   scope = {
-    institutionId: scope.institutionId || undefined,
+    teamId: scope.teamId || undefined,
     projectGroupId: scope.projectGroupId || undefined,
     projectId: scope.projectId || undefined,
   };
@@ -56,9 +56,9 @@ export async function createDocType(scope: ScopeInput, code: string, label: stri
     throw new Error(`타입 코드는 영문 2글자여야 합니다: ${code}`);
   }
   const db = getDb();
-  if (scope.institutionId) {
-    const inst = await db.institution.findUnique({ where: { id: scope.institutionId } });
-    if (!inst) throw new Error(`institution을 찾을 수 없습니다: ${scope.institutionId}`);
+  if (scope.teamId) {
+    const team = await db.team.findUnique({ where: { id: scope.teamId } });
+    if (!team) throw new Error(`팀을 찾을 수 없습니다: ${scope.teamId}`);
   }
   if (scope.projectGroupId) {
     const group = await db.projectGroup.findUnique({ where: { id: scope.projectGroupId } });
@@ -70,7 +70,7 @@ export async function createDocType(scope: ScopeInput, code: string, label: stri
   }
   const row = await db.docType.create({
     data: {
-      institutionId: scope.institutionId ?? null,
+      teamId: scope.teamId ?? null,
       projectGroupId: scope.projectGroupId ?? null,
       projectId: scope.projectId ?? null,
       code: code.toUpperCase(),
@@ -120,7 +120,7 @@ export async function listDocTypes(scope: ScopeInput): Promise<DocType[]> {
   const db = getDb();
   const rows = await db.docType.findMany({
     where: {
-      institutionId: scope.institutionId ?? undefined,
+      teamId: scope.teamId ?? undefined,
       projectGroupId: scope.projectGroupId ?? undefined,
       projectId: scope.projectId ?? undefined,
     },
@@ -135,7 +135,7 @@ export async function listDocStatuses(docTypeId: string): Promise<DocStatus[]> {
 }
 
 /** 프로젝트 스코프에 없으면 그 프로젝트의 group, 없으면 그 group의
- * institution 순으로 찾는다(resolveTemplate()의 override 체인과 같은
+ * team 순으로 찾는다(resolveTemplate()의 override 체인과 같은
  * 방식 - 구체적인 스코프가 우선). TemplateFile과 달리 DocType엔
  * "스코프 없는 전역 기본값" 개념이 없어 체인 끝에 전역 폴백은 없다 -
  * 셋 다 없으면 그냥 null. 유일한 호출부(documents.ts의
@@ -154,10 +154,10 @@ export async function findDocTypeByCode(projectId: string, code: string): Promis
   if (groupRow) return { id: groupRow.id, code: groupRow.code, label: groupRow.label, guideline: groupRow.guideline };
 
   const group = await db.projectGroup.findUnique({ where: { id: project.projectGroupId } });
-  if (group?.institutionId) {
-    const institutionRow = await db.docType.findFirst({ where: { institutionId: group.institutionId, code: upperCode } });
-    if (institutionRow) {
-      return { id: institutionRow.id, code: institutionRow.code, label: institutionRow.label, guideline: institutionRow.guideline };
+  if (group?.teamId) {
+    const teamRow = await db.docType.findFirst({ where: { teamId: group.teamId, code: upperCode } });
+    if (teamRow) {
+      return { id: teamRow.id, code: teamRow.code, label: teamRow.label, guideline: teamRow.guideline };
     }
   }
 
@@ -165,7 +165,7 @@ export async function findDocTypeByCode(projectId: string, code: string): Promis
 }
 
 /** "이 프로젝트에서 실제로 쓸 수 있는 타입 전체" - project 자신 +
- * 소속 group + 그 group의 institution에 정의된 타입을 전부 모아
+ * 소속 group + 그 group의 team에 정의된 타입을 전부 모아
  * 반환한다(findDocTypeByCode()와 같은 체인, 목록 버전). 같은 코드가
  * 여러 스코프에 동시에 있어도 중복 제거하지 않는다 - 그건 설계자가
  * 알아야 할 데이터 정합성 문제지 이 함수가 조용히 감출 일이 아니다. */
@@ -176,12 +176,12 @@ export async function listDocTypesForProject(projectId: string): Promise<DocType
 
   const group = await db.projectGroup.findUnique({ where: { id: project.projectGroupId } });
 
-  const [projectTypes, groupTypes, institutionTypes] = await Promise.all([
+  const [projectTypes, groupTypes, teamTypes] = await Promise.all([
     listDocTypes({ projectId }),
     listDocTypes({ projectGroupId: project.projectGroupId }),
-    group?.institutionId ? listDocTypes({ institutionId: group.institutionId }) : Promise.resolve([]),
+    group?.teamId ? listDocTypes({ teamId: group.teamId }) : Promise.resolve([]),
   ]);
-  return [...projectTypes, ...groupTypes, ...institutionTypes];
+  return [...projectTypes, ...groupTypes, ...teamTypes];
 }
 
 export async function findDocStatusByCode(docTypeId: string, code: string): Promise<DocStatus | null> {
@@ -192,11 +192,11 @@ export async function findDocStatusByCode(docTypeId: string, code: string): Prom
 }
 
 /** API/CLI가 소유권(어느 스코프 소속인지) 확인할 때 쓴다 - DocType은
- * institutionId/projectGroupId/projectId 중 하나만 채워지는 스코프라
+ * teamId/projectGroupId/projectId 중 하나만 채워지는 스코프라
  * 나머지 둘은 null이다. */
 export async function getDocTypeById(
   docTypeId: string,
-): Promise<(DocType & { institutionId: string | null; projectGroupId: string | null; projectId: string | null }) | null> {
+): Promise<(DocType & { teamId: string | null; projectGroupId: string | null; projectId: string | null }) | null> {
   const db = getDb();
   const row = await db.docType.findUnique({ where: { id: docTypeId } });
   if (!row) return null;
@@ -205,7 +205,7 @@ export async function getDocTypeById(
     code: row.code,
     label: row.label,
     guideline: row.guideline,
-    institutionId: row.institutionId,
+    teamId: row.teamId,
     projectGroupId: row.projectGroupId,
     projectId: row.projectId,
   };

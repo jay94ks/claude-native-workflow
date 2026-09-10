@@ -24,14 +24,14 @@ function isUniqueConstraintError(err: unknown): boolean {
   );
 }
 
-async function institutionIdForProject(projectId: string): Promise<string | null> {
+async function teamIdForProject(projectId: string): Promise<string | null> {
   const db = getDb();
   const project = await db.project.findUnique({
     where: { id: projectId },
     include: { projectGroup: true },
   });
   if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${projectId}`);
-  return project.projectGroup.institutionId ?? null;
+  return project.projectGroup.teamId ?? null;
 }
 
 /**
@@ -39,8 +39,8 @@ async function institutionIdForProject(projectId: string): Promise<string | null
  * 원자적으로 예약한다 - 엔티티 테이블별 `@unique`만으로는 서로 다른
  * 엔티티 타입 간(예: Document ↔ Question) 충돌을 못 막았던 문제를
  * 레지스트리 하나로 해소한다. 코드의 유일성은 전역이 아니라 **프로젝트
- * 단위**다(`@@unique([projectId, code])`) - 기관/프로젝트 경계를 넘는
- * 충돌 검사 자체가 없다(각 기관·프로젝트의 추적 코드는 서로 별도).
+ * 단위**다(`@@unique([projectId, code])`) - 팀/프로젝트 경계를 넘는
+ * 충돌 검사 자체가 없다(각 팀·프로젝트의 추적 코드는 서로 별도).
  *
  * 예약 성공 후 tryCreate로 실제 엔티티(Document/Question)를 만들고, 그
  * 엔티티의 id를 레지스트리의 location에 채운다. tryCreate가 실패하면
@@ -56,13 +56,13 @@ export async function withTrackingCode<T extends { id: string }>(
   maxAttempts = 5,
 ): Promise<T> {
   const db = getDb();
-  const institutionId = await institutionIdForProject(projectId);
+  const teamId = await teamIdForProject(projectId);
   let lastErr: unknown;
   for (let i = 0; i < maxAttempts; i++) {
     const code = generateTrackingCode(typeCode);
     try {
       await db.trackingCode.create({
-        data: { code, projectId, institutionId, which, location: "" },
+        data: { code, projectId, teamId, which, location: "" },
       });
     } catch (err) {
       if (!isUniqueConstraintError(err)) throw err;
@@ -84,7 +84,7 @@ export async function withTrackingCode<T extends { id: string }>(
 export interface TrackingCodeLookup {
   code: string;
   projectId: string;
-  institutionId: string | null;
+  teamId: string | null;
   which: string;
   location: string;
 }
@@ -99,7 +99,7 @@ export async function lookupTrackingCode(projectId: string, code: string): Promi
   return {
     code: row.code,
     projectId: row.projectId,
-    institutionId: row.institutionId,
+    teamId: row.teamId,
     which: row.which,
     location: row.location,
   };

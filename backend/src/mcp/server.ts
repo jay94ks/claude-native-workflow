@@ -67,21 +67,21 @@ async function main() {
     call(`/api/credentials/${a.id}`, { method: "DELETE" }),
   );
 
-  // ---------------------------------------------------------------- 기관/그룹/프로젝트
+  // ---------------------------------------------------------------- 팀/그룹/프로젝트
 
-  tool("institution_create", "기관 생성", "새 기관을 만든다.", { name: z.string() }, async (a) =>
-    call("/api/institutions", { method: "POST", body: JSON.stringify(a) }),
+  tool("team_create", "팀 생성", "새 팀을 만든다.", { name: z.string() }, async (a) =>
+    call("/api/teams", { method: "POST", body: JSON.stringify(a) }),
   );
-  tool("institution_list", "기관 목록", "전체 기관 목록.", {}, async () => call("/api/institutions"));
+  tool("team_list", "팀 목록", "전체 팀 목록.", {}, async () => call("/api/teams"));
   tool(
     "group_create",
     "프로젝트 그룹 생성",
     "새 프로젝트 그룹을 만든다.",
-    { name: z.string(), institutionId: z.string().optional() },
+    { name: z.string(), teamId: z.string().optional() },
     async (a) => call("/api/project-groups", { method: "POST", body: JSON.stringify(a) }),
   );
-  tool("group_list", "프로젝트 그룹 목록", "프로젝트 그룹 목록(institutionId로 필터 가능).", { institutionId: z.string().optional() }, async (a) => {
-    const qs = a.institutionId ? `?institutionId=${encodeURIComponent(String(a.institutionId))}` : "";
+  tool("group_list", "프로젝트 그룹 목록", "프로젝트 그룹 목록(teamId로 필터 가능).", { teamId: z.string().optional() }, async (a) => {
+    const qs = a.teamId ? `?teamId=${encodeURIComponent(String(a.teamId))}` : "";
     return call(`/api/project-groups${qs}`);
   });
   tool(
@@ -118,7 +118,7 @@ async function main() {
     { projectId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
     async (a) => call(`/api/projects/${a.projectId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
   );
-  tool("doctype_list", "문서 타입 목록", "프로젝트에서 쓸 수 있는 문서 타입 목록(프로젝트 자신 + 소속 group/institution에서 상속된 것 포함).", { projectId: z.string() }, async (a) =>
+  tool("doctype_list", "문서 타입 목록", "프로젝트에서 쓸 수 있는 문서 타입 목록(프로젝트 자신 + 소속 group/team에서 상속된 것 포함).", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/doc-types`),
   );
   tool(
@@ -129,21 +129,21 @@ async function main() {
     async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
   );
   tool(
-    "doctype_create_institution",
-    "기관 스코프 문서 타입 생성",
-    "그 기관 소속 모든 프로젝트가 상속받는 문서 타입을 정의한다(code는 영문 2글자).",
-    { institutionId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
-    async (a) => call(`/api/institutions/${a.institutionId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
+    "doctype_create_team",
+    "팀 스코프 문서 타입 생성",
+    "그 팀 소속 모든 프로젝트가 상속받는 문서 타입을 정의한다(code는 영문 2글자).",
+    { teamId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
+    async (a) => call(`/api/teams/${a.teamId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
   );
-  tool("doctype_list_institution", "기관 스코프 문서 타입 목록", "그 기관에 직접 정의된 문서 타입 목록.", { institutionId: z.string() }, async (a) =>
-    call(`/api/institutions/${a.institutionId}/doc-types`),
+  tool("doctype_list_team", "팀 스코프 문서 타입 목록", "그 팀에 직접 정의된 문서 타입 목록.", { teamId: z.string() }, async (a) =>
+    call(`/api/teams/${a.teamId}/doc-types`),
   );
   tool(
-    "doctype_guideline_set_institution",
-    "기관 스코프 문서 타입 지침 설정",
+    "doctype_guideline_set_team",
+    "팀 스코프 문서 타입 지침 설정",
     "그 문서 타입이 무엇을 하기 위한 것인지 자연어 설명을 쓰거나 수정한다(빈 문자열이면 지움).",
-    { institutionId: z.string(), docTypeId: z.string(), guideline: z.string() },
-    async (a) => call(`/api/institutions/${a.institutionId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
+    { teamId: z.string(), docTypeId: z.string(), guideline: z.string() },
+    async (a) => call(`/api/teams/${a.teamId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
   );
   tool(
     "doctype_create_group",
@@ -192,23 +192,23 @@ async function main() {
     async (a) => call(`/api/doc-types/${a.docTypeId}/transitions`),
   );
   tool(
-    "doctype_status_add_institution",
-    "기관 스코프 문서 타입 상태 추가",
-    "기관 스코프 문서 타입이 가질 수 있는 상태를 하나 정의한다.",
-    { institutionId: z.string(), docTypeId: z.string(), code: z.string(), label: z.string(), isTerminal: z.boolean().optional() },
+    "doctype_status_add_team",
+    "팀 스코프 문서 타입 상태 추가",
+    "팀 스코프 문서 타입이 가질 수 있는 상태를 하나 정의한다.",
+    { teamId: z.string(), docTypeId: z.string(), code: z.string(), label: z.string(), isTerminal: z.boolean().optional() },
     async (a) =>
-      call(`/api/institutions/${a.institutionId}/doc-types/${a.docTypeId}/statuses`, {
+      call(`/api/teams/${a.teamId}/doc-types/${a.docTypeId}/statuses`, {
         method: "POST",
         body: JSON.stringify({ code: a.code, label: a.label, isTerminal: a.isTerminal ?? false }),
       }),
   );
   tool(
-    "doctype_transition_add_institution",
-    "기관 스코프 문서 타입 상태 전이 추가",
-    "기관 스코프 문서 타입의 두 상태(코드로 지정) 사이 허용된 전이를 정의한다.",
-    { institutionId: z.string(), docTypeId: z.string(), fromStatusCode: z.string(), toStatusCode: z.string(), label: z.string().optional() },
+    "doctype_transition_add_team",
+    "팀 스코프 문서 타입 상태 전이 추가",
+    "팀 스코프 문서 타입의 두 상태(코드로 지정) 사이 허용된 전이를 정의한다.",
+    { teamId: z.string(), docTypeId: z.string(), fromStatusCode: z.string(), toStatusCode: z.string(), label: z.string().optional() },
     async (a) =>
-      call(`/api/institutions/${a.institutionId}/doc-types/${a.docTypeId}/transitions`, {
+      call(`/api/teams/${a.teamId}/doc-types/${a.docTypeId}/transitions`, {
         method: "POST",
         body: JSON.stringify({ fromStatusCode: a.fromStatusCode, toStatusCode: a.toStatusCode, label: a.label }),
       }),
@@ -347,7 +347,7 @@ async function main() {
   tool(
     "template_get",
     "템플릿 조회",
-    "CLAUDE.md/SKILL.md 등 템플릿 파일의 실제 적용될 내용을 조회한다(project → group → institution → 전역 기본값 순).",
+    "CLAUDE.md/SKILL.md 등 템플릿 파일의 실제 적용될 내용을 조회한다(project → group → team → 전역 기본값 순).",
     { filename: z.string(), projectId: z.string().optional() },
     async (a) => {
       const qs = new URLSearchParams({ filename: String(a.filename), ...(a.projectId ? { projectId: String(a.projectId) } : {}) });
@@ -357,13 +357,13 @@ async function main() {
   tool(
     "template_set",
     "템플릿 override 설정",
-    "특정 스코프(기관/그룹/프로젝트, 생략하면 전역 기본값)에 템플릿 내용을 설정한다.",
-    { filename: z.string(), content: z.string(), institutionId: z.string().optional(), projectGroupId: z.string().optional(), projectId: z.string().optional() },
+    "특정 스코프(팀/그룹/프로젝트, 생략하면 전역 기본값)에 템플릿 내용을 설정한다.",
+    { filename: z.string(), content: z.string(), teamId: z.string().optional(), projectGroupId: z.string().optional(), projectId: z.string().optional() },
     async (a) => {
       const qs = new URLSearchParams({ filename: String(a.filename) });
       return call(`/api/templates?${qs}`, {
         method: "PUT",
-        body: JSON.stringify({ content: a.content, institutionId: a.institutionId, projectGroupId: a.projectGroupId, projectId: a.projectId }),
+        body: JSON.stringify({ content: a.content, teamId: a.teamId, projectGroupId: a.projectGroupId, projectId: a.projectId }),
       });
     },
   );

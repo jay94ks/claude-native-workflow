@@ -3,13 +3,13 @@ import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import DocTypeManager from "../components/DocTypeManager.vue";
 
-interface Institution {
+interface Team {
   id: string;
   name: string;
   enabled: boolean;
 }
 
-const institutions = ref<Institution[]>([]);
+const teams = ref<Team[]>([]);
 const newName = ref("");
 const error = ref("");
 const loading = ref(true);
@@ -18,7 +18,7 @@ const expandedId = ref<string | null>(null);
 async function load() {
   loading.value = true;
   try {
-    institutions.value = await apiCall<Institution[]>("/institutions");
+    teams.value = await apiCall<Team[]>("/teams");
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "목록을 불러오지 못했습니다";
   } finally {
@@ -30,7 +30,7 @@ async function create() {
   if (!newName.value.trim()) return;
   error.value = "";
   try {
-    await apiCall("/institutions", { method: "POST", body: JSON.stringify({ name: newName.value.trim() }) });
+    await apiCall("/teams", { method: "POST", body: JSON.stringify({ name: newName.value.trim() }) });
     newName.value = "";
     await load();
   } catch (err) {
@@ -46,27 +46,27 @@ onMounted(load);
 </script>
 
 <template>
-  <h1>기관</h1>
+  <h1>팀</h1>
   <form class="create-row" @submit.prevent="create">
-    <input v-model="newName" type="text" placeholder="새 기관 이름" />
+    <input v-model="newName" type="text" placeholder="새 팀 이름" />
     <button type="submit">추가</button>
   </form>
   <p v-if="error" class="error">{{ error }}</p>
   <p v-if="loading">불러오는 중...</p>
   <ul v-else class="list">
-    <li v-for="inst in institutions" :key="inst.id">
+    <li v-for="team in teams" :key="team.id">
       <div class="row">
-        <span>{{ inst.name }}</span>
-        <span class="muted">{{ inst.enabled ? "" : "(비활성)" }}</span>
-        <button class="manage-btn" @click="toggleManage(inst.id)">
-          {{ expandedId === inst.id ? "문서 타입 관리 닫기" : "문서 타입 관리" }}
+        <span>{{ team.name }}</span>
+        <span class="muted">{{ team.enabled ? "" : "(비활성)" }}</span>
+        <button class="manage-btn" @click="toggleManage(team.id)">
+          {{ expandedId === team.id ? "문서 타입 관리 닫기" : "문서 타입 관리" }}
         </button>
       </div>
-      <div v-if="expandedId === inst.id" class="manage-panel">
-        <DocTypeManager scope="institution" :scope-id="inst.id" />
+      <div v-if="expandedId === team.id" class="manage-panel">
+        <DocTypeManager scope="team" :scope-id="team.id" />
       </div>
     </li>
-    <li v-if="institutions.length === 0" class="muted">아직 기관이 없습니다.</li>
+    <li v-if="teams.length === 0" class="muted">아직 팀이 없습니다.</li>
   </ul>
 </template>
 

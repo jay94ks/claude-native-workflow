@@ -1037,10 +1037,58 @@ claude-native-workflow/SKILL.md`(+ seed-templates 사본)의 "추적 코드
 아티팩트를 실제 버그로 착각하지 않기 위해). `npx tsc --noEmit` 클린
 확인.
 
+## "기관"(Institution) → "팀"(Team) 전체 리네임 - 완료 (2026-09-11)
+
+처음엔 "웹 UI 표시 텍스트만 교정"으로 좁게 추정했으나(바로 위 항목의
+추정), 설계자가 명시적으로 범위를 넓혔다 - "사용자에게 보이는 라벨만
+교정하는 것이 아니라 전체를 수정하는거야". DB 스키마(모델/컬럼명)부터
+REST 라우트, CLI 명령어 이름, MCP 도구 이름, 프런트엔드 라우트/파일/
+변수명까지 `institution`/"기관" 개념 전체를 `team`/"팀"으로 바꿨다 -
+계층은 이제 Team → ProjectGroup → Project(`ProjectGroup`은 그대로,
+"기관→팀"만 대상).
+
+**이 라운드는 이 세션이 지켜온 "기존 CLI/MCP 명령 시그니처는 안
+바꾼다" 원칙의 의도적 예외다** - 설계자가 명시적으로 전체 리네임을
+요구했으므로 `institution-*` CLI 명령/`*_institution` MCP 도구
+이름 자체가 `team-*`/`*_team`으로 바뀌었다(하위 호환 유지가 목적이
+아닌 유일한 라운드).
+
+**스키마는 마이그레이션 스크립트 없이 깨끗하게 리네임**했다 - 이
+저장소는 아직 실제 영속 배포 없이 매 라운드 스크래치 Docker 스택만
+써왔으므로(`docker compose down -v`로 항상 정리), `Institution`→
+`Team`, `institutionId`→`teamId`, `InstallConfig.institutionsEnabled`→
+`teamsEnabled`를 3드라이버 스키마 전부에 데이터 마이그레이션 없이
+반영했다. 실제로 이 시스템을 설치해 데이터가 쌓인 배포가 있다면 이
+변경으로 깨진다(일반 공개 전 단계라는 판단하에 수용).
+
+**리네임 범위**: `backend/prisma/schema.{postgres,mysql,sqlite}.prisma`
+(model/column/index), `core/institutions.ts`→`core/teams.ts`(파일명
+포함, `Institution`→`Team`/`createInstitution`→`createTeam`/
+`listInstitutions`→`listTeams`/`setInstitutionsEnabled`→
+`setTeamsEnabled`), `core/installConfig.ts`, `core/projectGroups.ts`,
+`core/docTypes.ts`(ScopeInput/체인 로직), `core/templates.ts`
+(TemplateScopeInput/resolveTemplate 체인), `core/projects.ts`/
+`core/tracking.ts`(주석 + 실제 쿼리 필드), `api/server.ts`(import,
+`/api/institutions*`→`/api/teams*` 7개 라우트, `requireOwnedDocTypeByInstitution`→
+`requireOwnedDocTypeByTeam`, 요청/응답 바디 필드), `cli/index.ts`
+(`institution-create`→`team-create`, `institutions`→`teams`,
+`institution-doctype-*` 5개→`team-doctype-*`, `--institution`→`--team`
+플래그), `mcp/server.ts`(`institution_create/list`→`team_create/list`,
+`doctype_*_institution` 5개→`doctype_*_team`, 한글 title/description),
+프런트엔드(`InstitutionsView.vue`→`TeamsView.vue` 파일명+내용,
+`router/index.ts`, `AppLayout.vue`, `ProjectGroupsView.vue`,
+`DocTypeManager.vue`의 `scope` prop 타입), 문서(`SKILL.md` 양쪽 사본,
+`README.md`).
+
+**사전 준비(직전 라운드에서 이미 완료)**: 웹 UI 표시 텍스트("기관"→
+"팀" 한글 라벨)는 이번 라운드 착수 전에 이미 교정돼 있었다(narrow-scope
+시도 중 완료) - 이번 라운드는 그 위에 식별자 전체 리네임을 얹었다.
+
+검증: `npm run db:generate`(3드라이버) 클린 → `npx tsc --noEmit`
+(backend) 클린 → `vue-tsc -b && npm run build`(frontend) 클린(엔드투엔드
+브라우저/CLI/MCP 재기동 검증은 다음 세션에서 이어서 진행 예정 - 컴파일
+레벨 검증까지 이 라운드에서 완료).
+
 ## 다음 단계
 
-설계자가 다음 단계로 요청한 것 하나가 남아 있다(아직 계획 단계 시작
-전): **"기관" 용어를 "팀"으로 변경** - 웹 UI 표시 텍스트 전반("기관" →
-"팀")의 용어 교정. DB 컬럼/코드 식별자(institutionId 등)는 안 바꾸고
-사용자에게 보이는 라벨만 교정하는 것으로 추정 - 범위를 다음 계획
-단계에서 설계자와 확인 필요.
+설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

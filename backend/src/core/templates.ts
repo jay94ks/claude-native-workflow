@@ -4,30 +4,30 @@ import { fileURLToPath } from "node:url";
 import { getDb } from "./db.js";
 
 // CLAUDE.md/SKILL.md 같은 템플릿 파일을 DocType과 같은 스코프 패턴
-// (institutionId?/projectGroupId?/projectId? 중 최대 하나)으로 저장한다.
+// (teamId?/projectGroupId?/projectId? 중 최대 하나)으로 저장한다.
 // 셋 다 null이면 설치 전역 기본값 - resolveTemplate()이 project →
-// group → institution → 전역 기본값 순으로 override를 찾는다.
+// group → team → 전역 기본값 순으로 override를 찾는다.
 
 export interface TemplateFile {
   id: string;
   filename: string;
   content: string;
-  institutionId: string | null;
+  teamId: string | null;
   projectGroupId: string | null;
   projectId: string | null;
   updatedAt: Date;
 }
 
 export interface TemplateScopeInput {
-  institutionId?: string;
+  teamId?: string;
   projectGroupId?: string;
   projectId?: string;
 }
 
 function assertAtMostOneScope(scope: TemplateScopeInput): void {
-  const set = [scope.institutionId, scope.projectGroupId, scope.projectId].filter(Boolean);
+  const set = [scope.teamId, scope.projectGroupId, scope.projectId].filter(Boolean);
   if (set.length > 1) {
-    throw new Error("institutionId/projectGroupId/projectId 중 최대 하나만 지정해야 합니다");
+    throw new Error("teamId/projectGroupId/projectId 중 최대 하나만 지정해야 합니다");
   }
 }
 
@@ -35,7 +35,7 @@ function toTemplateFile(row: {
   id: string;
   filename: string;
   content: string;
-  institutionId: string | null;
+  teamId: string | null;
   projectGroupId: string | null;
   projectId: string | null;
   updatedAt: Date;
@@ -44,14 +44,14 @@ function toTemplateFile(row: {
     id: row.id,
     filename: row.filename,
     content: row.content,
-    institutionId: row.institutionId,
+    teamId: row.teamId,
     projectGroupId: row.projectGroupId,
     projectId: row.projectId,
     updatedAt: row.updatedAt,
   };
 }
 
-/** project → group → institution → 전역 기본값 순으로 override를
+/** project → group → team → 전역 기본값 순으로 override를
  * 탐색해서 실제 적용될 템플릿을 반환한다. projectId를 안 주면 전역
  * 기본값만 본다. */
 export async function resolveTemplate(filename: string, projectId?: string): Promise<TemplateFile | null> {
@@ -69,17 +69,17 @@ export async function resolveTemplate(filename: string, projectId?: string): Pro
       if (groupRow) return toTemplateFile(groupRow);
 
       const group = await db.projectGroup.findUnique({ where: { id: project.projectGroupId } });
-      if (group?.institutionId) {
-        const institutionRow = await db.templateFile.findFirst({
-          where: { institutionId: group.institutionId, filename },
+      if (group?.teamId) {
+        const teamRow = await db.templateFile.findFirst({
+          where: { teamId: group.teamId, filename },
         });
-        if (institutionRow) return toTemplateFile(institutionRow);
+        if (teamRow) return toTemplateFile(teamRow);
       }
     }
   }
 
   const globalRow = await db.templateFile.findFirst({
-    where: { institutionId: null, projectGroupId: null, projectId: null, filename },
+    where: { teamId: null, projectGroupId: null, projectId: null, filename },
   });
   return globalRow ? toTemplateFile(globalRow) : null;
 }
@@ -97,7 +97,7 @@ export async function setTemplateOverride(
   assertAtMostOneScope(scope);
   const db = getDb();
   const where = {
-    institutionId: scope.institutionId ?? null,
+    teamId: scope.teamId ?? null,
     projectGroupId: scope.projectGroupId ?? null,
     projectId: scope.projectId ?? null,
     filename,
@@ -128,7 +128,7 @@ export async function seedDefaultTemplates(): Promise<void> {
   const db = getDb();
   for (const filename of SEED_FILES) {
     const existing = await db.templateFile.findFirst({
-      where: { institutionId: null, projectGroupId: null, projectId: null, filename },
+      where: { teamId: null, projectGroupId: null, projectId: null, filename },
     });
     if (existing) continue;
     const sourceName = SEED_SOURCE_BY_FILENAME[filename];

@@ -3,15 +3,15 @@ import { seedDefaultDocTypes } from "./docTypes.js";
 
 const DEFAULT_GROUP_NAME = "기본";
 
-// Project.projectGroupId는 스키마상 필수다 - 하지만 "기관·그룹 없이도
+// Project.projectGroupId는 스키마상 필수다 - 하지만 "팀·그룹 없이도
 // 동작해야 한다"(개인 PC/소규모 설치에서 계층 구조를 신경 쓰지 않아도
-// 되게)는 요구를 만족시키려고, projectGroupId를 안 넘기면 기관 없는
+// 되게)는 요구를 만족시키려고, projectGroupId를 안 넘기면 팀 없는
 // 기본 그룹을 찾거나 만들어서 쓴다 - 설계자가 계층을 원하면 나중에
 // 언제든 진짜 그룹을 만들어 옮기면 된다.
 async function defaultProjectGroupId(): Promise<string> {
   const db = getDb();
   const existing = await db.projectGroup.findFirst({
-    where: { institutionId: null, name: DEFAULT_GROUP_NAME },
+    where: { teamId: null, name: DEFAULT_GROUP_NAME },
   });
   if (existing) return existing.id;
   const created = await db.projectGroup.create({ data: { name: DEFAULT_GROUP_NAME } });

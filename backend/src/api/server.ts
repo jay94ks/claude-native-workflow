@@ -7,7 +7,7 @@ import { connectDb } from "../core/db.js";
 import { register, login, refresh, logout, AuthError, assertJwtSecretConfigured, seedDefaultAdminAccount } from "../core/auth.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
-import { createInstitution, listInstitutions } from "../core/institutions.js";
+import { createTeam, listTeams } from "../core/teams.js";
 import { getInstallConfig } from "../core/installConfig.js";
 import { createProjectGroup, listProjectGroups } from "../core/projectGroups.js";
 import { createProject, getProject, listProjects } from "../core/projects.js";
@@ -196,23 +196,23 @@ app.get(
   }),
 );
 
-// ---------------------------------------------------------------- 기관/그룹/프로젝트
+// ---------------------------------------------------------------- 팀/그룹/프로젝트
 
 app.post(
-  "/api/institutions",
+  "/api/teams",
   authenticate,
   asyncRoute(async (req, res) => {
     const { name } = req.body as { name?: string };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
-    res.json(await createInstitution(name));
+    res.json(await createTeam(name));
   }),
 );
 
 app.get(
-  "/api/institutions",
+  "/api/teams",
   authenticate,
   asyncRoute(async (_req, res) => {
-    res.json(await listInstitutions());
+    res.json(await listTeams());
   }),
 );
 
@@ -220,9 +220,9 @@ app.post(
   "/api/project-groups",
   authenticate,
   asyncRoute(async (req, res) => {
-    const { name, institutionId } = req.body as { name?: string; institutionId?: string };
+    const { name, teamId } = req.body as { name?: string; teamId?: string };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
-    res.json(await createProjectGroup(name, institutionId));
+    res.json(await createProjectGroup(name, teamId));
   }),
 );
 
@@ -230,7 +230,7 @@ app.get(
   "/api/project-groups",
   authenticate,
   asyncRoute(async (req, res) => {
-    res.json(await listProjectGroups(req.query.institutionId as string | undefined));
+    res.json(await listProjectGroups(req.query.teamId as string | undefined));
   }),
 );
 
@@ -303,7 +303,7 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    // 이 프로젝트 스코프뿐 아니라 소속 group/institution에 상속된 타입도
+    // 이 프로젝트 스코프뿐 아니라 소속 group/team에 상속된 타입도
     // 같이 보여준다 - "이 프로젝트에서 실제로 쓸 수 있는 타입 전체"가
     // 이 라우트의 실제 의미(문서 생성 화면 드롭다운이 이걸 씀).
     res.json(await listDocTypesForProject(req.params.projectId));
@@ -312,7 +312,7 @@ app.get(
 
 // 위 라우트와 달리 상속분을 빼고 이 프로젝트에 직접 정의된 타입만 -
 // 관리 화면(웹 UI의 DocTypeManager)이 "여기서 상태/전이를 추가해도 되는
-// 타입"을 구분할 때 쓴다(상속된 타입은 그걸 실제로 소유한 그룹/기관
+// 타입"을 구분할 때 쓴다(상속된 타입은 그걸 실제로 소유한 그룹/팀
 // 화면에서 관리해야 함).
 app.get(
   "/api/projects/:projectId/doc-types/own",
@@ -323,25 +323,25 @@ app.get(
   }),
 );
 
-// 기관/그룹 스코프 DocType - Member는 projectId에만 연결되고 기관/그룹
+// 팀/그룹 스코프 DocType - Member는 projectId에만 연결되고 팀/그룹
 // 단위 "관리자" 역할 개념이 아직 없다(설치 단위 admin role은 범위 밖 -
-// PUT /api/templates가 기관/그룹 스코프에 authenticate만 요구하는 것과
+// PUT /api/templates가 팀/그룹 스코프에 authenticate만 요구하는 것과
 // 같은, 이미 문서화된 한계를 그대로 따른다).
 app.post(
-  "/api/institutions/:institutionId/doc-types",
+  "/api/teams/:teamId/doc-types",
   authenticate,
   asyncRoute(async (req, res) => {
     const { code, label, guideline } = req.body as { code?: string; label?: string; guideline?: string };
     if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await createDocType({ institutionId: req.params.institutionId }, code, label, guideline));
+    res.json(await createDocType({ teamId: req.params.teamId }, code, label, guideline));
   }),
 );
 
 app.get(
-  "/api/institutions/:institutionId/doc-types",
+  "/api/teams/:teamId/doc-types",
   authenticate,
   asyncRoute(async (req, res) => {
-    res.json(await listDocTypes({ institutionId: req.params.institutionId }));
+    res.json(await listDocTypes({ teamId: req.params.teamId }));
   }),
 );
 
@@ -371,16 +371,16 @@ app.get(
   }),
 );
 
-// docTypeId가 실제로 이 프로젝트 소속인지 확인 - 다른 프로젝트/기관
+// docTypeId가 실제로 이 프로젝트 소속인지 확인 - 다른 프로젝트/팀
 // 스코프의 docTypeId를 잘못(또는 악의적으로) 겨냥하는 걸 막는다.
 async function requireOwnedDocType(projectId: string, docTypeId: string): Promise<boolean> {
   const docType = await getDocTypeById(docTypeId);
   return docType !== null && docType.projectId === projectId;
 }
 
-async function requireOwnedDocTypeByInstitution(institutionId: string, docTypeId: string): Promise<boolean> {
+async function requireOwnedDocTypeByTeam(teamId: string, docTypeId: string): Promise<boolean> {
   const docType = await getDocTypeById(docTypeId);
-  return docType !== null && docType.institutionId === institutionId;
+  return docType !== null && docType.teamId === teamId;
 }
 
 async function requireOwnedDocTypeByGroup(groupId: string, docTypeId: string): Promise<boolean> {
@@ -440,15 +440,15 @@ app.put(
   }),
 );
 
-// 기관/그룹 스코프 DocType에 상태/전이 붙이기 - 생성/목록 라우트와 같은
-// 인가 수준(authenticate만, 기관/그룹 단위 관리자 역할이 아직 없다는
+// 팀/그룹 스코프 DocType에 상태/전이 붙이기 - 생성/목록 라우트와 같은
+// 인가 수준(authenticate만, 팀/그룹 단위 관리자 역할이 아직 없다는
 // 이미 문서화된 한계를 그대로 따름 - PUT /api/templates와 동일).
 app.post(
-  "/api/institutions/:institutionId/doc-types/:docTypeId/statuses",
+  "/api/teams/:teamId/doc-types/:docTypeId/statuses",
   authenticate,
   asyncRoute(async (req, res) => {
-    if (!(await requireOwnedDocTypeByInstitution(req.params.institutionId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 기관에 해당 문서 타입이 없습니다" });
+    if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
       return;
     }
     const { code, label, isTerminal } = req.body as { code?: string; label?: string; isTerminal?: boolean };
@@ -458,11 +458,11 @@ app.post(
 );
 
 app.post(
-  "/api/institutions/:institutionId/doc-types/:docTypeId/transitions",
+  "/api/teams/:teamId/doc-types/:docTypeId/transitions",
   authenticate,
   asyncRoute(async (req, res) => {
-    if (!(await requireOwnedDocTypeByInstitution(req.params.institutionId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 기관에 해당 문서 타입이 없습니다" });
+    if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
       return;
     }
     const { fromStatusCode, toStatusCode, label } = req.body as {
@@ -479,11 +479,11 @@ app.post(
 );
 
 app.put(
-  "/api/institutions/:institutionId/doc-types/:docTypeId/guideline",
+  "/api/teams/:teamId/doc-types/:docTypeId/guideline",
   authenticate,
   asyncRoute(async (req, res) => {
-    if (!(await requireOwnedDocTypeByInstitution(req.params.institutionId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 기관에 해당 문서 타입이 없습니다" });
+    if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
       return;
     }
     const { guideline } = req.body as { guideline?: string };
@@ -771,14 +771,14 @@ app.put(
   asyncRoute(async (req, res) => {
     const filename = req.query.filename as string | undefined;
     if (!filename) { res.status(400).json({ error: "filename이 필요합니다" }); return; }
-    const { content, institutionId, projectGroupId, projectId } = req.body as {
+    const { content, teamId, projectGroupId, projectId } = req.body as {
       content?: string;
-      institutionId?: string;
+      teamId?: string;
       projectGroupId?: string;
       projectId?: string;
     };
     if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
-    res.json(await setTemplateOverride(filename, { institutionId, projectGroupId, projectId }, content));
+    res.json(await setTemplateOverride(filename, { teamId, projectGroupId, projectId }, content));
   }),
 );
 

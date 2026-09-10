@@ -73,7 +73,7 @@ onMounted(load);
 
     <section>
       <h2>문서 타입</h2>
-      <p class="hint">이 프로젝트에서 문서를 만들 때 쓸 수 있는 타입 전체(이 프로젝트 자신 + 소속 그룹/기관에서 상속된 것).</p>
+      <p class="hint">이 프로젝트에서 문서를 만들 때 쓸 수 있는 타입 전체(이 프로젝트 자신 + 소속 그룹/팀에서 상속된 것).</p>
       <ul class="chips">
         <li v-for="t in docTypes" :key="t.id">{{ t.code }} · {{ t.label }}</li>
       </ul>
@@ -81,7 +81,7 @@ onMounted(load);
 
     <section>
       <h2>문서 타입 관리</h2>
-      <p class="hint">이 프로젝트가 직접 정의한 타입만 - 상속받은 타입은 실제로 정의된 그룹/기관 화면에서 관리한다.</p>
+      <p class="hint">이 프로젝트가 직접 정의한 타입만 - 상속받은 타입은 실제로 정의된 그룹/팀 화면에서 관리한다.</p>
       <DocTypeManager scope="project" :scope-id="id" />
     </section>
 

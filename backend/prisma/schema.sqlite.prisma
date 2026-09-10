@@ -16,17 +16,17 @@ datasource db {
 // ---------------------------------------------------------------- 설치 전역
 
 model InstallConfig {
-  id                  String  @id @default("singleton")
-  institutionsEnabled Boolean @default(true)
+  id           String  @id @default("singleton")
+  teamsEnabled Boolean @default(true)
 }
 
 // 추적 코드 중앙 레지스트리 - 원자적 insert로 발급을 예약한다(엔티티
 // 테이블별 @unique만으로는 서로 다른 엔티티 타입 간 충돌을 못 막음 -
 // 예: Document와 Question이 우연히 같은 문자열을 가질 수 있었음).
-// **기관/프로젝트 경계를 넘지 않는다** - 코드 문자열의 유일성은 전역이
+// **팀/프로젝트 경계를 넘지 않는다** - 코드 문자열의 유일성은 전역이
 // 아니라 프로젝트 단위(`@@unique([projectId, code])`)라, 서로 다른
 // 프로젝트는 같은 코드 문자열을 독립적으로 가질 수 있다(설계자 확인 -
-// "각 기관과 프로젝트의 추적코드는 서로 별도"). institutionId는
+// "각 팀과 프로젝트의 추적코드는 서로 별도"). teamId는
 // Project→ProjectGroup을 거치지 않고 바로 경계를 확인할 수 있도록
 // 복제해 저장(DocType/TemplateFile과 같은 스코프 패턴). which로 어떤
 // 엔티티 타입인지, location으로 그 엔티티 자신의 내부 id를 가리킨다.
@@ -34,19 +34,19 @@ model InstallConfig {
 // 유지한다(DocumentLink/Comment가 Document.trackingCode를 직접 가리키는
 // 기존 FK 관계를 건드리지 않음 - 이 테이블은 발급/조회 전용 레지스트리).
 model TrackingCode {
-  id            String   @id @default(cuid())
-  code          String // 추적 코드 문자열("XX-XXXXXXXX") - 프로젝트 안에서만 유일
-  institutionId String?
-  projectId     String
-  which         String // "document" | "question"
-  location      String // 그 엔티티의 내부 id(Document.id / Question.id) - 발급 직후 잠깐 빈 문자열
-  createdAt     DateTime @default(now())
+  id        String   @id @default(cuid())
+  code      String // 추적 코드 문자열("XX-XXXXXXXX") - 프로젝트 안에서만 유일
+  teamId    String?
+  projectId String
+  which     String // "document" | "question"
+  location  String // 그 엔티티의 내부 id(Document.id / Question.id) - 발급 직후 잠깐 빈 문자열
+  createdAt DateTime @default(now())
 
-  institution Institution? @relation(fields: [institutionId], references: [id])
-  project     Project      @relation(fields: [projectId], references: [id])
+  team    Team?   @relation(fields: [teamId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
 
   @@unique([projectId, code])
-  @@index([institutionId])
+  @@index([teamId])
   @@index([which])
 }
 
@@ -97,9 +97,9 @@ model GitCredential {
   @@index([userId])
 }
 
-// ---------------------------------------------------------------- 계층: 기관/그룹/프로젝트
+// ---------------------------------------------------------------- 계층: 팀/그룹/프로젝트
 
-model Institution {
+model Team {
   id        String   @id @default(cuid())
   name      String
   enabled   Boolean  @default(true)
@@ -112,17 +112,17 @@ model Institution {
 }
 
 model ProjectGroup {
-  id            String   @id @default(cuid())
-  institutionId String?
-  name          String
-  createdAt     DateTime @default(now())
+  id        String   @id @default(cuid())
+  teamId    String?
+  name      String
+  createdAt DateTime @default(now())
 
-  institution   Institution? @relation(fields: [institutionId], references: [id])
+  team          Team?          @relation(fields: [teamId], references: [id])
   projects      Project[]
   docTypes      DocType[]
   templateFiles TemplateFile[]
 
-  @@index([institutionId])
+  @@index([teamId])
 }
 
 model Project {
@@ -177,8 +177,8 @@ model Member {
 // ---------------------------------------------------------------- 문서 체계 (정규화된 타입/상태/전이)
 
 model DocType {
-  id             String  @id @default(cuid())
-  institutionId  String?
+  id             String   @id @default(cuid())
+  teamId         String?
   projectGroupId String?
   projectId      String?
   code           String // 영문 2글자
@@ -186,7 +186,7 @@ model DocType {
   guideline      String? // "이 타입은 무엇을 하기 위한 것인가" 자연어 설명(선택)
   createdAt      DateTime @default(now())
 
-  institution  Institution?  @relation(fields: [institutionId], references: [id])
+  team         Team?         @relation(fields: [teamId], references: [id])
   projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
   project      Project?      @relation(fields: [projectId], references: [id])
 
@@ -194,7 +194,7 @@ model DocType {
   transitions DocStatusTransition[]
   documents   Document[]
 
-  @@index([institutionId])
+  @@index([teamId])
   @@index([projectGroupId])
   @@index([projectId])
 }
@@ -381,13 +381,13 @@ model Message {
 }
 
 // ---------------------------------------------------------------- 템플릿 파일 (CLAUDE.md, SKILL.md 등)
-// institutionId/projectGroupId/projectId 중 정확히 하나만 채워지는 스코프
+// teamId/projectGroupId/projectId 중 정확히 하나만 채워지는 스코프
 // 오버라이드, 셋 다 null이면 설치 전역 기본값. DocType과 같은 스코프
 // 패턴 - filename별로 별도 테이블을 늘리지 않고 하나로 일반화.
 
 model TemplateFile {
   id             String   @id @default(cuid())
-  institutionId  String?
+  teamId         String?
   projectGroupId String?
   projectId      String?
   filename       String // 예: "CLAUDE.md", ".claude/skills/claude-native-workflow/SKILL.md"
@@ -395,12 +395,12 @@ model TemplateFile {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  institution  Institution?  @relation(fields: [institutionId], references: [id])
+  team         Team?         @relation(fields: [teamId], references: [id])
   projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
   project      Project?      @relation(fields: [projectId], references: [id])
 
-  @@unique([institutionId, projectGroupId, projectId, filename])
-  @@index([institutionId])
+  @@unique([teamId, projectGroupId, projectId, filename])
+  @@index([teamId])
   @@index([projectGroupId])
   @@index([projectId])
 }

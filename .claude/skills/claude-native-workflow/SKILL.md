@@ -37,10 +37,10 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 | `RM` | 지시 사항/지침 | active → archived(종료) |
 | `DS` | 설계 결정 | open → decided(종료) | `doctype-create <projectId> <code> <label>`은
 프로젝트 스코프, `group-doctype-create <groupId> <code> <label>`/
-`institution-doctype-create <institutionId> <code> <label>`은 그
-그룹/기관 소속 모든 프로젝트가 상속받는 공용 타입을 만든다(`docs
+`team-doctype-create <teamId> <code> <label>`은 그
+그룹/팀 소속 모든 프로젝트가 상속받는 공용 타입을 만든다(`docs
 new <projectId> <code> ...`나 `docs doctypes <projectId>`에서 프로젝트
-자신의 타입과 구분 없이 그대로 쓰인다 - project → group → institution
+자신의 타입과 구분 없이 그대로 쓰인다 - project → group → team
 순으로 찾음, 더 구체적인 스코프가 우선). 문서 상태를 바꿀 땐 `docs
 transition <trackingCode> <toStatusCode>`를 쓰되, 그 문서 타입에
 정의된 전이만 허용된다.
@@ -50,9 +50,9 @@ transition <trackingCode> <toStatusCode>`를 쓰되, 그 문서 타입에
 한다: 프로젝트 스코프는 `docs doctype-status-add <projectId>
 <docTypeId> <code> <label> [--terminal]`(`doctype_status_add`), 그룹
 스코프는 `docs group-doctype-status-add <groupId> <docTypeId> <code>
-<label> [--terminal]`(`doctype_status_add_group`), 기관 스코프는 `docs
-institution-doctype-status-add <institutionId> <docTypeId> <code>
-<label> [--terminal]`(`doctype_status_add_institution`). 상태 사이
+<label> [--terminal]`(`doctype_status_add_group`), 팀 스코프는 `docs
+team-doctype-status-add <teamId> <docTypeId> <code>
+<label> [--terminal]`(`doctype_status_add_team`). 상태 사이
 이동을 허용하려면 같은 스코프 짝의 `*-doctype-transition-add
 <...스코프id> <docTypeId> <fromCode> <toCode> [--label <l>]`로 전이를
 정의한다(정의 안 한 전이는 `docs transition`이 거부한다 - 스코프와
@@ -62,7 +62,7 @@ doctype-transitions <아무값> <docTypeId>`(`doctype_transitions`,
 
 타입 생성 시(`*-doctype-create ... --guideline "<설명>"`) 또는 나중에
 (`docs doctype-guideline-set <projectId> <docTypeId> <설명...>`, 그룹/
-기관 스코프는 `group-doctype-guideline-set`/`institution-doctype-
+팀 스코프는 `group-doctype-guideline-set`/`team-doctype-
 guideline-set`) 그 타입이 "무엇을 하기 위한 것인지" 자연어 설명을
 붙일 수 있다 - `docs doctypes <projectId>` 응답의 `guideline` 필드로
 조회되며, 웹 UI 문서 생성 화면에서 힌트로도 보인다.

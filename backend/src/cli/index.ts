@@ -112,23 +112,23 @@ credCmd
   .command("remove <id>")
   .action((id) => run(async () => printJson(await apiCall(`/api/credentials/${id}`, { method: "DELETE" }))));
 
-// ---------------------------------------------------------------- 기관/그룹/프로젝트
+// ---------------------------------------------------------------- 팀/그룹/프로젝트
 
 program
-  .command("institution-create <name>")
-  .action((name) => run(async () => printJson(await apiCall("/api/institutions", { method: "POST", body: JSON.stringify({ name }) }))));
+  .command("team-create <name>")
+  .action((name) => run(async () => printJson(await apiCall("/api/teams", { method: "POST", body: JSON.stringify({ name }) }))));
 
-program.command("institutions").action(() => run(async () => printJson(await apiCall("/api/institutions"))));
+program.command("teams").action(() => run(async () => printJson(await apiCall("/api/teams"))));
 
 program
   .command("group-create <name>")
-  .option("--institution <id>")
+  .option("--team <id>")
   .action((name, opts) =>
     run(async () =>
       printJson(
         await apiCall("/api/project-groups", {
           method: "POST",
-          body: JSON.stringify({ name, institutionId: opts.institution }),
+          body: JSON.stringify({ name, teamId: opts.team }),
         }),
       ),
     ),
@@ -205,12 +205,12 @@ program
   );
 
 program
-  .command("institution-doctype-create <institutionId> <code> <label>")
+  .command("team-doctype-create <teamId> <code> <label>")
   .option("--guideline <text>", "이 타입은 무엇을 하기 위한 것인지(선택)")
-  .action((institutionId, code, label, opts) =>
+  .action((teamId, code, label, opts) =>
     run(async () =>
       printJson(
-        await apiCall(`/api/institutions/${institutionId}/doc-types`, {
+        await apiCall(`/api/teams/${teamId}/doc-types`, {
           method: "POST",
           body: JSON.stringify({ code, label, guideline: opts.guideline }),
         }),
@@ -219,15 +219,15 @@ program
   );
 
 program
-  .command("institution-doctypes <institutionId>")
-  .action((institutionId) => run(async () => printJson(await apiCall(`/api/institutions/${institutionId}/doc-types`))));
+  .command("team-doctypes <teamId>")
+  .action((teamId) => run(async () => printJson(await apiCall(`/api/teams/${teamId}/doc-types`))));
 
 program
-  .command("institution-doctype-guideline-set <institutionId> <docTypeId> <guideline...>")
-  .action((institutionId, docTypeId, guidelineParts) =>
+  .command("team-doctype-guideline-set <teamId> <docTypeId> <guideline...>")
+  .action((teamId, docTypeId, guidelineParts) =>
     run(async () =>
       printJson(
-        await apiCall(`/api/institutions/${institutionId}/doc-types/${docTypeId}/guideline`, {
+        await apiCall(`/api/teams/${teamId}/doc-types/${docTypeId}/guideline`, {
           method: "PUT",
           body: JSON.stringify({ guideline: guidelineParts.join(" ") }),
         }),
@@ -299,12 +299,12 @@ program
   .action((_projectId, docTypeId) => run(async () => printJson(await apiCall(`/api/doc-types/${docTypeId}/transitions`))));
 
 program
-  .command("institution-doctype-status-add <institutionId> <docTypeId> <code> <label>")
+  .command("team-doctype-status-add <teamId> <docTypeId> <code> <label>")
   .option("--terminal", "이 상태가 종료 상태임을 표시")
-  .action((institutionId, docTypeId, code, label, opts) =>
+  .action((teamId, docTypeId, code, label, opts) =>
     run(async () =>
       printJson(
-        await apiCall(`/api/institutions/${institutionId}/doc-types/${docTypeId}/statuses`, {
+        await apiCall(`/api/teams/${teamId}/doc-types/${docTypeId}/statuses`, {
           method: "POST",
           body: JSON.stringify({ code, label, isTerminal: !!opts.terminal }),
         }),
@@ -313,12 +313,12 @@ program
   );
 
 program
-  .command("institution-doctype-transition-add <institutionId> <docTypeId> <fromCode> <toCode>")
+  .command("team-doctype-transition-add <teamId> <docTypeId> <fromCode> <toCode>")
   .option("--label <l>", "전이 라벨(선택)")
-  .action((institutionId, docTypeId, fromCode, toCode, opts) =>
+  .action((teamId, docTypeId, fromCode, toCode, opts) =>
     run(async () =>
       printJson(
-        await apiCall(`/api/institutions/${institutionId}/doc-types/${docTypeId}/transitions`, {
+        await apiCall(`/api/teams/${teamId}/doc-types/${docTypeId}/transitions`, {
           method: "POST",
           body: JSON.stringify({ fromStatusCode: fromCode, toStatusCode: toCode, label: opts.label }),
         }),
@@ -542,7 +542,7 @@ templateCmd
   .command("set <filename> <file>")
   .option("--project <id>", "이 프로젝트 스코프에 override 설정")
   .option("--group <id>", "이 프로젝트 그룹 스코프에 override 설정")
-  .option("--institution <id>", "이 기관 스코프에 override 설정")
+  .option("--team <id>", "이 팀 스코프에 override 설정")
   .action((filename, file, opts) =>
     run(async () => {
       const fs = await import("node:fs");
@@ -553,7 +553,7 @@ templateCmd
           method: "PUT",
           body: JSON.stringify({
             content,
-            institutionId: opts.institution,
+            teamId: opts.team,
             projectGroupId: opts.group,
             projectId: opts.project,
           }),

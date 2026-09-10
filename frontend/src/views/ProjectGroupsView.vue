@@ -5,18 +5,18 @@ import DocTypeManager from "../components/DocTypeManager.vue";
 
 interface ProjectGroup {
   id: string;
-  institutionId: string | null;
+  teamId: string | null;
   name: string;
 }
-interface Institution {
+interface Team {
   id: string;
   name: string;
 }
 
 const groups = ref<ProjectGroup[]>([]);
-const institutions = ref<Institution[]>([]);
+const teams = ref<Team[]>([]);
 const newName = ref("");
-const newInstitutionId = ref("");
+const newTeamId = ref("");
 const error = ref("");
 const loading = ref(true);
 const expandedId = ref<string | null>(null);
@@ -24,12 +24,12 @@ const expandedId = ref<string | null>(null);
 async function load() {
   loading.value = true;
   try {
-    const [groupList, institutionList] = await Promise.all([
+    const [groupList, teamList] = await Promise.all([
       apiCall<ProjectGroup[]>("/project-groups"),
-      apiCall<Institution[]>("/institutions").catch(() => []),
+      apiCall<Team[]>("/teams").catch(() => []),
     ]);
     groups.value = groupList;
-    institutions.value = institutionList;
+    teams.value = teamList;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "목록을 불러오지 못했습니다";
   } finally {
@@ -37,9 +37,9 @@ async function load() {
   }
 }
 
-function institutionName(id: string | null): string {
+function teamName(id: string | null): string {
   if (!id) return "-";
-  return institutions.value.find((i) => i.id === id)?.name ?? id;
+  return teams.value.find((t) => t.id === id)?.name ?? id;
 }
 
 async function create() {
@@ -48,10 +48,10 @@ async function create() {
   try {
     await apiCall("/project-groups", {
       method: "POST",
-      body: JSON.stringify({ name: newName.value.trim(), institutionId: newInstitutionId.value || undefined }),
+      body: JSON.stringify({ name: newName.value.trim(), teamId: newTeamId.value || undefined }),
     });
     newName.value = "";
-    newInstitutionId.value = "";
+    newTeamId.value = "";
     await load();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "생성에 실패했습니다";
@@ -69,9 +69,9 @@ onMounted(load);
   <h1>프로젝트 그룹</h1>
   <form class="create-row" @submit.prevent="create">
     <input v-model="newName" type="text" placeholder="새 그룹 이름" />
-    <select v-if="institutions.length > 0" v-model="newInstitutionId">
-      <option value="">기관 없음</option>
-      <option v-for="inst in institutions" :key="inst.id" :value="inst.id">{{ inst.name }}</option>
+    <select v-if="teams.length > 0" v-model="newTeamId">
+      <option value="">팀 없음</option>
+      <option v-for="team in teams" :key="team.id" :value="team.id">{{ team.name }}</option>
     </select>
     <button type="submit">추가</button>
   </form>
@@ -81,7 +81,7 @@ onMounted(load);
     <li v-for="group in groups" :key="group.id">
       <div class="row">
         <span>{{ group.name }}</span>
-        <span class="muted">{{ institutionName(group.institutionId) }}</span>
+        <span class="muted">{{ teamName(group.teamId) }}</span>
         <button class="manage-btn" @click="toggleManage(group.id)">
           {{ expandedId === group.id ? "문서 타입 관리 닫기" : "문서 타입 관리" }}
         </button>
