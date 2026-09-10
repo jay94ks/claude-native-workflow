@@ -299,6 +299,19 @@ app.get(
   }),
 );
 
+// 위 라우트와 달리 상속분을 빼고 이 프로젝트에 직접 정의된 타입만 -
+// 관리 화면(웹 UI의 DocTypeManager)이 "여기서 상태/전이를 추가해도 되는
+// 타입"을 구분할 때 쓴다(상속된 타입은 그걸 실제로 소유한 그룹/기관
+// 화면에서 관리해야 함).
+app.get(
+  "/api/projects/:projectId/doc-types/own",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listDocTypes({ projectId: req.params.projectId }));
+  }),
+);
+
 // 기관/그룹 스코프 DocType - Member는 projectId에만 연결되고 기관/그룹
 // 단위 "관리자" 역할 개념이 아직 없다(설치 단위 admin role은 범위 밖 -
 // PUT /api/templates가 기관/그룹 스코프에 authenticate만 요구하는 것과

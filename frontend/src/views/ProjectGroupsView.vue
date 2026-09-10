@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
+import DocTypeManager from "../components/DocTypeManager.vue";
 
 interface ProjectGroup {
   id: string;
@@ -18,6 +19,7 @@ const newName = ref("");
 const newInstitutionId = ref("");
 const error = ref("");
 const loading = ref(true);
+const expandedId = ref<string | null>(null);
 
 async function load() {
   loading.value = true;
@@ -56,6 +58,10 @@ async function create() {
   }
 }
 
+function toggleManage(id: string) {
+  expandedId.value = expandedId.value === id ? null : id;
+}
+
 onMounted(load);
 </script>
 
@@ -73,8 +79,16 @@ onMounted(load);
   <p v-if="loading">불러오는 중...</p>
   <ul v-else class="list">
     <li v-for="group in groups" :key="group.id">
-      <span>{{ group.name }}</span>
-      <span class="muted">{{ institutionName(group.institutionId) }}</span>
+      <div class="row">
+        <span>{{ group.name }}</span>
+        <span class="muted">{{ institutionName(group.institutionId) }}</span>
+        <button class="manage-btn" @click="toggleManage(group.id)">
+          {{ expandedId === group.id ? "문서 타입 관리 닫기" : "문서 타입 관리" }}
+        </button>
+      </div>
+      <div v-if="expandedId === group.id" class="manage-panel">
+        <DocTypeManager scope="group" :scope-id="group.id" />
+      </div>
     </li>
     <li v-if="groups.length === 0" class="muted">아직 프로젝트 그룹이 없습니다.</li>
   </ul>
@@ -118,13 +132,30 @@ h1 {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .list li {
-  padding: 12px 16px;
   border-bottom: 1px solid #eee;
-  display: flex;
-  justify-content: space-between;
 }
 .list li:last-child {
   border-bottom: none;
+}
+.row {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.manage-btn {
+  margin-left: auto;
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.manage-btn:hover {
+  background: #eef0f6;
+}
+.manage-panel {
+  padding: 0 16px 16px;
 }
 .muted {
   color: #888;
