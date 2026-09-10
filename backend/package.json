@@ -7,16 +7,19 @@
   "type": "module",
   "main": "dist/api/server.js",
   "bin": {
-    "docs": "dist/cli/index.js"
+    "docs": "dist/cli/index.js",
+    "docs-mcp": "dist/mcp/server.js"
   },
   "scripts": {
     "build": "npm run db:generate && tsc -p tsconfig.json",
     "dev": "tsx src/api/server.ts",
     "start": "node dist/api/server.js",
     "cli": "tsx src/cli/index.ts",
+    "mcp": "tsx src/mcp/server.ts",
     "db:generate": "prisma generate --schema prisma/schema.postgres.prisma && prisma generate --schema prisma/schema.mysql.prisma && prisma generate --schema prisma/schema.sqlite.prisma"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@prisma/client": "^6.19.3",
     "argon2": "^0.45.1",
     "commander": "^12.1.0",

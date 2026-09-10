@@ -77,9 +77,9 @@ model Institution {
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  projectGroups             ProjectGroup[]
-  docTypes                  DocType[]
-  claudeMdTemplateOverrides ClaudeMdTemplateOverride[]
+  projectGroups ProjectGroup[]
+  docTypes      DocType[]
+  templateFiles TemplateFile[]
 }
 
 model ProjectGroup {
@@ -88,10 +88,10 @@ model ProjectGroup {
   name          String
   createdAt     DateTime @default(now())
 
-  institution               Institution? @relation(fields: [institutionId], references: [id])
-  projects                  Project[]
-  docTypes                  DocType[]
-  claudeMdTemplateOverrides ClaudeMdTemplateOverride[]
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  projects      Project[]
+  docTypes      DocType[]
+  templateFiles TemplateFile[]
 
   @@index([institutionId])
 }
@@ -102,15 +102,15 @@ model Project {
   name           String
   createdAt      DateTime @default(now())
 
-  projectGroup              ProjectGroup     @relation(fields: [projectGroupId], references: [id])
-  gitRepo                   ProjectGitRepo?
-  members                   Member[]
-  docTypes                  DocType[]
-  documents                 Document[]
-  comments                  Comment[]
-  pushHookPrompts           PushHookPrompt[]
-  messages                  Message[]
-  claudeMdTemplateOverrides ClaudeMdTemplateOverride[]
+  projectGroup    ProjectGroup     @relation(fields: [projectGroupId], references: [id])
+  gitRepo         ProjectGitRepo?
+  members         Member[]
+  docTypes        DocType[]
+  documents       Document[]
+  comments        Comment[]
+  pushHookPrompts PushHookPrompt[]
+  messages        Message[]
+  templateFiles   TemplateFile[]
 
   @@index([projectGroupId])
 }
@@ -343,20 +343,26 @@ model Message {
   @@index([projectId])
 }
 
-// ---------------------------------------------------------------- CLAUDE.md 템플릿
+// ---------------------------------------------------------------- 템플릿 파일 (CLAUDE.md, SKILL.md 등)
+// institutionId/projectGroupId/projectId 중 정확히 하나만 채워지는 스코프
+// 오버라이드, 셋 다 null이면 설치 전역 기본값. DocType과 같은 스코프
+// 패턴 - filename별로 별도 테이블을 늘리지 않고 하나로 일반화.
 
-model ClaudeMdTemplateOverride {
-  id             String  @id @default(cuid())
+model TemplateFile {
+  id             String   @id @default(cuid())
   institutionId  String?
   projectGroupId String?
   projectId      String?
-  content        String  @db.LongText
+  filename       String // 예: "CLAUDE.md", ".claude/skills/claude-native-workflow/SKILL.md"
+  content        String   @db.LongText
   createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   institution  Institution?  @relation(fields: [institutionId], references: [id])
   projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
   project      Project?      @relation(fields: [projectId], references: [id])
 
+  @@unique([institutionId, projectGroupId, projectId, filename])
   @@index([institutionId])
   @@index([projectGroupId])
   @@index([projectId])

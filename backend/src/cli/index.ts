@@ -346,6 +346,50 @@ commentCmd
     run(async () => printJson(await apiCall(`/api/projects/${projectId}/comments/${commentId}/resolve`, { method: "POST" }))),
   );
 
+// ---------------------------------------------------------------- 템플릿 (CLAUDE.md, SKILL.md 등)
+
+const templateCmd = program.command("template").description("CLAUDE.md/SKILL.md 템플릿 관리");
+
+templateCmd
+  .command("get <filename>")
+  .option("--project <id>", "이 프로젝트 스코프로 resolve(override 체인 적용) - 생략하면 전역 기본값만")
+  .action((filename, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({ filename, ...(opts.project ? { projectId: opts.project } : {}) });
+      printJson(await apiCall(`/api/templates?${qs}`));
+    }),
+  );
+
+templateCmd
+  .command("set <filename> <file>")
+  .option("--project <id>", "이 프로젝트 스코프에 override 설정")
+  .option("--group <id>", "이 프로젝트 그룹 스코프에 override 설정")
+  .option("--institution <id>", "이 기관 스코프에 override 설정")
+  .action((filename, file, opts) =>
+    run(async () => {
+      const fs = await import("node:fs");
+      const content = fs.readFileSync(file, "utf-8");
+      const qs = new URLSearchParams({ filename });
+      printJson(
+        await apiCall(`/api/templates?${qs}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            content,
+            institutionId: opts.institution,
+            projectGroupId: opts.group,
+            projectId: opts.project,
+          }),
+        }),
+      );
+    }),
+  );
+
+templateCmd
+  .command("deploy <projectId>")
+  .action((projectId) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/templates/deploy`, { method: "POST" }))),
+  );
+
 // ---------------------------------------------------------------- diff / message (Phase 0 - 자리만, Phase 2/4에서 구현)
 
 const gitCmd = program.command("git").description("git 이력(Phase 2에서 구현)");

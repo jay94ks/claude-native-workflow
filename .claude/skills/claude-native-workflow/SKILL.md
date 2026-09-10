@@ -1,0 +1,75 @@
+---
+name: claude-native-workflow
+description: claude-native-workflow로 관리되는 프로젝트에서 문서/설계 기록을 읽고 쓸 때 사용한다. docs CLI와 MCP 도구로 프로젝트 문서, 질의/답변, 코멘트, 보고서를 다루는 방법을 안내한다.
+---
+
+# claude-native-workflow
+
+이 프로젝트의 문서/설계 기록은 파일이 아니라 claude-native-workflow
+시스템의 DB에 저장된다. 모든 읽기/쓰기는 `docs` CLI 명령 또는 이 스킬과
+함께 등록된 MCP 도구로만 한다 - DB/파일을 직접 건드리는 우회 경로는
+없다.
+
+## 반드시 지켜야 하는 두 가지 규칙
+
+1. **추적 코드 명시**: 문서, 질의(Question), 답변을 언급하거나 제안할
+   때는 항상 정확한 추적 코드(`XX-XXXXXXXX` - 영문 2글자 + hex 8글자)를
+   함께 적는다. 문서 종류: `SP`(설계 명세), `DC`(결정 요청),
+   `DN`(결과 보고), 질의는 `QU`. 예: "QU-B2C3D4E5에 대한 답변으로
+   SP-A1B2C3D4를 갱신했다."
+2. **로컬 스크래치 사본은 git 커밋 금지**: 문서를 편집할 때 로컬 임시
+   파일로 복사해 Edit/Write 도구로 다듬은 뒤 `docs save`로 다시 올리는
+   건 정상 작업 방식이다. 단 이 임시 파일을 프로젝트의 git 저장소에
+   커밋하지 않는다(문서 정본은 시스템 DB).
+
+## 문서 타입 / 상태 흐름
+
+새 프로젝트는 기본으로 `SP`(설계 명세: draft→active→archived),
+`DC`(결정 요청: open→answered→applied), `DN`(결과 보고: 단일 종료
+상태) 세 타입을 갖고 시작한다. 관리자가 `doctype-create`로 프로젝트/
+그룹/기관 단위 타입을 자유롭게 추가할 수 있다 - 코드에 고정된 목록이
+아니다. 문서 상태를 바꿀 땐 `docs transition <trackingCode>
+<toStatusCode>`를 쓰되, 그 문서 타입에 정의된 전이만 허용된다.
+
+## 질의/답변(Question/Answer) 루프
+
+설계자에게 확인이 필요한 사항은 문서 본문에 체크리스트로 묻어두지 않고
+`docs question <trackingCode> <질문 내용>`으로 정식 질의를 만든다 -
+`QU-XXXXXXXX` 추적 코드가 발급된다. 답변 대기 목록은 `docs pending
+<projectId>`, 답변 처리는 `docs reply <questionTrackingCode> <답변>`.
+문서의 모든 질의가 답변되면, 그 문서 타입에 유일하게 허용된 다음 상태가
+있을 경우 문서 상태가 자동으로 전이된다(모호하면 자동 전이하지 않고
+`docs transition`으로 직접 지정).
+
+## 명령 요약 (CLI `docs` / MCP 도구 이름 병기)
+
+| 목적 | CLI | MCP 도구 |
+|---|---|---|
+| 문서 생성 | `docs new <projectId> <typeCode> --title <t> --body <file>` | `document_new` |
+| 문서 조회 | `docs get <trackingCode>` | `document_get` |
+| 문서 목록 | `docs list <projectId>` | `document_list` |
+| 검색 | `docs search <projectId> <query>` | `document_search` |
+| 본문 갱신 | `docs save <trackingCode> <file>` | `document_save` |
+| 상태 전이 | `docs transition <trackingCode> <toStatusCode>` | `document_transition` |
+| 문서 링크 | `docs link <from> <to>` | `document_link` |
+| 역참조 조회 | `docs backlinks <trackingCode>` | `document_backlinks` |
+| 보고서 생성 | `docs report-new <projectId> --title <t> --body <file>` | `report_new` |
+| 질의 등록 | `docs question <trackingCode> <text>` | `question_add` |
+| 답변 대기 목록 | `docs pending <projectId>` | `pending_list` |
+| 답변 | `docs reply <questionTrackingCode> <answer>` | `question_reply` |
+| 코멘트 | `docs comment list/add/resolve` | `comment_list/add/resolve` |
+
+`git log/diff/blame/show`, `message list/send/wait` 명령은 CLI/MCP
+양쪽에 이름은 등록돼 있지만 아직 미구현 상태(git 이력은 Gitea 통합,
+메시징 송수신은 EMQX 구독 인프라 도입 이후) - 호출하면 "아직 구현되지
+않았습니다"라는 명확한 에러가 온다. 조용히 실패한 게 아니라 다음 단계에
+채워질 자리라는 뜻이다.
+
+## 인증
+
+MCP 도구는 CLI가 `docs auth login`으로 저장한 것과 같은 자격증명
+파일(`~/.claude-native-workflow/credentials.json`)을 공유한다 - 설계자가
+미리 한 번 로그인해두면 MCP 세션에서 별도 로그인 없이 바로 쓸 수 있다.
+비밀번호가 대화 컨텍스트에 남지 않도록 `auth register/login`은 MCP
+도구로 노출되지 않는다(CLI로만 수행) - `auth_whoami`만 진단용으로
+예외적으로 제공된다.

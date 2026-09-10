@@ -22,6 +22,7 @@ import {
 import { createReport } from "../core/report.js";
 import { addQuestion, listPendingQuestions, answerQuestion } from "../core/questions.js";
 import { addComment, listComments, resolveComment } from "../core/comments.js";
+import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
 import { ensureSearchIndexes } from "../core/search.js";
 import { authenticate, requireProjectRole, type AuthedRequest } from "../middleware/auth.js";
 
@@ -408,6 +409,41 @@ app.post(
   }),
 );
 
+// ---------------------------------------------------------------- 템플릿 (CLAUDE.md, SKILL.md 등)
+// filename이 ".claude/skills/.../SKILL.md"처럼 슬래시를 포함할 수 있어
+// 경로 세그먼트(:filename) 대신 쿼리스트링으로 받는다(Express 경로
+// 매칭이 슬래시 포함 값을 세그먼트 하나로 다루지 못함).
+
+app.get(
+  "/api/templates",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const filename = req.query.filename as string | undefined;
+    if (!filename) { res.status(400).json({ error: "filename이 필요합니다" }); return; }
+    const projectId = req.query.projectId as string | undefined;
+    const resolved = await resolveTemplate(filename, projectId);
+    if (!resolved) { res.status(404).json({ error: "not found" }); return; }
+    res.json(resolved);
+  }),
+);
+
+app.put(
+  "/api/templates",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const filename = req.query.filename as string | undefined;
+    if (!filename) { res.status(400).json({ error: "filename이 필요합니다" }); return; }
+    const { content, institutionId, projectGroupId, projectId } = req.body as {
+      content?: string;
+      institutionId?: string;
+      projectGroupId?: string;
+      projectId?: string;
+    };
+    if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
+    res.json(await setTemplateOverride(filename, { institutionId, projectGroupId, projectId }, content));
+  }),
+);
+
 // ---------------------------------------------------------------- 아직 미구현 (자리만 등록 - "CLI/MCP 명령어 완전성" 원칙)
 // diff 계열은 Gitea 통합(Phase 2), message send/wait는 EMQX 구독 측
 // (Phase 4)에서 실제로 채운다 - 그때까지는 명확한 501을 반환한다(조용히
@@ -428,6 +464,12 @@ app.get("/api/projects/:projectId/messages", authenticate, notImplemented("messa
 app.post("/api/projects/:projectId/messages", authenticate, notImplemented("message send", "Phase 4 (EMQX 구독 측)"));
 app.get("/api/projects/:projectId/messages/wait", authenticate, notImplemented("message wait", "Phase 4 (EMQX 구독 측)"));
 
+app.post(
+  "/api/projects/:projectId/templates/deploy",
+  authenticate,
+  notImplemented("template deploy(프로젝트 git 저장소에 커밋)", "Phase 2 (Gitea 통합)"),
+);
+
 // ---------------------------------------------------------------- 에러 핸들러
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -445,6 +487,7 @@ async function main() {
   assertCredentialEncryptionKeyConfigured();
   await connectDb();
   await ensureSearchIndexes();
+  await seedDefaultTemplates();
 
   const port = Number(process.env.PORT ?? 8760);
   const host = process.env.HOST ?? "127.0.0.1";

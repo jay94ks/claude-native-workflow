@@ -9,7 +9,7 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 (대화 세션에서 작성, 저장소에는 아직 커밋 안 됨 - 진행 상황은
 [DESIGN-NOTES.md](DESIGN-NOTES.md) 참고)를 참고.
 
-## 지금 상태: Phase 0 완료
+## 지금 상태: Phase 1 완료
 
 - Prisma 스키마(PostgreSQL/MySQL/SQLite 3드라이버, 완전 정규화 - JSON
   컬럼 없음)
@@ -22,7 +22,10 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 - 코멘트, 보고서 생성
 - Meilisearch 기반 검색/캐시(모든 조회가 DB가 아니라 검색 엔진을 거침)
 - EMQX 기반 실시간 이벤트 발행(구독 측은 Phase 4)
-- CLI(`docs`) - REST API를 호출하는 순수 클라이언트
+- CLI(`docs`) + MCP 서버(`docs-mcp`) - 둘 다 REST API만 호출하는 순수
+  클라이언트, 도구/명령이 1:1 대칭
+- CLAUDE.md/SKILL.md 템플릿 관리(기관/그룹/프로젝트 override, 프로젝트
+  git 저장소에 실제 커밋하는 `template deploy`는 Phase 2에서)
 
 diff 계열(git 이력)과 인스턴스 메시징 송수신/대기는 자리만 등록되어
 있고 Phase 2/4에서 실제로 구현된다(호출하면 명확한 501을 반환).
@@ -64,11 +67,19 @@ Meilisearch/EMQX는 별도로 떠 있어야 한다(각자 공식 바이너리/Do
 
 ```bash
 cd backend
-npm link   # 전역에 docs 명령 설치
+npm link   # 전역에 docs/docs-mcp 명령 설치
 docs auth login --api http://localhost:8760 --username <u> --password <p>
 docs project-create <이름>
 docs new <projectId> SP --title "..." --body <로컬 파일>
 ```
+
+### MCP
+
+`docs auth login`으로 한 번 로그인해두면(`~/.claude-native-workflow/
+credentials.json` 공유), `docs-mcp`를 stdio MCP 서버로 등록해 CLI와
+동일한 39개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
+비밀번호가 대화 컨텍스트에 남지 않도록 의도적으로 MCP 도구로 노출하지
+않는다(CLI 전용) - `auth_whoami`만 로그인 상태 확인용 예외.
 
 ## 설계 원칙
 
