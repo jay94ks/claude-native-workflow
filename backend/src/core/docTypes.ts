@@ -115,6 +115,43 @@ export async function findDocStatusByCode(docTypeId: string, code: string): Prom
   return { id: row.id, code: row.code, label: row.label, isTerminal: row.isTerminal };
 }
 
+/** API/CLI가 소유권(어느 프로젝트 소속인지) 확인할 때 쓴다 - DocType은
+ * institutionId/projectGroupId/projectId 중 하나만 채워지는 스코프라
+ * projectId가 null일 수도 있다(기관/그룹 단위 타입). */
+export async function getDocTypeById(docTypeId: string): Promise<(DocType & { projectId: string | null }) | null> {
+  const db = getDb();
+  const row = await db.docType.findUnique({ where: { id: docTypeId } });
+  if (!row) return null;
+  return { id: row.id, code: row.code, label: row.label, projectId: row.projectId };
+}
+
+/** addDocStatusTransition()은 id 기반(seedDefaultDocTypes 내부용) -
+ * API/CLI는 다른 곳(`docs transition <trackingCode> <toStatusCode>`
+ * 등)과 마찬가지로 상태 코드로 다뤄야 하므로 이 래퍼를 통한다. */
+export async function addDocStatusTransitionByCode(
+  docTypeId: string,
+  fromCode: string,
+  toCode: string,
+  label?: string,
+): Promise<DocStatusTransition> {
+  const from = await findDocStatusByCode(docTypeId, fromCode);
+  if (!from) throw new Error(`"${fromCode}" 상태가 이 타입에 정의돼 있지 않습니다`);
+  const to = await findDocStatusByCode(docTypeId, toCode);
+  if (!to) throw new Error(`"${toCode}" 상태가 이 타입에 정의돼 있지 않습니다`);
+  return addDocStatusTransition(docTypeId, from.id, to.id, label);
+}
+
+export async function listDocStatusTransitions(docTypeId: string): Promise<DocStatusTransition[]> {
+  const db = getDb();
+  const rows = await db.docStatusTransition.findMany({ where: { docTypeId } });
+  return rows.map((r: DocStatusTransition) => ({
+    id: r.id,
+    fromStatusId: r.fromStatusId,
+    toStatusId: r.toStatusId,
+    label: r.label,
+  }));
+}
+
 /** 그 상태에서 실제로 갈 수 있는 다음 상태 id 목록(DocStatusTransition
  * 기준) - "터미널 상태가 아니면 무조건 다음 상태로" 같은 임의 규칙이
  * 아니라, 정의된 전이만 허용한다. */

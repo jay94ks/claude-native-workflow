@@ -16,7 +16,10 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 - 인증(회원가입/로그인/JWT+리프레시 토큰)
 - git 자격증명 저장(AES-256-GCM 암호화)
 - 기관/프로젝트 그룹/프로젝트 계층(기관 단위는 선택적)
-- 커스터마이즈 가능한 문서 타입 체계(DocType/DocStatus/DocStatusTransition)
+- 커스터마이즈 가능한 문서 타입 체계(DocType/DocStatus/DocStatusTransition) -
+  `doctype-create`로 타입을 만든 뒤 `doctype-status-add`/
+  `doctype-transition-add`로 상태·전이를 직접 정의(새 타입은 상태가
+  0개라 최소 하나는 추가해야 그 타입으로 문서를 만들 수 있음)
 - 문서 CRUD + 버전 이력 + 문서 간 링크(역참조 가능)
 - 질의/답변(Question/Answer) 추적 - 트래킹 코드(`QU-XXXXXXXX`) 부여
 - **추적 코드 중앙 레지스트리**(`TrackingCode`) - 코드 발급을 원자적
@@ -169,7 +172,7 @@ docs migrate apply <projectId> manifest.json
 
 `docs auth login`으로 한 번 로그인해두면(`~/.claude-native-workflow/
 credentials.json` 공유), `docs-mcp`를 stdio MCP 서버로 등록해 CLI와
-동일한 54개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
+동일한 57개 도구를 그대로 쓸 수 있다. `auth register/login/logout`은
 비밀번호가 대화 컨텍스트에 남지 않도록 의도적으로 MCP 도구로 노출하지
 않는다(CLI 전용) - `auth_whoami`만 로그인 상태 확인용 예외.
 

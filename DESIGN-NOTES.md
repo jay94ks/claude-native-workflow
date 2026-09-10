@@ -447,6 +447,48 @@ DB 기반 시스템으로 옮기는 `docs migrate scan`/`migrate apply` CLI+MCP
 컨테이너/볼륨/이미지/스크래치 `.env`/CLI 자격증명/export한 concept
 문서 사본 전부 정리.
 
+## 로드맵 이후 보완: DocStatus/DocStatusTransition CLI/MCP/API 완전성 - 완료 (2026-09-10)
+
+Phase 6(가이디드 마이그레이션) 실측 중 발견한 것 - `core/docTypes.ts`의
+`addDocStatus()`/`addDocStatusTransition()`은 Phase 0부터 구현돼
+있었고 `seedDefaultDocTypes()`(SP/DC/DN 기본값 심기)가 내부적으로
+써왔지만 REST 라우트/CLI/MCP 어디에도 노출된 적이 없었다 - `docs
+doctype-create`로 커스텀 타입을 만들면 상태가 0개라 그 타입으로 문서를
+만들려는 순간 막혔다. "CLI/MCP 명령어 완전성" 원칙 위반을 로드맵 완료
+후에 발견한 것이라 새 Phase 번호 없이 별도 보완으로 처리했다.
+
+- `core/docTypes.ts`에 `getDocTypeById()`(소유권 확인용),
+  `addDocStatusTransitionByCode()`(id 대신 코드로 전이를 정의하는 래퍼 -
+  기존 `addDocStatusTransition()`은 `seedDefaultDocTypes` 내부용으로
+  그대로 둠), `listDocStatusTransitions()`(지금까지 단일 상태발 전이만
+  보던 `allowedNextStatuses()`와 달리 타입 전체 전이 목록) 추가.
+- `POST /api/projects/:projectId/doc-types/:docTypeId/statuses`,
+  `POST /api/projects/:projectId/doc-types/:docTypeId/transitions`
+  (둘 다 owner + docTypeId가 실제로 그 프로젝트 소속인지 확인 -
+  틀리면 404), `GET /api/doc-types/:docTypeId/transitions` 신설.
+- CLI `doctype-status-add`/`doctype-transition-add`/
+  `doctype-transitions` + MCP `doctype_status_add`/
+  `doctype_transition_add`/`doctype_transitions` - 기존 `doctype-create`/
+  `doctypes`가 flat 명령이라(다른 명령들처럼 하위 그룹이 아님) 같은
+  스타일로 맞춤(기존 이름을 그룹으로 리네임하는 불필요한 변경은 안 함).
+
+검증: 실제 스택(Postgres+Meilisearch+backend)에서 커스텀 타입을 만들어
+"정의된 상태가 없습니다" 실패를 먼저 재현(고치기 전 증상 확인) →
+`doctype-status-add`로 상태 2개(하나는 `--terminal`) 추가 →
+`doctype-transition-add`로 전이 연결 → `doctype-transitions`로 조회 →
+`docs new`로 그 타입 문서를 실제로 만들어 올바른 초기 상태(진입점)로
+생성되는지, `docs transition`이 정의한 경로를 실제로 따라가는지,
+정의 안 된 전이는 거부되는지까지 CLI로 끝까지 확인. 다른 프로젝트의
+projectId로 남의 docTypeId를 겨냥하면 404가 오는지(소유권 우회 불가)
+curl로 확인. MCP 도구도 stdio로 직접 호출해 CLI와 동일하게 동작하는지
+대조(최초 시도에서 두 MCP 호출을 순서를 기다리지 않고 동시에 흘려보내
+경쟁 상태로 하나가 실패했는데, 이는 테스트 스크립트가 응답을 기다리지
+않고 요청을 몰아 보낸 문제였지 실제 코드 버그가 아님을 순차 재호출로
+확인함 - 상태를 직접 조회해 실제로는 첫 호출만 반영되고 둘째 호출이
+그 시점엔 아직 없던 상태를 참조해 정당하게 실패한 것이었다는 것까지
+확인). 테스트 후 컨테이너/볼륨/이미지/스크래치 `.env`/CLI 자격증명
+전부 정리.
+
 ## 다음 단계
 
-로드맵의 Phase 0~6이 전부 완료됐다. 추가 요청이 있을 때까지 대기.
+로드맵의 Phase 0~6과 위 보완까지 전부 완료됐다. 추가 요청이 있을 때까지 대기.

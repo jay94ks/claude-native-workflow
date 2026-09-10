@@ -185,6 +185,38 @@ program
   .command("doctypes <projectId>")
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/doc-types`))));
 
+program
+  .command("doctype-status-add <projectId> <docTypeId> <code> <label>")
+  .option("--terminal", "이 상태가 종료 상태임을 표시")
+  .action((projectId, docTypeId, code, label, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/statuses`, {
+          method: "POST",
+          body: JSON.stringify({ code, label, isTerminal: !!opts.terminal }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("doctype-transition-add <projectId> <docTypeId> <fromCode> <toCode>")
+  .option("--label <l>", "전이 라벨(선택)")
+  .action((projectId, docTypeId, fromCode, toCode, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/transitions`, {
+          method: "POST",
+          body: JSON.stringify({ fromStatusCode: fromCode, toStatusCode: toCode, label: opts.label }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("doctype-transitions <projectId> <docTypeId>")
+  .action((_projectId, docTypeId) => run(async () => printJson(await apiCall(`/api/doc-types/${docTypeId}/transitions`))));
+
 // ---------------------------------------------------------------- 문서
 
 program

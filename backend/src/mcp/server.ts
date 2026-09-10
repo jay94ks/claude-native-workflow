@@ -121,6 +121,35 @@ async function main() {
   tool("doctype_list", "문서 타입 목록", "프로젝트의 문서 타입 목록.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/doc-types`),
   );
+  tool(
+    "doctype_status_add",
+    "문서 타입 상태 추가",
+    "그 문서 타입이 가질 수 있는 상태를 하나 정의한다(새 타입은 상태가 0개라 이걸로 최소 1개는 만들어야 문서 생성이 가능해진다).",
+    { projectId: z.string(), docTypeId: z.string(), code: z.string(), label: z.string(), isTerminal: z.boolean().optional() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/statuses`, {
+        method: "POST",
+        body: JSON.stringify({ code: a.code, label: a.label, isTerminal: a.isTerminal ?? false }),
+      }),
+  );
+  tool(
+    "doctype_transition_add",
+    "문서 타입 상태 전이 추가",
+    "두 상태(코드로 지정) 사이의 허용된 전이를 정의한다 - 정의된 전이만 docs transition으로 이동 가능.",
+    { projectId: z.string(), docTypeId: z.string(), fromStatusCode: z.string(), toStatusCode: z.string(), label: z.string().optional() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/transitions`, {
+        method: "POST",
+        body: JSON.stringify({ fromStatusCode: a.fromStatusCode, toStatusCode: a.toStatusCode, label: a.label }),
+      }),
+  );
+  tool(
+    "doctype_transitions",
+    "문서 타입 전이 목록",
+    "그 문서 타입에 정의된 상태 전이 전체 목록.",
+    { docTypeId: z.string() },
+    async (a) => call(`/api/doc-types/${a.docTypeId}/transitions`),
+  );
 
   // ---------------------------------------------------------------- 문서
 

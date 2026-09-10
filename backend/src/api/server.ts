@@ -12,7 +12,15 @@ import { getInstallConfig } from "../core/installConfig.js";
 import { createProjectGroup, listProjectGroups } from "../core/projectGroups.js";
 import { createProject, getProject, listProjects } from "../core/projects.js";
 import { addMember, listMembers } from "../core/members.js";
-import { createDocType, listDocTypes, listDocStatuses } from "../core/docTypes.js";
+import {
+  createDocType,
+  listDocTypes,
+  listDocStatuses,
+  addDocStatus,
+  getDocTypeById,
+  addDocStatusTransitionByCode,
+  listDocStatusTransitions,
+} from "../core/docTypes.js";
 import {
   createDocument,
   getDocument,
@@ -292,6 +300,58 @@ app.get(
   authenticate,
   asyncRoute(async (req, res) => {
     res.json(await listDocStatuses(req.params.docTypeId));
+  }),
+);
+
+// docTypeId가 실제로 이 프로젝트 소속인지 확인 - 다른 프로젝트/기관
+// 스코프의 docTypeId를 잘못(또는 악의적으로) 겨냥하는 걸 막는다.
+async function requireOwnedDocType(projectId: string, docTypeId: string): Promise<boolean> {
+  const docType = await getDocTypeById(docTypeId);
+  return docType !== null && docType.projectId === projectId;
+}
+
+app.post(
+  "/api/projects/:projectId/doc-types/:docTypeId/statuses",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { code, label, isTerminal } = req.body as { code?: string; label?: string; isTerminal?: boolean };
+    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
+    res.json(await addDocStatus(req.params.docTypeId, code, label, isTerminal ?? false));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/doc-types/:docTypeId/transitions",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { fromStatusCode, toStatusCode, label } = req.body as {
+      fromStatusCode?: string;
+      toStatusCode?: string;
+      label?: string;
+    };
+    if (!fromStatusCode || !toStatusCode) {
+      res.status(400).json({ error: "fromStatusCode/toStatusCode가 필요합니다" });
+      return;
+    }
+    res.json(await addDocStatusTransitionByCode(req.params.docTypeId, fromStatusCode, toStatusCode, label));
+  }),
+);
+
+app.get(
+  "/api/doc-types/:docTypeId/transitions",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listDocStatusTransitions(req.params.docTypeId));
   }),
 );
 

@@ -31,6 +31,15 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 아니다. 문서 상태를 바꿀 땐 `docs transition <trackingCode>
 <toStatusCode>`를 쓰되, 그 문서 타입에 정의된 전이만 허용된다.
 
+**새로 만든 타입은 상태가 0개라 그대로는 문서를 만들 수 없다** -
+`doctype-create` 직후 최소 하나는 `docs doctype-status-add <projectId>
+<docTypeId> <code> <label> [--terminal]`(`doctype_status_add`)로
+상태를 추가해야 한다. 상태 사이 이동을 허용하려면 `docs
+doctype-transition-add <projectId> <docTypeId> <fromCode> <toCode>
+[--label <l>]`(`doctype_transition_add`)로 전이를 정의한다(정의 안 한
+전이는 `docs transition`이 거부한다). 지금까지 만든 전이를 확인하려면
+`docs doctype-transitions <projectId> <docTypeId>`(`doctype_transitions`).
+
 ## 세션을 시작하거나 이 프로젝트를 다시 열 때
 
 `docs hook queue <projectId> --status pending`으로 대기 중인 push 훅이
