@@ -1,5 +1,5 @@
 import { getDb } from "./db.js";
-import { addTeamAdmin } from "./teamAdmins.js";
+import { addTeamAdmin, isTeamAdmin } from "./teamAdmins.js";
 
 // InstallConfig는 싱글턴 - id를 항상 "singleton"으로 고정해서 upsert.
 const INSTALL_CONFIG_ID = "singleton";
@@ -29,6 +29,10 @@ export interface Team {
   enabled: boolean;
 }
 
+export interface TeamWithMyAdmin extends Team {
+  isAdmin: boolean;
+}
+
 /** 생성 직후 그 설계자를 자동으로 첫 TeamAdmin으로 등록한다
  * (addMember(project.id, req.userId!, "owner")가 프로젝트 생성자를
  * owner로 넣는 것과 같은 원칙) - 안 그러면 "팀 관리자만 관리 가능"으로
@@ -44,14 +48,22 @@ export async function createTeam(name: string, actingUserId: string): Promise<Te
   return { id: row.id, name: row.name, enabled: row.enabled };
 }
 
-export async function listTeams(): Promise<Team[]> {
+/** 각 팀에 대한 호출자의 팀장 여부(isAdmin)를 함께 계산해서 얹는다 -
+ * 프런트가 CUD 버튼을 그 값 하나로 v-if할 수 있게(isTeamAdmin()이 이미
+ * admin-aware라 최고 관리자는 자동으로 전부 true). */
+export async function listTeams(viewerId: string): Promise<TeamWithMyAdmin[]> {
   const db = getDb();
   const rows = await db.team.findMany({ orderBy: { createdAt: "desc" } });
-  return rows.map((r: { id: string; name: string; enabled: boolean }) => ({
-    id: r.id,
-    name: r.name,
-    enabled: r.enabled,
-  }));
+  const out: TeamWithMyAdmin[] = [];
+  for (const r of rows as { id: string; name: string; enabled: boolean }[]) {
+    out.push({
+      id: r.id,
+      name: r.name,
+      enabled: r.enabled,
+      isAdmin: await isTeamAdmin(r.id, viewerId),
+    });
+  }
+  return out;
 }
 
 export async function updateTeam(teamId: string, input: { name?: string; enabled?: boolean }): Promise<Team> {

@@ -160,7 +160,7 @@ export async function register(
 // 고정하라는 명시적 지시). 계정이 이미 하나라도 있으면(이 시드가 이미
 // 실행됐거나 설계자가 직접 가입했거나) 절대 건드리지 않는다 - 순수
 // "빈 설치를 부팅 가능한 상태로 만드는" 1회성 동작.
-const DEFAULT_ADMIN_USERNAME = "admin";
+export const DEFAULT_ADMIN_USERNAME = "admin";
 const DEFAULT_ADMIN_PASSWORD = "12345678";
 
 export async function seedDefaultAdminAccount(): Promise<void> {
@@ -168,6 +168,21 @@ export async function seedDefaultAdminAccount(): Promise<void> {
   const userCount = await db.user.count();
   if (userCount > 0) return;
   await register({ username: DEFAULT_ADMIN_USERNAME, password: DEFAULT_ADMIN_PASSWORD });
+}
+
+// admin 계정은 항상 최고 관리자다(설계자 확정 - 모든 역할/관리자 판정을
+// 우회한다). username은 가입 후 절대 안 바뀌므로(프로필 수정에
+// username 필드가 없음) 한 번 찾은 id를 프로세스 수명 동안 캐시해도
+// 안전하다 - 못 찾았을 때만(아직 시드 전 등) 매번 재조회한다.
+let cachedAdminUserId: string | null = null;
+
+export async function isSuperAdmin(userId: string): Promise<boolean> {
+  if (!cachedAdminUserId) {
+    const db = getDb();
+    const admin = await db.user.findUnique({ where: { username: DEFAULT_ADMIN_USERNAME } });
+    cachedAdminUserId = admin?.id ?? null;
+  }
+  return cachedAdminUserId === userId;
 }
 
 export async function login(usernameOrEmail: string, password: string): Promise<AuthResult> {

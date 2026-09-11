@@ -375,6 +375,13 @@ program
   );
 
 program
+  .command("project-delete <projectId>")
+  .description("프로젝트를 완전히 삭제한다(문서/코멘트/칸반/Q&A/연결된 Gitea 저장소까지 전부 - 되돌릴 수 없음, owner 전용)")
+  .action((projectId) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}`, { method: "DELETE" }))),
+  );
+
+program
   .command("member-add <projectId> <userId>")
   .requiredOption("--role <r>", "owner|editor|viewer")
   .action((projectId, userId, opts) =>
@@ -979,6 +986,33 @@ gitCmd
       }
       console.log(`${proposal.files.length}개 파일을 ${opts.out}에 썼습니다.`);
     }),
+  );
+
+gitCmd
+  .command("publish <projectId>")
+  .requiredOption("--credential <id>", "쓸 git 자격증명 id(docs credential list로 확인)")
+  .description("외부(권위) 저장소로 실제 동기화(push)를 시도한다 - 즉시 반영되면 status:synced, fast-forward 불가/권한 부족이면 status:queued로 AI 대기열에 올라감")
+  .action((projectId, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/publish`, {
+          method: "POST",
+          body: JSON.stringify({ gitCredentialId: opts.credential }),
+        }),
+      ),
+    ),
+  );
+
+gitCmd
+  .command("publish-queue <projectId>")
+  .description("이 프로젝트의 처리 대기 중인 발행 큐 항목을 조회한다(없으면 null)")
+  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/publish-queue`))));
+
+gitCmd
+  .command("publish-queue-done <projectId> <id>")
+  .description("발행 큐 항목 처리를 완료로 보고한다 - 그래야 웹 UI의 동기화 버튼이 다시 활성화된다")
+  .action((projectId, id) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/publish-queue/${id}/done`, { method: "POST" }))),
   );
 
 gitCmd

@@ -8,6 +8,7 @@ interface ProjectGroup {
   id: string;
   teamId: string | null;
   name: string;
+  isAdmin: boolean;
 }
 interface Team {
   id: string;
@@ -147,15 +148,17 @@ onMounted(load);
         <template v-else>
           <span>{{ group.name }}</span>
           <span class="muted">{{ teamName(group.teamId) }}</span>
-          <button class="manage-btn" @click="startEdit(group)">이름 수정</button>
+          <button v-if="group.isAdmin" class="manage-btn" @click="startEdit(group)">이름 수정</button>
         </template>
-        <button class="manage-btn" @click="toggleMembers(group.id)">
-          {{ expandedMembersId === group.id ? "멤버 닫기" : "멤버 보기" }}
-        </button>
-        <button class="manage-btn" @click="toggleAdmins(group.id)">
-          {{ expandedAdminsId === group.id ? "그룹 관리자 닫기" : "그룹 관리자" }}
-        </button>
-        <button class="danger-btn" @click="remove(group)">삭제</button>
+        <template v-if="group.isAdmin">
+          <button class="manage-btn" @click="toggleMembers(group.id)">
+            {{ expandedMembersId === group.id ? "멤버 닫기" : "멤버 보기" }}
+          </button>
+          <button class="manage-btn" @click="toggleAdmins(group.id)">
+            {{ expandedAdminsId === group.id ? "그룹 관리자 닫기" : "그룹 관리자" }}
+          </button>
+          <button class="danger-btn" @click="remove(group)">삭제</button>
+        </template>
       </div>
       <p v-if="editError && editingId === group.id" class="error inline">{{ editError }}</p>
       <p v-if="deleteError[group.id]" class="error inline">{{ deleteError[group.id] }}</p>

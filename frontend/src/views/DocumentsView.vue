@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, inject, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import FolderTree from "../components/FolderTree.vue";
 import Pagination from "../components/Pagination.vue";
+import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
 const route = useRoute();
 const isRecentMode = computed(() => route.query.recent === "1");
+
+const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
+const canCreateDocument = computed(() => roleSatisfies(myRole.value, "editor"));
 
 interface DocumentSummary {
   trackingCode: string;
@@ -166,14 +170,14 @@ watch(page, load);
           </select>
         </div>
 
-        <form class="create-row" @submit.prevent="create">
+        <form v-if="canCreateDocument" class="create-row" @submit.prevent="create">
           <input v-model="newTitle" type="text" placeholder="새 문서 제목" />
           <select v-model="newTypeCode">
             <option v-for="t in docTypes" :key="t.id" :value="t.code">{{ t.code }}</option>
           </select>
           <button type="submit">만들기</button>
         </form>
-        <p v-if="selectedTypeGuideline" class="guideline-hint">{{ selectedTypeGuideline }}</p>
+        <p v-if="canCreateDocument && selectedTypeGuideline" class="guideline-hint">{{ selectedTypeGuideline }}</p>
       </template>
 
       <p v-if="error" class="error">{{ error }}</p>

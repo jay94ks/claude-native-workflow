@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, inject, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import DocTypeManager from "../components/DocTypeManager.vue";
 import GitRepoPanel from "../components/GitRepoPanel.vue";
@@ -7,11 +8,35 @@ import AccessControlManager from "../components/AccessControlManager.vue";
 import UserRef from "../components/UserRef.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useAuthStore } from "../stores/auth";
+import { PROJECT_MY_ROLE_KEY } from "../utils/projectContext";
 
 const entityPicker = useEntityPickerStore();
 const auth = useAuthStore();
+const router = useRouter();
 
 const props = defineProps<{ id: string }>();
+
+const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
+const isOwner = computed(() => myRole.value === "owner");
+
+const deleting = ref(false);
+const deleteProjectError = ref("");
+
+async function deleteProject() {
+  const confirmed = window.confirm(
+    "이 프로젝트를 완전히 삭제하시겠습니까?\n문서/코멘트/칸반 보드/질의응답 등 이 프로젝트의 모든 데이터가 함께 삭제되고, 연결된 Gitea 저장소도 함께 삭제됩니다.\n되돌릴 수 없습니다.",
+  );
+  if (!confirmed) return;
+  deleting.value = true;
+  deleteProjectError.value = "";
+  try {
+    await apiCall(`/projects/${props.id}`, { method: "DELETE" });
+    router.push("/projects");
+  } catch (err) {
+    deleteProjectError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
+    deleting.value = false;
+  }
+}
 
 interface DocType {
   id: string;
@@ -123,7 +148,7 @@ onMounted(load);
 
     <section>
       <h2>멤버</h2>
-      <form class="create-row" @submit.prevent="addMember">
+      <form v-if="isOwner" class="create-row" @submit.prevent="addMember">
         <button type="button" class="pick-btn" @click="pickNewMember">{{ newMemberUserId || "사용자 선택..." }}</button>
         <select v-model="newMemberRole">
           <option value="owner">owner</option>
@@ -136,7 +161,7 @@ onMounted(load);
       <ul class="list">
         <li v-for="m in members" :key="m.id">
           <UserRef :user-id="m.userId" />
-          <span class="member-controls">
+          <span v-if="isOwner" class="member-controls">
             <select
               :value="m.role"
               :disabled="isSelfOwner(m)"
@@ -157,6 +182,7 @@ onMounted(load);
               제거
             </button>
           </span>
+          <span v-else class="muted">{{ m.role }}</span>
         </li>
         <li v-if="members.length === 0" class="muted">멤버가 없습니다.</li>
       </ul>
@@ -168,6 +194,15 @@ onMounted(load);
         협업 중인 설계자의 읽기/쓰기/삭제 권한을 공통/문서 타입별/개별 문서 단위로 더 좁게 제한(또는 넓게 예외 허용)할 수 있다.
       </p>
       <AccessControlManager :project-id="id" />
+    </section>
+
+    <section v-if="isOwner" class="danger-zone">
+      <h2>제한구역</h2>
+      <p class="hint">
+        이 프로젝트를 완전히 삭제한다 - 문서/코멘트/칸반 보드/질의응답 등 모든 데이터와 연결된 Gitea 저장소까지 함께 삭제되며 되돌릴 수 없다.
+      </p>
+      <p v-if="deleteProjectError" class="error">{{ deleteProjectError }}</p>
+      <button type="button" class="delete-project-btn" :disabled="deleting" @click="deleteProject">프로젝트 삭제</button>
     </section>
   </template>
 </template>
@@ -277,5 +312,26 @@ section {
 .error {
   color: #d1344b;
   font-size: 13px;
+}
+.danger-zone {
+  border: 1px solid #e2a2ad;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fff8f8;
+}
+.danger-zone h2 {
+  color: #d1344b;
+}
+.delete-project-btn {
+  background: #d1344b;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.delete-project-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

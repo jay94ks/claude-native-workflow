@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, provide, ref, watch } from "vue";
 import { apiCall, ApiError } from "../api/client";
+import { PROJECT_MY_ROLE_KEY } from "../utils/projectContext";
 
 const props = defineProps<{ id: string }>();
 
@@ -8,11 +9,14 @@ interface Project {
   id: string;
   name: string;
   projectGroupId: string;
+  myRole: string | null;
 }
 
 const project = ref<Project | null>(null);
 const loading = ref(true);
 const error = ref("");
+
+provide(PROJECT_MY_ROLE_KEY, computed(() => project.value?.myRole ?? null));
 
 async function load() {
   loading.value = true;

@@ -18,7 +18,7 @@ interface MessagePublishEvent {
   createdAt: string;
 }
 
-export async function sendMessage(projectId: string, authorId: string, body: string): Promise<MessageDetail> {
+export async function sendMessage(projectId: string, authorId: string | null, body: string): Promise<MessageDetail> {
   if (!body) throw new Error("body가 필요합니다");
   const db = getDb();
   const row = await db.message.create({ data: { projectId, authorId, body } });

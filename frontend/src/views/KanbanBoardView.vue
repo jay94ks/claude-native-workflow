@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
 const props = defineProps<{ id: string }>();
 const kanbanDialog = useKanbanCardDialogStore();
 const entityPicker = useEntityPickerStore();
+
+// 분류/카드 생성, 카드 숨김/이동은 editor 이상(백엔드 requireProjectRole
+// ("editor")/roleSatisfies(role,"editor")와 동일한 기준) - 분류 숨김
+// 토글·순서 변경은 개인 취향/뷰어 허용 구간이라 그대로 둔다.
+const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
+const canEdit = computed(() => roleSatisfies(myRole.value, "editor"));
 
 interface KanbanColumnView {
   id: string;
@@ -217,7 +224,7 @@ onUnmounted(() => disconnect?.());
 
 <template>
   <div class="board-toolbar">
-    <button @click="showNewColumnForm = !showNewColumnForm">+ 새 분류</button>
+    <button v-if="canEdit" @click="showNewColumnForm = !showNewColumnForm">+ 새 분류</button>
     <button class="secondary" @click="showHiddenPanel = !showHiddenPanel">숨김 관리 ({{ hiddenColumns.length }})</button>
   </div>
   <form v-if="showNewColumnForm" class="new-column-form" @submit.prevent="createColumn">
@@ -270,7 +277,7 @@ onUnmounted(() => disconnect?.());
           v-for="(c, i) in cardsFor(col.id)"
           :key="c.trackingCode"
           class="card"
-          draggable="true"
+          :draggable="canEdit"
           @dragstart="onCardDragStart(c.trackingCode)"
           @dragover.prevent
           @drop.stop="onCardDrop(col.id, i)"
@@ -278,11 +285,11 @@ onUnmounted(() => disconnect?.());
         >
           <span v-if="c.origin === 'designer'" class="badge">필수</span>
           <span class="card-title">{{ c.title }}</span>
-          <button class="hide-btn" title="숨기기" @click.stop="setCardHidden(c.trackingCode, true)">숨김</button>
+          <button v-if="canEdit" class="hide-btn" title="숨기기" @click.stop="setCardHidden(c.trackingCode, true)">숨김</button>
         </div>
       </div>
 
-      <button class="add-card-btn" @click="openCardForm(col.id)">+ 카드</button>
+      <button v-if="canEdit" class="add-card-btn" @click="openCardForm(col.id)">+ 카드</button>
       <form v-if="newCardColumnId === col.id" class="new-card-form" @submit.prevent="createCard">
         <input v-model="newCardTitle" type="text" placeholder="카드 제목" />
         <textarea v-model="newCardBody" rows="2" placeholder="설명(선택)"></textarea>

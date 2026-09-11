@@ -205,6 +205,13 @@ async function main() {
     async (a) => call(`/api/projects/${a.projectId}/hidden`, { method: "PUT", body: JSON.stringify({ hidden: a.hidden }) }),
   );
   tool(
+    "project_delete",
+    "프로젝트 삭제",
+    "프로젝트를 완전히 삭제한다(문서/코멘트/칸반/Q&A/연결된 Gitea 저장소까지 전부 - 되돌릴 수 없음, owner 전용).",
+    { projectId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}`, { method: "DELETE" }),
+  );
+  tool(
     "member_add",
     "프로젝트 멤버 추가",
     "프로젝트에 사용자를 role과 함께 추가한다.",
@@ -632,6 +639,27 @@ async function main() {
     "외부 연동 프로젝트에서 달라진 파일들의 실제 내용을 가져온다 - 외부(권위) 저장소로 반영하는 건 설계자 몫.",
     { projectId: z.string() },
     async (a) => call(`/api/projects/${a.projectId}/git/sync-proposal`),
+  );
+  tool(
+    "git_publish",
+    "외부 저장소로 동기화(발행)",
+    "외부(권위) 저장소로 실제 동기화(push)를 시도한다 - 즉시 반영되면 status:synced, fast-forward 불가/권한 부족이면 status:queued로 AI 대기열에 올라간다(이 프로젝트에 메시지로도 안내됨).",
+    { projectId: z.string(), gitCredentialId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/publish`, { method: "POST", body: JSON.stringify({ gitCredentialId: a.gitCredentialId }) }),
+  );
+  tool(
+    "git_publish_queue",
+    "발행 대기열 조회",
+    "이 프로젝트의 처리 대기 중인 발행 큐 항목(없으면 null) - 세션 시작 시 확인 권장(pending이면 처리 후 git_publish_queue_done으로 보고).",
+    { projectId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/publish-queue`),
+  );
+  tool(
+    "git_publish_queue_done",
+    "발행 대기열 처리 완료 보고",
+    "발행 큐 항목 처리를 완료로 보고한다 - 그래야 웹 UI의 동기화 버튼이 다시 활성화된다.",
+    { projectId: z.string(), id: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/publish-queue/${a.id}/done`, { method: "POST" }),
   );
   tool("git_log", "git 로그 조회", "자체 호스팅 저장소의 커밋 로그.", { projectId: z.string(), ref: z.string().optional() }, async (a) => {
     const qs = a.ref ? `?ref=${encodeURIComponent(String(a.ref))}` : "";

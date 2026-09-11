@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { getMemberRole } from "./members.js";
+import { isSuperAdmin } from "./auth.js";
 
 // 문서 정리용 폴더 - 실제 git 파일 트리와 무관하게 DB 안에서만 존재하는
 // 설계자 개인 소유의 정리 편의 기능이다. 폴더는 만든 설계자 한 명의
@@ -27,7 +28,9 @@ async function assertOwnsFolder(folderId: string, userId: string): Promise<{ id:
   const db = getDb();
   const folder = await db.folder.findUnique({ where: { id: folderId } });
   if (!folder) throw new Error(`폴더를 찾을 수 없습니다: ${folderId}`);
-  if (folder.createdBy !== userId) throw new Error("본인이 만든 폴더만 관리할 수 있습니다");
+  if (folder.createdBy !== userId && !(await isSuperAdmin(userId))) {
+    throw new Error("본인이 만든 폴더만 관리할 수 있습니다");
+  }
   return folder;
 }
 

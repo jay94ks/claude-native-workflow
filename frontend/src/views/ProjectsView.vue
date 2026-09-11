@@ -7,6 +7,7 @@ interface Project {
   projectGroupId: string;
   name: string;
   hidden: boolean;
+  canToggleHidden: boolean;
 }
 interface ProjectGroup {
   id: string;
@@ -93,7 +94,7 @@ onMounted(load);
         <span v-if="project.hidden" class="hidden-badge">🔒 숨김</span>
         <span class="muted">{{ groupName(project.projectGroupId) }}</span>
       </span>
-      <button class="hide-btn" @click="toggleHidden(project)">{{ project.hidden ? "숨김 해제" : "숨김" }}</button>
+      <button v-if="project.canToggleHidden" class="hide-btn" @click="toggleHidden(project)">{{ project.hidden ? "숨김 해제" : "숨김" }}</button>
     </li>
     <li v-if="projects.length === 0" class="muted">아직 프로젝트가 없습니다.</li>
   </ul>

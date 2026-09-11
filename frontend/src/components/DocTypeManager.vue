@@ -1,8 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, inject, onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
+import { PROJECT_MY_ROLE_KEY } from "../utils/projectContext";
 
 const props = defineProps<{ projectId: string }>();
+
+// 문서 타입 CRUD·상태/전이 관리는 전부 프로젝트 owner 전용(백엔드
+// requireProjectRole("owner")와 동일한 기준) - 타입 자체를 보는 건
+// 누구나 가능, 관리 버튼만 owner에게만 보인다.
+const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
+const isOwner = computed(() => myRole.value === "owner");
 
 interface DocType {
   id: string;
@@ -210,18 +217,20 @@ onMounted(loadTypes);
 <template>
   <div class="manager">
     <p v-if="error" class="error">{{ error }}</p>
-    <form class="create-row" @submit.prevent="createType">
-      <input v-model="newCode" type="text" placeholder="코드(영문 2글자)" maxlength="2" class="code-input" />
-      <input v-model="newLabel" type="text" placeholder="라벨" />
-      <button type="submit">타입 만들기</button>
-    </form>
-    <textarea
-      v-model="newGuideline"
-      class="guideline-input"
-      rows="2"
-      placeholder="이 타입은 무엇을 하기 위한 것인지(선택)"
-    ></textarea>
-    <p v-if="createError" class="error">{{ createError }}</p>
+    <template v-if="isOwner">
+      <form class="create-row" @submit.prevent="createType">
+        <input v-model="newCode" type="text" placeholder="코드(영문 2글자)" maxlength="2" class="code-input" />
+        <input v-model="newLabel" type="text" placeholder="라벨" />
+        <button type="submit">타입 만들기</button>
+      </form>
+      <textarea
+        v-model="newGuideline"
+        class="guideline-input"
+        rows="2"
+        placeholder="이 타입은 무엇을 하기 위한 것인지(선택)"
+      ></textarea>
+      <p v-if="createError" class="error">{{ createError }}</p>
+    </template>
 
     <p v-if="loading" class="muted">불러오는 중...</p>
     <ul v-else class="types">
@@ -239,7 +248,7 @@ onMounted(loadTypes);
             <div v-if="!editingGuideline" class="guideline-view">
               <p v-if="expandedType?.guideline" class="guideline-text">{{ expandedType.guideline }}</p>
               <p v-else class="muted">지침 없음</p>
-              <button class="edit-btn" @click="startEditGuideline">수정</button>
+              <button v-if="isOwner" class="edit-btn" @click="startEditGuideline">수정</button>
             </div>
             <div v-else class="guideline-edit">
               <textarea v-model="guidelineDraft" rows="2" placeholder="이 타입은 무엇을 하기 위한 것인지"></textarea>
@@ -259,7 +268,7 @@ onMounted(loadTypes);
               </li>
               <li v-if="statuses.length === 0" class="muted">상태가 없습니다 - 최소 하나는 있어야 문서를 만들 수 있습니다.</li>
             </ul>
-            <form class="add-row" @submit.prevent="addStatus">
+            <form v-if="isOwner" class="add-row" @submit.prevent="addStatus">
               <select v-model="newStatusCode">
                 <option value="">상태 코드 선택</option>
                 <option v-for="c in STANDARD_STATUS_CODES" :key="c" :value="c">{{ c }}</option>
@@ -280,7 +289,7 @@ onMounted(loadTypes);
               </li>
               <li v-if="transitions.length === 0" class="muted">정의된 전이가 없습니다.</li>
             </ul>
-            <form class="add-row" @submit.prevent="addTransition">
+            <form v-if="isOwner" class="add-row" @submit.prevent="addTransition">
               <select v-model="newTransitionFrom">
                 <option value="">시작 상태</option>
                 <option v-for="s in statuses" :key="s.id" :value="s.code">{{ s.code }}</option>

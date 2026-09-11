@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
-import { useAuthStore } from "../stores/auth";
 import UserRef from "./UserRef.vue";
 import TrackingCodeText from "./TrackingCodeText.vue";
 
 const props = defineProps<{ projectId: string; targetType: "document" | "source" | "kanbanCard"; targetKey: string }>();
-const auth = useAuthStore();
 
 interface CommentItem {
   id: string;
@@ -15,7 +13,8 @@ interface CommentItem {
   authorId: string;
   createdAt: string;
   updatedAt: string;
-  status: string; // open | closed | solved | etc - 작성자 본인만 변경 가능
+  status: string; // open | closed | solved | etc - 작성자 본인만 변경 가능(최고 관리자는 예외)
+  canManage: boolean; // 서버 계산 - 작성자 본인이거나 최고 관리자
 }
 
 const STATUS_LABEL: Record<string, string> = { open: "열림", closed: "닫힘", solved: "해결", etc: "잡담" };
@@ -117,8 +116,6 @@ async function changeStatus(c: CommentItem, status: string) {
   }
 }
 
-const isMine = computed(() => (c: CommentItem) => c.authorId === auth.me?.id);
-
 onMounted(async () => {
   await load();
   disconnect = await connectProjectRealtime(props.projectId, {
@@ -154,7 +151,7 @@ onUnmounted(() => disconnect?.());
           </div>
           <div class="c-actions">
             <select
-              v-if="isMine(c)"
+              v-if="c.canManage"
               class="status-select"
               :class="c.status"
               :value="c.status"
@@ -164,7 +161,7 @@ onUnmounted(() => disconnect?.());
               <option v-for="(label, code) in STATUS_LABEL" :key="code" :value="code">{{ label }}</option>
             </select>
             <span v-else class="status-badge" :class="c.status">{{ STATUS_LABEL[c.status] ?? c.status }}</span>
-            <template v-if="isMine(c)">
+            <template v-if="c.canManage">
               <button type="button" @click="startEdit(c)">수정</button>
               <button type="button" class="danger" :disabled="busy[c.id]" @click="remove(c)">삭제</button>
             </template>

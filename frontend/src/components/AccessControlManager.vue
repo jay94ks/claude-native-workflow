@@ -1,14 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, inject, onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import UserRef from "./UserRef.vue";
 import { useNicknamesStore } from "../stores/nicknames";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import { PROJECT_MY_ROLE_KEY } from "../utils/projectContext";
 
 const nicknames = useNicknamesStore();
 const entityPicker = useEntityPickerStore();
 
 const props = defineProps<{ projectId: string }>();
+
+// 세부 접근 권한은 백엔드 자체가 owner 전용(GET .../access도 owner만
+// 조회 가능) - non-owner는 애초에 이 섹션을 볼 이유가 없으므로
+// 조회 자체를 건너뛴다(실패 응답을 보여주는 대신 통째로 숨김).
+const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
+const isOwner = computed(() => myRole.value === "owner");
 
 interface Member {
   userId: string;
@@ -51,7 +58,7 @@ async function load() {
   try {
     const [m, d, o] = await Promise.all([
       apiCall<Member[]>(`/projects/${props.projectId}/members`),
-      apiCall<DocType[]>(`/projects/${props.projectId}/doc-types/own`),
+      apiCall<DocType[]>(`/projects/${props.projectId}/doc-types`),
       apiCall<AccessOverride[]>(`/projects/${props.projectId}/access`),
     ]);
     members.value = m;
@@ -122,11 +129,13 @@ function flagText(b: boolean | null): string {
   return b ? "허용" : "차단";
 }
 
-onMounted(load);
+onMounted(() => {
+  if (isOwner.value) load();
+});
 </script>
 
 <template>
-  <div class="manager">
+  <div v-if="isOwner" class="manager">
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="loading" class="muted">불러오는 중...</p>
     <template v-else>

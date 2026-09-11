@@ -6,6 +6,7 @@ import * as gitea from "./gitea.js";
 import { GitAuthRequiredError } from "./gitea.js";
 import { registerWebhook } from "./externalGit.js";
 import { resyncCollaboratorGrantsForProject } from "./members.js";
+import { sendMessage } from "./messages.js";
 
 export { GitAuthRequiredError };
 
@@ -243,6 +244,32 @@ export async function getProjectGitRepo(projectId: string): Promise<ProjectGitRe
   return row ? toInfo(row) : null;
 }
 
+/** 프로젝트 삭제 시 연결된 Gitea 저장소도 함께 지운다(설계자 확인 -
+ * 프로젝트를 삭제하면 DB 데이터뿐 아니라 Gitea 저장소도 같이 삭제).
+ * self_hosted는 저장소 하나(slugForProject), external_linked는 미러+
+ * 작업 저장소 둘 다(레거시 provider "github"/"gitlab"은 애초에 Gitea
+ * 사본이 없던 버전이라 스킵). 실패해도(Gitea 다운 등) 개별적으로
+ * 로그만 남기고 계속 진행한다(fail-soft - syncCollaboratorGrant와
+ * 같은 원칙 - Gitea가 일시적으로 안 떠 있다고 프로젝트 삭제 자체가
+ * 막히면 안 됨). */
+export async function deleteProjectGitRepo(projectId: string): Promise<void> {
+  const repo = await getProjectGitRepo(projectId);
+  if (!repo) return;
+  const slugs =
+    repo.provider === "self_hosted"
+      ? [slugForProject(projectId)]
+      : repo.provider === "external_linked"
+        ? [mirrorSlugForProject(projectId), workSlugForProject(projectId)]
+        : [];
+  for (const slug of slugs) {
+    try {
+      await gitea.deleteRepo(slug);
+    } catch (err) {
+      console.error(`deleteProjectGitRepo(${projectId}) - Gitea 저장소 삭제 실패(${slug}):`, err);
+    }
+  }
+}
+
 export async function getWebhookSecret(projectId: string): Promise<string | null> {
   const db = getDb();
   const row = await db.projectGitRepo.findUnique({ where: { projectId } });
@@ -395,4 +422,78 @@ export async function getGitSyncProposal(projectId: string): Promise<{ files: Gi
     }),
   );
   return { files };
+}
+
+// ---------------------------------------------------------------- 외부 저장소 동기화(발행) - Gitea Push Mirror 기반
+// "동기화 제안"까지만 있던 걸 실제로 외부(권위) 저장소에 반영하는
+// 기능(설계자 확정) - work 저장소에 Push Mirror를 걸어두고 즉시
+// 동기화를 트리거한다. fast-forward가 안 되거나(외부가 앞서감)
+// 자격증명에 push 권한이 없으면 Gitea의 push가 그대로 실패하고(별도
+// 사전 판정 없이 "시도 후 확인"), 그 결과를 그대로 AI 대기열로 넘긴다.
+
+export type PublishResult = { status: "synced" } | { status: "queued"; queueEntryId: string };
+
+async function waitForPushMirrorOutcome(slug: string, previousUpdate: string | null): Promise<gitea.PushMirrorStatus | null> {
+  for (let i = 0; i < 20; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const status = await gitea.getPushMirrorStatus(slug);
+    if (status?.lastError) return status;
+    if (status?.lastUpdate && status.lastUpdate !== previousUpdate) return status;
+  }
+  return await gitea.getPushMirrorStatus(slug);
+}
+
+export async function publishToExternalRepo(projectId: string, gitCredentialId: string): Promise<PublishResult> {
+  const repo = await getProjectGitRepo(projectId);
+  if (!repo || repo.provider !== "external_linked") {
+    throw new Error("외부 저장소 연동(external_linked) 프로젝트에서만 발행할 수 있습니다");
+  }
+  const token = await resolveCredentialToken(gitCredentialId);
+  if (!token) throw new Error(`자격증명을 찾을 수 없습니다: ${gitCredentialId}`);
+
+  const workSlug = workSlugForProject(projectId);
+  const existing = await gitea.getPushMirrorStatus(workSlug);
+  if (!existing) {
+    // push mirror의 "username"은 대부분의 PAT 기반 인증(GitHub/GitLab)에서
+    // 실질적으로 무시된다 - 토큰을 그대로 재사용한다.
+    await gitea.configurePushMirror(workSlug, repo.repoUrl, token, token);
+  }
+  await gitea.triggerPushMirrorSync(workSlug);
+  const result = await waitForPushMirrorOutcome(workSlug, existing?.lastUpdate ?? null);
+
+  if (!result?.lastError) {
+    return { status: "synced" };
+  }
+
+  const db = getDb();
+  const entry = await db.gitSyncQueueEntry.create({
+    data: { projectId, status: "pending", reason: "push_failed" },
+  });
+  await sendMessage(
+    projectId,
+    null,
+    `외부 저장소 동기화(발행)에 실패했습니다: ${result.lastError}\n\n` +
+      `"docs git sync-proposal ${projectId} --out <dir>"로 변경 제안을 확인해 직접 반영하거나 충돌을 해소한 뒤, ` +
+      `"docs git publish-queue-done ${projectId} ${entry.id}"로 완료를 보고하세요 - 그래야 "동기화" 버튼이 다시 활성화됩니다.`,
+  );
+  return { status: "queued", queueEntryId: entry.id };
+}
+
+/** 이 프로젝트에 아직 처리 안 된(pending) 발행 큐 항목이 있는지 -
+ * "동기화" 버튼을 비활성 상태로 유지할지 판단하는 데 쓴다. */
+export async function getPendingPublishQueueEntry(projectId: string): Promise<{ id: string; reason: string } | null> {
+  const db = getDb();
+  const row = await db.gitSyncQueueEntry.findFirst({ where: { projectId, status: "pending" }, orderBy: { createdAt: "desc" } });
+  return row ? { id: row.id, reason: row.reason } : null;
+}
+
+/** AI가 대기열 항목 처리를 마쳤다고 보고할 때 호출 - 요청한 프로젝트와
+ * 실제 큐 항목의 프로젝트가 일치하는지 재확인한다(pushHookPrompts.ts의
+ * transitionQueueEntry와 같은 이유 - 다른 프로젝트 권한으로 남의 큐
+ * 항목을 건드리는 것 방지). */
+export async function completePublishQueueEntry(id: string, projectId: string): Promise<void> {
+  const db = getDb();
+  const row = await db.gitSyncQueueEntry.findUnique({ where: { id } });
+  if (!row || row.projectId !== projectId) throw new Error(`큐 항목을 찾을 수 없습니다: ${id}`);
+  await db.gitSyncQueueEntry.update({ where: { id }, data: { status: "done" } });
 }

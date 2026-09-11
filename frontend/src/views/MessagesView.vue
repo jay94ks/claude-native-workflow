@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { connectProjectRealtime, type MessageEvent as RealtimeMessageEvent } from "../realtime";
 import UserRef from "../components/UserRef.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
 import Pagination from "../components/Pagination.vue";
+import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
 const props = defineProps<{ id: string }>();
+
+const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
+const canSend = computed(() => roleSatisfies(myRole.value, "editor"));
 
 interface MessageItem {
   id: string;
@@ -103,7 +107,7 @@ watch(page, load);
     <li v-if="messages.length === 0" class="muted">{{ tab === "pending" ? "대기 중인 메시지가 없습니다." : "기록된 메시지가 없습니다." }}</li>
   </ul>
   <Pagination :page="page" :total-pages="totalPages" @update:page="page = $event" />
-  <form class="send-row" @submit.prevent="send">
+  <form v-if="canSend" class="send-row" @submit.prevent="send">
     <input v-model="draft" type="text" placeholder="메시지 입력..." />
     <button type="submit" :disabled="sending">전송</button>
   </form>

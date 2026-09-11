@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
+import { PROJECT_MY_ROLE_KEY } from "../utils/projectContext";
 
 const props = defineProps<{ projectId: string }>();
+
+// git 저장소 기능 전체는 프로젝트 owner 전용(설계자 확정) - 컴포넌트
+// 자체를 owner가 아니면 아예 렌더링하지 않는다.
+const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
+const isOwner = computed(() => myRole.value === "owner");
 
 interface GitRepo {
   provider: string;
@@ -249,15 +255,86 @@ function toggleFile(path: string) {
   expandedFilePath.value = expandedFilePath.value === path ? null : path;
 }
 
+// ---------------------------------------------------------------- 동기화(발행) - 실제로 외부(권위) 저장소에 push
+// 위 "동기화 제안"(diff 미리보기)과 달리 실제 push를 시도한다 - 즉시
+// 반영되면 끝, fast-forward가 안 되거나 자격증명에 push 권한이 없으면
+// AI 대기열로 넘어간다. 대기 중에는 버튼을 비활성화하고, 큐 항목이
+// 사라질 때까지(AI가 완료 보고) 주기적으로 폴링한다(sync-status
+// 폴링과 같은 스타일 - 별도 타이머로 독립 운용).
+
+interface PublishQueueEntry {
+  id: string;
+  reason: string;
+}
+
+const publishCredentialId = ref("");
+const publishing = ref(false);
+const publishError = ref("");
+const publishSuccessAt = ref<number | null>(null);
+const publishQueueEntry = ref<PublishQueueEntry | null>(null);
+
+let publishQueuePollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function stopPublishQueuePoll() {
+  if (publishQueuePollTimer) {
+    clearTimeout(publishQueuePollTimer);
+    publishQueuePollTimer = null;
+  }
+}
+
+async function pollPublishQueueOnce(): Promise<void> {
+  try {
+    const entry = await apiCall<PublishQueueEntry | null>(`/projects/${props.projectId}/git/publish-queue`);
+    publishQueueEntry.value = entry;
+    if (entry) {
+      publishQueuePollTimer = setTimeout(pollPublishQueueOnce, 5000);
+    }
+  } catch {
+    // 폴링 실패는 조용히 재시도(다음 수동 새로고침에서도 다시 시도됨) -
+    // 버튼을 영구히 비활성 상태로 가두지 않기 위해 멈추지 않는다.
+    publishQueuePollTimer = setTimeout(pollPublishQueueOnce, 5000);
+  }
+}
+
+async function publish() {
+  if (!publishCredentialId.value) return;
+  publishing.value = true;
+  publishError.value = "";
+  publishSuccessAt.value = null;
+  try {
+    const result = await apiCall<{ status: "synced" } | { status: "queued"; queueEntryId: string }>(
+      `/projects/${props.projectId}/git/publish`,
+      { method: "POST", body: JSON.stringify({ gitCredentialId: publishCredentialId.value }) },
+    );
+    if (result.status === "synced") {
+      publishSuccessAt.value = Date.now();
+    } else {
+      stopPublishQueuePoll();
+      await pollPublishQueueOnce();
+    }
+  } catch (err) {
+    publishError.value = err instanceof ApiError ? err.message : "동기화에 실패했습니다";
+  } finally {
+    publishing.value = false;
+  }
+}
+
 onMounted(async () => {
+  if (!isOwner.value) return;
   await load();
-  if (gitRepo.value?.provider === "external_linked") await pollSyncStatusOnce();
+  if (gitRepo.value?.provider === "external_linked") {
+    await pollSyncStatusOnce();
+    await pollPublishQueueOnce();
+  }
 });
-onUnmounted(stopSyncPoll);
+onUnmounted(() => {
+  stopSyncPoll();
+  stopPublishQueuePoll();
+});
 </script>
 
 <template>
-  <div class="panel">
+  <div v-if="isOwner" class="panel">
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="loading" class="muted">불러오는 중...</p>
 
@@ -304,6 +381,30 @@ onUnmounted(stopSyncPoll);
             하세요.
           </p>
         </div>
+      </div>
+
+      <div class="publish-panel">
+        <h3>동기화(발행)</h3>
+        <p class="hint">
+          작업 저장소의 커밋을 실제로 외부(권위) 저장소에 push한다(Gitea Push Mirror 사용). fast-forward가 안 되거나
+          자격증명에 push 권한이 없으면 AI 대기열로 넘어가고, 처리 완료 보고 전까지 이 버튼은 비활성화된다.
+        </p>
+        <div v-if="publishQueueEntry" class="publish-queued">
+          AI 처리 대기 중({{ publishQueueEntry.reason === "diverged" ? "충돌" : "발행 실패" }}) -
+          <code>docs git publish-queue-done {{ projectId }} {{ publishQueueEntry.id }}</code>로 완료 보고가 오면
+          자동으로 다시 활성화됩니다.
+        </div>
+        <template v-else>
+          <select v-model="publishCredentialId">
+            <option value="">자격 증명 선택</option>
+            <option v-for="c in credentials" :key="c.id" :value="c.id">{{ c.hostPattern ?? c.credentialType }}</option>
+          </select>
+          <button :disabled="publishing || !publishCredentialId" @click="publish">
+            {{ publishing ? "동기화 중..." : "동기화" }}
+          </button>
+          <p v-if="publishError" class="error">{{ publishError }}</p>
+          <p v-if="publishSuccessAt" class="publish-success">외부 저장소에 반영됐습니다.</p>
+        </template>
       </div>
     </template>
 
@@ -526,6 +627,46 @@ onUnmounted(stopSyncPoll);
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+.publish-panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #eee;
+}
+.publish-panel h3 {
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+.publish-panel select {
+  padding: 6px 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-right: 8px;
+}
+.publish-panel button {
+  background: #fff;
+  border: 1px solid #3454d1;
+  color: #3454d1;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.publish-panel button:disabled {
+  opacity: 0.6;
+}
+.publish-queued {
+  padding: 10px;
+  background: #fff7e6;
+  border: 1px solid #f0c674;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.publish-success {
+  color: #2a8a4a;
+  font-size: 13px;
+  margin-top: 6px;
 }
 .hint {
   font-size: 12px;

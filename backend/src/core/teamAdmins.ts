@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { getActiveKeyScope } from "./requestScope.js";
+import { isSuperAdmin } from "./auth.js";
 
 export interface TeamAdmin {
   id: string;
@@ -39,6 +40,7 @@ export async function isTeamAdmin(teamId: string | null, userId: string): Promis
   const scope = getActiveKeyScope();
   if (scope.type === "project") return false;
   if (scope.type === "team" && scope.teamId !== teamId) return false;
+  if (await isSuperAdmin(userId)) return true;
   const db = getDb();
   const row = await db.teamAdmin.findUnique({ where: { teamId_userId: { teamId, userId } } });
   return row !== null;

@@ -180,6 +180,61 @@ export async function getMirrorUpdatedAt(slug: string): Promise<string | null> {
   return json.mirror_updated ?? null;
 }
 
+// ---------------------------------------------------------------- Push Mirror (외부 저장소 동기화/발행)
+// pull-mirror(forceMirrorSync/getMirrorUpdatedAt)와 정반대 방향 - 이
+// 저장소(work)의 커밋을 외부 저장소로 실제 push한다. Gitea 자체 기능을
+// 그대로 위임한다(설계자 확정 - git 프로토콜/GitHub·GitLab 커밋 API를
+// 직접 다루지 않음). **정확한 API 경로/응답 필드명은 실제 Gitea
+// 인스턴스의 /api/swagger로 재확인 - 버전별로 조금씩 다를 수 있다.**
+
+export interface PushMirrorStatus {
+  remoteAddress: string;
+  lastError: string | null;
+  lastUpdate: string | null;
+}
+
+/** work 저장소에 push mirror를 등록한다(이미 있으면 Gitea가 중복
+ * 에러를 던짐 - 호출부가 getPushMirrorStatus로 먼저 존재를 확인해야
+ * 한다). username/token은 자격증명에서 복호화한 값을 그대로 전달. */
+export async function configurePushMirror(
+  slug: string,
+  remoteAddress: string,
+  username: string,
+  token: string,
+): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/push_mirrors`, {
+    method: "POST",
+    body: JSON.stringify({
+      remote_address: remoteAddress,
+      remote_username: username,
+      remote_password: token,
+      sync_on_commit: false,
+    }),
+  });
+}
+
+/** 등록된 push mirror의 즉시 동기화를 큐에 넣는다(pull-mirror의
+ * forceMirrorSync와 마찬가지로 비동기 - 완료 여부는
+ * getPushMirrorStatus()의 lastUpdate/lastError로 폴링해 확인). */
+export async function triggerPushMirrorSync(slug: string): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/push_mirrors-sync`, { method: "POST" });
+}
+
+/** 등록된 push mirror 목록(이 시스템은 저장소당 하나만 등록하므로
+ * 첫 번째만 본다) - lastError가 있으면 마지막 동기화가 실패한 것
+ * (자격증명에 push 권한이 없는 경우 등), null이면 성공. */
+export async function getPushMirrorStatus(slug: string): Promise<PushMirrorStatus | null> {
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/push_mirrors`);
+  const json = (await res.json()) as { remote_address: string; last_error?: string; last_update?: string }[];
+  if (json.length === 0) return null;
+  const first = json[0];
+  return {
+    remoteAddress: first.remote_address,
+    lastError: first.last_error?.trim() ? first.last_error : null,
+    lastUpdate: first.last_update ?? null,
+  };
+}
+
 export interface FullTreeEntry {
   path: string;
   sha: string;

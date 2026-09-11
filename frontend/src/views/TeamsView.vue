@@ -9,6 +9,7 @@ interface Team {
   id: string;
   name: string;
   enabled: boolean;
+  isAdmin: boolean;
 }
 interface TeamMemberRow {
   projectId: string;
@@ -140,19 +141,23 @@ onMounted(load);
         <template v-else>
           <span>{{ team.name }}</span>
           <span class="muted">{{ team.enabled ? "" : "(비활성)" }}</span>
-          <button class="manage-btn" @click="startEdit(team)">이름 수정</button>
-          <button class="manage-btn" @click="toggleEnabled(team)">{{ team.enabled ? "비활성화" : "활성화" }}</button>
+          <template v-if="team.isAdmin">
+            <button class="manage-btn" @click="startEdit(team)">이름 수정</button>
+            <button class="manage-btn" @click="toggleEnabled(team)">{{ team.enabled ? "비활성화" : "활성화" }}</button>
+          </template>
         </template>
-        <button class="manage-btn" @click="toggleMembers(team.id)">
-          {{ expandedMembersId === team.id ? "멤버 닫기" : "멤버 보기" }}
-        </button>
-        <button class="manage-btn" @click="toggleAdmins(team.id)">
-          {{ expandedAdminsId === team.id ? "팀장 관리 닫기" : "팀장 관리" }}
-        </button>
-        <button class="manage-btn" @click="toggleKeys(team.id)">
-          {{ expandedKeysId === team.id ? "키 관리 닫기" : "키 관리" }}
-        </button>
-        <button class="danger-btn" @click="remove(team)">삭제</button>
+        <template v-if="team.isAdmin">
+          <button class="manage-btn" @click="toggleMembers(team.id)">
+            {{ expandedMembersId === team.id ? "멤버 닫기" : "멤버 보기" }}
+          </button>
+          <button class="manage-btn" @click="toggleAdmins(team.id)">
+            {{ expandedAdminsId === team.id ? "팀장 관리 닫기" : "팀장 관리" }}
+          </button>
+          <button class="manage-btn" @click="toggleKeys(team.id)">
+            {{ expandedKeysId === team.id ? "키 관리 닫기" : "키 관리" }}
+          </button>
+          <button class="danger-btn" @click="remove(team)">삭제</button>
+        </template>
       </div>
       <p v-if="editError && editingId === team.id" class="error inline">{{ editError }}</p>
       <p v-if="deleteError[team.id]" class="error inline">{{ deleteError[team.id] }}</p>

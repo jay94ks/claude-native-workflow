@@ -29,6 +29,12 @@ export interface Project {
   hiddenBy: string | null;
 }
 
+export interface ProjectWithMyPerms extends Project {
+  /** owner 또는 소속 팀 팀장만 true(숨김 토글 라우트가 요구하는 것과
+   * 정확히 같은 조건) - 프런트가 숨김/숨김해제 버튼을 v-if할 때 쓴다. */
+  canToggleHidden: boolean;
+}
+
 export async function createProject(name: string, projectGroupId?: string): Promise<Project> {
   const db = getDb();
   // createProjectGroup()과 같은 이유로 빈 문자열을 "안 넘김"으로
@@ -83,19 +89,39 @@ export async function setProjectHidden(projectId: string, hidden: boolean, actin
   return { id: row.id, projectGroupId: row.projectGroupId, name: row.name, hidden: row.hidden, hiddenBy: row.hiddenBy };
 }
 
+/** 프로젝트를 완전히 삭제한다 - 문서/코멘트/칸반/Q&A 등 DB 데이터는
+ * cascade로 함께 지워지고(스키마 참고), 연결된 Gitea 저장소도 먼저
+ * 지운다(설계자 확인). gitRepos.ts를 정적 import하면 projects.ts ↔
+ * gitRepos.ts 순환 참조가 생긴다(gitRepos.ts가 assertProjectExists를
+ * 쓰므로) - members.ts의 resolveWorkSlugForCollabSync와 동일한 회피
+ * 패턴으로 동적 import한다. */
+export async function deleteProject(projectId: string): Promise<void> {
+  try {
+    const { deleteProjectGitRepo } = await import("./gitRepos.js");
+    await deleteProjectGitRepo(projectId);
+  } catch (err) {
+    console.error(`deleteProject(${projectId}) - Gitea 저장소 정리 실패:`, err);
+  }
+  const db = getDb();
+  await db.project.delete({ where: { id: projectId } });
+}
+
 /** 숨김 프로젝트는 canSeeHiddenProject를 만족하는 viewer에게만 보인다 -
  * 숨김 아닌 프로젝트는 지금처럼(멤버십 무관) 전체 공개 목록. */
-export async function listProjects(projectGroupId: string | undefined, viewerId: string): Promise<Project[]> {
+export async function listProjects(projectGroupId: string | undefined, viewerId: string): Promise<ProjectWithMyPerms[]> {
   const db = getDb();
   const rows = await db.project.findMany({
     where: projectGroupId ? { projectGroupId } : undefined,
     orderBy: { createdAt: "desc" },
   });
-  const visible: Project[] = [];
+  const visible: ProjectWithMyPerms[] = [];
   for (const r of rows as { id: string; projectGroupId: string; name: string; hidden: boolean; hiddenBy: string | null }[]) {
     if (!(await isProjectAllowedByActiveScope(r.id))) continue; // 스코프 밖 프로젝트는 존재 자체를 목록에서 숨김
     if (r.hidden && !(await canSeeHiddenProject(r.id, viewerId))) continue;
-    visible.push({ id: r.id, projectGroupId: r.projectGroupId, name: r.name, hidden: r.hidden, hiddenBy: r.hiddenBy });
+    const role = await getMemberRole(r.id, viewerId);
+    const teamId = await getOwningTeamId(r.id);
+    const canToggleHidden = role === "owner" || (await isTeamAdmin(teamId, viewerId));
+    visible.push({ id: r.id, projectGroupId: r.projectGroupId, name: r.name, hidden: r.hidden, hiddenBy: r.hiddenBy, canToggleHidden });
   }
   return visible;
 }

@@ -16,6 +16,7 @@ import {
   updateMe,
   getPublicProfile,
   listUsers,
+  isSuperAdmin,
 } from "../core/auth.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
@@ -47,6 +48,7 @@ import {
   listProjects,
   canSeeHiddenProject,
   setProjectHidden,
+  deleteProject,
   getOwningTeamId,
   listAccessibleProjectIdsInScope,
   getProjectNamesByIds,
@@ -148,6 +150,9 @@ import {
   requestGitSyncStatus,
   getCachedGitSyncStatus,
   getGitSyncProposal,
+  publishToExternalRepo,
+  getPendingPublishQueueEntry,
+  completePublishQueueEntry,
   GitAuthRequiredError,
 } from "../core/gitRepos.js";
 import * as gitea from "../core/gitea.js";
@@ -383,8 +388,8 @@ app.post(
 app.get(
   "/api/teams",
   authenticate,
-  asyncRoute(async (_req, res) => {
-    res.json(await listTeams());
+  asyncRoute(async (req, res) => {
+    res.json(await listTeams(req.userId!));
   }),
 );
 
@@ -583,6 +588,7 @@ app.delete(
     if (!authorized && key.scope === "team" && key.teamId) {
       authorized = await isTeamAdmin(key.teamId, req.userId!);
     }
+    if (!authorized) authorized = await isSuperAdmin(req.userId!);
     if (!authorized) {
       res.status(403).json({ error: "이 키를 배제할 권한이 없습니다" });
       return;
@@ -611,7 +617,7 @@ app.get(
   "/api/project-groups",
   authenticate,
   asyncRoute(async (req, res) => {
-    res.json(await listProjectGroups(req.query.teamId as string | undefined));
+    res.json(await listProjectGroups(req.query.teamId as string | undefined, req.userId!));
   }),
 );
 
@@ -757,7 +763,21 @@ app.get(
     const project = await getProject(req.params.projectId);
     if (!project) { res.status(404).json({ error: "not found" }); return; }
     const notice = role ? await pendingQuestionNotice(req.params.projectId) : null;
-    res.json(withNotices(project, notice));
+    res.json(withNotices({ ...project, myRole: role }, notice));
+  }),
+);
+
+// 프로젝트 완전 삭제("제한구역") - owner 전용(admin은 자동 우회).
+// 문서/코멘트/칸반/Q&A 등 DB 데이터가 cascade로 전부 함께 삭제되고,
+// 연결된 Gitea 저장소도 같이 삭제된다(deleteProject 참고) - 되돌릴 수
+// 없다.
+app.delete(
+  "/api/projects/:projectId",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    await deleteProject(req.params.projectId);
+    res.json({ ok: true });
   }),
 );
 
@@ -1065,7 +1085,7 @@ app.get(
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
-    res.json(withNotices(doc, perm.notice));
+    res.json(withNotices({ ...doc, perm: { read: perm.read, write: perm.write, delete: perm.delete } }, perm.notice));
   }),
 );
 
@@ -1691,7 +1711,7 @@ app.get(
     if (!target) { res.status(404).json({ error: "대상을 찾을 수 없습니다" }); return; }
     const role = await getMemberRole(target.projectId, req.userId!);
     if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
-    res.json(await listComments(target.targetType, trackingCode));
+    res.json(await listComments(target.targetType, trackingCode, req.userId!));
   }),
 );
 
@@ -1702,7 +1722,7 @@ app.get(
   asyncRoute(async (req, res) => {
     const path = req.query.path as string | undefined;
     if (!path) { res.status(400).json({ error: "path 쿼리가 필요합니다" }); return; }
-    res.json(await listComments("source", path));
+    res.json(await listComments("source", path, req.userId!));
   }),
 );
 
@@ -2112,10 +2132,12 @@ app.get(
 // 그 결과를 폴링(pending/ready/none). 이미 진행 중일 때 POST를 또
 // 호출해도 새로 트리거하지 않는다(requestGitSyncStatus 내부에서 처리).
 
+// git 저장소 기능은 프로젝트 관리자(owner)만 쓸 수 있다(설계자 확정 -
+// viewer/editor는 아예 손댈 수 없음).
 app.post(
   "/api/projects/:projectId/git/sync-status",
   authenticate,
-  requireProjectRole("viewer"),
+  requireProjectRole("owner"),
   asyncRoute(async (req, res) => {
     res.json(await requestGitSyncStatus(req.params.projectId));
   }),
@@ -2124,7 +2146,7 @@ app.post(
 app.get(
   "/api/projects/:projectId/git/sync-status",
   authenticate,
-  requireProjectRole("viewer"),
+  requireProjectRole("owner"),
   asyncRoute(async (req, res) => {
     res.json(await getCachedGitSyncStatus(req.params.projectId));
   }),
@@ -2133,9 +2155,45 @@ app.get(
 app.get(
   "/api/projects/:projectId/git/sync-proposal",
   authenticate,
-  requireProjectRole("viewer"),
+  requireProjectRole("owner"),
   asyncRoute(async (req, res) => {
     res.json(await getGitSyncProposal(req.params.projectId));
+  }),
+);
+
+// ---------------------------------------------------------------- 외부 저장소 동기화(발행) - Push Mirror
+// 실제 push를 시도해 그 결과로 성공/실패(권한 부족·충돌 등)를
+// 판단한다 - owner 전용(git 저장소 기능 전체와 동일). 실패하면
+// AI 대기열에 올라가고, 완료 보고 전까지는 GET .../publish-queue가
+// pending 항목을 계속 돌려줘 "동기화" 버튼을 비활성 상태로 유지시킨다.
+
+app.post(
+  "/api/projects/:projectId/git/publish",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const { gitCredentialId } = req.body as { gitCredentialId?: string };
+    if (!gitCredentialId) { res.status(400).json({ error: "gitCredentialId가 필요합니다" }); return; }
+    res.json(await publishToExternalRepo(req.params.projectId, gitCredentialId));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/publish-queue",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    res.json(await getPendingPublishQueueEntry(req.params.projectId));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/publish-queue/:id/done",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    await completePublishQueueEntry(req.params.id, req.params.projectId);
+    res.json({ ok: true });
   }),
 );
 

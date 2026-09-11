@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { encryptSecret } from "./crypto.js";
+import { isSuperAdmin } from "./auth.js";
 
 // 설계자 계정에 연결해 저장하는 외부 git 저장소 자격증명(AES-256-GCM
 // 암호화). 프로젝트 생성/마이그레이션 시 입력한 git 저장소가 인증을
@@ -61,7 +62,7 @@ export async function listGitCredentials(userId: string): Promise<GitCredentialS
 export async function removeGitCredential(userId: string, id: string): Promise<void> {
   const db = getDb();
   const row = await db.gitCredential.findUnique({ where: { id } });
-  if (!row || row.userId !== userId) {
+  if (!row || (row.userId !== userId && !(await isSuperAdmin(userId)))) {
     throw new Error("자격증명을 찾을 수 없거나 소유자가 아닙니다");
   }
   await db.gitCredential.delete({ where: { id } });

@@ -33,10 +33,16 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 
 1. `docs hook queue <projectId> --status pending`으로 대기 중인 push
    훅이 있는지 확인한다.
-2. `docs pending <projectId>`로 `pending`(설계자가 답변했지만 아직
+2. 외부 저장소 연동 프로젝트라면 `docs git publish-queue <projectId>`
+   로도 대기 중인 발행(동기화) 충돌이 없는지 확인한다 - 있으면 `docs
+   git sync-proposal <projectId> --out <dir>`로 변경 내용을 확인해
+   직접 반영(또는 충돌 해소)한 뒤 `docs git publish-queue-done
+   <projectId> <id>`로 완료를 보고한다(그래야 웹 UI의 "동기화" 버튼이
+   다시 활성화됨).
+3. `docs pending <projectId>`로 `pending`(설계자가 답변했지만 아직
    확인 안 한 질의) 상태가 있는지 확인하고, 있으면 `docs question ack
    <trackingCode>`로 처리한다.
-3. **이전 작업이 시스템 다운 등으로 비정상 종료됐을 수 있으니**, `docs
+4. **이전 작업이 시스템 다운 등으로 비정상 종료됐을 수 있으니**, `docs
    message recent <projectId>`로 최근 메시지 기록을 먼저 확인해 놓친
    지시나 맥락이 없는지 살핀다(이 명령은 상태를 바꾸지 않으므로 반복
    호출해도 안전 - 장애 복구/재접속 시 확인용).
@@ -107,6 +113,12 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 제한된 문서/타입을 다루면 응답의 `notices`에 그 사실이 안내되니
 반드시 확인한다. 문서 삭제는 `docs delete <trackingCode>`(delete
 권한 필요, 리비전/링크/질의/답변까지 함께 정리됨).
+
+**설치 시 자동 시드되는 `admin` 계정은 항상 최고 관리자다** - 위의
+모든 역할/권한 제한(owner/editor/viewer, 세부 접근 권한, 팀장·그룹
+관리자 여부)을 API 키 스코프까지 포함해 전부 우회한다. `admin` 신원을
+대행하는 세션이라면 이 문서의 "owner만"/"팀장만"류 제약이 사실상
+적용되지 않는다고 봐도 된다.
 
 ## 질의/답변(Question/Answer) 루프 — AI가 묻고 설계자가 답한다
 
@@ -259,6 +271,9 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 연결 정보 조회 | `docs git repo <projectId>` | `git_repo` |
 | 동기화 상태 확인 | `docs git sync-status <projectId>` | `git_sync_status` |
 | 동기화 제안 내보내기 | `docs git sync-proposal <projectId> [--out <dir>]` | `git_sync_proposal` |
+| 외부 저장소로 실제 동기화(발행) | `docs git publish <projectId> --credential <id>` | `git_publish` |
+| 발행 대기열 조회 | `docs git publish-queue <projectId>` | `git_publish_queue` |
+| 발행 대기열 처리 완료 보고 | `docs git publish-queue-done <projectId> <id>` | `git_publish_queue_done` |
 | git 로그/diff/show | `docs git log/diff/show <projectId> [<sha>]` | `git_log`/`git_diff`/`git_show` |
 | 디렉터리 목록 | `docs git tree <projectId> [--path <p>] [--ref <r>]` | `git_tree` |
 | 파일 내용 조회 | `docs git cat <projectId> <path> [--ref <r>]` | `git_cat` |
@@ -295,7 +310,12 @@ API 호출 없음). **이 출력을 바로 apply에 넘기지 않는다** - 먼�
 같은 매니페스트를 두 번 `apply`하면 문서가 중복 생성되므로, 성공/실패
 여부를 확인하지 않고 재시도하지 않는다.
 
-## git 저장소 연결(3가지 방식) + 동기화 제안
+## git 저장소 연결(3가지 방식) + 동기화(발행)
+
+**git 저장소 관련 기능(연결/동기화 상태 확인/동기화 제안/발행)은
+전부 그 프로젝트의 owner만 호출할 수 있다**(설계자 확정 - viewer/
+editor는 시도하면 403). AI 세션이 이 명령들을 쓰려면 owner 권한을
+가진 설계자의 신원을 대행하고 있어야 한다.
 
 프로젝트에 git 저장소를 연결하는 방법은 세 가지다 - 전부 웹 UI(프로젝트
 "설정" 탭)와 CLI/MCP 양쪽에서 가능:
@@ -318,14 +338,27 @@ API 호출 없음). **이 출력을 바로 apply에 넘기지 않는다** - 먼�
 이 과정을 자동화 - 인증 실패 시 그 자리에서 자격증명을 입력받아 저장한
 뒤 자동 재시도한다).
 
-**동기화 제안**(옵션 3으로 연동한 프로젝트 전용) - 이 시스템의 편집은
-작업 저장소에 쌓일 뿐 외부(권위) 저장소에 자동으로 반영되지 않는다.
-`docs git sync-status <projectId>`로 미러 대비 작업 저장소가 뭐가
-달라졌는지 확인한다(Gitea의 미러 동기화가 비동기라 요청 후 완료될 때
-까지 명령이 자동으로 기다렸다가 결과를 보여준다). 달라진 파일을 실제로
-가져오려면 `docs git sync-proposal <projectId> --out <dir>`로 로컬
-디렉터리에 받아, 거기서 직접 커밋·PR을 진행한다(자동 PR 생성은 지원
-안 함 - 항상 설계자 검토를 거치도록 의도한 설계).
+**동기화 제안**(옵션 3으로 연동한 프로젝트 전용, 미리보기용) - 이
+시스템의 편집은 작업 저장소에 쌓인다. `docs git sync-status
+<projectId>`로 미러 대비 작업 저장소가 뭐가 달라졌는지 확인한다
+(Gitea의 미러 동기화가 비동기라 요청 후 완료될 때까지 명령이 자동으로
+기다렸다가 결과를 보여준다). 달라진 파일을 실제로 가져오려면 `docs
+git sync-proposal <projectId> --out <dir>`로 로컬 디렉터리에 받아
+내용만 확인할 수 있다.
+
+**동기화(발행)**(실제로 외부(권위) 저장소에 반영) - `docs git publish
+<projectId> --credential <id>`가 Gitea Push Mirror로 작업 저장소의
+커밋을 외부 저장소에 실제로 push한다. 즉시 반영되면(fast-forward
+가능하고 자격증명에 push 권한이 있으면) `status: "synced"`로 끝난다.
+**외부 저장소가 갈라져 있거나(fast-forward 불가) 자격증명 권한이
+부족하면 `status: "queued"`로 대기열에 올라가고, 그 프로젝트에
+시스템 메시지로 상황이 안내된다** - 위 "세션을 시작하거나 이 프로젝트를
+다시 열 때" 체크리스트의 2번을 참고해 `docs git sync-proposal --out
+<dir>`로 변경 내용을 확인하고 직접 반영(또는 충돌 해소)한 뒤 `docs
+git publish-queue-done <projectId> <id>`로 완료를 보고한다 - 이
+보고가 있어야 웹 UI의 "동기화" 버튼이 다시 활성화된다(자동 PR 생성은
+여전히 지원 안 함 - 항상 설계자 검토를 거치도록 의도한 설계는 동일하게
+유지).
 
 `git log/diff/show`는 자체 호스팅 저장소(옵션 1/2) 또는 외부 연동
 (옵션 3)이 연결된 프로젝트에서 동작한다 - 아직 연결 안 된 프로젝트는

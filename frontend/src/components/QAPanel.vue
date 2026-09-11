@@ -24,6 +24,21 @@ const emit = defineEmits<{ statusTransitioned: [statusCode: string] }>();
 
 const entityPicker = useEntityPickerStore();
 
+// KanbanCardDialog/TargetPanelDialog를 통해 열리면 ProjectShellView의
+// provide 트리 밖이라 inject를 못 쓴다 - DocumentExplorer.vue와 같은
+// 이유로 직접 한 번 더 가볍게 조회한다. 질문 등록/답변/승인·거부/AI
+// 확인 완료 표시는 전부 백엔드 requireEditorForTarget(editor 이상)과
+// 같은 기준.
+const canAnswer = ref(false);
+async function loadMyRole() {
+  try {
+    const project = await apiCall<{ myRole: string | null }>(`/projects/${props.projectId}`);
+    canAnswer.value = project.myRole === "owner" || project.myRole === "editor";
+  } catch {
+    canAnswer.value = false;
+  }
+}
+
 interface AnswerDetail {
   body: string | null;
   decision: string | null;
@@ -212,6 +227,7 @@ async function ack(q: QuestionItem) {
 }
 
 onMounted(async () => {
+  await loadMyRole();
   await load();
   disconnect = await connectProjectRealtime(props.projectId, {
     onChange: (event: ChangeEvent) => {
@@ -293,12 +309,12 @@ onUnmounted(() => disconnect?.());
           </span>
           <span v-if="q.answer.body" class="body"><TrackingCodeText :text="q.answer.body" /></span>
           <span class="meta"><UserRef :user-id="q.answer.answeredBy" /> · {{ new Date(q.answer.answeredAt).toLocaleString() }}</span>
-          <button v-if="q.status === 'pending'" class="ack-btn" :disabled="acking[q.trackingCode]" @click="ack(q)">
+          <button v-if="q.status === 'pending' && canAnswer" class="ack-btn" :disabled="acking[q.trackingCode]" @click="ack(q)">
             AI 확인 완료로 표시
           </button>
         </div>
         <template v-else-if="q.kind === 'approval'">
-          <div class="approval-row">
+          <div v-if="canAnswer" class="approval-row">
             <textarea v-model="answerDrafts[q.trackingCode]" rows="2" placeholder="메모(선택, 여러 줄 입력 가능)"></textarea>
             <div class="approval-actions">
               <button type="button" class="approve" :disabled="answering[q.trackingCode]" @click="decide(q, 'approved')">승인</button>
@@ -306,7 +322,7 @@ onUnmounted(() => disconnect?.());
             </div>
           </div>
         </template>
-        <form v-else class="answer-row" @submit.prevent="answer(q)">
+        <form v-else-if="canAnswer" class="answer-row" @submit.prevent="answer(q)">
           <textarea v-model="answerDrafts[q.trackingCode]" rows="2" placeholder="답변 입력... (여러 줄 입력 가능)"></textarea>
           <button type="submit" :disabled="answering[q.trackingCode]">답변</button>
         </form>
@@ -314,7 +330,7 @@ onUnmounted(() => disconnect?.());
       <li v-if="questions.length === 0" class="muted">아직 질문이 없습니다.</li>
     </ul>
     <Pagination :page="page" :total-pages="totalPages" @update:page="goToPage" />
-    <form class="ask-row" @submit.prevent="askQuestion">
+    <form v-if="canAnswer" class="ask-row" @submit.prevent="askQuestion">
       <textarea v-model="newQuestion" rows="2" placeholder="새 질문 등록... (여러 줄 입력 가능)"></textarea>
       <div class="ask-controls">
         <select v-model="newKind">

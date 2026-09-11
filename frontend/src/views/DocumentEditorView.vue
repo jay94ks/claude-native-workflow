@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, inject, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
@@ -8,6 +8,7 @@ import UserRef from "../components/UserRef.vue";
 import QAPanel from "../components/QAPanel.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
+import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
 const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
@@ -15,12 +16,20 @@ const entityPicker = useEntityPickerStore();
 const targetPanelDialog = useTargetPanelDialogStore();
 const activeTab = ref<"view" | "qa">("view");
 
+// 메시지로 지시는 문서 자체 권한이 아니라 프로젝트 editor 이상(백엔드
+// POST .../messages가 requireProjectRole("editor")) - 편집/저장/삭제/
+// 전이/소스연결은 doc.perm(문서별 세부 권한, resolveEffectivePermission
+// 결과)을 그대로 쓴다.
+const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
+const canSendInstruction = computed(() => roleSatisfies(myRole.value, "editor"));
+
 interface DocumentDetail {
   trackingCode: string;
   title: string;
   body: string;
   statusCode: string;
   createdBy: string;
+  perm: { read: boolean; write: boolean; delete: boolean };
   notices?: string[];
 }
 interface NextStatus {
@@ -287,18 +296,20 @@ onMounted(load);
       <p v-if="messageSent" class="saved">메시지를 보냈습니다.</p>
 
       <div class="toolbar">
-        <select v-model="toStatusCode">
-          <option value="">상태 전이...</option>
-          <option v-for="s in nextStatuses" :key="s.code" :value="s.code">{{ s.label }}</option>
-        </select>
-        <button class="secondary" :disabled="!toStatusCode" @click="transition">전이</button>
-        <span v-if="transitionError" class="error">{{ transitionError }}</span>
+        <template v-if="doc.perm.write">
+          <select v-model="toStatusCode">
+            <option value="">상태 전이...</option>
+            <option v-for="s in nextStatuses" :key="s.code" :value="s.code">{{ s.label }}</option>
+          </select>
+          <button class="secondary" :disabled="!toStatusCode" @click="transition">전이</button>
+          <span v-if="transitionError" class="error">{{ transitionError }}</span>
+        </template>
 
         <span class="spacer"></span>
 
-        <button v-if="mode === 'read'" class="secondary" @click="messageOpen = !messageOpen">메시지로 지시</button>
-        <button v-if="mode === 'read'" class="secondary" @click="startEdit">편집</button>
-        <button v-if="mode === 'read'" class="danger" :disabled="deleting" @click="remove">
+        <button v-if="mode === 'read' && canSendInstruction" class="secondary" @click="messageOpen = !messageOpen">메시지로 지시</button>
+        <button v-if="mode === 'read' && doc.perm.write" class="secondary" @click="startEdit">편집</button>
+        <button v-if="mode === 'read' && doc.perm.delete" class="danger" :disabled="deleting" @click="remove">
           {{ deleting ? "삭제 중..." : "삭제" }}
         </button>
       </div>
@@ -331,11 +342,11 @@ onMounted(load);
         <ul v-if="sourceLinks.length > 0" class="source-list">
           <li v-for="link in sourceLinks" :key="link.id">
             <button type="button" class="source-path" @click="openSourceFile(link.filePath)">{{ link.filePath }}</button>
-            <button type="button" class="remove-btn" @click="removeSourceLink(link.id)">해제</button>
+            <button v-if="doc.perm.write" type="button" class="remove-btn" @click="removeSourceLink(link.id)">해제</button>
           </li>
         </ul>
         <p v-else class="muted">연결된 소스코드가 없습니다.</p>
-        <button type="button" class="secondary" @click="pickSourceLink">+ 소스 파일 연결</button>
+        <button v-if="doc.perm.write" type="button" class="secondary" @click="pickSourceLink">+ 소스 파일 연결</button>
       </section>
     </template>
     <template v-else>

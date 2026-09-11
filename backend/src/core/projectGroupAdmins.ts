@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { isTeamAdmin } from "./teamAdmins.js";
+import { isSuperAdmin } from "./auth.js";
 
 // core/teamAdmins.ts와 동일한 패턴 - 다만 팀은 그룹의 상위 개념이라
 // 권한도 위에서 아래로 흐른다: 팀 관리자는 자기 팀 산하 모든 그룹에
@@ -42,6 +43,7 @@ export async function listProjectGroupAdmins(projectGroupId: string): Promise<Pr
  * 멤버 조회/그룹 관리자 등록·해제/그룹 CRUD가 전부 이 함수 하나를
  * 공유한다. */
 export async function isProjectGroupAdmin(projectGroupId: string, userId: string): Promise<boolean> {
+  if (await isSuperAdmin(userId)) return true;
   const db = getDb();
   const explicit = await db.projectGroupAdmin.findUnique({
     where: { projectGroupId_userId: { projectGroupId, userId } },

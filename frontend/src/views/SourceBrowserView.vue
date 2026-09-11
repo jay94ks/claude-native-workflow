@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { apiCall, apiCallBlob, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
@@ -7,10 +7,14 @@ import Pagination from "../components/Pagination.vue";
 import { languageForPath } from "../utils/language";
 import { classifyFileKind, type FileKind } from "../utils/fileKind";
 import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
+import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
 const props = defineProps<{ id: string }>();
 const route = useRoute();
 const targetPanelDialog = useTargetPanelDialogStore();
+
+const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
+const canEditSource = computed(() => roleSatisfies(myRole.value, "editor"));
 const ENTRIES_PAGE_SIZE = 30;
 const entriesPage = ref(1);
 
@@ -250,7 +254,7 @@ onBeforeUnmount(() => revokeMediaUrl());
             <button type="button" class="secondary" :disabled="downloading" @click="downloadOriginal">
               {{ downloading ? "받는 중..." : "원본 다운로드" }}
             </button>
-            <template v-if="fileKind === 'text'">
+            <template v-if="fileKind === 'text' && canEditSource">
               <template v-if="!editMode">
                 <button type="button" @click="startEdit">편집</button>
               </template>

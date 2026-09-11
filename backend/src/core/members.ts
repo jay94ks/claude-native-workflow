@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { getActiveKeyScope } from "./requestScope.js";
+import { isSuperAdmin } from "./auth.js";
 import * as gitea from "./gitea.js";
 
 const VALID_ROLES = new Set(["owner", "editor", "viewer"]);
@@ -141,6 +142,7 @@ export async function isProjectAllowedByActiveScope(projectId: string): Promise<
 
 export async function getMemberRole(projectId: string, userId: string): Promise<string | null> {
   if (!(await isProjectAllowedByActiveScope(projectId))) return null;
+  if (await isSuperAdmin(userId)) return "owner";
   const db = getDb();
   const row = await db.member.findUnique({ where: { projectId_userId: { projectId, userId } } });
   return row?.role ?? null;

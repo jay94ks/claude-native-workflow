@@ -1,12 +1,16 @@
 import { getDb } from "./db.js";
 import { getInstallConfig } from "./teams.js";
 import { isTeamAllowedByActiveScope } from "./teamAdmins.js";
-import { addProjectGroupAdmin } from "./projectGroupAdmins.js";
+import { addProjectGroupAdmin, isProjectGroupAdmin } from "./projectGroupAdmins.js";
 
 export interface ProjectGroup {
   id: string;
   teamId: string | null;
   name: string;
+}
+
+export interface ProjectGroupWithMyAdmin extends ProjectGroup {
+  isAdmin: boolean;
 }
 
 /** 생성 직후 그 설계자를 자동으로 첫 ProjectGroupAdmin으로 등록한다
@@ -47,17 +51,20 @@ export async function isGroupAllowedByActiveScope(groupId: string): Promise<bool
   return isTeamAllowedByActiveScope(group.teamId ?? "");
 }
 
-export async function listProjectGroups(teamId?: string): Promise<ProjectGroup[]> {
+/** 각 그룹에 대한 호출자의 그룹 관리자 여부(isAdmin)를 함께 계산해서
+ * 얹는다(listTeams()와 같은 원칙 - isProjectGroupAdmin()이 이미
+ * admin-aware라 최고 관리자는 자동으로 전부 true). */
+export async function listProjectGroups(teamId: string | undefined, viewerId: string): Promise<ProjectGroupWithMyAdmin[]> {
   const db = getDb();
   const rows = await db.projectGroup.findMany({
     where: teamId ? { teamId } : undefined,
     orderBy: { createdAt: "desc" },
   });
-  return rows.map((r: { id: string; teamId: string | null; name: string }) => ({
-    id: r.id,
-    teamId: r.teamId,
-    name: r.name,
-  }));
+  const out: ProjectGroupWithMyAdmin[] = [];
+  for (const r of rows as { id: string; teamId: string | null; name: string }[]) {
+    out.push({ id: r.id, teamId: r.teamId, name: r.name, isAdmin: await isProjectGroupAdmin(r.id, viewerId) });
+  }
+  return out;
 }
 
 export async function updateProjectGroup(groupId: string, input: { name: string }): Promise<ProjectGroup> {

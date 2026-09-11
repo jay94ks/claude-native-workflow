@@ -44,7 +44,7 @@ model TrackingCode {
   createdAt DateTime @default(now())
 
   team    Team?   @relation(fields: [teamId], references: [id])
-  project Project @relation(fields: [projectId], references: [id])
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, code])
   @@index([teamId])
@@ -218,6 +218,7 @@ model Project {
   apiKeys         ApiKey[]
   kanbanColumns   KanbanColumn[]
   kanbanCards     KanbanCard[]
+  gitSyncQueueEntries GitSyncQueueEntry[]
 
   @@index([projectGroupId])
 }
@@ -231,7 +232,7 @@ model ProjectGitRepo {
   gitCredentialId        String?
   webhookSecretEncrypted Bytes? // AES-256-GCM - 수신 웹훅 서명/토큰 검증용
 
-  project       Project        @relation(fields: [projectId], references: [id])
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   gitCredential GitCredential? @relation(fields: [gitCredentialId], references: [id])
 
   @@index([gitCredentialId])
@@ -244,7 +245,7 @@ model Member {
   role      String // owner | editor | viewer
   createdAt DateTime @default(now())
 
-  project Project @relation(fields: [projectId], references: [id])
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id])
 
   @@unique([projectId, userId])
@@ -261,7 +262,7 @@ model DocType {
   guideline String? // "이 타입은 무엇을 하기 위한 것인가" 자연어 설명(선택)
   createdAt DateTime @default(now())
 
-  project Project @relation(fields: [projectId], references: [id])
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   statuses        DocStatus[]
   transitions     DocStatusTransition[]
@@ -279,7 +280,7 @@ model DocStatus {
   guideline  String?
   isTerminal Boolean @default(false)
 
-  docType         DocType               @relation(fields: [docTypeId], references: [id])
+  docType         DocType               @relation(fields: [docTypeId], references: [id], onDelete: Cascade)
   documents       Document[]
   transitionsFrom DocStatusTransition[] @relation("TransitionFrom")
   transitionsTo   DocStatusTransition[] @relation("TransitionTo")
@@ -294,9 +295,9 @@ model DocStatusTransition {
   toStatusId   String
   label        String?
 
-  docType    DocType   @relation(fields: [docTypeId], references: [id])
-  fromStatus DocStatus @relation("TransitionFrom", fields: [fromStatusId], references: [id])
-  toStatus   DocStatus @relation("TransitionTo", fields: [toStatusId], references: [id])
+  docType    DocType   @relation(fields: [docTypeId], references: [id], onDelete: Cascade)
+  fromStatus DocStatus @relation("TransitionFrom", fields: [fromStatusId], references: [id], onDelete: Cascade)
+  toStatus   DocStatus @relation("TransitionTo", fields: [toStatusId], references: [id], onDelete: Cascade)
 
   @@index([docTypeId])
 }
@@ -315,9 +316,9 @@ model Document {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  project Project   @relation(fields: [projectId], references: [id])
-  docType DocType   @relation(fields: [docTypeId], references: [id])
-  status  DocStatus @relation(fields: [statusId], references: [id])
+  project Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  docType DocType   @relation(fields: [docTypeId], references: [id], onDelete: Cascade)
+  status  DocStatus @relation(fields: [statusId], references: [id], onDelete: Cascade)
   creator User      @relation("DocumentCreatedBy", fields: [createdBy], references: [id])
 
   revisions          DocumentRevision[]
@@ -381,7 +382,7 @@ model Question {
   status       String   @default("open") // open | pending | resolved
   createdAt    DateTime @default(now())
 
-  project Project @relation(fields: [projectId], references: [id])
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   asker   User    @relation("QuestionAskedBy", fields: [askedBy], references: [id])
   answer  Answer?
   refs    QuestionReference[]
@@ -449,7 +450,7 @@ model Comment {
   updatedAt  DateTime  @updatedAt
   status     String    @default("open") // open | closed | solved | etc - 작성자 본인만 변경 가능
 
-  project Project @relation(fields: [projectId], references: [id])
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   author  User    @relation("CommentAuthor", fields: [authorId], references: [id])
 
   @@index([projectId])
@@ -465,7 +466,7 @@ model PushHookPrompt {
   promptTemplate String
   createdAt      DateTime @default(now())
 
-  project     Project              @relation(fields: [projectId], references: [id])
+  project     Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   queueEntries PushHookQueueEntry[]
 
   @@index([projectId])
@@ -498,8 +499,27 @@ model Message {
   deliveredAt DateTime?
   createdAt   DateTime  @default(now())
 
-  project Project @relation(fields: [projectId], references: [id])
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   author  User?   @relation("MessageAuthor", fields: [authorId], references: [id])
+
+  @@index([projectId])
+}
+
+// 외부(권위) 저장소 동기화(발행)가 즉시 fast-forward로 반영 못 하는
+// 경우(충돌) 대기열에 올린다 - PushHookQueueEntry가 projectId를
+// 직접 안 가져서 보안 재확인이 필요했던 전례(core/pushHookPrompts.ts
+// 의 transitionQueueEntry 주석 참고)를 반영해 이번엔 처음부터 직접
+// 보유한다. 같이 보낸 프로젝트 메시지(core/messages.ts)는 별도로
+// 연결하지 않는다 - AI는 평소처럼 `message wait`로 받아보면 되고,
+// 이 큐는 "동기화 버튼 재활성화 여부"만 추적하면 충분하다.
+model GitSyncQueueEntry {
+  id        String   @id @default(cuid())
+  projectId String
+  status    String   @default("pending") // pending | done
+  reason    String // "diverged" | "push_failed"
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
 }
@@ -521,7 +541,7 @@ model TemplateFile {
 
   team         Team?         @relation(fields: [teamId], references: [id])
   projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
-  project      Project?      @relation(fields: [projectId], references: [id])
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, projectGroupId, projectId, filename])
   @@index([teamId])
@@ -542,8 +562,8 @@ model Folder {
   createdBy      String
   createdAt      DateTime @default(now())
 
-  project      Project              @relation(fields: [projectId], references: [id])
-  parentFolder Folder?              @relation("FolderChildren", fields: [parentFolderId], references: [id])
+  project      Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentFolder Folder?              @relation("FolderChildren", fields: [parentFolderId], references: [id], onDelete: Cascade)
   childFolders Folder[]             @relation("FolderChildren")
   creator      User                 @relation(fields: [createdBy], references: [id])
   entries      DocumentFolderEntry[]
@@ -601,7 +621,7 @@ model DocAccessOverride {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  project  Project   @relation(fields: [projectId], references: [id])
+  project  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user     User      @relation(fields: [userId], references: [id])
   docType  DocType?  @relation(fields: [docTypeId], references: [id], onDelete: Cascade)
   document Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
@@ -653,7 +673,7 @@ model KanbanColumn {
   order     Int      @default(0)
   createdAt DateTime @default(now())
 
-  project Project            @relation(fields: [projectId], references: [id])
+  project Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
   prefs   KanbanColumnPref[]
   cards   KanbanCard[]
 
@@ -693,8 +713,8 @@ model KanbanCard {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  project  Project                 @relation(fields: [projectId], references: [id])
-  column   KanbanColumn            @relation(fields: [columnId], references: [id])
+  project  Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  column   KanbanColumn            @relation(fields: [columnId], references: [id], onDelete: Cascade)
   creator  User                    @relation("KanbanCardCreatedBy", fields: [createdBy], references: [id])
   docRefs  KanbanCardDocumentRef[]
 

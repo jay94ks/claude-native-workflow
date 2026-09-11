@@ -47,6 +47,19 @@ const newTitle = ref("");
 const newTypeCode = ref("");
 const creating = ref(false);
 
+// AppLayout.vue 사이드바에 있어 ProjectShellView의 provide("projectMyRole")
+// 트리 밖이라 여기서 직접 한 번 더 받는다(가벼운 요청 - 이 앱 규모에서
+// 무시 가능한 중복).
+const canCreateDocument = ref(false);
+async function loadMyRole() {
+  try {
+    const project = await apiCall<{ myRole: string | null }>(`/projects/${props.projectId}`);
+    canCreateDocument.value = project.myRole === "owner" || project.myRole === "editor";
+  } catch {
+    canCreateDocument.value = false;
+  }
+}
+
 let observer: IntersectionObserver | null = null;
 let disconnect: (() => void) | null = null;
 
@@ -126,6 +139,7 @@ watch(docTypes, (types) => {
 });
 
 onMounted(async () => {
+  await loadMyRole();
   await loadDocTypes();
   await loadPage(true);
 
@@ -158,14 +172,14 @@ onBeforeUnmount(() => {
         <option v-for="t in docTypes" :key="t.id" :value="t.id">{{ t.code }} · {{ t.label }}</option>
       </select>
     </div>
-    <form class="create-row" @submit.prevent="submitCreate">
+    <form v-if="canCreateDocument" class="create-row" @submit.prevent="submitCreate">
       <input v-model="newTitle" type="text" placeholder="새 문서 제목" />
       <select v-model="newTypeCode">
         <option v-for="t in docTypes" :key="t.id" :value="t.code">{{ t.code }}</option>
       </select>
       <button type="submit" :disabled="creating || !newTitle.trim()">+</button>
     </form>
-    <p v-if="selectedTypeGuideline" class="guideline-hint">{{ selectedTypeGuideline }}</p>
+    <p v-if="canCreateDocument && selectedTypeGuideline" class="guideline-hint">{{ selectedTypeGuideline }}</p>
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="loading" class="muted">불러오는 중...</p>

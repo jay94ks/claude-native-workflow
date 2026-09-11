@@ -1,8 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
-import { verifyAccessToken } from "../core/auth.js";
+import { verifyAccessToken, isSuperAdmin } from "../core/auth.js";
 import { getMemberRole, roleSatisfies } from "../core/members.js";
 import { verifyApiKeySecret, API_KEY_PREFIX } from "../core/apiKeys.js";
-import { runWithKeyScope, getActiveKeyScope } from "../core/requestScope.js";
+import { runWithKeyScope, getActiveKeyScope, type KeyScope } from "../core/requestScope.js";
 
 export interface AuthedRequest extends Request {
   userId?: string;
@@ -31,7 +31,12 @@ export async function authenticate(req: AuthedRequest, res: Response, next: Next
         return;
       }
       req.userId = result.userId;
-      runWithKeyScope(result.scope, next);
+      // admin 계정은 스코프가 좁혀진 API 키를 쓰더라도 그 스코프를
+      // 무시하고 전체 접근을 허용한다(설계자 확정 - 최고 관리자는
+      // 완전 우회). unrestricted로 치환하는 것만으로 이 요청 안에서
+      // 실행되는 모든 스코프 판정 함수가 자동으로 통과한다.
+      const scope: KeyScope = (await isSuperAdmin(result.userId)) ? { type: "unrestricted" } : result.scope;
+      runWithKeyScope(scope, next);
     } catch {
       res.status(401).json({ error: "유효하지 않거나 배제된 API 키입니다" });
     }

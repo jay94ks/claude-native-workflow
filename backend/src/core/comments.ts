@@ -2,6 +2,7 @@ import { getDb } from "./db.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 import { getDocument } from "./documents.js";
 import { getKanbanCardByTrackingCode } from "./kanban.js";
+import { isSuperAdmin } from "./auth.js";
 
 // 코멘트는 설계자들끼리만 공유되는 채널이라 CLI/MCP에 없다(완전성 원칙의
 // 의도적 예외 - comment.G, 이번에 소스 코드/칸반 카드로 확장돼도 그대로
@@ -23,6 +24,13 @@ export interface CommentDetail {
   createdAt: Date;
   updatedAt: Date;
   status: string; // open | closed | solved | etc - 작성자 본인만 변경 가능
+}
+
+export interface CommentWithMyPerms extends CommentDetail {
+  /** 작성자 본인이거나 최고 관리자면 true - 프런트가 수정/삭제/상태
+   * 변경 버튼을 v-if할 때 쓴다(editComment/deleteComment/
+   * setCommentStatus가 실제로 허용하는 것과 정확히 같은 조건). */
+  canManage: boolean;
 }
 
 /** document/kanbanCard 대상은 실제로 존재하는지, 이 프로젝트 소속이
@@ -64,9 +72,11 @@ export async function addComment(
   return row;
 }
 
-export async function listComments(targetType: string, targetKey: string): Promise<CommentDetail[]> {
+export async function listComments(targetType: string, targetKey: string, viewerId: string): Promise<CommentWithMyPerms[]> {
   const db = getDb();
-  return db.comment.findMany({ where: { targetType, targetKey }, orderBy: { createdAt: "asc" } });
+  const rows = await db.comment.findMany({ where: { targetType, targetKey }, orderBy: { createdAt: "asc" } });
+  const superAdmin = await isSuperAdmin(viewerId);
+  return rows.map((r: CommentDetail) => ({ ...r, canManage: r.authorId === viewerId || superAdmin }));
 }
 
 export async function editComment(id: string, body: string, requesterId: string): Promise<CommentDetail> {
@@ -74,7 +84,9 @@ export async function editComment(id: string, body: string, requesterId: string)
   const db = getDb();
   const existing = await db.comment.findUnique({ where: { id } });
   if (!existing) throw new Error(`코멘트를 찾을 수 없습니다: ${id}`);
-  if (existing.authorId !== requesterId) throw new Error("본인이 작성한 코멘트만 수정할 수 있습니다");
+  if (existing.authorId !== requesterId && !(await isSuperAdmin(requesterId))) {
+    throw new Error("본인이 작성한 코멘트만 수정할 수 있습니다");
+  }
   const row = await db.comment.update({ where: { id }, data: { body } });
 
   await realtimePublish(projectChangesTopic(existing.projectId), {
@@ -93,7 +105,9 @@ export async function deleteComment(id: string, requesterId: string): Promise<vo
   const db = getDb();
   const existing = await db.comment.findUnique({ where: { id } });
   if (!existing) throw new Error(`코멘트를 찾을 수 없습니다: ${id}`);
-  if (existing.authorId !== requesterId) throw new Error("본인이 작성한 코멘트만 삭제할 수 있습니다");
+  if (existing.authorId !== requesterId && !(await isSuperAdmin(requesterId))) {
+    throw new Error("본인이 작성한 코멘트만 삭제할 수 있습니다");
+  }
   await db.comment.delete({ where: { id } });
 
   await realtimePublish(projectChangesTopic(existing.projectId), {
@@ -116,7 +130,9 @@ export async function setCommentStatus(id: string, status: string, requesterId: 
   const db = getDb();
   const existing = await db.comment.findUnique({ where: { id } });
   if (!existing) throw new Error(`코멘트를 찾을 수 없습니다: ${id}`);
-  if (existing.authorId !== requesterId) throw new Error("본인이 작성한 코멘트만 상태를 변경할 수 있습니다");
+  if (existing.authorId !== requesterId && !(await isSuperAdmin(requesterId))) {
+    throw new Error("본인이 작성한 코멘트만 상태를 변경할 수 있습니다");
+  }
   const row = await db.comment.update({ where: { id }, data: { status } });
 
   await realtimePublish(projectChangesTopic(existing.projectId), {

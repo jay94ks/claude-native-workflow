@@ -2218,6 +2218,137 @@ admin, REST API 직접 호출 + 웹 UI 클릭 양쪽):
 `vue-tsc -b`(frontend) 클린 확인. README.md 최신 라운드 + "지금 상태"
 DocType 항목, 본 문서 갱신.
 
+## 최고 관리자(admin) 전권 + CUD 버튼 권한별 숨김 + 프로젝트 삭제 + git 저장소 관리자 전용화·외부 저장소 동기화(발행) - 완료 (2026-09-11)
+
+설계자가 여섯 가지를 요청했다: (1) 권한 없는 사용자에게 CUD(Create/
+Update/Delete) 기능이 보이면 안 된다, (2) `admin` 계정은 항상 최고
+관리자라 모든 기능에 접근할 수 있어야 한다, (3) 프로젝트 삭제 버튼을
+"설정" 화면에 "제한구역" 섹션으로 추가한다 - 1차 요청 검토(Plan Mode)
+중 추가로 확인해 함께 승인받은: (4) git 저장소 기능은 프로젝트
+관리자만 쓸 수 있어야 한다, (5) 외부 저장소 연동 시 "동기화"를 누르면
+자격 증명을 요청하고 커밋/푸시 권한을 확인해야 한다, (6) 즉시 병합이
+불가능하면 AI 대기열로 넘기고 완료 보고가 오면 버튼이 재활성화돼야
+한다. Explore 에이전트 3개(백엔드 권한 판정 함수 전수조사, 프런트엔드
+CUD 버튼 전수조사, 기존 git 동기화/push-hook-queue 메커니즘 전수조사)
+로 설계했다.
+
+**최고 관리자**: `core/auth.ts`에 `isSuperAdmin(userId)` 신설 - admin
+계정의 id를 최초 호출 시 1회만 DB로 조회해 캐시하고(못 찾으면 매번
+재조회, 찾으면 순수 문자열 비교) 이후 사실상 공짜. 딱 세 함수만
+고쳐서 전체 권한 판정 트리가 연쇄적으로 우회되게 만들었다 -
+`core/members.ts`의 `getMemberRole`(스코프 체크 후 `"owner"` 즉시
+반환), `core/teamAdmins.ts`의 `isTeamAdmin`(스코프 체크 후 `true`),
+`core/projectGroupAdmins.ts`의 `isProjectGroupAdmin`(함수 맨 위,
+팀 없는 그룹도 커버해야 하므로 독립적으로 필요). `resolveEffectivePermission`
+/`canSeeHiddenProject`/`requireProjectRole`/`updateMemberRole`의
+self-guard 등은 `getMemberRole`을 거치므로 전부 자동 적용됐다.
+`listMembers()`는 별도 쿼리라 영향 없음(admin이 실제 멤버가 아닌
+프로젝트의 멤버 목록에 가짜로 나타나지 않음 - 의도대로 정확함).
+**API 키 스코프 완전 우회**(설계자 확인 - 옵션 (a), 스코프 유지+역할만
+우회하는 (b)안 대신): `middleware/auth.ts`의 API 키 인증 분기에서
+`isSuperAdmin(result.userId)`가 true면 `runWithKeyScope`에 실제
+스코프 대신 `{type:"unrestricted"}`를 넘긴다 - JWT 로그인 분기는
+이미 항상 unrestricted라 무변경. **"본인 소유물만" 계열도 admin은
+대행 가능**(설계자 확인): `core/comments.ts`(editComment/deleteComment/
+setCommentStatus 3곳), `core/folders.ts`(assertOwnsFolder),
+`core/gitCredentials.ts`(removeGitCredential) - 전부 소유권 비교에
+`|| isSuperAdmin(...)` 한 줄씩. `DELETE /api/api-keys/:keyId`는
+personal 키를 타인이 소유한 경우 대체 분기가 없어 명시적으로
+`|| await isSuperAdmin(...)`을 추가.
+
+**CUD 버튼 권한별 숨김**: 프런트가 스스로 "나는 admin이다"를 판정하지
+않는다 - 서버가 계산한 권한 필드(이미 admin-aware한 core 함수를
+거침)를 응답에 얹어 내려주고, 프런트는 그 필드로만 `v-if`한다.
+`GET /teams`/`GET /project-groups`에 `isAdmin`(행별), `GET /projects`
+에 `canToggleHidden`(행별, 숨김 토글 라우트와 정확히 같은 조건),
+`GET /projects/:id`에 `myRole`, `GET /documents/:code`에 `perm`
+(라우트가 이미 계산해 버리던 `resolveEffectivePermission` 결과를
+그대로 실어보냄 - 기존엔 notice만 썼음), 댓글 목록에 `canManage`
+(작성자 본인 또는 admin) 필드를 추가. **`ProjectShellView.vue`가
+이 저장소 최초로 Vue `provide`/`inject`를 도입** - `myRole`을
+`PROJECT_MY_ROLE_KEY`(신규 `utils/projectContext.ts`)로 하위 라우트
+전체(문서/칸반/설정/메시지 등)에 내려줘서, 탭마다 같은 값을 따로
+fetch하지 않게 했다. `AppLayout.vue` 사이드바의 `DocumentExplorer.vue`
+와 다이얼로그 전용(`QAPanel.vue`)은 이 provide 트리 밖이라 각자
+가벼운 `GET /projects/:id`를 한 번 더 호출(이 앱 규모에서 무시
+가능한 중복). `TeamAdminManager.vue`/`GroupAdminManager.vue`/
+`TeamKeysManager.vue`는 내부 버튼을 안 건드렸다 - 바깥 토글이 이미
+`isAdmin`으로 잠겨서 비관리자는 패널 자체를 못 여니 이중 가드가
+불필요. `CommentsPanel.vue`는 기존 `isMine(c)` 로컬 판정을 서버가
+계산한 `c.canManage`로 교체.
+
+**프로젝트 삭제("제한구역")**: 스키마 감사로 `Project`를 가리키는
+직계 관계 14개(`Member`/`DocType`/`Document`/`Comment`/`Question`/
+`PushHookPrompt`/`Message`/`TemplateFile`/`TrackingCode`/`Folder`/
+`DocAccessOverride`/`KanbanColumn`/`KanbanCard`/`ProjectGitRepo`)에
+`onDelete: Cascade`를 추가하고 `core/projects.ts`에 `deleteProject`,
+`core/gitRepos.ts`에 `deleteProjectGitRepo`(provider별 slug 계산 -
+self_hosted는 하나, external_linked는 미러+작업 저장소 둘 다 -
+Gitea API로 실제 삭제, 실패해도 fail-soft로 로그만 남기고 진행)
+신설. `DELETE /api/projects/:projectId`(owner 전용) + CLI `docs
+project-delete`/MCP `project_delete`. 프런트는 `ProjectSettingsView.vue`
+최하단에 "제한구역" 섹션(owner에게만 `v-if`), `window.confirm()`
+확인(기존 `DocumentEditorView.vue`의 `remove()` 패턴과 동일한 관례)
+후 삭제, 성공 시 `/projects` 목록으로 이동.
+
+**실측 중 발견해 같이 고친 스키마 버그**: 위 14개 직계 관계에 cascade를
+걸고 실제 삭제를 시도했더니 `DocStatus_docTypeId_fkey` 위반으로
+실패했다 - `DocType`이 cascade로 지워질 때 그 자식인 `DocStatus`/
+`DocStatusTransition`(`docType`/`fromStatus`/`toStatus` 3개 FK)에는
+cascade가 없어서 막힌 것. 같은 "조부모-부모-자식 다이아몬드" 패턴을
+전수조사해 `Document`의 `docType`/`status` FK, `KanbanCard`의
+`column` FK, `Folder`의 자기참조 `parentFolder` FK에도 같은 문제가
+있어 전부 고쳤다(3드라이버 전부, 총 8개 관계 추가) - 재현 후 실제
+문서/코멘트/질의/칸반카드/git 저장소가 있는 프로젝트를 삭제해 성공
+확인, Gitea REST API로 연결된 저장소가 실제로 사라진 것까지 직접
+확인했다. **덤으로 발견한 leftover 버그**: `AccessControlManager.vue`
+가 지난 라운드에 제거된 `/doc-types/own` 엔드포인트를 여전히
+호출하고 있었다 - `/doc-types`로 수정.
+
+**git 저장소 관리자 전용화 + 외부 저장소 동기화(발행)**: `POST/GET
+.../git/sync-status`, `GET .../git/sync-proposal`을 `viewer` → `owner`
+로 강화(연결 라우트는 원래도 owner 전용이었음). 실제 외부 저장소로의
+push는 **Gitea 자체의 Push Mirror 기능**을 쓰기로 확정(설계자 확인 -
+이 시스템이 지금까지 모든 git 동작을 Gitea REST API에 위임해온
+철학과 일치, 실제 커밋 이력 보존, Gitea가 fast-forward 실패를 직접
+감지). `core/gitea.ts`에 `configurePushMirror`/`triggerPushMirrorSync`/
+`getPushMirrorStatus` 신설(기존 pull-mirror 함수들과 같은 스타일).
+`core/gitRepos.ts`의 `publishToExternalRepo`는 **별도 사전 fast-forward
+판정 없이 "시도 후 결과로 판단"** 한다(이 시스템의 기존 관례 -
+예: 웹훅 자동 등록 실패 시 수동 안내로 폴백하는 패턴과 동일) - push
+mirror 동기화를 트리거하고 `lastError` 유무로 성공/실패를 가른다.
+실패하면 신규 모델 `GitSyncQueueEntry`(`PushHookQueueEntry`가
+`projectId`를 직접 안 가져서 보안 재확인이 필요했던 전례를 반영해
+이번엔 처음부터 직접 보유)에 큐 항목을 만들고, `core/messages.ts`의
+`sendMessage(projectId, null, ...)`(시스템 발신 - `authorId`가
+nullable로 이미 지원되던 필드, 이번이 첫 사용 사례)로 그 프로젝트에
+안내 메시지를 보낸다. `POST .../git/publish`(owner), `GET
+.../git/publish-queue`(owner, pending 항목 존재 여부), `POST
+.../git/publish-queue/:id/done`(editor 이상, AI가 호출 - 기존
+`transitionQueueEntry`처럼 요청 프로젝트와 큐 항목의 실제 프로젝트
+일치 확인 포함) + CLI `docs git publish/publish-queue/publish-queue-done`
+/MCP `git_publish`/`git_publish_queue`/`git_publish_queue_done`.
+프런트(`GitRepoPanel.vue`)는 기존 동기화 상태 폴링(`syncPollStatus`)
+과 같은 스타일로 별도 폴링 루프를 추가해 큐 항목이 사라질 때까지
+"동기화" 버튼을 비활성화한다.
+
+**실사용 인스턴스로 실측 검증**: admin 계정으로 로그인해 다른 사람이
+만든 팀 이름수정/삭제, 남의 코멘트 수정, 비멤버 프로젝트의 숨김
+토글이 전부 성공하는지 확인. admin이 만든 **프로젝트 스코프 API
+키로 스코프 밖의 완전히 다른 프로젝트**에 접근해도 성공하는지 확인
+(동일한 모양의 일반 설계자 키로는 여전히 403 - 대조 확인으로 우회가
+admin 전용임을 검증). 웹 UI에서 비관리자 계정으로 팀 목록을 열면
+버튼이 하나도 안 보이고, 실제 팀장 계정으로 열면 전부 보이는 대조
+확인. 문서/코멘트/칸반카드/git 저장소가 있는 프로젝트를 owner
+계정으로 삭제 → DB 데이터 전부 삭제 + Gitea 저장소가 실제로 사라진
+것을 Gitea API로 직접 확인, owner 아닌 계정으론 403 확인.
+`POST/GET .../git/sync-status`를 viewer 계정으로 호출하면 403(회귀
+재현 후 수정 확인), owner 계정은 통과.
+
+`npm run db:generate`(3드라이버) → `npx tsc --noEmit`(backend) →
+`vue-tsc -b`(frontend) 클린 확인. README.md 최신 라운드 + "지금 상태"
+여러 항목, QA-SCENARIOS.md, SKILL.md(양쪽 사본) 갱신.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

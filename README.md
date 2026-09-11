@@ -9,6 +9,53 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 (대화 세션에서 작성, 저장소에는 아직 커밋 안 됨 - 진행 상황은
 [DESIGN-NOTES.md](DESIGN-NOTES.md) 참고)를 참고.
 
+## 이번 라운드: 최고 관리자(admin) 전권 + CUD 버튼 권한별 숨김 + 프로젝트 삭제 + git 저장소 관리자 전용화·외부 저장소 동기화(발행)
+
+여섯 갈래 요구를 한 번에 반영했다. **(1) CUD 버튼 권한별 숨김** -
+지금까지는 거의 모든 화면이 생성/수정/삭제 버튼을 무조건 렌더링하고,
+클릭했을 때 서버가 403을 돌려주면 그제서야 인라인 에러로 보여줬다
+(유일한 예외: `CommentsPanel.vue`의 작성자 본인 `v-if`). 이제는
+서버가 계산한 권한 필드(`GET /teams`/`GET /project-groups`의
+`isAdmin`, `GET /projects`의 `canToggleHidden`, `GET /projects/:id`
+의 `myRole`, `GET /documents/:code`의 `perm`, 댓글 목록의
+`canManage`)를 프런트가 그대로 `v-if`에 써서 권한 없는 사용자에게는
+버튼 자체가 안 보인다 - "시도 후 실패"에서 "애초에 안 보임"으로.
+`ProjectShellView.vue`가 Vue `provide`/`inject`(이 저장소 최초 사용)
+로 "이 프로젝트에서 내 역할"을 하위 라우트 전체에 내려준다.
+**(2) 최고 관리자(admin)** - 설치 시 자동 시드되는 고정 계정
+`admin`은 이제 역할/관리자 판정을 전부 우회하는 진짜 최고 관리자다 -
+`core/auth.ts`의 `isSuperAdmin()` 하나가 `getMemberRole`/
+`isTeamAdmin`/`isProjectGroupAdmin` 세 곳에 스며들어 대부분의 판정을
+연쇄적으로 우회시킨다. 설계자 확인에 따라 **스코프가 좁혀진 API
+키(팀/프로젝트 단위)도 admin 소유면 스코프 자체를 무시**하고(미들웨어
+에서 스코프를 unrestricted로 치환), **코멘트/개인 폴더/git 자격증명
+처럼 "본인 소유물만" 다루게 설계된 기능도 admin은 타인 것까지 대행
+가능**하다. **(3) 프로젝트 삭제("제한구역")** - 프로젝트 설정 화면에
+danger-zone 스타일 섹션을 신설, 문서/코멘트/칸반/Q&A 등 DB 데이터를
+cascade로, 연결된 Gitea 저장소까지 함께 삭제한다(owner 전용, admin은
+자동 우회). **(4) git 저장소 기능 관리자 전용화** - 연결(link)은
+원래도 owner 전용이었지만 동기화 상태 확인/제안은 지금까지 `viewer`
+도 호출 가능했다 - owner 전용으로 통일. **(5)(6) 외부 저장소
+동기화(발행)** - "동기화 제안"(diff 미리보기)까지만 있던 걸, 실제로
+Gitea Push Mirror를 통해 외부(권위) 저장소에 push하는 "동기화" 버튼을
+신설했다. 자격증명을 선택해 시도하면 fast-forward 가능하고 push
+권한이 있으면 즉시 반영되고, 그렇지 않으면(충돌 또는 권한 부족)
+AI 대기열(`GitSyncQueueEntry`)에 올라가며 그 프로젝트에 시스템
+메시지(`authorId: null`)로 상황이 안내된다 - AI가 `docs git
+publish-queue-done`으로 완료를 보고해야 "동기화" 버튼이 다시
+활성화된다.
+
+**구현 중 실측으로 발견해 같이 고친 버그**: `TeamAdmin`/
+`ProjectGroupAdmin`처럼 팀/그룹 삭제 시 자식 행도 함께 지워져야
+하는데 `onDelete: Cascade`가 빠져있던 지난 라운드의 문제를 프로젝트
+삭제 스키마 감사 중 더 체계적으로 재확인했고, `DocStatus`/
+`DocStatusTransition`/`Document`(docType·status FK)/`KanbanCard`
+(column FK)/`Folder`(parentFolder FK)에도 같은 종류의 누락이 있어
+실제 삭제 시도에서 FK 제약 위반으로 막히는 걸 재현 후 전부 고쳤다.
+`AccessControlManager.vue`가 지난 라운드에 제거된 `/doc-types/own`
+엔드포인트를 여전히 호출하던 leftover 버그도 발견해 `/doc-types`로
+수정했다.
+
 ## 이번 라운드: 팀/프로젝트 그룹 CRUD + 계층별 멤버 가시성 보안 강화 + 팀/그룹 스코프 DocType 완전 제거
 
 세 갈래 요구를 한 번에 반영했다. **(1) 계층별 멤버 가시성** - 프로젝트
@@ -208,6 +255,20 @@ open/closed/solved/etc 4단계 상태를 갖고, 작성자 본인만 바꿀 수
 - Prisma 스키마(PostgreSQL/MySQL/SQLite 3드라이버, 완전 정규화 - JSON
   컬럼 없음)
 - 인증(회원가입/로그인/JWT+리프레시 토큰)
+- **최고 관리자(admin)** - 설치 시 자동 시드되는 고정 계정 `admin`은
+  모든 역할/관리자 판정(프로젝트 owner/editor/viewer, 팀장, 그룹
+  관리자, 세부 접근 권한)과 API 키 스코프 제한을 전부 우회한다.
+  코멘트/개인 폴더/git 자격증명처럼 "본인 소유물만" 다루게 설계된
+  기능도 admin은 타인 것까지 대행할 수 있다.
+- **CUD 버튼 권한별 숨김** - 생성/수정/삭제 버튼은 서버가 계산해
+  내려주는 권한 필드(팀/그룹의 `isAdmin`, 프로젝트의 `myRole`/
+  `canToggleHidden`, 문서의 `perm`, 댓글의 `canManage`)를 그대로
+  `v-if`에 써서, 권한 없는 사용자에게는 애초에 안 보인다(클릭 후
+  403이 아니라).
+- **프로젝트 삭제("제한구역")** - 프로젝트 "설정" 화면 danger-zone
+  섹션에서 owner가 프로젝트를 완전히 삭제할 수 있다 - 문서/코멘트/
+  칸반/Q&A 등 모든 DB 데이터가 cascade로, 연결된 Gitea 저장소까지
+  함께 삭제되며 되돌릴 수 없다.
 - git 자격증명 저장(AES-256-GCM 암호화)
 - 팀/프로젝트 그룹/프로젝트 계층(팀 단위는 선택적) - 팀/프로젝트
   그룹 둘 다 CRUD 전체(이름 수정, 팀은 `enabled` 토글도, 비어있지
@@ -249,8 +310,11 @@ open/closed/solved/etc 4단계 상태를 갖고, 작성자 본인만 바꿀 수
 - CLAUDE.md/SKILL.md 템플릿 관리(팀/그룹/프로젝트 override) +
   `template deploy`(해석된 템플릿을 프로젝트의 자체 호스팅 저장소
   루트에 실제 커밋)
-- **git 저장소 연결(3가지 방식)** - 웹 UI(프로젝트 "설정" 탭)와 CLI/MCP
-  둘 다에서 선택 가능. 저장소는 전부 이 시스템이 만드는 Gitea 조직
+- **git 저장소 연결(3가지 방식) + 관리자 전용화 + 외부 저장소
+  동기화(발행)** - 웹 UI(프로젝트 "설정" 탭)와 CLI/MCP 둘 다에서 선택
+  가능. **git 저장소 관련 기능 전체(연결/동기화 상태 확인/동기화
+  제안/발행)는 그 프로젝트의 owner만 쓸 수 있다**(admin은 항상 예외).
+  저장소는 전부 이 시스템이 만드는 Gitea 조직
   (organization) 네임스페이스(`cnwk-projects`, `GITEA_ORG_NAME`으로
   변경 가능) 아래 생성된다 - 특정 설계자 개인 소유가 아니라, 저장소별
   협업자 권한을 그 프로젝트의 멤버 role과 동기화하는 방식으로 접근을
@@ -267,10 +331,17 @@ open/closed/solved/etc 4단계 상태를 갖고, 작성자 본인만 바꿀 수
   재시도한다. **동기화 제안**(외부 연동 프로젝트 전용) - "설정" 탭에서
   미러 대비 작업 저장소가 뭐가 달라졌는지 확인(`docs git sync-status`,
   Gitea의 미러 동기화가 비동기라 요청 후 완료될 때까지 대기하는 방식)
-  하고, 달라진 파일 내용을 내보낼 수 있다(`docs git sync-proposal
-  --out <dir>`) - 실제로 외부(권위) 저장소에 반영(브랜치·PR)하는 건
-  설계자가 직접 한다(자동 PR 생성은 범위 밖 - 항상 사람이 검토 후
-  반영).
+  하고, 달라진 파일 내용을 미리 볼 수 있다(`docs git sync-proposal
+  --out <dir>`). **동기화(발행)** - "동기화" 버튼(`docs git publish
+  --credential <id>`)이 Gitea Push Mirror로 작업 저장소의 커밋을
+  실제로 외부(권위) 저장소에 push한다. fast-forward 가능하고
+  자격증명에 push 권한이 있으면 즉시 반영되고(`status: "synced"`),
+  그렇지 않으면(충돌 또는 권한 부족) `GitSyncQueueEntry` 대기열에
+  올라가며 그 프로젝트에 시스템 메시지(`authorId: null`)로 상황이
+  안내된다 - AI가 `docs git sync-proposal`로 확인해 직접 반영(또는
+  충돌 해소)한 뒤 `docs git publish-queue-done`으로 완료를 보고해야
+  "동기화" 버튼이 다시 활성화된다(자동 PR 생성은 여전히 범위 밖 -
+  항상 사람/AI의 검토를 거친 뒤 반영).
 - **git push 훅 프롬프트 자동화**(대기열 방식) - `hook create/list/
   delete`로 프로젝트별 트리거 규칙을 정의하면, 매칭되는 push마다
   `hook queue`에 항목이 쌓인다. 서버가 클로드 세션을 직접 스폰하지
