@@ -2002,10 +2002,86 @@ DB의 `giteaUserId`와 일치 확인, 암호화된 비밀번호 컬럼이 평문
 `npm run db:generate`(3드라이버) → `npx tsc --noEmit`(backend) 클린
 확인.
 
+## Gitea 저장소 소유권을 조직 네임스페이스로 전환 + 커밋/푸시를 실제 설계자 신원으로 귀속 - 완료 (2026-09-11)
+
+직전 라운드가 "Gitea 계정 마스터링"을 발급·보관까지만 하고 실제
+사용(저장소 소유권, 커밋 귀속)은 범위 밖으로 미뤘던 부분을 설계자가
+이어서 요청 - 저장소를 공유 admin 계정 대신 각 설계자 신원으로 커밋
+/push하게 하고, 외부 git 클라이언트가 Gitea git 프로토콜로 직접
+clone/push하는 경우까지 지원한다.
+
+- **저장소는 전부 Gitea 조직(organization) 네임스페이스
+  (`cnwk-projects`, `GITEA_ORG_NAME`으로 변경 가능) 아래 생성**한다
+  (`core/gitea.ts`의 `orgLogin()`/`ensureGiteaOrgConfigured()`, 서버
+  부팅 시 멱등 자동 생성) - "누구 개인 소유냐"라는 질문 자체를 없애고,
+  그 대신 **저장소별 협업자(collaborator) 권한을 프로젝트
+  `Member.role`과 그대로 동기화**한다(owner→admin/editor→write/
+  viewer→read, `PUT/DELETE /repos/{org}/{repo}/collaborators/
+  {username}`) - 멤버 추가/역할변경/제거(`core/members.ts`에 신규
+  `removeMember()`/`updateMemberRole()` 추가 - 지금까지 추가만 되고
+  제거/변경 라우트 자체가 없었다는 걸 이번에 확인해 같이 만듦),
+  저장소가 막 연결된 시점(기존 멤버 일괄 반영), 설계자의 Gitea
+  계정이 나중에 준비된 시점(보완 스윕) 세 곳에서 동기화 - 전부
+  fail-soft.
+- **설계자당 Gitea Personal Access Token(PAT) 하나를 발급·보관**해
+  (`core/giteaAccounts.ts`, 계정 생성 직후 그 임시 비밀번호로 Basic
+  Auth해 발급) 두 가지 용도를 겸한다 - (a) 이 시스템의 웹 UI/CLI를
+  거쳐 파일을 저장할 때(`core/gitea.ts`의 `putFileContent()`가
+  `actingToken` 인자를 받아, 있으면 그 설계자 PAT로 커밋해 신원이
+  실제로 귀속되게 함 - 없으면 관리자 토큰으로 폴백), (b) 프로필
+  화면("Gitea 개인 접근 토큰" 카드, `ApiKey`의 "생성 시 1회 노출"
+  UX 재사용)에서 재발급·노출해 **외부 git 클라이언트가 그 값을
+  비밀번호 자리에 넣어 직접 clone/push**하는 자격증명으로. CLI
+  `docs git my-token`(재발급+1회 노출) - MCP엔 의도적으로 없음(신원/
+  자격증명 관리라 `auth`/`key_*`와 같은 원칙).
+- **실제 인스턴스로 검증하며 발견한 함정 두 가지**: ① Gitea PAT 발급
+  (`POST /users/{username}/tokens`)은 관리자 토큰이 아니라 **그 계정
+  자신의 Basic Auth**를 요구한다(응답의 평문 토큰 필드는 `token`이
+  아니라 `sha1`). ② 이 세션이 처음부터 써온 `GITEA_API_TOKEN`(admin
+  계정 소유)에 `organization` 스코프가 없어서 `ensureGiteaOrgConfigured()`
+  가 403으로 막혔다 - Gitea 1.20+ 스코프 토큰 모델에서 `write:admin`이
+  있어도 `organization` 카테고리는 별도로 있어야 함을 실측으로 확인.
+  admin 계정의 Gitea 비밀번호를 재설정(설계자 승인 받음 - 이 계정은
+  이 시스템 전용 로컬 서비스 계정이지 사람 개인 계정이 아님)해 필요한
+  스코프를 전부 포함한 새 토큰을 발급하고 `.env`를 갱신해 해결.
+- **브레이킹 체인지**: 이전 라운드까지 만들어진 프로젝트들의 저장소는
+  여전히 `admin/project-...` 네임스페이스에 남아있고, 새로 연결되는
+  저장소만 `cnwk-projects/project-...`를 쓴다(마이그레이션 스크립트는
+  안 만듦 - 기존 관행). 옛 저장소를 쓰는 프로젝트의 협업자 동기화는
+  대상 저장소가 없어 404로 fail-soft 스킵된다(로그만 남고 앱 동작은
+  안 막힘 - 실측으로 확인).
+
+**실제 인스턴스로 실측**: 새 프로젝트 연결 시 `repoUrl`이 실제로
+`cnwk-projects/...`인지 확인 → 프로젝트 owner(생성자)가 자동으로
+그 저장소의 Gitea `admin` 협업자로 등록되는지 확인 → 두 번째 설계자를
+editor로 추가 → Gitea 협업자 권한이 `write`인지 확인 → 역할을
+viewer로 변경 → `read`로 내려가는지 → 제거 → 협업자 목록에서
+`none`으로 빠지는지(웹 UI의 역할 select/제거 버튼으로도 동일하게
+재현 - 실제 클릭으로 확인) → 소스 에디터 저장 API로 파일을 저장 →
+Gitea 커밋 API에서 author가 관리자 계정이 아니라 그 설계자 자신의
+Gitea 계정으로 찍히는지 확인 → 프로필 화면에서 토큰을 재발급·복사 →
+로컬 `git clone`(실제 외부 클라이언트)으로 그 자격증명을 써서
+clone → 파일 수정 후 `git push` → 실제로 성공하고 Gitea 커밋 로그에
+반영되는지, 그 push가 지난 라운드의 시스템 웹훅 경로를 타고
+`PushHookQueueEntry`까지 정상적으로 쌓이는지(기존 기능과의 통합
+확인) → 그 프로젝트 멤버가 아닌 설계자의 Gitea 계정은 협업자 권한이
+`none`이라 Gitea 스스로 접근을 거부함을 확인 → 토큰 재발급(회전) →
+이전 토큰은 401, 새 토큰은 정상 동작 확인 → `docs member-set-role`/
+`docs member-remove`/`docs git my-token`(CLI) 왕복 → MCP
+`tools/list`로 `member_set_role`/`member_remove`는 있고
+`git_my_token`은 없는지 확인 → 조직 생성이 재기동해도 중복 안
+되는지(멱등) 확인.
+
+`npm run db:generate`(3드라이버) → `npx tsc --noEmit`(backend) →
+`vue-tsc -b`(frontend) 클린 확인.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.
 
-프로젝트 멤버를 제거하는 라우트/CLI/UI가 없다(이번 라운드 검증
-중 확인된 기존 한계 - 지금까지는 필요한 적이 없어 안 만들어져
-있었음). 필요해지면 별도 요청으로 다룬다.
+이전 라운드까지 만들어진 프로젝트들의 Gitea 저장소가 옛
+`admin/project-...` 네임스페이스에 남아있다(조직 네임스페이스로의
+전환이 새로 연결되는 저장소부터만 적용되는 브레이킹 체인지 -
+마이그레이션 스크립트 없음, 기존 관행). 실사용 전환 시 필요하면
+그 저장소들을 Gitea 어드민 UI/API로 `cnwk-projects` 조직에 수동
+이관하거나 다시 연결해야 한다.

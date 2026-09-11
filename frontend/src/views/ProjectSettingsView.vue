@@ -6,8 +6,10 @@ import GitRepoPanel from "../components/GitRepoPanel.vue";
 import AccessControlManager from "../components/AccessControlManager.vue";
 import UserRef from "../components/UserRef.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import { useAuthStore } from "../stores/auth";
 
 const entityPicker = useEntityPickerStore();
+const auth = useAuthStore();
 
 const props = defineProps<{ id: string }>();
 
@@ -68,6 +70,27 @@ async function addMember() {
   }
 }
 
+async function changeMemberRole(m: Member, role: string): Promise<void> {
+  memberError.value = "";
+  try {
+    await apiCall(`/projects/${props.id}/members/${m.userId}`, { method: "PUT", body: JSON.stringify({ role }) });
+    members.value = await apiCall<Member[]>(`/projects/${props.id}/members`);
+  } catch (err) {
+    memberError.value = err instanceof ApiError ? err.message : "역할 변경에 실패했습니다";
+    members.value = await apiCall<Member[]>(`/projects/${props.id}/members`); // select를 실제 서버 상태로 되돌림
+  }
+}
+
+async function removeMember(m: Member): Promise<void> {
+  memberError.value = "";
+  try {
+    await apiCall(`/projects/${props.id}/members/${m.userId}`, { method: "DELETE" });
+    members.value = members.value.filter((x) => x.id !== m.id);
+  } catch (err) {
+    memberError.value = err instanceof ApiError ? err.message : "멤버 제거에 실패했습니다";
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -110,7 +133,22 @@ onMounted(load);
       <ul class="list">
         <li v-for="m in members" :key="m.id">
           <UserRef :user-id="m.userId" />
-          <span class="muted">{{ m.role }}</span>
+          <span class="member-controls">
+            <select :value="m.role" @change="changeMemberRole(m, ($event.target as HTMLSelectElement).value)">
+              <option value="owner">owner</option>
+              <option value="editor">editor</option>
+              <option value="viewer">viewer</option>
+            </select>
+            <button
+              type="button"
+              class="remove-btn"
+              :disabled="m.userId === auth.me?.id"
+              :title="m.userId === auth.me?.id ? '본인은 제거할 수 없습니다' : ''"
+              @click="removeMember(m)"
+            >
+              제거
+            </button>
+          </span>
         </li>
         <li v-if="members.length === 0" class="muted">멤버가 없습니다.</li>
       </ul>
@@ -204,6 +242,29 @@ section {
 .muted {
   color: #888;
   font-size: 13px;
+}
+.member-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.member-controls select {
+  padding: 4px 6px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.remove-btn {
+  background: #fff;
+  border: 1px solid #e2a2ad;
+  color: #d1344b;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.remove-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .error {
   color: #d1344b;

@@ -225,6 +225,7 @@ export interface MeProfile {
   nicknameNumber: number;
   displayLabel: string;
   nicknameChangedAt: string | null;
+  giteaUsername: string | null;
 }
 
 export async function getMe(userId: string): Promise<MeProfile> {
@@ -242,6 +243,7 @@ export async function getMe(userId: string): Promise<MeProfile> {
     nicknameNumber: user.nicknameNumber,
     displayLabel: formatDisplayLabel(user.nickname, user.nicknameNumber),
     nicknameChangedAt: user.nicknameChangedAt ? user.nicknameChangedAt.toISOString() : null,
+    giteaUsername: user.giteaUsername,
   };
 }
 
@@ -299,6 +301,7 @@ export async function updateMe(userId: string, input: UpdateMeInput): Promise<Me
     nicknameNumber: user.nicknameNumber,
     displayLabel: formatDisplayLabel(user.nickname, user.nicknameNumber),
     nicknameChangedAt: user.nicknameChangedAt ? user.nicknameChangedAt.toISOString() : null,
+    giteaUsername: user.giteaUsername,
   };
 }
 

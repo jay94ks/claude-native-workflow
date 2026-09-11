@@ -27,6 +27,48 @@ export function repoOwner(): string {
   return config().owner;
 }
 
+// 저장소는 관리자 개인 네임스페이스가 아니라 이 시스템이 만드는 Gitea
+// 조직(organization) 네임스페이스 아래 만든다 - "소유자가 누구냐"라는
+// 질문 자체를 없애고, 그 대신 저장소별 협업자 권한을 Member.role과
+// 동기화하는 방식으로 접근을 표현한다(core/members.ts의
+// syncCollaboratorGrant() 참고). 조직 이름은 새 환경변수 없이 고정
+// 상수를 기본값으로 쓰되, 필요하면 GITEA_ORG_NAME으로 덮어쓸 수 있다.
+const DEFAULT_ORG_LOGIN = "cnwk-projects";
+
+export function orgLogin(): string {
+  return process.env.GITEA_ORG_NAME || DEFAULT_ORG_LOGIN;
+}
+
+/** 서버 기동 시 호출(Gitea 미설정이면 조용히 스킵 - fail-soft) - 이
+ * 시스템의 조직 네임스페이스가 아직 없으면 만든다(멱등 - GET으로 먼저
+ * 존재를 확인). 시스템 웹훅/계정 마스터링보다 먼저 실행돼야 한다 -
+ * 그 안에 만들어질 저장소들이 이 조직을 전제로 하므로. */
+export async function ensureGiteaOrgConfigured(): Promise<void> {
+  try {
+    config();
+  } catch {
+    return;
+  }
+  try {
+    const { apiUrl, token } = config();
+    const org = orgLogin();
+    const getRes = await fetch(`${apiUrl}/api/v1/orgs/${encodeURIComponent(org)}`, {
+      headers: { Authorization: `token ${token}` },
+    });
+    if (getRes.ok) return;
+    if (getRes.status !== 404) {
+      const body = await getRes.text().catch(() => "");
+      throw new Error(`Gitea API 오류: HTTP ${getRes.status} ${body}`);
+    }
+    await giteaFetch("/api/v1/orgs", {
+      method: "POST",
+      body: JSON.stringify({ username: org, visibility: "private" }),
+    });
+  } catch (err) {
+    console.error("ensureGiteaOrgConfigured 실패:", err);
+  }
+}
+
 async function giteaFetch(path: string, init?: RequestInit): Promise<Response> {
   const { apiUrl, token } = config();
   const res = await fetch(`${apiUrl}${path}`, {
@@ -50,7 +92,7 @@ export interface CreatedRepo {
 }
 
 export async function createRepo(slug: string): Promise<CreatedRepo> {
-  const res = await giteaFetch("/api/v1/user/repos", {
+  const res = await giteaFetch(`/api/v1/orgs/${orgLogin()}/repos`, {
     method: "POST",
     body: JSON.stringify({ name: slug, private: true, auto_init: true }),
   });
@@ -67,8 +109,7 @@ export async function createRepo(slug: string): Promise<CreatedRepo> {
  * 실패한다(설계자 확인 필요 없이 명백한 버그 - deleteRepo로 정리해야
  * 재시도가 실제로 성립함). */
 export async function deleteRepo(slug: string): Promise<void> {
-  const { owner } = config();
-  await giteaFetch(`/api/v1/repos/${owner}/${slug}`, { method: "DELETE" });
+  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}`, { method: "DELETE" });
 }
 
 /** migrateRepo()가 "인증이 필요해서 실패"를 다른 실패와 구분해 던질 때
@@ -102,6 +143,7 @@ export async function migrateRepo(slug: string, cloneAddr: string, opts: Migrate
     headers: { Authorization: `token ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       repo_name: slug,
+      repo_owner: orgLogin(),
       clone_addr: cloneAddr,
       mirror: opts.mirror,
       private: true,
@@ -125,8 +167,7 @@ export async function migrateRepo(slug: string, cloneAddr: string, opts: Migrate
  * 완료 시점을 알려면 getMirrorUpdatedAt()으로 타임스탬프 변화를
  * 폴링해야 한다. */
 export async function forceMirrorSync(slug: string): Promise<void> {
-  const { owner } = config();
-  await giteaFetch(`/api/v1/repos/${owner}/${slug}/mirror-sync`, { method: "POST" });
+  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/mirror-sync`, { method: "POST" });
 }
 
 /** 미러가 마지막으로 실제 동기화된 시각(ISO 문자열) - forceMirrorSync()
@@ -134,8 +175,7 @@ export async function forceMirrorSync(slug: string): Promise<void> {
  * 끝났는지" 판단하는 데 쓴다(mirror-sync 자체가 비동기 큐잉이라 트리거
  * 직후 바로 비교하면 옛 상태를 읽을 수 있음). */
 export async function getMirrorUpdatedAt(slug: string): Promise<string | null> {
-  const { owner } = config();
-  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}`);
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}`);
   const json = (await res.json()) as { mirror_updated?: string };
   return json.mirror_updated ?? null;
 }
@@ -155,25 +195,11 @@ export interface FullTreeEntry {
  * 기본 브랜치의 최신 커밋(ref 생략 시 Gitea가 기본 브랜치로 해석)
  * 트리를 재귀 조회한다. */
 export async function getFullTree(slug: string, ref = "HEAD"): Promise<FullTreeEntry[]> {
-  const { owner } = config();
-  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/git/trees/${ref}?recursive=true`);
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/git/trees/${ref}?recursive=true`);
   const json = (await res.json()) as { tree: { path: string; sha: string; type: string; size?: number }[] };
   return json.tree
     .filter((e) => e.type === "blob")
     .map((e) => ({ path: e.path, sha: e.sha, type: "blob" as const, size: e.size }));
-}
-
-export async function createWebhook(slug: string, targetUrl: string, secret: string): Promise<void> {
-  const { owner } = config();
-  await giteaFetch(`/api/v1/repos/${owner}/${slug}/hooks`, {
-    method: "POST",
-    body: JSON.stringify({
-      type: "gitea",
-      config: { url: targetUrl, content_type: "json", secret },
-      events: ["push"],
-      active: true,
-    }),
-  });
 }
 
 export interface SystemWebhook {
@@ -236,11 +262,10 @@ export async function ensureGiteaSystemWebhookConfigured(): Promise<void> {
 }
 
 export async function listCommits(slug: string, opts?: { ref?: string; limit?: number }): Promise<unknown[]> {
-  const { owner } = config();
   const qs = new URLSearchParams();
   if (opts?.ref) qs.set("sha", opts.ref);
   qs.set("limit", String(opts?.limit ?? 50));
-  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/commits?${qs}`);
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/commits?${qs}`);
   return res.json() as Promise<unknown[]>;
 }
 
@@ -257,27 +282,25 @@ export async function listCommitsPaged(
   slug: string,
   opts: { ref?: string; page: number; pageSize: number },
 ): Promise<CommitPage> {
-  const { owner } = config();
   const qs = new URLSearchParams();
   if (opts.ref) qs.set("sha", opts.ref);
   qs.set("limit", String(opts.pageSize));
   qs.set("page", String(opts.page));
-  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/commits?${qs}`);
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/commits?${qs}`);
   const items = (await res.json()) as unknown[];
 
   const nextQs = new URLSearchParams();
   if (opts.ref) nextQs.set("sha", opts.ref);
   nextQs.set("limit", "1");
   nextQs.set("page", String(opts.page + 1));
-  const nextRes = await giteaFetch(`/api/v1/repos/${owner}/${slug}/commits?${nextQs}`);
+  const nextRes = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/commits?${nextQs}`);
   const nextItems = (await nextRes.json()) as unknown[];
 
   return { items, hasMore: nextItems.length > 0 };
 }
 
 export async function getCommit(slug: string, sha: string): Promise<unknown> {
-  const { owner } = config();
-  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/git/commits/${sha}`);
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/git/commits/${sha}`);
   return res.json();
 }
 
@@ -285,8 +308,7 @@ export async function getCommit(slug: string, sha: string): Promise<unknown> {
 // 1.27 인스턴스에 대고 검증해서 확정한 경로("/{owner}/{repo}/commit/
 // {sha}.diff" 웹 라우트는 404 - API 하위 경로가 맞다).
 export async function getCommitDiff(slug: string, sha: string): Promise<string> {
-  const { owner } = config();
-  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/git/commits/${sha}.diff`);
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/git/commits/${sha}.diff`);
   return res.text();
 }
 
@@ -303,10 +325,9 @@ export async function getBlame(_slug: string, _filepath: string, _ref?: string):
 }
 
 async function getContentsRaw(slug: string, path: string, ref?: string): Promise<unknown> {
-  const { owner } = config();
   const encodedPath = path ? path.split("/").map(encodeURIComponent).join("/") : "";
   const qs = ref ? `?ref=${encodeURIComponent(ref)}` : "";
-  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/contents/${encodedPath}${qs}`);
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/contents/${encodedPath}${qs}`);
   return res.json();
 }
 
@@ -398,14 +419,27 @@ export function mimeTypeForPath(filePath: string): string {
   return RAW_MIME_TYPES[ext] ?? "application/octet-stream";
 }
 
-/** 파일이 있으면 갱신, 없으면 생성 - CLAUDE.md/SKILL.md 템플릿 배포용. */
-export async function putFileContent(slug: string, filepath: string, content: string, message: string): Promise<void> {
-  const { apiUrl, token, owner } = config();
+/** 파일이 있으면 갱신, 없으면 생성 - 소스 에디터 저장 + CLAUDE.md/
+ * SKILL.md 템플릿 배포에서 쓴다. `actingToken`이 있으면 그 값(호출한
+ * 설계자 자신의 Gitea PAT - core/giteaAccounts.ts의
+ * getGiteaAccessToken())으로 인증해 커밋이 그 설계자 신원으로
+ * 귀속되게 한다 - 없으면(그 설계자가 아직 Gitea 토큰이 없는 과도기
+ * 상태) 관리자 토큰으로 폴백한다(저장 자체를 막지 않기 위한 방어적
+ * 처리 - 호출부가 이 경우 경고를 남긴다). */
+export async function putFileContent(
+  slug: string,
+  filepath: string,
+  content: string,
+  message: string,
+  actingToken?: string,
+): Promise<void> {
+  const { apiUrl, token: adminToken } = config();
+  const authToken = actingToken || adminToken;
   const encodedPath = filepath.split("/").map(encodeURIComponent).join("/");
-  const contentPath = `/api/v1/repos/${owner}/${slug}/contents/${encodedPath}`;
+  const contentPath = `/api/v1/repos/${orgLogin()}/${slug}/contents/${encodedPath}`;
 
   let existingSha: string | undefined;
-  const getRes = await fetch(`${apiUrl}${contentPath}`, { headers: { Authorization: `token ${token}` } });
+  const getRes = await fetch(`${apiUrl}${contentPath}`, { headers: { Authorization: `token ${authToken}` } });
   if (getRes.ok) {
     const json = (await getRes.json()) as { sha: string };
     existingSha = json.sha;
@@ -414,10 +448,15 @@ export async function putFileContent(slug: string, filepath: string, content: st
   }
 
   const contentB64 = Buffer.from(content, "utf-8").toString("base64");
-  await giteaFetch(contentPath, {
+  const res = await fetch(`${apiUrl}${contentPath}`, {
     method: existingSha ? "PUT" : "POST",
+    headers: { Authorization: `token ${authToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ content: contentB64, message, sha: existingSha }),
   });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
 }
 
 /** Gitea 사용자 계정 존재 여부 - 사용자 계정 마스터링(core/
@@ -462,4 +501,63 @@ export async function createGiteaUser(input: {
   });
   const json = (await res.json()) as { id: number; username: string };
   return { id: json.id, username: json.username };
+}
+
+/** 저장소 협업자 권한 부여/변경 - Member.role과 동기화하는 용도
+ * (core/members.ts의 syncCollaboratorGrant()). 관리자 토큰으로 호출
+ * (저장소가 속한 조직의 관리자 권한이 필요 - 협업자 본인 권한이 아님). */
+export async function setRepoCollaborator(
+  slug: string,
+  username: string,
+  permission: "read" | "write" | "admin",
+): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/collaborators/${encodeURIComponent(username)}`, {
+    method: "PUT",
+    body: JSON.stringify({ permission }),
+  });
+}
+
+export async function removeRepoCollaborator(slug: string, username: string): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/collaborators/${encodeURIComponent(username)}`, {
+    method: "DELETE",
+  });
+}
+
+/** 그 설계자 본인의 Gitea 비밀번호로 Basic Auth해 PAT를 발급한다 -
+ * 실제 인스턴스로 검증해 확정: `POST /users/{username}/tokens`는
+ * 관리자 토큰이 아니라 그 계정 자신의 Basic Auth를 요구한다(giteaFetch
+ * 를 못 씀 - 항상 관리자 토큰만 쓰므로 별도 raw fetch). 응답의 평문
+ * 토큰 값은 `sha1` 필드(실측 확인 - `token`이 아님). `write:repository`
+ * 스코프 하나면 repo 읽기/쓰기 둘 다 커버되는 것도 실측 확인(별도로
+ * `read:repository`를 안 넣어도 됨). */
+export async function createUserAccessToken(username: string, password: string, tokenName: string): Promise<string> {
+  const { apiUrl } = config();
+  const basic = Buffer.from(`${username}:${password}`).toString("base64");
+  const res = await fetch(`${apiUrl}/api/v1/users/${encodeURIComponent(username)}/tokens`, {
+    method: "POST",
+    headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: tokenName, scopes: ["write:repository"] }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
+  const json = (await res.json()) as { sha1: string };
+  return json.sha1;
+}
+
+/** 재발급(회전) 전 기존 토큰을 지운다 - 실측 확인: 삭제도 그 계정
+ * 자신의 Basic Auth로 된다(관리자 sudo 불필요). 이미 없어졌거나
+ * 이름이 안 맞아 404가 나도 무시(재발급 흐름을 막지 않기 위해). */
+export async function deleteUserAccessToken(username: string, password: string, tokenName: string): Promise<void> {
+  const { apiUrl } = config();
+  const basic = Buffer.from(`${username}:${password}`).toString("base64");
+  const res = await fetch(`${apiUrl}/api/v1/users/${encodeURIComponent(username)}/tokens/${encodeURIComponent(tokenName)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Basic ${basic}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
 }

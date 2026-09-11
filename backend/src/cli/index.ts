@@ -330,6 +330,27 @@ program
   .command("members <projectId>")
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/members`))));
 
+program
+  .command("member-set-role <projectId> <userId> <role>")
+  .action((projectId, userId, role) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/members/${userId}`, {
+          method: "PUT",
+          body: JSON.stringify({ role }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("member-remove <projectId> <userId>")
+  .action((projectId, userId) =>
+    run(async () =>
+      printJson(await apiCall(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" })),
+    ),
+  );
+
 // ---------------------------------------------------------------- 문서 타입 체계
 
 program
@@ -1088,6 +1109,17 @@ gitCmd
           body: JSON.stringify({ content, message: opts.message }),
         }),
       );
+    }),
+  );
+
+gitCmd
+  .command("my-token")
+  .description("내 Gitea 개인 접근 토큰을 재발급하고 1회 노출한다(외부 git 클라이언트에서 clone/push 시 비밀번호 자리에 쓴다)")
+  .action(() =>
+    run(async () => {
+      const result = await apiCall<{ username: string; token: string }>("/api/auth/me/git-token", { method: "POST" });
+      console.log("이 값은 지금 한 번만 표시됩니다 - 안전한 곳에 저장하세요.");
+      printJson(result);
     }),
   );
 

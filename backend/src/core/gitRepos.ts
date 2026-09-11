@@ -5,6 +5,7 @@ import { assertProjectExists } from "./projects.js";
 import * as gitea from "./gitea.js";
 import { GitAuthRequiredError } from "./gitea.js";
 import { registerWebhook } from "./externalGit.js";
+import { resyncCollaboratorGrantsForProject } from "./members.js";
 
 export { GitAuthRequiredError };
 
@@ -155,6 +156,9 @@ export async function linkSelfHostedRepo(
       gitCredentialId: importFrom?.gitCredentialId ?? null,
     },
   });
+  // 저장소가 없던 동안 가입한 멤버들에게도 한 번에 협업자 권한을
+  // 부여한다(core/members.ts) - fail-soft, 실패해도 연결 자체는 성공.
+  await resyncCollaboratorGrantsForProject(projectId);
   return toInfo(row);
 }
 
@@ -221,6 +225,10 @@ export async function linkExternalAsPrimary(
       webhookSecretEncrypted: encryptSecret(secret),
     },
   });
+  // 저장소가 없던 동안 가입한 멤버들에게도 한 번에 협업자 권한을
+  // 부여한다(work 저장소 기준 - requireGiteaWorkingSlug가 알아서
+  // 작업 저장소를 고름).
+  await resyncCollaboratorGrantsForProject(projectId);
 
   return {
     ...toInfo(row),

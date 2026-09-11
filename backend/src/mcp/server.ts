@@ -155,6 +155,20 @@ async function main() {
   tool("member_list", "프로젝트 멤버 목록", "프로젝트 멤버 목록.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/members`),
   );
+  tool(
+    "member_set_role",
+    "프로젝트 멤버 역할 변경",
+    "프로젝트 멤버의 role을 바꾼다(owner|editor|viewer).",
+    { projectId: z.string(), userId: z.string(), role: z.enum(["owner", "editor", "viewer"]) },
+    async (a) => call(`/api/projects/${a.projectId}/members/${a.userId}`, { method: "PUT", body: JSON.stringify({ role: a.role }) }),
+  );
+  tool(
+    "member_remove",
+    "프로젝트 멤버 제거",
+    "프로젝트에서 멤버를 제거한다.",
+    { projectId: z.string(), userId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/members/${a.userId}`, { method: "DELETE" }),
+  );
 
   // ---------------------------------------------------------------- 문서 타입 체계
 

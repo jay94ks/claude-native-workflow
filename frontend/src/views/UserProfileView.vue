@@ -5,6 +5,7 @@ import { useAuthStore } from "../stores/auth";
 import UserRef from "../components/UserRef.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
 import PersonalKeysManager from "../components/PersonalKeysManager.vue";
+import GiteaTokenCard from "../components/GiteaTokenCard.vue";
 
 const props = defineProps<{ id: string }>();
 const auth = useAuthStore();
@@ -142,6 +143,7 @@ watch(() => props.id, load);
     </section>
 
     <PersonalKeysManager v-if="isSelf" />
+    <GiteaTokenCard v-if="isSelf" />
 
     <section class="card">
       <h2>최근 활동</h2>

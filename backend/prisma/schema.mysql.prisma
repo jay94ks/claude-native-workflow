@@ -77,6 +77,12 @@ model User {
   giteaPasswordEncrypted Bytes?
   giteaUserId        Int?
   giteaProvisionedAt DateTime?
+  // 계정 생성 직후 그 임시 비밀번호로 발급해두는 Gitea PAT - 백엔드가
+  // 이 설계자를 대신해 커밋할 때(core/gitea.ts의 putFileContent)와
+  // 이 설계자가 외부 git 클라이언트에서 직접 쓰는 자격증명을 겸한다
+  // (core/giteaAccounts.ts 참고).
+  giteaAccessTokenEncrypted Bytes?
+  giteaTokenName            String?
 
   gitCredentials    GitCredential[]
   refreshTokens     RefreshToken[]

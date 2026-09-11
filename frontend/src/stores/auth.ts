@@ -17,6 +17,7 @@ export interface Me {
   nicknameNumber: number;
   displayLabel: string;
   nicknameChangedAt: string | null;
+  giteaUsername: string | null;
 }
 
 export const useAuthStore = defineStore("auth", {

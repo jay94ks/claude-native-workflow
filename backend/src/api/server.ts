@@ -20,7 +20,11 @@ import {
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
 import { createTeam, listTeams } from "../core/teams.js";
-import { ensureAllUsersGiteaAccountsConfigured } from "../core/giteaAccounts.js";
+import {
+  ensureAllUsersGiteaAccountsConfigured,
+  getGiteaAccessToken,
+  regenerateGiteaAccessToken,
+} from "../core/giteaAccounts.js";
 import { addTeamAdmin, removeTeamAdmin, listTeamAdmins, isTeamAllowedByActiveScope } from "../core/teamAdmins.js";
 import { getInstallConfig, getGiteaSystemWebhookSecret } from "../core/installConfig.js";
 import { createProjectGroup, listProjectGroups, isGroupAllowedByActiveScope } from "../core/projectGroups.js";
@@ -35,7 +39,15 @@ import {
   getProjectNamesByIds,
   type SearchScope,
 } from "../core/projects.js";
-import { addMember, listMembers, getMemberRole, roleSatisfies, isProjectAllowedByActiveScope } from "../core/members.js";
+import {
+  addMember,
+  listMembers,
+  getMemberRole,
+  roleSatisfies,
+  isProjectAllowedByActiveScope,
+  removeMember,
+  updateMemberRole,
+} from "../core/members.js";
 import { isTeamAdmin } from "../core/teamAdmins.js";
 import { getActiveKeyScope } from "../core/requestScope.js";
 import { listUserActivity } from "../core/activity.js";
@@ -297,6 +309,20 @@ app.put(
       nickname?: string;
     };
     res.json(await updateMe(req.userId!, { email, phone, emailVisible, phoneVisible, nickname }));
+  }),
+);
+
+// Gitea 개인 접근 토큰 재발급 - 기존 토큰을 지우고 새로 발급해 응답에
+// 딱 한 번 평문으로 실어 보낸다(ApiKey 생성 시 노출 패턴과 동일). 신원/
+// 자격증명 관리라 requireUnrestrictedScope(스코프 있는 키로는 불가).
+app.post(
+  "/api/auth/me/git-token",
+  authenticate,
+  requireUnrestrictedScope,
+  asyncRoute(async (req, res) => {
+    const token = await regenerateGiteaAccessToken(req.userId!);
+    const user = await getMe(req.userId!);
+    res.json({ username: user.giteaUsername, token });
   }),
 );
 
@@ -598,6 +624,27 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     res.json(await listMembers(req.params.projectId));
+  }),
+);
+
+app.put(
+  "/api/projects/:projectId/members/:userId",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const { role } = req.body as { role?: string };
+    if (!role) { res.status(400).json({ error: "role이 필요합니다" }); return; }
+    res.json(await updateMemberRole(req.params.projectId, req.params.userId, role));
+  }),
+);
+
+app.delete(
+  "/api/projects/:projectId/members/:userId",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    await removeMember(req.params.projectId, req.params.userId);
+    res.json({ ok: true });
   }),
 );
 
@@ -2095,7 +2142,11 @@ app.put(
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const { content, message } = req.body as { content?: string; message?: string };
     if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
-    await gitea.putFileContent(slug, filePath, content, message || `docs: update ${filePath}`);
+    // 커밋이 실제로 이 요청을 보낸 설계자 신원으로 귀속되도록, 그
+    // 설계자의 Gitea PAT를 구해 넘긴다 - 아직 없으면(과도기 상태)
+    // putFileContent()가 관리자 토큰으로 폴백한다.
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    await gitea.putFileContent(slug, filePath, content, message || `docs: update ${filePath}`, actingToken);
     await syncSourceFileOnSave(req.params.projectId, filePath, content);
     res.json({ ok: true });
   }),
@@ -2289,16 +2340,17 @@ app.post(
     const projectId = req.params.projectId;
     const slug = await requireGiteaWorkingSlug(projectId);
     const deployed: string[] = [];
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
 
     const claudeMd = await resolveTemplate("CLAUDE.md", projectId);
     if (claudeMd) {
-      await gitea.putFileContent(slug, "CLAUDE.md", claudeMd.content, "docs: deploy CLAUDE.md template");
+      await gitea.putFileContent(slug, "CLAUDE.md", claudeMd.content, "docs: deploy CLAUDE.md template", actingToken);
       deployed.push("CLAUDE.md");
     }
     const skillFilename = ".claude/skills/claude-native-workflow/SKILL.md";
     const skillMd = await resolveTemplate(skillFilename, projectId);
     if (skillMd) {
-      await gitea.putFileContent(slug, skillFilename, skillMd.content, "docs: deploy SKILL.md template");
+      await gitea.putFileContent(slug, skillFilename, skillMd.content, "docs: deploy SKILL.md template", actingToken);
       deployed.push(skillFilename);
     }
 
@@ -2339,6 +2391,7 @@ async function main() {
   await seedDefaultTemplates();
   await seedDefaultAdminAccount();
   await ensureEmqxAuthConfigured();
+  await gitea.ensureGiteaOrgConfigured();
   await gitea.ensureGiteaSystemWebhookConfigured();
   await ensureAllUsersGiteaAccountsConfigured();
 
