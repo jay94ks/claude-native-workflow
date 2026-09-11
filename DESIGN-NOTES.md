@@ -3061,6 +3061,36 @@ E 밑에도 X)로 E를 promote 시도 → "같은 위치에 이미 "X" 폴더가
 --noEmit`(backend), `vue-tsc -b`(frontend), `npm run audit:cli-mcp`
 (변경 없음 재확인) 전부 클린.
 
+## 질문 일괄 ack(`#question-bulk-ack`) - 완료 (2026-09-12)
+
+PLANS.md 12번(`## 5. 질의/응답 (Q&A)`). pending(설계자 답변 완료,
+AI 확인 대기) 질의가 여러 건 쌓이면 하나씩 `question ack`해야 했다 -
+마이그레이션 직후처럼 한꺼번에 밀렸을 때 불편.
+
+이번 세션에 먼저 끝낸 `#document-bulk-actions`와 정확히 같은 모양
+이라 그대로 반복했다 - `acknowledgeQuestion(trackingCode)` 새 core
+함수 없이 반복 호출, 선택한 질의들이 서로 다른 프로젝트/권한을 가질
+수 있어 항목별 결과(`{trackingCode, ok, error?}`)를 반환한다(하나가
+막혀도 나머지는 계속 진행). 라우트 `POST /api/questions/bulk-ack`,
+CLI `question-ack-bulk`, MCP `question_ack_bulk`(CLI 태그와 그대로
+맞아떨어져 `KNOWN_RENAMES` 불필요).
+
+**웹 UI는 추가하지 않았다** - 이 백로그 항목 자체가 "마이그레이션
+직후처럼" CLI가 몰아서 처리하는 시나리오를 사유로 들었고, 실제로
+`/ack`를 호출하는 화면은 `QAPanel.vue`(문서 하나의 Q&A 스레드)뿐이라
+여러 질의를 가로질러 선택하는 기존 화면 자체가 없다(홈 대시보드는
+`pending` 목록을 아예 안 보여줌 - `status === "open"`만 노출). 없는
+화면을 새로 만드는 건 과잉 구현이라 CLI/MCP만 추가했다.
+
+**실측 검증**: docker 재빌드·재기동 후 admin 계정으로 HTTP 왕복 -
+문서 하나에 질문 2개 등록·답변(둘 다 pending) → `POST
+.../bulk-ack`로 한 번에 ack → 둘 다 `ok:true`, `GET .../pending`에서
+둘 다 빠짐 확인 → 이미 ack된 질의 + 존재하지 않는 질의를 섞어 재시도
+→ 둘 다 각자 다른 이유로 `ok:false` 확인 → 필수 필드 누락 400 확인.
+CLI `question-ack-bulk`, MCP `question_ack_bulk`(이미 resolved인
+질의로 실패 케이스까지) 실제 서버/클라이언트로 왕복. `npm run
+audit:cli-mcp`, `npx tsc --noEmit`(backend) 클린(프론트 변경 없음).
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

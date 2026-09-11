@@ -42,7 +42,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 9 | ✅ | `#doctype-transition-delete` | DocStatusTransition 삭제(참조 무결성 가드 없음) |
 | 10 | ✅ | `#document-bulk-actions` | 문서 일괄 상태 전이(웹/CLI/MCP)/폴더 이동(웹 전용), 항목별 결과 |
 | 11 | ✅ | `#folder-delete-recursive` | 폴더 삭제 시 재귀 삭제/상위로 끌어올리기 선택 가능 |
-| 12 | ⬜ | `#question-bulk-ack` | 질문 일괄 ack 없음 |
+| 12 | ✅ | `#question-bulk-ack` | 질문 일괄 ack(CLI/MCP 전용, 항목별 결과) |
 | 13 | ⬜ | `#question-withdraw` | 질문 취소/철회 기능 없음 |
 | 14 | ⬜ | `#comment-edit-delete` | 코멘트 수정/삭제 없음(해결 처리만 가능) |
 | 15 | ⬜ | `#message-edit-delete` | 메시지 수정/삭제 없음 |
@@ -64,10 +64,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 ---
 
 ## 5. 질의/응답 (Q&A)
-
-### `#question-bulk-ack`
-**일괄 ack가 없다** - pending이 여러 건 쌓이면 하나씩 `question
-ack`해야 한다. 마이그레이션 직후처럼 한꺼번에 밀렸을 때 불편.
 
 ### `#question-withdraw`
 **질문을 취소/철회하는 기능이 없다** - 클로드가 등록한 질문이 더 이상

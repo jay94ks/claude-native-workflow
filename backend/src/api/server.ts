@@ -1918,6 +1918,38 @@ app.post(
   }),
 );
 
+// 선택한 질의들이 서로 다른 프로젝트/권한을 가질 수 있어(document
+// bulk-transition과 동일한 이유) 전부-성공/전부-실패가 아니라
+// 항목별 결과를 반환한다 - 새 core 함수 없이 기존 단건 함수를 그대로
+// 반복 호출한다.
+app.post(
+  "/api/questions/bulk-ack",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { trackingCodes } = req.body as { trackingCodes?: string[] };
+    if (!trackingCodes?.length) {
+      res.status(400).json({ error: "trackingCodes가 필요합니다" });
+      return;
+    }
+    const results = await Promise.all(
+      trackingCodes.map(async (trackingCode) => {
+        try {
+          const projectId = await getQuestionProjectId(trackingCode);
+          if (!projectId) return { trackingCode, ok: false, error: "질문을 찾을 수 없습니다" };
+          if (!(await requireEditorForTarget(projectId, req.userId!))) {
+            return { trackingCode, ok: false, error: "이 작업은 최소 editor 권한이 필요합니다" };
+          }
+          const updated = await acknowledgeQuestion(trackingCode);
+          return { trackingCode, ok: true, status: updated.status };
+        } catch (err) {
+          return { trackingCode, ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }),
+    );
+    res.json(results);
+  }),
+);
+
 // ---------------------------------------------------------------- 코멘트
 // 설계자들끼리만 공유되는 채널이라 CLI/MCP엔 없다(완전성 원칙의
 // 의도적 예외 - 소스 코드/칸반 카드 코멘트도 동일하게 적용). 질의와

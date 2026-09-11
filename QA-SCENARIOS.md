@@ -356,14 +356,17 @@
 - [x] 질문의 모든 open이 사라지면(유일한 다음 상태가 있을 때) 문서
   상태 자동 전이 - Phase 0 시절부터 검증, 최근 라운드는 회귀만 확인.
 - [x] open/resolved 상태에서 ack 시도 시 거부 - 실측.
+- [x] 질문 일괄 ack(`question-ack-bulk`/`question_ack_bulk`) - 여러
+  pending 질의를 한 번에 확인 완료 처리(항목별 결과), 이미 처리됐거나
+  존재하지 않는 질의를 섞어도 그 항목만 실패 - CLI/MCP 전부 실측
+  (웹 UI엔 없음 - CLI 전용 시나리오).
 - [ ] 참고 문서가 삭제된 뒤에도 질의 자체는 안전하게 남아있는지(참고
   문서 태그 행만 없어지고 질의/답변 본문은 안 깨지는지) - cascade
   방향은 스키마로 확인했지만 실제 질의가 있는 상태에서 삭제까지
   실측한 적은 없음.
 
 ### 추가 개발 계획
-`#question-bulk-ack` `#question-withdraw` - 상세는 [PLANS.md](PLANS.md)
-참고.
+`#question-withdraw` - 상세는 [PLANS.md](PLANS.md) 참고.
 
 ---
 

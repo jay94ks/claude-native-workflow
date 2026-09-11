@@ -962,6 +962,15 @@ program
   );
 
 program
+  .command("question-ack-bulk <trackingCodes...>")
+  .description("여러 pending 질의를 한 번에 확인 완료로 표시 - 항목별 결과를 반환(일부만 실패해도 나머지는 계속 진행)")
+  .action((trackingCodes) =>
+    run(async () =>
+      printJson(await apiCall(`/api/questions/bulk-ack`, { method: "POST", body: JSON.stringify({ trackingCodes }) })),
+    ),
+  );
+
+program
   .command("pending <projectId>")
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/pending`))));
 
