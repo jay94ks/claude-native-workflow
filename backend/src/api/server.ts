@@ -18,6 +18,7 @@ import {
   listUsers,
   isSuperAdmin,
 } from "../core/auth.js";
+import { LoginRateLimitError } from "../core/loginRateLimit.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
 import { createTeam, listTeams, updateTeam, deleteTeam, listMembersForTeam } from "../core/teams.js";
@@ -215,7 +216,7 @@ app.post(
       res.status(400).json({ error: "username_or_email/password가 필요합니다" });
       return;
     }
-    res.json(await login(username_or_email, password));
+    res.json(await login(username_or_email, password, req.ip ?? "unknown"));
   }),
 );
 
@@ -2369,6 +2370,10 @@ if (fs.existsSync(frontendDist)) {
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof AuthError) { res.status(400).json({ error: err.message }); return; }
+  if (err instanceof LoginRateLimitError) {
+    res.status(429).set("Retry-After", String(err.retryAfterSeconds)).json({ error: err.message });
+    return;
+  }
   // 알 수 없는 예외는 서버 로그에만 자세히 남기고, 응답은 일반화한다 -
   // concept 세션 QA로 발견: 안 그러면 fs/Prisma 에러 메시지에 섞인
   // 서버 내부 경로 구조가 클라이언트에 그대로 노출된다.

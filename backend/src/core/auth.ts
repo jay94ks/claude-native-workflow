@@ -3,6 +3,7 @@ import argon2 from "argon2";
 import jwt from "jsonwebtoken";
 import { getDb } from "./db.js";
 import { ensureGiteaAccountForUser } from "./giteaAccounts.js";
+import { assertNotLocked, clearIdentifierAttempts, recordFailedAttempt } from "./loginRateLimit.js";
 
 // ID/PW 계정, argon2id 비밀번호 해시, Access(JWT, 단명) + Refresh(장기,
 // DB에 해시로 저장 - 원문은 저장하지 않는다) 토큰 - concept 브랜치
@@ -185,14 +186,22 @@ export async function isSuperAdmin(userId: string): Promise<boolean> {
   return cachedAdminUserId === userId;
 }
 
-export async function login(usernameOrEmail: string, password: string): Promise<AuthResult> {
+export async function login(usernameOrEmail: string, password: string, clientIp: string): Promise<AuthResult> {
+  assertNotLocked(usernameOrEmail, clientIp);
   const db = getDb();
   const user = await db.user.findFirst({
     where: { OR: [{ username: usernameOrEmail }, { email: usernameOrEmail }] },
   });
-  if (!user) throw new AuthError("아이디/이메일 또는 비밀번호가 올바르지 않습니다");
+  if (!user) {
+    recordFailedAttempt(usernameOrEmail, clientIp);
+    throw new AuthError("아이디/이메일 또는 비밀번호가 올바르지 않습니다");
+  }
   const ok = await argon2.verify(user.passwordHash, password);
-  if (!ok) throw new AuthError("아이디/이메일 또는 비밀번호가 올바르지 않습니다");
+  if (!ok) {
+    recordFailedAttempt(usernameOrEmail, clientIp);
+    throw new AuthError("아이디/이메일 또는 비밀번호가 올바르지 않습니다");
+  }
+  clearIdentifierAttempts(usernameOrEmail);
   return {
     access_token: issueAccessToken(user.id, user.username),
     refresh_token: await issueRefreshToken(user.id),
