@@ -74,7 +74,7 @@ watch(
           <p v-else class="muted">연결된 근거 문서가 없습니다.</p>
         </section>
 
-        <QAPanel :project-id="card.projectId" target-type="kanbanCard" :target-key="card.trackingCode" />
+        <QAPanel :project-id="card.projectId" target-type="kanbanCard" :target-key="card.trackingCode" :in-dialog="true" />
         <CommentsPanel :project-id="card.projectId" target-type="kanbanCard" :target-key="card.trackingCode" />
       </template>
     </div>

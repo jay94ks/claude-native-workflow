@@ -4,6 +4,8 @@ import { apiCall, apiCallText, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { diffLines } from "diff";
 import { useNicknamesStore } from "../stores/nicknames";
+import { parseUnifiedDiff, type FileDiff } from "../utils/diffParse";
+import DiffFileList from "../components/DiffFileList.vue";
 
 const props = defineProps<{ id: string }>();
 const nicknames = useNicknamesStore();
@@ -79,12 +81,7 @@ async function openCommit(sha: string) {
   }
 }
 
-const diffLinesRendered = computed(() =>
-  diffText.value.split("\n").map((line) => ({
-    text: line,
-    kind: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : "ctx",
-  })),
-);
+const commitFiles = computed<FileDiff[]>(() => parseUnifiedDiff(diffText.value));
 
 // ---------------------------------------------------------------- 문서 버전 이력
 
@@ -158,11 +155,29 @@ async function loadRevisions() {
   }
 }
 
-const revisionDiffParts = computed(() => {
+// diffLines()가 이미 만들어주는 {value,added,removed} 조각들을 한
+// "파일"짜리 FileDiff로 감싸 DiffFileList와 같은 카드 스타일(접기/
+// 펼치기, +N/-M 배지)을 그대로 재사용한다 - diff 알고리즘을 새로
+// 만들지 않고 재포장만 함.
+const revisionFiles = computed<FileDiff[]>(() => {
   const from = timeline.value.find((t) => t.id === fromId.value);
   const to = timeline.value.find((t) => t.id === toId.value);
   if (!from || !to) return [];
-  return diffLines(from.body, to.body);
+  const parts = diffLines(from.body, to.body);
+  const lines: FileDiff["hunks"][number]["lines"] = [];
+  let additions = 0;
+  let deletions = 0;
+  for (const part of parts) {
+    const kind = part.added ? "add" : part.removed ? "del" : "ctx";
+    const partLines = part.value.split("\n");
+    if (partLines[partLines.length - 1] === "") partLines.pop();
+    for (const text of partLines) {
+      lines.push({ kind, text });
+      if (kind === "add") additions++;
+      else if (kind === "del") deletions++;
+    }
+  }
+  return [{ oldPath: from.label, newPath: to.label, binary: false, additions, deletions, hunks: [{ header: "", lines }] }];
 });
 
 watch(selectedDoc, loadRevisions);
@@ -232,7 +247,7 @@ onUnmounted(() => disconnect?.());
       <div class="diff-pane">
         <p v-if="diffError" class="error">{{ diffError }}</p>
         <p v-if="diffLoading">불러오는 중...</p>
-        <pre v-else-if="selectedSha" class="diff"><span v-for="(l, i) in diffLinesRendered" :key="i" :class="l.kind">{{ l.text }}</span></pre>
+        <DiffFileList v-else-if="selectedSha" :files="commitFiles" />
         <p v-else class="muted">왼쪽에서 커밋을 선택하세요.</p>
       </div>
     </div>
@@ -262,7 +277,7 @@ onUnmounted(() => disconnect?.());
             <option v-for="t in timeline" :key="t.id" :value="t.id">{{ t.label }}</option>
           </select>
         </div>
-        <pre class="diff"><span v-for="(p, i) in revisionDiffParts" :key="i" :class="p.added ? 'add' : p.removed ? 'del' : 'ctx'">{{ p.value }}</span></pre>
+        <DiffFileList :files="revisionFiles" />
       </template>
     </template>
   </section>
@@ -338,28 +353,6 @@ section {
   flex: 1;
   min-width: 0;
   overflow: auto;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-  padding: 10px;
-}
-.diff {
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin: 0;
-}
-.diff span {
-  display: block;
-}
-.diff .add {
-  background: #e6ffec;
-  color: #1f9254;
-}
-.diff .del {
-  background: #ffeef0;
-  color: #d1344b;
 }
 .filter-row {
   display: flex;

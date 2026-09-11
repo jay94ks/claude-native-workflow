@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import Pagination from "./Pagination.vue";
 
 interface Item {
   key: string;
@@ -25,8 +26,56 @@ interface UserListItem {
   id: string;
   displayLabel: string;
 }
-interface FullTreeEntry {
+
+// sourceFile 선택은 평평한 전체 목록(/git/tree/all - 재귀 전체) 대신
+// SourceBrowserView.vue와 같은 지연 디렉터리 탐색(/git/tree?path=)을
+// 쓴다 - 저장소가 커도 한 번에 받는 데이터가 한 디렉터리 분량뿐이라
+// 부담이 훨씬 적다. 엔트리가 많은 디렉터리는 같은 Pagination.vue로
+// 30개씩 클라이언트 페이지네이션.
+const ENTRIES_PAGE_SIZE = 30;
+interface TreeEntry {
+  name: string;
   path: string;
+  type: "file" | "dir";
+}
+const treeDir = ref("");
+const treeEntries = ref<TreeEntry[]>([]);
+const treeEntriesPage = ref(1);
+const treeLoading = ref(false);
+const treeError = ref("");
+
+const treeEntriesTotalPages = computed(() => Math.max(1, Math.ceil(treeEntries.value.length / ENTRIES_PAGE_SIZE)));
+const pagedTreeEntries = computed(() =>
+  treeEntries.value.slice((treeEntriesPage.value - 1) * ENTRIES_PAGE_SIZE, treeEntriesPage.value * ENTRIES_PAGE_SIZE),
+);
+
+function parentDir(dirPath: string): string {
+  const parts = dirPath.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+async function loadTree(dirPath: string) {
+  const options = store.options;
+  if (!options) return;
+  treeLoading.value = true;
+  treeError.value = "";
+  try {
+    treeEntries.value = await apiCall<TreeEntry[]>(`/projects/${options.projectId ?? ""}/git/tree?path=${encodeURIComponent(dirPath)}`);
+    treeDir.value = dirPath;
+    treeEntriesPage.value = 1;
+  } catch (err) {
+    treeError.value = err instanceof ApiError ? err.message : "디렉터리를 불러오지 못했습니다";
+  } finally {
+    treeLoading.value = false;
+  }
+}
+
+/** multi:false라 클릭 한 번으로 바로 선택 - 기존 "선택됨" 칩/확인
+ * 흐름을 그대로 재사용(수동 입력값을 목록에 추가하는 addManual()과는
+ * 별개 경로). */
+function selectTreeFile(path: string) {
+  selected.value = new Set([path]);
 }
 
 async function load() {
@@ -41,9 +90,6 @@ async function load() {
     } else if (options.kind === "user") {
       const users = await apiCall<UserListItem[]>(`/users?limit=100`);
       items.value = users.map((u) => ({ key: u.id, label: u.displayLabel }));
-    } else {
-      const files = await apiCall<FullTreeEntry[]>(`/projects/${options.projectId ?? ""}/git/tree/all`);
-      items.value = files.map((f) => ({ key: f.path, label: f.path }));
     }
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "목록을 불러오지 못했습니다";
@@ -59,7 +105,12 @@ watch(
     search.value = "";
     manualEntry.value = "";
     selected.value = new Set(store.options?.initialSelected ?? []);
-    load();
+    if (store.options?.kind === "sourceFile") {
+      treeDir.value = "";
+      loadTree("");
+    } else {
+      load();
+    }
   },
 );
 
@@ -115,20 +166,42 @@ const kindTitle = computed(() => {
         <h2>{{ kindTitle }}</h2>
         <button class="close-btn" @click="store.cancel()">닫기 ✕</button>
       </div>
-      <input v-model="search" type="text" class="search" placeholder="검색..." />
-      <p v-if="error" class="error">{{ error }}</p>
-      <p v-if="loading" class="muted">불러오는 중...</p>
-      <ul v-else class="list">
-        <li v-for="item in filteredItems" :key="item.key" @click="toggle(item.key)">
-          <input
-            :type="store.options?.multi ? 'checkbox' : 'radio'"
-            :checked="selected.has(item.key)"
-            @click.stop="toggle(item.key)"
-          />
-          <span>{{ item.label }}</span>
-        </li>
-        <li v-if="filteredItems.length === 0" class="muted empty">항목이 없습니다.</li>
-      </ul>
+      <template v-if="store.options?.kind === 'sourceFile'">
+        <div class="tree-path-bar">
+          <button v-if="treeDir" type="button" @click="loadTree(parentDir(treeDir))">.. (상위)</button>
+          <span class="tree-current-path">/{{ treeDir }}</span>
+        </div>
+        <p v-if="treeError" class="error">{{ treeError }}</p>
+        <p v-if="treeLoading" class="muted">불러오는 중...</p>
+        <ul v-else class="list tree-list">
+          <li
+            v-for="e in pagedTreeEntries"
+            :key="e.path"
+            :class="{ dir: e.type === 'dir', active: e.type === 'file' && selected.has(e.path) }"
+            @click="e.type === 'dir' ? loadTree(e.path) : selectTreeFile(e.path)"
+          >
+            <span>{{ e.type === "dir" ? "📁" : "📄" }} {{ e.name }}</span>
+          </li>
+          <li v-if="treeEntries.length === 0" class="muted empty">파일이 없습니다.</li>
+        </ul>
+        <Pagination v-if="!treeLoading" :page="treeEntriesPage" :total-pages="treeEntriesTotalPages" @update:page="treeEntriesPage = $event" />
+      </template>
+      <template v-else>
+        <input v-model="search" type="text" class="search" placeholder="검색..." />
+        <p v-if="error" class="error">{{ error }}</p>
+        <p v-if="loading" class="muted">불러오는 중...</p>
+        <ul v-else class="list">
+          <li v-for="item in filteredItems" :key="item.key" @click="toggle(item.key)">
+            <input
+              :type="store.options?.multi ? 'checkbox' : 'radio'"
+              :checked="selected.has(item.key)"
+              @click.stop="toggle(item.key)"
+            />
+            <span>{{ item.label }}</span>
+          </li>
+          <li v-if="filteredItems.length === 0" class="muted empty">항목이 없습니다.</li>
+        </ul>
+      </template>
       <div v-if="store.options?.allowManualEntry" class="manual-row">
         <input v-model="manualEntry" type="text" placeholder="목록에 없으면 직접 입력..." @keydown.enter.prevent="addManual" />
         <button type="button" @click="addManual">추가</button>
@@ -216,6 +289,32 @@ const kindTitle = computed(() => {
 }
 .list li.empty:hover {
   background: none;
+}
+.tree-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.tree-path-bar button {
+  font-size: 12px;
+  background: #eef0f6;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.tree-current-path {
+  font-size: 12px;
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-list li.dir {
+  font-weight: 600;
+}
+.tree-list li.active {
+  background: #e4e9fb;
 }
 .manual-row {
   display: flex;

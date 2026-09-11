@@ -359,6 +359,7 @@ model Question {
   asker   User    @relation("QuestionAskedBy", fields: [askedBy], references: [id])
   answer  Answer?
   refs    QuestionReference[]
+  options QuestionOption[]
 
   @@index([projectId])
   @@index([targetType, targetKey])
@@ -375,6 +376,20 @@ model QuestionReference {
 
   @@unique([questionId, trackingCode])
   @@index([trackingCode])
+}
+
+// AI가 답변 요청 질문에 제안하는 선택지 - 클릭하면 라벨이 그대로
+// 답변 수동 입력칸에 반영된다(제출은 별도 - 검토 후 확정 제출).
+model QuestionOption {
+  id         String  @id @default(cuid())
+  questionId String
+  label      String
+  detail     String?
+  order      Int     @default(0)
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
 }
 
 // body는 kind="answer"일 때 필수(자유 텍스트 답변), kind="approval"일
@@ -406,7 +421,7 @@ model Comment {
   authorId   String
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
-  resolvedAt DateTime?
+  status     String    @default("open") // open | closed | solved | etc - 작성자 본인만 변경 가능
 
   project Project @relation(fields: [projectId], references: [id])
   author  User    @relation("CommentAuthor", fields: [authorId], references: [id])

@@ -10,6 +10,9 @@ import { getKanbanCardByTrackingCode } from "./kanban.js";
 
 export type CommentTargetType = "document" | "source" | "kanbanCard";
 
+export type CommentStatus = "open" | "closed" | "solved" | "etc";
+const ALLOWED_STATUSES = new Set<CommentStatus>(["open", "closed", "solved", "etc"]);
+
 export interface CommentDetail {
   id: string;
   projectId: string;
@@ -19,7 +22,7 @@ export interface CommentDetail {
   authorId: string;
   createdAt: Date;
   updatedAt: Date;
-  resolvedAt: Date | null;
+  status: string; // open | closed | solved | etc - 작성자 본인만 변경 가능
 }
 
 /** document/kanbanCard 대상은 실제로 존재하는지, 이 프로젝트 소속이
@@ -103,32 +106,29 @@ export async function deleteComment(id: string, requesterId: string): Promise<vo
   } satisfies ChangeEvent);
 }
 
-/** 코멘트 id로 그 코멘트가 속한 프로젝트를 구한다 - API 레이어가 resolve
- * 라우트의 인가(멤버 role)를 검사할 때 씀(경로에 projectId가 없어
- * requireProjectRole 미들웨어를 못 쓰므로 - getQuestionProjectId와
- * 동일한 패턴). */
-export async function getCommentProjectId(id: string): Promise<string | null> {
-  const db = getDb();
-  const row = await db.comment.findUnique({ where: { id } });
-  return row?.projectId ?? null;
-}
-
-export async function resolveComment(id: string, projectId: string): Promise<void> {
-  const db = getDb();
-  const row = await db.comment.findUnique({ where: { id } });
-  if (!row || row.projectId !== projectId) {
-    throw new Error(`코멘트를 찾을 수 없습니다: ${id}`);
+/** 코멘트 상태는 본인만 변경할 수 있다 - editComment/deleteComment와
+ * 정확히 같은 작성자 확인 패턴(이전엔 resolve만 editor 기준이라
+ * 불일치했던 지점을 통일). */
+export async function setCommentStatus(id: string, status: string, requesterId: string): Promise<CommentDetail> {
+  if (!ALLOWED_STATUSES.has(status as CommentStatus)) {
+    throw new Error(`status는 open/closed/solved/etc 중 하나여야 합니다: ${status}`);
   }
-  await db.comment.update({ where: { id }, data: { resolvedAt: new Date() } });
+  const db = getDb();
+  const existing = await db.comment.findUnique({ where: { id } });
+  if (!existing) throw new Error(`코멘트를 찾을 수 없습니다: ${id}`);
+  if (existing.authorId !== requesterId) throw new Error("본인이 작성한 코멘트만 상태를 변경할 수 있습니다");
+  const row = await db.comment.update({ where: { id }, data: { status } });
 
-  await realtimePublish(projectChangesTopic(projectId), {
+  await realtimePublish(projectChangesTopic(existing.projectId), {
     entity: "comment",
     action: "update",
     id,
-    targetType: row.targetType,
-    targetKey: row.targetKey,
+    targetType: existing.targetType,
+    targetKey: existing.targetKey,
     at: new Date().toISOString(),
   } satisfies ChangeEvent);
+
+  return row;
 }
 
 export interface RecentComment extends CommentDetail {

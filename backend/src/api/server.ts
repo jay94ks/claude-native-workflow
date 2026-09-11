@@ -84,9 +84,8 @@ import {
   listComments,
   editComment,
   deleteComment,
-  getCommentProjectId,
   listRecentComments,
-  resolveComment,
+  setCommentStatus,
 } from "../core/comments.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
@@ -1532,11 +1531,12 @@ app.post(
   "/api/questions",
   authenticate,
   asyncRoute(async (req, res) => {
-    const { trackingCode, kind, text, refs } = req.body as {
+    const { trackingCode, kind, text, refs, options } = req.body as {
       trackingCode?: string;
       kind?: string;
       text?: string;
       refs?: string[];
+      options?: { label: string; detail?: string }[];
     };
     if (!trackingCode || !kind || !text) { res.status(400).json({ error: "trackingCode/kind/text가 필요합니다" }); return; }
     const target = await resolveTargetByTrackingCode(trackingCode);
@@ -1545,7 +1545,7 @@ app.post(
       res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" });
       return;
     }
-    res.json(await addQuestionByTrackingCode(trackingCode, kind, text, req.userId!, refs));
+    res.json(await addQuestionByTrackingCode(trackingCode, kind, text, req.userId!, refs, options));
   }),
 );
 
@@ -1554,9 +1554,15 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const { path, kind, text, refs } = req.body as { path?: string; kind?: string; text?: string; refs?: string[] };
+    const { path, kind, text, refs, options } = req.body as {
+      path?: string;
+      kind?: string;
+      text?: string;
+      refs?: string[];
+      options?: { label: string; detail?: string }[];
+    };
     if (!path || !kind || !text) { res.status(400).json({ error: "path/kind/text가 필요합니다" }); return; }
-    res.json(await addQuestion(req.params.projectId, "source", path, kind, text, req.userId!, refs));
+    res.json(await addQuestion(req.params.projectId, "source", path, kind, text, req.userId!, refs, options));
   }),
 );
 
@@ -1736,17 +1742,12 @@ app.delete(
 );
 
 app.post(
-  "/api/comments/:id/resolve",
+  "/api/comments/:id/status",
   authenticate,
   asyncRoute(async (req, res) => {
-    const projectId = await getCommentProjectId(req.params.id);
-    if (!projectId) { res.status(404).json({ error: "코멘트를 찾을 수 없습니다" }); return; }
-    if (!(await requireEditorForTarget(projectId, req.userId!))) {
-      res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" });
-      return;
-    }
-    await resolveComment(req.params.id, projectId);
-    res.json({ ok: true });
+    const { status } = req.body as { status?: string };
+    if (!status) { res.status(400).json({ error: "status가 필요합니다" }); return; }
+    res.json(await setCommentStatus(req.params.id, status, req.userId!));
   }),
 );
 

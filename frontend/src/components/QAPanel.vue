@@ -7,7 +7,18 @@ import UserRef from "./UserRef.vue";
 import TrackingCodeText from "./TrackingCodeText.vue";
 import Pagination from "./Pagination.vue";
 
-const props = defineProps<{ projectId: string; targetType: "document" | "source" | "kanbanCard"; targetKey: string }>();
+const props = withDefaults(
+  defineProps<{
+    projectId: string;
+    targetType: "document" | "source" | "kanbanCard";
+    targetKey: string;
+    /** 이미 다이얼로그 안(TargetPanelDialog/KanbanCardDialog)이면 true -
+     * 선택지를 그 자리에 바로 보여준다. 페이지에 직접 박혀있으면(문서
+     * [질의/답변] 탭) false - "제안 목록" 버튼 뒤 별도 다이얼로그로. */
+    inDialog?: boolean;
+  }>(),
+  { inDialog: false },
+);
 const emit = defineEmits<{ statusTransitioned: [statusCode: string] }>();
 
 const entityPicker = useEntityPickerStore();
@@ -18,6 +29,10 @@ interface AnswerDetail {
   answeredBy: string;
   answeredAt: string;
 }
+interface QuestionOptionItem {
+  label: string;
+  detail: string | null;
+}
 interface QuestionItem {
   trackingCode: string;
   ordinal: number;
@@ -26,6 +41,7 @@ interface QuestionItem {
   askedBy: string;
   status: string; // open | pending | resolved
   refs: string[];
+  options: QuestionOptionItem[];
   answer: AnswerDetail | null;
 }
 
@@ -55,6 +71,7 @@ const answerDrafts = ref<Record<string, string>>({});
 const answering = ref<Record<string, boolean>>({});
 const acking = ref<Record<string, boolean>>({});
 const transitionNotice = ref("");
+const openOptionsFor = ref<string | null>(null);
 
 const STATUS_LABEL: Record<string, string> = { open: "미답변", pending: "확인 대기", resolved: "처리 완료" };
 const KIND_LABEL: Record<string, string> = { answer: "답변 요청", approval: "승인 요청" };
@@ -172,6 +189,13 @@ async function submitAnswer(q: QuestionItem, payload: { body?: string; decision?
   }
 }
 
+/** 선택지 클릭 - 제출은 안 하고 수동 입력칸(답변/승인메모 공용)만
+ * 채운다(검토 후 기존 답변/승인/거부 버튼으로 직접 제출). */
+function selectOption(q: QuestionItem, option: QuestionOptionItem) {
+  answerDrafts.value = { ...answerDrafts.value, [q.trackingCode]: option.label };
+  if (openOptionsFor.value === q.trackingCode) openOptionsFor.value = null;
+}
+
 async function ack(q: QuestionItem) {
   acking.value = { ...acking.value, [q.trackingCode]: true };
   error.value = "";
@@ -231,6 +255,36 @@ onUnmounted(() => disconnect?.());
             <TrackingCodeText v-for="ref in q.refs" :key="ref" :text="ref" class="ref-chip" />
           </template>
         </div>
+        <template v-if="!q.answer && q.options.length > 0">
+          <!-- inDialog: 이미 다이얼로그 안이라 바로 목록으로 노출 -->
+          <ul v-if="inDialog" class="options-list">
+            <li v-for="(opt, i) in q.options" :key="i">
+              <button type="button" class="option-btn" @click="selectOption(q, opt)">
+                <span class="option-label">{{ opt.label }}</span>
+                <span v-if="opt.detail" class="option-detail">{{ opt.detail }}</span>
+              </button>
+            </li>
+          </ul>
+          <!-- 페이지에 직접 박힌 경우: 버튼 뒤 별도 다이얼로그로 -->
+          <template v-else>
+            <button type="button" class="options-toggle" @click="openOptionsFor = q.trackingCode">
+              제안 목록 ({{ q.options.length }})
+            </button>
+            <div v-if="openOptionsFor === q.trackingCode" class="options-overlay" @click.self="openOptionsFor = null">
+              <div class="options-dialog">
+                <button type="button" class="close-btn" @click="openOptionsFor = null">닫기 ✕</button>
+                <ul class="options-list">
+                  <li v-for="(opt, i) in q.options" :key="i">
+                    <button type="button" class="option-btn" @click="selectOption(q, opt)">
+                      <span class="option-label">{{ opt.label }}</span>
+                      <span v-if="opt.detail" class="option-detail">{{ opt.detail }}</span>
+                    </button>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </template>
+        </template>
         <div v-if="q.answer" class="answer">
           <span v-if="q.answer.decision" class="decision" :class="q.answer.decision">
             {{ q.answer.decision === "approved" ? "승인됨" : "거부됨" }}
@@ -394,6 +448,77 @@ h2 {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.options-toggle {
+  background: #fff;
+  border: 1px solid #3454d1;
+  color: #3454d1;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+.options-list {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.option-btn {
+  width: 100%;
+  text-align: left;
+  background: #f7f8fb;
+  border: 1px solid #e4e6ee;
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.option-btn:hover {
+  background: #eef0f6;
+  border-color: #3454d1;
+}
+.option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #222;
+}
+.option-detail {
+  font-size: 11px;
+  color: #888;
+}
+.options-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+.options-dialog {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px;
+  width: min(420px, 90vw);
+  max-height: 70vh;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+}
+.options-dialog .close-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
 }
 .ack-btn {
   background: #fff;

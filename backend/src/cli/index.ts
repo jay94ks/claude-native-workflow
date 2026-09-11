@@ -20,6 +20,24 @@ function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
+// "--choices" 플래그 파싱 - 선택지끼리는 ";;", 한 선택지 안 라벨/
+// 부가정보는 ":::"로 구분한다(--refs의 쉼표 구분 관례를 참고 -
+// 라벨/부가정보 텍스트 안에 쉼표가 흔히 들어갈 수 있어 더 드문
+// 구분자를 쓴다).
+function parseChoices(raw?: string): { label: string; detail?: string }[] | undefined {
+  if (!raw) return undefined;
+  const items = raw
+    .split(";;")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const [label, ...rest] = s.split(":::");
+      const detail = rest.join(":::").trim();
+      return { label: label.trim(), detail: detail || undefined };
+    });
+  return items.length > 0 ? items : undefined;
+}
+
 async function run(fn: () => Promise<void>): Promise<void> {
   try {
     await fn();
@@ -778,6 +796,10 @@ program
   .command("question <trackingCode> <text...>")
   .option("--kind <approval|answer>", "승인 요청 또는 답변 요청(기본: answer)")
   .option("--refs <codes>", "판단에 참고한 문서 trackingCode 목록(쉼표로 구분)")
+  .option(
+    "--choices <options>",
+    "제안 선택지 목록 - 선택지끼리는 ;;로, 한 선택지 안 라벨/부가정보는 :::로 구분(예: \"A:::설명A;;B:::설명B\")",
+  )
   .action((trackingCode, textParts, opts) =>
     run(async () =>
       printJson(
@@ -788,6 +810,7 @@ program
             kind: opts.kind ?? "answer",
             text: textParts.join(" "),
             refs: opts.refs ? String(opts.refs).split(",").map((s: string) => s.trim()) : undefined,
+            options: parseChoices(opts.choices),
           }),
         }),
       ),
@@ -799,6 +822,10 @@ program
   .description("소스 코드 파일에 AI 질문을 남긴다(문서/칸반 카드가 아닌 대상)")
   .option("--kind <approval|answer>", "승인 요청 또는 답변 요청(기본: answer)")
   .option("--refs <codes>", "판단에 참고한 문서 trackingCode 목록(쉼표로 구분)")
+  .option(
+    "--choices <options>",
+    "제안 선택지 목록 - 선택지끼리는 ;;로, 한 선택지 안 라벨/부가정보는 :::로 구분(예: \"A:::설명A;;B:::설명B\")",
+  )
   .action((projectId, path, textParts, opts) =>
     run(async () =>
       printJson(
@@ -809,6 +836,7 @@ program
             kind: opts.kind ?? "answer",
             text: textParts.join(" "),
             refs: opts.refs ? String(opts.refs).split(",").map((s: string) => s.trim()) : undefined,
+            options: parseChoices(opts.choices),
           }),
         }),
       ),

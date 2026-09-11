@@ -15,6 +15,7 @@ const dialog = useTargetPanelDialogStore();
         :project-id="dialog.projectId"
         :target-type="dialog.targetType"
         :target-key="dialog.targetKey"
+        :in-dialog="true"
       />
       <CommentsPanel
         v-else

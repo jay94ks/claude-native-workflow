@@ -1800,6 +1800,85 @@ projectId` 대조 덕분에 role 검사와 무관하게 `400`으로 거부되고
 클린 확인 → 실사용 인스턴스에 재빌드 배포 후 확인/취소 양쪽 경로
 실측.
 
+## 변경 추적 리스트화 + Q&A 선택지 + 콤보박스 라벨 분리 + 사이드바/피커 부분 로딩 + 코멘트 상태 - 완료 (2026-09-11)
+
+설계자가 실사용 중 발견한 6개 UX/기능 문제를 한 번에 요청했다.
+
+1. **변경 추적 리스트화**: `ChangeTrackingView.vue`의 git 커밋 diff가
+   커밋 전체의 raw unified diff를 파일 경계 구분 없이 하나의 `<pre>`
+   블록에 그대로 붓고 있었다(문서 리비전 diff도 `diffLines()` 결과를
+   똑같이 통짜로 렌더링). 신규 `frontend/src/utils/diffParse.ts`
+   (`parseUnifiedDiff()` - `diff --git`/`@@` 경계로 파일·hunk 단위
+   파싱, 파일별 +N/-M 카운트까지 계산)와 신규
+   `frontend/src/components/DiffFileList.vue`(파일마다 접고 펼 수
+   있는 카드 - 2개 이상이면 기본 접힘)로 교체. 문서 리비전 diff는
+   새 diff 알고리즘을 또 만들지 않고 기존 `diffLines()` 결과를 한
+   "파일"짜리 `FileDiff`로 재포장해 같은 컴포넌트를 재사용했다.
+2. **Q&A 선택지**: `Question`/`Answer`엔 "AI가 제안하는 선택지" 개념이
+   전혀 없었다(`text`/`body` 둘 다 자유 텍스트뿐). 신규
+   `QuestionOption { questionId, label, detail?, order }` 테이블 +
+   `addQuestion()`/CLI `--choices "A:::설명A;;B:::설명B"`/MCP
+   `options: [{label, detail?}]` 파라미터로 AI가 구조화된 선택지를
+   제시할 수 있게 됐다. `QAPanel.vue`에 신규 `inDialog` prop -
+   이미 다이얼로그 안(`TargetPanelDialog`/`KanbanCardDialog`)이면
+   선택지를 바로 인라인으로, 페이지에 직접 박혀있으면(문서 [질의/답변]
+   탭) "제안 목록 (N)" 버튼 뒤 별도 다이얼로그로. 클릭하면 라벨이
+   답변 수동 입력칸에 채워질 뿐 자동 제출은 안 됨(검토 후 기존
+   답변/승인/거부 버튼으로 직접 제출).
+3. **콤보박스 라벨/설명 분리**: 전수 조사 결과 실제로 `<option>`
+   텍스트 하나에 라벨+긴 설명을 이어붙이는 곳은
+   `DocumentEditorView.vue`의 상태 전이 select 한 군데뿐이었다(다른
+   곳은 이미 `DocumentsView.vue`의 "select엔 라벨만, 지침은 별도
+   텍스트" 패턴을 따르고 있었음) - 그 패턴을 그대로 가져와 통일.
+4. **사이드바 무한 스크롤**: `DocumentExplorer.vue`가
+   `GET .../documents`(전체 배열)를 한 번에 불러와 클라이언트에서
+   타입별로 그룹핑하던 것을, 이미 있던 `GET .../documents/page`
+   (`DocumentsView.vue`가 쓰던 것과 동일 라우트) 기반 무한 스크롤로
+   재작성 - DocType 필터("전체" + 프로젝트 유효 타입) + 30개씩
+   `IntersectionObserver`(이 저장소 최초 사용)로 이어붙임. "전체"
+   선택 시 타입 구분 없이 최신순 플랫 목록(타입 코드는 작은 칩으로만
+   표시). 생성 폼도 타입별 여러 개에서 사이드바 상단 고정 폼 하나로.
+5. **소스 파일 선택 피커 트리뷰**: `EntityPickerDialog.vue`의
+   `kind:"sourceFile"`가 `GET .../git/tree/all`(재귀 전체 트리)을
+   한 번에 받아 평평한 체크박스 목록으로 보여주던 것을,
+   `SourceBrowserView.vue`가 이미 쓰던 `GET .../git/tree?path=`
+   지연 디렉터리 탐색으로 교체 - 한 디렉터리 분량만 받고, 그마저
+   `Pagination.vue`로 30개씩 페이지네이션. 파일 클릭 시 기존
+   `selected`/확인 흐름을 그대로 재사용(document/user kind는
+   기존 평평한 목록 그대로).
+6. **코멘트 상태**: `Comment.resolvedAt`(사실상 이진 해결/미해결)을
+   `status: "open"|"closed"|"solved"|"etc"`로 확장하면서, 실측 중
+   발견한 기존 불일치(`resolveComment()`가 작성자 본인이 아니라
+   editor 이상이면 누구나 호출 가능했음 - `editComment`/
+   `deleteComment`는 이미 작성자 본인만 허용)를 요청이 명시한 "본인만
+   변경 가능" 기준으로 통일(`setCommentStatus()`가 `editComment`와
+   동일한 작성자 확인 패턴 사용). `POST /api/comments/:id/resolve`
+   (이진)를 `POST /api/comments/:id/status`(4단계)로 교체 - 의미가
+   근본적으로 바뀌어 이름을 그대로 유지하는 게 오히려 혼란을 준다고
+   판단(기존 시그니처 유지 원칙의 명시적 예외).
+
+실사용 인스턴스로 전부 실측: 여러 파일이 바뀐 실제 멀티파일 커밋을
+Gitea 배치 API로 만들어 diff 카드가 파일별로 쪼개져 보이는지(신규
+파일은 "(신규)" 라벨, +N/-M 배지, 접기/펼치기) 확인, 문서 리비전
+diff도 같은 카드 스타일로 나오는지 확인. 선택지 있는 질문을 문서
+페이지(페이지 컨텍스트)와 소스 코드 화면(다이얼로그 컨텍스트) 양쪽에
+등록해 "제안 목록" 버튼+다이얼로그 경로와 인라인 직접 노출 경로 둘
+다 확인, 클릭 시 정확히 그 질문의 답변 입력칸만 채워지는지 대조.
+상태 전이 select에 라벨만 보이고 선택 시 지침이 별도로 뜨는지 확인.
+35개 문서를 만들어 사이드바 무한 스크롤이 실제로 다음 페이지를
+이어붙이고 마지막 페이지에서 멈추는지, 타입 필터가 정확한 쿼리를
+보내는지 네트워크 로그로 확인. 소스 파일 피커에서 디렉터리 진입·
+상위 이동·파일 선택·확인까지 왕복해 실제 문서-소스 링크가 생기는지
+확인. 코멘트 상태를 작성자 계정에서 변경 후 배지가 바뀌는지, 새
+계정을 등록해 그 프로젝트 멤버로 추가한 뒤 그 계정으로 상태 변경을
+시도하면 403급으로 거부되고 실제 상태가 안 바뀌는지 API로 대조
+확인. 칸반 카드 다이얼로그의 인라인 QAPanel/CommentsPanel이 `inDialog`
+prop 추가 후에도 회귀 없이 정상 동작하는지 확인.
+
+`npm run db:generate`(3드라이버, `QuestionOption` 신규 + `Comment.
+resolvedAt`→`status`) → `npx tsc --noEmit`(backend) →
+`vue-tsc -b && npm run build`(frontend) 클린 확인.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

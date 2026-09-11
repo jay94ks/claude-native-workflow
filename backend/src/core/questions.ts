@@ -10,6 +10,11 @@ const QUESTION_TYPE_CODE = "QU";
 export type QuestionTargetType = "document" | "source" | "kanbanCard";
 export type QuestionKind = "approval" | "answer";
 
+export interface QuestionOptionDetail {
+  label: string;
+  detail: string | null;
+}
+
 export interface QuestionDetail {
   trackingCode: string;
   projectId: string;
@@ -21,6 +26,7 @@ export interface QuestionDetail {
   askedBy: string;
   status: string; // open(AI 질의, 설계자 답변 대기) | pending(설계자 답변 완료, AI 확인 대기) | resolved(AI 확인 완료)
   refs: string[];
+  options: QuestionOptionDetail[];
 }
 
 export interface AnswerDetail {
@@ -54,6 +60,7 @@ export async function addQuestion(
   text: string,
   askedBy: string,
   refTrackingCodes?: string[],
+  options?: { label: string; detail?: string }[],
 ): Promise<QuestionDetail> {
   if (kind !== "approval" && kind !== "answer") throw new Error(`kind는 approval/answer 중 하나여야 합니다: ${kind}`);
   if (!text.trim()) throw new Error("text가 필요합니다");
@@ -66,6 +73,8 @@ export async function addQuestion(
     if (!refDoc) throw new Error(`참고 문서를 찾을 수 없습니다: ${ref}`);
   }
 
+  const opts = (options ?? []).filter((o) => o.label.trim());
+
   const count = await db.question.count({ where: { targetType, targetKey } });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const row = await withTrackingCode<any>(projectId, QUESTION_TYPE_CODE, "question", (trackingCode) =>
@@ -77,6 +86,12 @@ export async function addQuestion(
   if (refs.length > 0) {
     await db.questionReference.createMany({
       data: refs.map((trackingCode) => ({ questionId: row.id, trackingCode })),
+    });
+  }
+
+  if (opts.length > 0) {
+    await db.questionOption.createMany({
+      data: opts.map((o, order) => ({ questionId: row.id, label: o.label, detail: o.detail ?? null, order })),
     });
   }
 
@@ -101,6 +116,7 @@ export async function addQuestion(
     askedBy: row.askedBy,
     status: row.status,
     refs,
+    options: opts.map((o) => ({ label: o.label, detail: o.detail ?? null })),
   };
 }
 
@@ -126,10 +142,11 @@ export async function addQuestionByTrackingCode(
   text: string,
   askedBy: string,
   refs?: string[],
+  options?: { label: string; detail?: string }[],
 ): Promise<QuestionDetail> {
   const target = await resolveTargetByTrackingCode(trackingCode);
   if (!target) throw new Error(`대상을 찾을 수 없습니다: ${trackingCode}`);
-  return addQuestion(target.projectId, target.targetType, trackingCode, kind, text, askedBy, refs);
+  return addQuestion(target.projectId, target.targetType, trackingCode, kind, text, askedBy, refs, options);
 }
 
 export interface QuestionWithAnswer extends QuestionDetail {
@@ -147,6 +164,7 @@ interface QuestionRow {
   askedBy: string;
   status: string;
   refs: { trackingCode: string }[];
+  options: { label: string; detail: string | null }[];
   answer: { decision: string | null; body: string | null; answeredBy: string; answeredAt: Date } | null;
 }
 
@@ -162,6 +180,7 @@ function mapQuestionRow(r: QuestionRow): QuestionWithAnswer {
     askedBy: r.askedBy,
     status: r.status,
     refs: r.refs.map((x) => x.trackingCode),
+    options: r.options.map((o) => ({ label: o.label, detail: o.detail })),
     answer: r.answer
       ? { decision: r.answer.decision, body: r.answer.body, answeredBy: r.answer.answeredBy, answeredAt: r.answer.answeredAt }
       : null,
@@ -173,7 +192,7 @@ export async function listQuestions(targetType: string, targetKey: string): Prom
   const db = getDb();
   const rows = await db.question.findMany({
     where: { targetType, targetKey },
-    include: { answer: true, refs: true },
+    include: { answer: true, refs: true, options: { orderBy: { order: "asc" } } },
     orderBy: { ordinal: "asc" },
   });
   return rows.map(mapQuestionRow);
@@ -206,7 +225,7 @@ export async function listQuestionsPaged(
   const [rows, total] = await Promise.all([
     db.question.findMany({
       where,
-      include: { answer: true, refs: true },
+      include: { answer: true, refs: true, options: { orderBy: { order: "asc" } } },
       orderBy: { createdAt: "desc" },
       skip: (safePage - 1) * opts.pageSize,
       take: opts.pageSize,
@@ -256,6 +275,7 @@ export async function listPendingQuestions(projectId: string): Promise<PendingQu
       askedBy: r.askedBy,
       status: r.status,
       refs: r.refs.map((x: { trackingCode: string }) => x.trackingCode),
+      options: [],
       targetLabel,
     });
   }
@@ -316,6 +336,7 @@ export async function answerQuestion(
     data: { status: "pending" },
   });
   const refRows = await db.questionReference.findMany({ where: { questionId: question.id } });
+  const optionRows = await db.questionOption.findMany({ where: { questionId: question.id }, orderBy: { order: "asc" } });
 
   await realtimePublish(projectChangesTopic(question.projectId), {
     entity: "answer",
@@ -357,6 +378,7 @@ export async function answerQuestion(
       askedBy: updatedQuestion.askedBy,
       status: updatedQuestion.status,
       refs: refRows.map((x: { trackingCode: string }) => x.trackingCode),
+      options: optionRows.map((o: { label: string; detail: string | null }) => ({ label: o.label, detail: o.detail })),
     },
     answer: { decision: answerRow.decision, body: answerRow.body, answeredBy: answerRow.answeredBy, answeredAt: answerRow.answeredAt },
     documentStatusTransitioned,
@@ -374,6 +396,7 @@ export async function acknowledgeQuestion(questionTrackingCode: string): Promise
   }
   const updated = await db.question.update({ where: { id: question.id }, data: { status: "resolved" } });
   const refRows = await db.questionReference.findMany({ where: { questionId: question.id } });
+  const optionRows = await db.questionOption.findMany({ where: { questionId: question.id }, orderBy: { order: "asc" } });
   return {
     trackingCode: updated.trackingCode,
     projectId: updated.projectId,
@@ -385,5 +408,6 @@ export async function acknowledgeQuestion(questionTrackingCode: string): Promise
     askedBy: updated.askedBy,
     status: updated.status,
     refs: refRows.map((x: { trackingCode: string }) => x.trackingCode),
+    options: optionRows.map((o: { label: string; detail: string | null }) => ({ label: o.label, detail: o.detail })),
   };
 }

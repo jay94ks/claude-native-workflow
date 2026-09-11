@@ -245,7 +245,7 @@ async function sendInstructionMessage() {
   }
 }
 
-const statusOptionLabel = computed(() => (s: NextStatus) => (s.guideline ? `${s.label} — ${s.guideline}` : s.label));
+const selectedNextStatusGuideline = computed(() => nextStatuses.value.find((s) => s.code === toStatusCode.value)?.guideline ?? null);
 
 onMounted(load);
 </script>
@@ -289,7 +289,7 @@ onMounted(load);
       <div class="toolbar">
         <select v-model="toStatusCode">
           <option value="">상태 전이...</option>
-          <option v-for="s in nextStatuses" :key="s.code" :value="s.code">{{ statusOptionLabel(s) }}</option>
+          <option v-for="s in nextStatuses" :key="s.code" :value="s.code">{{ s.label }}</option>
         </select>
         <button class="secondary" :disabled="!toStatusCode" @click="transition">전이</button>
         <span v-if="transitionError" class="error">{{ transitionError }}</span>
@@ -302,6 +302,7 @@ onMounted(load);
           {{ deleting ? "삭제 중..." : "삭제" }}
         </button>
       </div>
+      <p v-if="selectedNextStatusGuideline" class="guideline-hint">{{ selectedNextStatusGuideline }}</p>
       <p v-if="deleteError" class="error">{{ deleteError }}</p>
 
       <div v-if="messageOpen" class="message-compose">
@@ -425,6 +426,11 @@ h1 {
 }
 .spacer {
   flex: 1;
+}
+.guideline-hint {
+  font-size: 12px;
+  color: #888;
+  margin: -6px 0 12px;
 }
 .message-compose {
   background: #f8f9fb;

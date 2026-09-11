@@ -508,23 +508,36 @@ async function main() {
   tool(
     "question_add",
     "질의 등록",
-    "문서/칸반 카드에 대한 질의를 등록하고 추적 코드를 발급받는다(질의는 AI가 등록, 설계자가 답변) - kind로 승인 요청(approval)/답변 요청(answer, 기본값)을 구분하고, refs로 판단에 참고한 문서를 태깅할 수 있다.",
-    { trackingCode: z.string(), text: z.string(), kind: z.enum(["approval", "answer"]).optional(), refs: z.array(z.string()).optional() },
+    "문서/칸반 카드에 대한 질의를 등록하고 추적 코드를 발급받는다(질의는 AI가 등록, 설계자가 답변) - kind로 승인 요청(approval)/답변 요청(answer, 기본값)을 구분하고, refs로 판단에 참고한 문서를 태깅할 수 있다. options로 설계자가 고를 수 있는 제안 선택지(라벨+부가정보)를 같이 제시할 수 있다 - 클릭하면 답변 입력칸에 라벨이 채워질 뿐 자동 제출은 안 됨.",
+    {
+      trackingCode: z.string(),
+      text: z.string(),
+      kind: z.enum(["approval", "answer"]).optional(),
+      refs: z.array(z.string()).optional(),
+      options: z.array(z.object({ label: z.string(), detail: z.string().optional() })).optional(),
+    },
     async (a) =>
       call(`/api/questions`, {
         method: "POST",
-        body: JSON.stringify({ trackingCode: a.trackingCode, kind: a.kind ?? "answer", text: a.text, refs: a.refs }),
+        body: JSON.stringify({ trackingCode: a.trackingCode, kind: a.kind ?? "answer", text: a.text, refs: a.refs, options: a.options }),
       }),
   );
   tool(
     "question_add_source",
     "소스 코드 파일에 질의 등록",
-    "문서/칸반 카드가 아닌 소스 코드 파일에 AI 질의를 등록한다 - kind/refs는 question_add와 동일.",
-    { projectId: z.string(), path: z.string(), text: z.string(), kind: z.enum(["approval", "answer"]).optional(), refs: z.array(z.string()).optional() },
+    "문서/칸반 카드가 아닌 소스 코드 파일에 AI 질의를 등록한다 - kind/refs/options는 question_add와 동일.",
+    {
+      projectId: z.string(),
+      path: z.string(),
+      text: z.string(),
+      kind: z.enum(["approval", "answer"]).optional(),
+      refs: z.array(z.string()).optional(),
+      options: z.array(z.object({ label: z.string(), detail: z.string().optional() })).optional(),
+    },
     async (a) =>
       call(`/api/projects/${a.projectId}/questions/source`, {
         method: "POST",
-        body: JSON.stringify({ path: a.path, kind: a.kind ?? "answer", text: a.text, refs: a.refs }),
+        body: JSON.stringify({ path: a.path, kind: a.kind ?? "answer", text: a.text, refs: a.refs, options: a.options }),
       }),
   );
   tool("question_list", "문서/칸반 카드의 전체 질의/답변 조회", "한 대상의 질의 전체(open+pending+resolved)를 답변과 함께 순서대로 조회한다.", { trackingCode: z.string() }, async (a) =>

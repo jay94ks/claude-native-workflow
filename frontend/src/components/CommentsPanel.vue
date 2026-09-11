@@ -15,15 +15,17 @@ interface CommentItem {
   authorId: string;
   createdAt: string;
   updatedAt: string;
-  resolvedAt: string | null;
+  status: string; // open | closed | solved | etc - 작성자 본인만 변경 가능
 }
+
+const STATUS_LABEL: Record<string, string> = { open: "열림", closed: "닫힘", solved: "해결", etc: "잡담" };
 
 const comments = ref<CommentItem[]>([]);
 const loading = ref(true);
 const error = ref("");
 const newComment = ref("");
 const adding = ref(false);
-const resolving = ref<Record<string, boolean>>({});
+const changingStatus = ref<Record<string, boolean>>({});
 
 const editingId = ref<string | null>(null);
 const editDraft = ref("");
@@ -102,16 +104,16 @@ async function remove(c: CommentItem) {
   }
 }
 
-async function resolve(c: CommentItem) {
-  resolving.value = { ...resolving.value, [c.id]: true };
+async function changeStatus(c: CommentItem, status: string) {
+  changingStatus.value = { ...changingStatus.value, [c.id]: true };
   error.value = "";
   try {
-    await apiCall(`/comments/${c.id}/resolve`, { method: "POST" });
+    await apiCall(`/comments/${c.id}/status`, { method: "POST", body: JSON.stringify({ status }) });
     await load();
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "해결 처리에 실패했습니다";
+    error.value = err instanceof ApiError ? err.message : "상태 변경에 실패했습니다";
   } finally {
-    resolving.value = { ...resolving.value, [c.id]: false };
+    changingStatus.value = { ...changingStatus.value, [c.id]: false };
   }
 }
 
@@ -151,8 +153,17 @@ onUnmounted(() => disconnect?.());
             <span class="at">{{ new Date(c.createdAt).toLocaleString() }}</span>
           </div>
           <div class="c-actions">
-            <span v-if="c.resolvedAt" class="resolved">해결됨</span>
-            <button v-else type="button" :disabled="resolving[c.id]" @click="resolve(c)">해결</button>
+            <select
+              v-if="isMine(c)"
+              class="status-select"
+              :class="c.status"
+              :value="c.status"
+              :disabled="changingStatus[c.id]"
+              @change="changeStatus(c, ($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="(label, code) in STATUS_LABEL" :key="code" :value="code">{{ label }}</option>
+            </select>
+            <span v-else class="status-badge" :class="c.status">{{ STATUS_LABEL[c.status] ?? c.status }}</span>
             <template v-if="isMine(c)">
               <button type="button" @click="startEdit(c)">수정</button>
               <button type="button" class="danger" :disabled="busy[c.id]" @click="remove(c)">삭제</button>
@@ -240,12 +251,38 @@ h2 {
 .c-actions button.danger {
   color: #d1344b;
 }
-.resolved {
+.status-badge {
   font-size: 11px;
-  color: #1f9254;
-  background: #e3f6ec;
   padding: 4px 10px;
   border-radius: 999px;
+  flex-shrink: 0;
+}
+.status-select {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+.status-badge.open,
+.status-select.open {
+  background: #fdf0e3;
+  color: #b96a1a;
+}
+.status-badge.closed,
+.status-select.closed {
+  background: #eef0f6;
+  color: #555;
+}
+.status-badge.solved,
+.status-select.solved {
+  background: #e3f6ec;
+  color: #1f9254;
+}
+.status-badge.etc,
+.status-select.etc {
+  background: #f0e9fb;
+  color: #6a3ea1;
 }
 textarea {
   width: 100%;
