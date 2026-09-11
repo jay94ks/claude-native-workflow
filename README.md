@@ -262,28 +262,87 @@ Question/Answer로 자동 변환되지 않는다(필요하면 `docs question`으
 
 ```bash
 cd backend/docker
-cp .env.example .env   # JWT_SECRET/CREDENTIAL_ENCRYPTION_KEY/POSTGRES_PASSWORD/MEILISEARCH_API_KEY 채우기
+cp .env.example .env
 docker compose up -d --build
 ```
 
+`.env`를 채우지 않아도(전부 예시 값 그대로 둬도) 일단 기동은 된다 -
+아래 항목별로 "채우지 않으면 무슨 기능이 꺼지는지"를 명시했으니, 필요한
+만큼만 채우고 나머지는 나중에 채워도 된다(값을 채운 뒤엔
+`docker compose up -d --build`를 다시 실행하면 반영됨).
+
 백엔드는 `:8760`(포트 충돌 시 `.env`에 `BACKEND_HOST_PORT` 지정). 최초
 기동 시(계정이 하나도 없으면) 이 시스템 자신의 관리자 계정이
-`admin`/`12345678`로 항상 자동 생성된다(설계자 확정 - 무작위 초기
-비밀번호 대신 고정값, 로그인 직후 바로 비밀번호를 바꾸는 걸 권장).
-EMQX 대시보드(`:18083`, 기본 admin/public)에서 API Key를 발급받아
-`.env`의 `EMQX_API_KEY`/`EMQX_API_SECRET`에 채우면 실시간 발행/
-인증·인가 훅 자동 등록까지 전부 동작한다(안 채워도 나머지 기능은
-정상 동작 - 발행/구독만 조용히 스킵됨). `EMQX_SERVICE_USERNAME`/
-`PASSWORD`(무작위 값)도 함께 채워야 `message wait`가 동작한다. Gitea
-(`:3001`)도 같은 패턴 - 최초 기동 후 설치 마법사 완료 → 관리자 계정
-생성 → Personal Access Token 발급 →
-`GITEA_ADMIN_USERNAME`/`GITEA_API_TOKEN`에 채워야 git 저장소 연결
-기능이 동작한다(`.env.example` 참고 - PAT 발급 시 repository뿐 아니라
-user 스코프도 읽기/쓰기로 줘야 한다, repository만 주면 저장소 생성이
-403으로 막힌다). `PUBLIC_BACKEND_URL`을 채우면 `git link` 시 웹훅과
-EMQX 인증/인가 훅이 자동 등록된다(로컬 전용 개발 환경이면 비워둬도
-나머지 기능엔 지장 없음 - 웹훅/훅 등록만 건너뜀). 웹 UI의 실시간 변경
-추적/메시징 패널 갱신을 쓰려면 `PUBLIC_EMQX_WS_URL`도 채운다(예:
+`admin`/`12345678`로 항상 자동 생성된다(로그인 직후 바로 비밀번호를
+바꾸는 걸 권장).
+
+#### Meilisearch(검색 엔진) - 어디서 값을 "받아올" 필요가 없다
+
+`MEILISEARCH_API_KEY`는 Meilisearch 사이트에 가입하거나 로그인해서
+발급받는 값이 아니다 - **본인이 직접 정하는 비밀번호 같은 것**이다.
+`.env`를 열어 `MEILISEARCH_API_KEY=` 뒤에 아무 무작위 문자열이나
+채워 넣으면 끝(예: `openssl rand -hex 32`로 생성하거나, 터미널이
+어려우면 그냥 길고 남이 못 맞출 문자열을 손으로 입력해도 된다). 이
+값을 Meilisearch 컨테이너가 그대로 자기 "마스터 키"로 쓴다 - 별도
+대시보드나 설정 화면 자체가 없다. 문서 검색/목록 조회가 전부 이
+서비스를 거치므로(핵심 기능), 이 값만은 반드시 채워야 한다.
+
+#### EMQX(실시간 메시징) - 1회성으로 대시보드에 직접 들어가야 한다
+
+EMQX는 REST API 키를 이미지가 미리 만들어주지 않아서, 최초 기동 후
+딱 한 번 사람이 직접 발급받아야 한다. `EMQX_API_KEY`/`EMQX_API_SECRET`
+를 안 채워도 시스템 자체는 정상 기동한다 - 다만 실시간 알림(변경
+추적 뷰·메시징 패널이 새로고침 없이 갱신되는 것, `message wait` 롱폴)
+만 조용히 꺼진 채로 동작한다. 나중에 아래 순서대로 채워 넣고
+`docker compose up -d --build`를 다시 돌리면 그 순간부터 켜진다.
+
+1. `docker compose up -d --build`로 먼저 전체를 한 번 띄운다(EMQX
+   값이 비어 있어도 무방 - 위 설명대로 기동엔 지장 없음).
+2. 브라우저에서 `http://localhost:18083`(EMQX 대시보드)에 접속한다.
+3. 기본 계정 `admin` / 비밀번호 `public`으로 로그인한다(최초 로그인 시
+   비밀번호 변경을 요구할 수 있다 - 바꿔도 되고, 바꾼 뒤엔 그 새
+   비밀번호로 다음에 로그인하면 된다. 이건 대시보드 접속용 계정일
+   뿐이라 시스템 동작과는 무관).
+4. 왼쪽 메뉴에서 **System → API Key**로 이동한다.
+5. **Create**로 새 API 키를 만든다(이름은 아무거나, 권한은 기본값
+   그대로 둬도 된다).
+6. 생성 직후 화면에 **API Key**와 **Secret Key** 두 값이 뜬다 - Secret
+   Key는 **이 화면을 벗어나면 다시 볼 수 없다**(EMQX 자체의 정책 -
+   이 화면을 닫기 전에 반드시 복사해둔다. 놓쳤으면 API Key를
+   지우고(Delete) 다시 만들면 된다).
+7. `.env`를 열어 `EMQX_API_KEY`에는 API Key를, `EMQX_API_SECRET`에는
+   Secret Key를 붙여넣는다.
+8. `EMQX_SERVICE_USERNAME`/`EMQX_SERVICE_PASSWORD`는 (Meilisearch
+   키와 마찬가지로) **어디서 받아오는 값이 아니라 아무 무작위 문자열을
+   직접 정해서** 채운다(`message wait`가 내부적으로 쓰는 전용 계정 -
+   EMQX 대시보드에 로그인하거나 뭔가를 조회할 때 쓰는 계정이 아님).
+9. `docker compose up -d --build`를 다시 실행한다 - 이제부터 실시간
+   기능이 켜진다.
+
+#### Gitea(선택 - git 저장소를 이 시스템 안에서 직접 관리하려는 경우만)
+
+git 저장소 연결/이력 조회 기능을 쓰지 않을 거라면 이 절은 건너뛰어도
+된다(`GITEA_*` 값을 비워두면 그 기능만 에러를 반환할 뿐 나머지는
+정상). 쓰려면 EMQX와 같은 패턴으로 1회성 수동 단계가 필요하다:
+
+1. `http://localhost:3001`(Gitea 웹 UI)에 접속해 설치 마법사를
+   완료한다(대부분 기본값 그대로 "설치" 눌러도 된다).
+2. 마법사 마지막에 관리자 계정을 만든다(아이디/비밀번호는 본인이
+   직접 정함 - 이후 Gitea 저장소는 전부 이 계정 아래 만들어진다).
+3. 로그인 후 오른쪽 위 프로필 아이콘 → **Settings** → **Applications**
+   로 이동해 **Generate New Token**으로 Personal Access Token을
+   발급한다(권한은 최소 `repository`와 `user` 스코프를 읽기/쓰기로
+   - `repository`만 주면 저장소 생성 시점에 403으로 막힌다).
+4. `.env`의 `GITEA_ADMIN_USERNAME`(2번에서 만든 계정 아이디)과
+   `GITEA_API_TOKEN`(3번에서 발급한 값)을 채운다.
+5. `docker compose up -d --build`를 다시 실행한다.
+
+#### 그 외(선택) - 외부에서 접속할 계획이 없다면 안 건드려도 된다
+
+`PUBLIC_BACKEND_URL`을 채우면 `git link` 시 웹훅과 EMQX 인증/인가
+훅이 자동 등록된다(로컬 전용 개발 환경이면 비워둬도 나머지 기능엔
+지장 없음 - 웹훅/훅 등록만 건너뜀). 웹 UI의 실시간 변경 추적/메시징
+패널 갱신을 쓰려면 `PUBLIC_EMQX_WS_URL`도 채운다(예:
 `ws://localhost:8083/mqtt` - 8083 포트가 이미 다른 걸로 쓰이고 있으면
 `EMQX_WS_HOST_PORT`로 호스트 노출 포트를 바꾸고 URL도 맞춰준다). 비워두면
 `GET /api/realtime-config`가 `null`을 반환해 웹 UI가 실시간 갱신만 조용히
