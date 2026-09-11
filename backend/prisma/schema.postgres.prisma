@@ -86,6 +86,9 @@ model User {
   hiddenProjects    Project[]          @relation("ProjectHiddenBy")
   apiKeysOwned      ApiKey[]           @relation("ApiKeyOwner")
   apiKeysRevoked    ApiKey[]           @relation("ApiKeyRevoker")
+  kanbanColumnPrefs KanbanColumnPref[]
+  kanbanCardsCreated KanbanCard[]        @relation("KanbanCardCreatedBy")
+  kanbanCardComments KanbanCardComment[]
 }
 
 model RefreshToken {
@@ -187,6 +190,8 @@ model Project {
   folders         Folder[]
   accessOverrides DocAccessOverride[]
   apiKeys         ApiKey[]
+  kanbanColumns   KanbanColumn[]
+  kanbanCards     KanbanCard[]
 
   @@index([projectGroupId])
 }
@@ -304,6 +309,7 @@ model Document {
   accessOverrides    DocAccessOverride[]
   folderEntries      DocumentFolderEntry[]
   sourceLinks        DocumentSourceLink[]
+  kanbanCardRefs     KanbanCardDocumentRef[]
 
   @@index([projectId])
   @@index([docTypeId])
@@ -599,4 +605,96 @@ model ApiKey {
   @@index([ownerId])
   @@index([projectId])
   @@index([teamId])
+}
+
+// ---------------------------------------------------------------- 칸반 보드
+// 컬럼(분류)은 프로젝트 공유 자원 - 순서/숨김만 설계자별로 다르게 볼 수
+// 있다(KanbanColumnPref, null 필드는 "이 설계자가 커스텀 안 함 → 컬럼
+// 자체의 기본값을 따름" - TemplateFile류와 같은 오버레이 패턴).
+model KanbanColumn {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  project Project            @relation(fields: [projectId], references: [id])
+  prefs   KanbanColumnPref[]
+  cards   KanbanCard[]
+
+  @@index([projectId])
+}
+
+model KanbanColumnPref {
+  id       String   @id @default(cuid())
+  columnId String
+  userId   String
+  order    Int?
+  hidden   Boolean?
+
+  column KanbanColumn @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id])
+
+  @@unique([columnId, userId])
+  @@index([userId])
+}
+
+// 카드는 문서/질문과 같은 원칙으로 트래킹 코드를 받는다("KB-XXXXXXXX").
+// origin("ai"|"designer")으로 누가 만들었는지 구분 - 설계자가 만든
+// 카드는 항상 "반드시 진행되어야 하는 작업"으로 간주된다(별도
+// mandatory 컬럼 없이 origin이 그 의미를 겸함). hidden은 컬럼과 달리
+// 설계자별이 아니라 전역(공유 보드의 실제 작업 항목이므로).
+model KanbanCard {
+  id           String   @id @default(cuid())
+  projectId    String
+  columnId     String
+  trackingCode String   @unique // "KB-XXXXXXXX"
+  title        String
+  body         String?
+  origin       String   // "ai" | "designer"
+  hidden       Boolean  @default(false)
+  order        Int      @default(0)
+  createdBy    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project  Project                 @relation(fields: [projectId], references: [id])
+  column   KanbanColumn            @relation(fields: [columnId], references: [id])
+  creator  User                    @relation("KanbanCardCreatedBy", fields: [createdBy], references: [id])
+  docRefs  KanbanCardDocumentRef[]
+  comments KanbanCardComment[]
+
+  @@index([projectId])
+  @@index([columnId])
+}
+
+// 카드가 근거로 삼은 문서들 - QuestionReference와 동일한 조인 테이블
+// 패턴(카드 다이얼로그의 "근거 문서" 목록).
+model KanbanCardDocumentRef {
+  id           String @id @default(cuid())
+  cardId       String
+  trackingCode String
+
+  card     KanbanCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  document Document   @relation(fields: [trackingCode], references: [trackingCode], onDelete: Cascade)
+
+  @@unique([cardId, trackingCode])
+  @@index([trackingCode])
+}
+
+// 카드별 코멘트 - 설계자간 의견 공유 채널(문서 Comment와 같은 "AI
+// 격리" 원칙, CLI/MCP 없음). 문서 Comment와 달리 편집/삭제를 지원해야
+// 해서(요청 명시) 별도 모델로 둔다.
+model KanbanCardComment {
+  id        String   @id @default(cuid())
+  cardId    String
+  body      String
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  card   KanbanCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  author User       @relation(fields: [authorId], references: [id])
+
+  @@index([cardId])
 }

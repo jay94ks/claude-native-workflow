@@ -431,6 +431,60 @@ async function main() {
     call(`/api/projects/${a.projectId}/access`),
   );
 
+  // ---------------------------------------------------------------- 칸반 보드
+  // 코멘트/폴더와 달리 이 기능은 AI에게 완전히 노출된다 - 컬럼 순서/숨김
+  // 변경과 카드 코멘트만 예외(개인 UI 설정이거나 설계자간 채널)로 없음.
+
+  tool(
+    "kanban_columns",
+    "칸반 분류 목록",
+    "이 프로젝트의 칸반 분류(컬럼) 목록 - 순서/숨김은 이 신원 기준.",
+    { projectId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/kanban/columns`),
+  );
+  tool(
+    "kanban_card_new",
+    "칸반 카드 생성",
+    "칸반 카드를 만들어 분류에 추가한다(AI가 만든 카드로 기록됨 - 설계자가 만든 카드와 달리 메시지 알림이 안 감).",
+    {
+      projectId: z.string(),
+      columnId: z.string(),
+      title: z.string(),
+      body: z.string().optional(),
+      refs: z.array(z.string()).optional(),
+    },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/kanban/cards`, {
+        method: "POST",
+        body: JSON.stringify({ columnId: a.columnId, title: a.title, body: a.body, refs: a.refs, origin: "ai" }),
+      }),
+  );
+  tool(
+    "kanban_cards",
+    "칸반 카드 목록",
+    "칸반 카드 목록(숨긴 카드 제외) - columnId를 주면 그 분류로 제한.",
+    { projectId: z.string(), columnId: z.string().optional() },
+    async (a) => call(`/api/projects/${a.projectId}/kanban/cards${a.columnId ? `?columnId=${a.columnId}` : ""}`),
+  );
+  tool(
+    "kanban_card_get",
+    "칸반 카드 상세",
+    "칸반 카드 상세(근거 문서 포함).",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/kanban/cards/${a.trackingCode}`),
+  );
+  tool(
+    "kanban_card_move",
+    "칸반 카드 이동",
+    "칸반 카드를 다른 분류로(또는 같은 분류 안 다른 위치로) 옮긴다.",
+    { trackingCode: z.string(), toColumnId: z.string(), toIndex: z.number().optional() },
+    async (a) =>
+      call(`/api/kanban/cards/${a.trackingCode}/move`, {
+        method: "PUT",
+        body: JSON.stringify({ toColumnId: a.toColumnId, toIndex: a.toIndex }),
+      }),
+  );
+
   // ---------------------------------------------------------------- 보고서
 
   tool(

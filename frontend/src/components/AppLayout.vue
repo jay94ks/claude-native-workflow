@@ -5,6 +5,7 @@ import { useAuthStore } from "../stores/auth";
 import { apiCall } from "../api/client";
 import DocumentExplorer from "./DocumentExplorer.vue";
 import DocumentPreviewDialog from "./DocumentPreviewDialog.vue";
+import KanbanCardDialog from "./KanbanCardDialog.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -52,6 +53,7 @@ function handleLogout() {
       <slot />
     </main>
     <DocumentPreviewDialog />
+    <KanbanCardDialog />
   </div>
 </template>
 

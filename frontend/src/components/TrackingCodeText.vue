@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useDocumentDialogStore } from "../stores/documentDialog";
+import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
 
 const props = defineProps<{ text: string }>();
 const dialog = useDocumentDialogStore();
+const kanbanDialog = useKanbanCardDialogStore();
 
 const TRACKING_CODE_RE = /\b[A-Z]{2}-[0-9A-F]{8}\b/g;
+
+function openCode(code: string): void {
+  if (code.startsWith("KB-")) kanbanDialog.show(code);
+  else dialog.show(code);
+}
 
 interface Part {
   text: string;
@@ -29,7 +36,7 @@ const parts = computed<Part[]>(() => {
 <template>
   <span
     ><template v-for="(part, i) in parts" :key="i"
-      ><code v-if="part.isCode" class="tcode" @click="dialog.show(part.text)">{{ part.text }}</code
+      ><code v-if="part.isCode" class="tcode" @click="openCode(part.text)">{{ part.text }}</code
       ><template v-else>{{ part.text }}</template></template
     ></span
   >

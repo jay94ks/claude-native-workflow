@@ -1471,6 +1471,75 @@ recreate`)도 명시. Gitea는 이런 부트스트랩 메커니즘이 없어 여
 `npm run db:generate`(3드라이버) → `npx tsc --noEmit`(backend) →
 `vue-tsc -b && npm run build`(frontend) 클린 확인.
 
+## 프로젝트별 칸반 보드 - 완료 (2026-09-11)
+
+10개 세부 요구사항으로 온 요청 - 각 프로젝트의 "변경 추적" 탭 우측에
+"칸반 보드" 탭을 추가해 "분류(컬럼) → 카드" 구조로 진행 흐름을
+추적한다.
+
+**컬럼은 프로젝트 공유, 순서/숨김만 설계자별**: `KanbanColumn
+{ projectId, name, order }` + `KanbanColumnPref { columnId, userId,
+order?, hidden? }`(`@@unique([columnId,userId])`, null=미지정 →
+컬럼 자체의 기본값을 따름 - `TemplateFile`류와 같은 오버레이 패턴) -
+바로 직전 라운드에서 끝낸 "폴더의 설계자 개인 소유화"와 정신은
+같지만, 폴더와 달리 컬럼 자체(존재)는 전원이 공유하고 "내가 보는
+순서/숨김 여부"만 개인화된다는 점이 다르다(요청 10번이 정확히 그렇게
+콕 집어 말함).
+
+**카드는 문서/질문과 같은 원칙으로 트래킹 코드를 받는다**
+(`KB-XXXXXXXX`) - `origin: "ai" | "designer"`로 누가 만들었는지
+구분한다. 서버가 인증 신원만으로는 웹 브라우저 세션과 CLI/MCP
+세션을 구분할 수 없어서(둘 다 같은 JWT/API 키 인증 경로), 이 구분은
+**요청 바디의 명시적 `origin` 필드**로 한다 - `core/messages.ts`의
+`markDelivered`가 "CLI/MCP 호출부만 명시적으로 true를 보낸다"로 같은
+문제를 풀었던 선례를 그대로 따름. 웹 UI 폼은 항상 `origin:"designer"`,
+CLI `kanban-card-new`/MCP `kanban_card_new`는 항상 `origin:"ai"`를
+하드코딩해서 보낸다.
+
+**설계자가 만든 카드 = 메시지 자동 발송**: `createKanbanCard()`가
+`origin==="designer"`일 때 기존 `sendMessage()`를 그대로 호출해
+`[trackingCode] 제목` 메시지를 보낸다(요청 문구 "메시지 기능과
+연동" 그대로 - 새 알림 채널을 안 만듦). "반드시 진행되어야 하는
+작업"이라는 의미는 별도 컬럼 없이 `origin==="designer"` 자체가
+겸한다.
+
+**카드 코멘트는 설계자간 채널 - 코멘트(comment)와 같은 이유로
+CLI/MCP에 없음**: 요청 문구 "설계자간에 의견 공유"가 기존 `Comment`
+모델의 AI 격리 설계 근거와 똑같아서, 완전성 원칙의 다섯 번째 의도적
+예외로 추가했다(`SKILL.md`에 명시). 단 기존 `Comment`엔 편집/삭제가
+없어 재사용이 불가능해(요청이 명시적으로 요구) `KanbanCardComment`를
+별도 모델로 새로 만들었다 - 기존 문서 코멘트는 이번에 손 안 댐.
+
+**카드 숨김은 컬럼과 달리 전역(글로벌)**: 요청 10번이 "칸반 분류의
+순서와 숨김 처리"라고 컬럼만 콕 집어 개인화를 요구했고 카드 숨김
+(7번)엔 그런 단서가 없었다 - 카드는 공유 보드의 실제 작업 항목이라
+한 사람이 숨기면 전원에게 같이 치워지는 쪽이 "보드"라는 개념에
+맞다고 판단(설계 결정, `KanbanCard.hidden` 단순 boolean).
+
+**드래그는 새 라이브러리 없이 네이티브 HTML5 Drag and Drop API**로
+구현(`draggable`/`dragstart`/`dragover.prevent`/`drop`) - 이 저장소의
+첫 드래그 기능이다(폴더는 ▲▼ 버튼 방식이었음, 이번엔 요청이 명시적으로
+"드래그"를 요구). 카드/컬럼 순서 변경 둘 다 "전체 새 순서 배열을
+보내면 서버가 0..n-1로 순차 재번호"하는 방식으로 통일해 fractional
+index 같은 복잡한 스킴을 피했다.
+
+**추적 코드 클릭 시 다이얼로그 분기**: 기존 `TrackingCodeText.vue`/
+`MarkdownBody.vue`는 매치된 코드를 무조건 문서 다이얼로그로 보냈는데,
+`KB-` 접두어면 새 `useKanbanCardDialogStore()`로 분기하도록 클릭
+핸들러만 확장했다(정규식 자체는 안 건드림 - 이미 `[A-Z]{2}-[0-9A-F]{8}`
+포맷이라 `KB-`도 그대로 매치됨).
+
+검증: 실사용 인스턴스(`backend/docker/`) 재빌드 후 웹+CLI 왕복 -
+새 프로젝트가 기본 4개 컬럼으로 시작하는지, 웹에서 만든 카드가 메시지
+탭에 `[KB-XXXXXXXX] 제목` 형식으로 실제로 오는지(핵심 검증), CLI로
+만든 카드는 메시지가 안 오는지(origin 구분 확인), 카드/컬럼 드래그
+순서 변경이 새로고침 후에도 유지되는지, 두 번째 계정으로 컬럼 순서/
+숨김이 서로 안 섞이는지(폴더 라운드와 같은 2계정 검증 방식), 카드
+숨김은 전역으로 적용되는지, 카드 다이얼로그의 근거 문서 클릭 시 문서
+다이얼로그가 그 위에 뜨는지, 카드 코멘트 수정/삭제가 본인 것만
+되는지. `npm run db:generate`(3드라이버) → `npx tsc --noEmit`
+(backend) → `vue-tsc -b && npm run build`(frontend) 클린 확인.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

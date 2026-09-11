@@ -70,6 +70,22 @@ import { ensureSearchIndexes } from "../core/search.js";
 import { resolveEffectivePermission, setAccessOverride, listAccessOverrides } from "../core/permissions.js";
 import { createFolder, renameFolder, deleteFolder, reorderFolder, listFolders, listFolderDocuments, moveDocumentToFolder } from "../core/folders.js";
 import {
+  createKanbanColumn,
+  listKanbanColumnsForUser,
+  getKanbanColumnProjectId,
+  setColumnHiddenForUser,
+  reorderColumnsForUser,
+  createKanbanCard,
+  listKanbanCards,
+  getKanbanCardByTrackingCode,
+  moveKanbanCard,
+  setKanbanCardHidden,
+  addKanbanCardComment,
+  listKanbanCardComments,
+  editKanbanCardComment,
+  deleteKanbanCardComment,
+} from "../core/kanban.js";
+import {
   createApiKey,
   listProjectKeys,
   listTeamKeys,
@@ -1259,6 +1275,177 @@ app.put(
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
     const { folderId } = req.body as { folderId?: string | null };
     await moveDocumentToFolder(req.params.trackingCode, folderId ?? null, req.userId!);
+    res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- 칸반 보드
+// 컬럼(분류)은 프로젝트 공유, 순서/숨김만 설계자별(KanbanColumnPref) -
+// 그 두 라우트는 "이 프로젝트 멤버인가"만 확인하고 role 등급은 안 따진다
+// (개인 설정이라 editor/owner를 요구할 이유가 없음). 카드는 문서와
+// 같은 관례로 트래킹 코드 주소 지정 - 하위 라우트(이동/숨김/코멘트)는
+// 경로에 projectId가 없어 먼저 카드를 조회해 projectId를 얻은 뒤
+// getMemberRole로 인라인 인가한다(질문/코멘트 라우트와 동일 패턴).
+
+app.post(
+  "/api/projects/:projectId/kanban/columns",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { name } = req.body as { name?: string };
+    if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
+    res.json(await createKanbanColumn(req.params.projectId, name));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/kanban/columns",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listKanbanColumnsForUser(req.params.projectId, req.userId!));
+  }),
+);
+
+app.put(
+  "/api/kanban/columns/:id/hidden",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getKanbanColumnProjectId(req.params.id);
+    if (!projectId) { res.status(404).json({ error: "분류를 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!role) { res.status(403).json({ error: "이 프로젝트의 멤버만 가능합니다" }); return; }
+    const { hidden } = req.body as { hidden?: boolean };
+    if (hidden === undefined) { res.status(400).json({ error: "hidden이 필요합니다" }); return; }
+    await setColumnHiddenForUser(req.params.id, req.userId!, hidden);
+    res.json({ ok: true });
+  }),
+);
+
+app.put(
+  "/api/projects/:projectId/kanban/columns/order",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { columnIds } = req.body as { columnIds?: string[] };
+    if (!Array.isArray(columnIds)) { res.status(400).json({ error: "columnIds 배열이 필요합니다" }); return; }
+    await reorderColumnsForUser(req.params.projectId, req.userId!, columnIds);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/kanban/cards",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { columnId, title, body, refs, origin } = req.body as {
+      columnId?: string;
+      title?: string;
+      body?: string;
+      refs?: string[];
+      origin?: string;
+    };
+    if (!columnId || !title) { res.status(400).json({ error: "columnId/title이 필요합니다" }); return; }
+    if (origin !== "ai" && origin !== "designer") { res.status(400).json({ error: "origin은 ai/designer 중 하나여야 합니다" }); return; }
+    res.json(await createKanbanCard(req.params.projectId, columnId, title, body, origin, req.userId!, refs));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/kanban/cards",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const columnId = req.query.columnId as string | undefined;
+    const includeHidden = req.query.includeHidden === "true";
+    res.json(await listKanbanCards(req.params.projectId, columnId, includeHidden));
+  }),
+);
+
+app.get(
+  "/api/kanban/cards/:trackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const card = await getKanbanCardByTrackingCode(req.params.trackingCode);
+    if (!card) { res.status(404).json({ error: "not found" }); return; }
+    const role = await getMemberRole(card.projectId, req.userId!);
+    if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
+    res.json(card);
+  }),
+);
+
+app.put(
+  "/api/kanban/cards/:trackingCode/move",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const card = await getKanbanCardByTrackingCode(req.params.trackingCode);
+    if (!card) { res.status(404).json({ error: "not found" }); return; }
+    const role = await getMemberRole(card.projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    const { toColumnId, toIndex } = req.body as { toColumnId?: string; toIndex?: number };
+    if (!toColumnId) { res.status(400).json({ error: "toColumnId가 필요합니다" }); return; }
+    await moveKanbanCard(req.params.trackingCode, toColumnId, toIndex);
+    res.json({ ok: true });
+  }),
+);
+
+app.put(
+  "/api/kanban/cards/:trackingCode/hidden",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const card = await getKanbanCardByTrackingCode(req.params.trackingCode);
+    if (!card) { res.status(404).json({ error: "not found" }); return; }
+    const role = await getMemberRole(card.projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    const { hidden } = req.body as { hidden?: boolean };
+    if (hidden === undefined) { res.status(400).json({ error: "hidden이 필요합니다" }); return; }
+    await setKanbanCardHidden(req.params.trackingCode, hidden);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/kanban/cards/:trackingCode/comments",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const card = await getKanbanCardByTrackingCode(req.params.trackingCode);
+    if (!card) { res.status(404).json({ error: "not found" }); return; }
+    const role = await getMemberRole(card.projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    const { body } = req.body as { body?: string };
+    if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
+    res.json(await addKanbanCardComment(req.params.trackingCode, body, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/kanban/cards/:trackingCode/comments",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const card = await getKanbanCardByTrackingCode(req.params.trackingCode);
+    if (!card) { res.status(404).json({ error: "not found" }); return; }
+    const role = await getMemberRole(card.projectId, req.userId!);
+    if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
+    res.json(await listKanbanCardComments(req.params.trackingCode));
+  }),
+);
+
+app.put(
+  "/api/kanban/card-comments/:id",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { body } = req.body as { body?: string };
+    if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
+    res.json(await editKanbanCardComment(req.params.id, body, req.userId!));
+  }),
+);
+
+app.delete(
+  "/api/kanban/card-comments/:id",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    await deleteKanbanCardComment(req.params.id, req.userId!);
     res.json({ ok: true });
   }),
 );

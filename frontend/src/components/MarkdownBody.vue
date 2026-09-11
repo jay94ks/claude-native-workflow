@@ -3,9 +3,11 @@ import { computed, ref } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useDocumentDialogStore } from "../stores/documentDialog";
+import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
 
 const props = defineProps<{ body: string }>();
 const dialog = useDocumentDialogStore();
+const kanbanDialog = useKanbanCardDialogStore();
 const container = ref<HTMLElement | null>(null);
 
 const TRACKING_CODE_RE = /\b([A-Z]{2}-[0-9A-F]{8})\b/g;
@@ -24,7 +26,10 @@ const html = computed(() => {
 function onClick(e: MouseEvent) {
   const target = e.target as HTMLElement;
   const codeEl = target.closest(".tcode-link") as HTMLElement | null;
-  if (codeEl?.dataset.code) dialog.show(codeEl.dataset.code);
+  const code = codeEl?.dataset.code;
+  if (!code) return;
+  if (code.startsWith("KB-")) kanbanDialog.show(code);
+  else dialog.show(code);
 }
 </script>
 

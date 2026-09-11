@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { seedDefaultDocTypes } from "./docTypes.js";
+import { seedDefaultKanbanColumns } from "./kanban.js";
 import { getMemberRole, isProjectAllowedByActiveScope } from "./members.js";
 import { isTeamAdmin } from "./teamAdmins.js";
 
@@ -41,6 +42,7 @@ export async function createProject(name: string, projectGroupId?: string): Prom
   }
   const row = await db.project.create({ data: { name, projectGroupId: groupId } });
   await seedDefaultDocTypes(row.id);
+  await seedDefaultKanbanColumns(row.id);
   return { id: row.id, projectGroupId: row.projectGroupId, name: row.name, hidden: row.hidden, hiddenBy: row.hiddenBy };
 }
 

@@ -175,6 +175,25 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
   같은 급의 신원 관리 동작이라 CLI 전용이고 MCP엔 아예 없다(아래
   "인증" 절 참고) - AI 세션이 스스로 더 넓은/새로운 키를 만들거나
   남의 키를 배제할 수 있으면 안 된다는 설계 취지.
+- **칸반 카드 코멘트** - 칸반 보드 자체(분류/카드 생성·조회·이동)는
+  아래 표의 `kanban-*` 명령으로 AI에게 완전히 열려 있지만, 카드에
+  달리는 코멘트만은 코멘트(comment)와 똑같은 이유(설계자들끼리만
+  공유하는 채널)로 CLI/MCP에 없다 - 웹 UI에서만 작성/수정/삭제한다.
+
+## 칸반 보드
+
+프로젝트별 진행 흐름을 "분류(컬럼) → 카드" 구조로 추적한다. 컬럼은
+설계자가 웹 UI에서 만들고(기본 pending/doing/qa/done), AI는 그 컬럼을
+보고 작업 현황에 맞춰 카드를 만들거나(`kanban-card-new`) 다른 컬럼으로
+옮긴다(`kanban-card-move`) - 카드는 그 판단의 근거가 된 문서를
+`--refs`로 같이 태깅할 수 있다(질의의 `--refs`와 같은 패턴).
+
+**설계자가 웹 UI에서 만든 카드는 그 즉시 이 프로젝트에 메시지로
+알림이 온다**(`[KB-XXXXXXXX] 제목` 형식 - `docs message list`로 확인
+가능) - 이 카드는 "반드시 진행되어야 하는 작업"으로 간주해야 한다.
+세션을 시작하거나 새 메시지를 확인했을 때 이런 카드가 보이면,
+`kanban-card-get <trackingCode>`로 내용을 확인하고 실행 계획을 세워
+처리한 뒤 그 진행 상황에 맞게 `kanban-card-move`로 컬럼을 옮긴다.
 
 ## 명령 요약 (CLI `docs` / MCP 도구 이름 병기)
 
@@ -228,6 +247,11 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 최근 메시지(비파괴, 장애 복구용) | `docs message recent <projectId> [--limit <n>]` | `message_recent` |
 | 마이그레이션 후보 스캔 | `docs migrate scan <sourceDir>` | `migrate_scan` |
 | 마이그레이션 반영 | `docs migrate apply <projectId> <manifestFile>` | `migrate_apply` |
+| 칸반 분류 목록 | `docs kanban-columns <projectId>` | `kanban_columns` |
+| 칸반 카드 생성(+근거 문서) | `docs kanban-card-new <projectId> <columnId> <title> [--body <t>] [--refs <codes>]` | `kanban_card_new` |
+| 칸반 카드 목록 | `docs kanban-cards <projectId> [--column <columnId>]` | `kanban_cards` |
+| 칸반 카드 상세 | `docs kanban-card-get <trackingCode>` | `kanban_card_get` |
+| 칸반 카드 이동 | `docs kanban-card-move <trackingCode> <toColumnId> [--index <n>]` | `kanban_card_move` |
 
 ## 가이디드 마이그레이션(옛 파일 기반 프로젝트 옮기기)
 
