@@ -248,6 +248,29 @@ program
 program.command("teams").action(() => run(async () => printJson(await apiCall("/api/teams"))));
 
 program
+  .command("team-update <teamId>")
+  .option("--name <n>")
+  .option("--enabled <bool>", "true|false")
+  .action((teamId, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/teams/${teamId}`, {
+          method: "PUT",
+          body: JSON.stringify({ name: opts.name, enabled: opts.enabled === undefined ? undefined : opts.enabled === "true" }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("team-delete <teamId>")
+  .action((teamId) => run(async () => printJson(await apiCall(`/api/teams/${teamId}`, { method: "DELETE" }))));
+
+program
+  .command("team-members <teamId>")
+  .action((teamId) => run(async () => printJson(await apiCall(`/api/teams/${teamId}/members`))));
+
+program
   .command("team-admin-add <teamId> <userId>")
   .action((teamId, userId) =>
     run(async () =>
@@ -280,6 +303,45 @@ program
   );
 
 program.command("groups").action(() => run(async () => printJson(await apiCall("/api/project-groups"))));
+
+program
+  .command("group-update <groupId>")
+  .requiredOption("--name <n>")
+  .action((groupId, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/project-groups/${groupId}`, { method: "PUT", body: JSON.stringify({ name: opts.name }) }),
+      ),
+    ),
+  );
+
+program
+  .command("group-delete <groupId>")
+  .action((groupId) => run(async () => printJson(await apiCall(`/api/project-groups/${groupId}`, { method: "DELETE" }))));
+
+program
+  .command("group-members <groupId>")
+  .action((groupId) => run(async () => printJson(await apiCall(`/api/project-groups/${groupId}/members`))));
+
+program
+  .command("group-admin-add <groupId> <userId>")
+  .action((groupId, userId) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/project-groups/${groupId}/admins`, { method: "POST", body: JSON.stringify({ userId }) }),
+      ),
+    ),
+  );
+
+program
+  .command("group-admin-remove <groupId> <userId>")
+  .action((groupId, userId) =>
+    run(async () => printJson(await apiCall(`/api/project-groups/${groupId}/admins/${userId}`, { method: "DELETE" }))),
+  );
+
+program
+  .command("group-admins <groupId>")
+  .action((groupId) => run(async () => printJson(await apiCall(`/api/project-groups/${groupId}/admins`))));
 
 program
   .command("project-create <name>")
@@ -385,68 +447,6 @@ program
   );
 
 program
-  .command("team-doctype-create <teamId> <code> <label>")
-  .option("--guideline <text>", "이 타입은 무엇을 하기 위한 것인지(선택)")
-  .action((teamId, code, label, opts) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/teams/${teamId}/doc-types`, {
-          method: "POST",
-          body: JSON.stringify({ code, label, guideline: opts.guideline }),
-        }),
-      ),
-    ),
-  );
-
-program
-  .command("team-doctypes <teamId>")
-  .action((teamId) => run(async () => printJson(await apiCall(`/api/teams/${teamId}/doc-types`))));
-
-program
-  .command("team-doctype-guideline-set <teamId> <docTypeId> <guideline...>")
-  .action((teamId, docTypeId, guidelineParts) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/teams/${teamId}/doc-types/${docTypeId}/guideline`, {
-          method: "PUT",
-          body: JSON.stringify({ guideline: guidelineParts.join(" ") }),
-        }),
-      ),
-    ),
-  );
-
-program
-  .command("group-doctype-create <groupId> <code> <label>")
-  .option("--guideline <text>", "이 타입은 무엇을 하기 위한 것인지(선택)")
-  .action((groupId, code, label, opts) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/project-groups/${groupId}/doc-types`, {
-          method: "POST",
-          body: JSON.stringify({ code, label, guideline: opts.guideline }),
-        }),
-      ),
-    ),
-  );
-
-program
-  .command("group-doctypes <groupId>")
-  .action((groupId) => run(async () => printJson(await apiCall(`/api/project-groups/${groupId}/doc-types`))));
-
-program
-  .command("group-doctype-guideline-set <groupId> <docTypeId> <guideline...>")
-  .action((groupId, docTypeId, guidelineParts) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/project-groups/${groupId}/doc-types/${docTypeId}/guideline`, {
-          method: "PUT",
-          body: JSON.stringify({ guideline: guidelineParts.join(" ") }),
-        }),
-      ),
-    ),
-  );
-
-program
   .command("doctype-status-add <projectId> <docTypeId> <code>")
   .description("code는 draft/review/pending/approved/deprecated/archived 중 하나(라벨/지침/종료 여부는 표준값 고정)")
   .action((projectId, docTypeId, code) =>
@@ -486,76 +486,6 @@ program
 program
   .command("doctype-transitions <projectId> <docTypeId>")
   .action((_projectId, docTypeId) => run(async () => printJson(await apiCall(`/api/doc-types/${docTypeId}/transitions`))));
-
-program
-  .command("team-doctype-status-add <teamId> <docTypeId> <code>")
-  .action((teamId, docTypeId, code) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/teams/${teamId}/doc-types/${docTypeId}/statuses`, {
-          method: "POST",
-          body: JSON.stringify({ code }),
-        }),
-      ),
-    ),
-  );
-
-program
-  .command("team-doctype-apply-standard-flow <teamId> <docTypeId>")
-  .action((teamId, docTypeId) =>
-    run(async () =>
-      printJson(await apiCall(`/api/teams/${teamId}/doc-types/${docTypeId}/standard-flow`, { method: "POST" })),
-    ),
-  );
-
-program
-  .command("team-doctype-transition-add <teamId> <docTypeId> <fromCode> <toCode>")
-  .option("--label <l>", "전이 라벨(선택)")
-  .action((teamId, docTypeId, fromCode, toCode, opts) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/teams/${teamId}/doc-types/${docTypeId}/transitions`, {
-          method: "POST",
-          body: JSON.stringify({ fromStatusCode: fromCode, toStatusCode: toCode, label: opts.label }),
-        }),
-      ),
-    ),
-  );
-
-program
-  .command("group-doctype-status-add <groupId> <docTypeId> <code>")
-  .action((groupId, docTypeId, code) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/project-groups/${groupId}/doc-types/${docTypeId}/statuses`, {
-          method: "POST",
-          body: JSON.stringify({ code }),
-        }),
-      ),
-    ),
-  );
-
-program
-  .command("group-doctype-apply-standard-flow <groupId> <docTypeId>")
-  .action((groupId, docTypeId) =>
-    run(async () =>
-      printJson(await apiCall(`/api/project-groups/${groupId}/doc-types/${docTypeId}/standard-flow`, { method: "POST" })),
-    ),
-  );
-
-program
-  .command("group-doctype-transition-add <groupId> <docTypeId> <fromCode> <toCode>")
-  .option("--label <l>", "전이 라벨(선택)")
-  .action((groupId, docTypeId, fromCode, toCode, opts) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/project-groups/${groupId}/doc-types/${docTypeId}/transitions`, {
-          method: "POST",
-          body: JSON.stringify({ fromStatusCode: fromCode, toStatusCode: toCode, label: opts.label }),
-        }),
-      ),
-    ),
-  );
 
 // ---------------------------------------------------------------- 문서
 

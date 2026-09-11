@@ -2100,6 +2100,124 @@ userId가 호출자 자신이고 새 role이 owner가 아니면" 거부하는 �
 
 `npx tsc --noEmit`(backend) → `vue-tsc -b`(frontend) 클린 확인.
 
+## 팀/프로젝트 그룹 CRUD + 계층별 멤버 가시성 보안 강화 + 팀/그룹 스코프 DocType 완전 제거 - 완료 (2026-09-11)
+
+설계자가 세 갈래 요구를 한 번에 제시했다: (1) 보안 요구사항 -
+프로젝트 멤버는 그 프로젝트 멤버끼리만, 프로젝트 그룹 멤버(산하
+전체 프로젝트 멤버 합)는 그룹 "관리자"만, 팀 멤버(팀 산하 전체)는
+팀 "관리자"만 볼 수 있어야 한다. (2) UI 요구사항 - 팀/프로젝트
+그룹 CRUD 전체(지금까지 생성/목록뿐이었음). (3) 추가 노트 - 팀/
+프로젝트 그룹 단위로 문서 타입을 획일화해 정하는 기능은 없어야
+한다 - 확인 결과 지금까지 여러 라운드([기관/그룹 스코프 DocType
+생성 지원], [그룹/기관 스코프 DocType 상태/전이 지원], [웹 UI에서
+DocType 관리] 등)에 걸쳐 만든 팀/그룹 스코프 DocType 생성·상태·
+전이·표준흐름 관리 + project→group→team 상속 체인 전체를 완전히
+제거하라는 뜻이었다(설계자 확인 - "네, 기존 팀/그룹 DocType 기능
+전체를 완전히 제거").
+
+**실측으로 확인한 시작 상태**: 프로젝트 멤버 목록은 이미
+`requireProjectRole("viewer")`로 막혀 있어 요구 1(프로젝트 단위)은
+이미 충족돼 있었다(그대로 유지, 새로 만든 것 없음). 그룹/팀 단위로는
+"그 산하 전체 멤버를 한 번에 보여주는" 조회 자체가 아예 없었고,
+"프로젝트 그룹 관리자"라는 개념 자체가 없었다(`TeamAdmin`은 있지만
+대응하는 `ProjectGroupAdmin`이 없음).
+
+**설계 결정**:
+- `core/projectGroupAdmins.ts` 신설 - `core/teamAdmins.ts`를 그대로
+  본떴다. 다만 팀은 그룹의 상위 개념이므로 `isProjectGroupAdmin()`은
+  그 그룹에 명시적으로 등록된 관리자이거나, **그 그룹이 속한 팀의
+  TeamAdmin이어도** true(기존 `canSeeHiddenProject`의 "팀장은 자기
+  팀 산하 숨김 프로젝트도 본다"와 같은 상속 원칙 - DB에 별도 행을
+  만들지 않고 함수 안에서 판정).
+- 부트스트랩 - `addMember(project.id, req.userId!, "owner")`가
+  프로젝트 생성자를 자동 owner로 넣는 것과 같은 원칙을 적용해
+  `createTeam`/`createProjectGroup`이 생성 직후 그 사람을 자동으로
+  첫 관리자로 등록한다("관리자만 볼 수 있다"로 잠근 뒤에도 방금
+  만든 팀/그룹을 곧바로 관리할 수 있어야 하므로).
+- **기존 보안 허점 발견·수정**: `POST/DELETE /api/teams/:teamId/admins`
+  가 지금까지 `authenticate`+API 키 스코프만 확인하고 "호출자가
+  실제로 그 팀의 관리자인가"는 확인하지 않았다(로그인한 아무
+  설계자나 자기 자신을 아무 팀의 팀장으로 등록할 수 있었음 - 코드
+  주석에 "설치 단위 admin role이 아직 없다는 기존 한계"로만 적혀
+  있었다). 이번 라운드가 "보안 요구사항"을 명시적으로 다루는 김에
+  `isTeamAdmin()` 확인을 추가해 닫았고, 새로 만드는 그룹 관리자
+  라우트는 처음부터 `isProjectGroupAdmin()` 확인을 포함해서 같은
+  구멍을 복제하지 않았다.
+- 그룹/팀 멤버 가시성은 새 테이블 없이 기존 `Member` 데이터를 다른
+  스코프로 집계 조회만 추가(`listMembersForGroup`/
+  `listMembersForTeam`) - 중복 제거 안 함(한 사람이 여러 프로젝트에
+  걸쳐 있으면 그만큼 여러 행, "사실 그대로 보여준다"는 기존 원칙과
+  동일).
+- 삭제는 비어있을 때만(폴더 삭제 등에서 이미 쓰는 관례) - 팀은
+  소속 프로젝트 그룹이 있으면, 그룹은 소속 프로젝트가 있으면 명확한
+  에러로 거부(이관 기능은 범위 밖).
+
+**`DocType` 스키마 축소**: `teamId`/`projectGroupId` 컬럼과 관계·
+인덱스 전부 삭제, `projectId`를 nullable에서 필수로 변경 - 문서
+타입은 이제 항상 정확히 하나의 프로젝트에만 속한다. `core/docTypes.ts`
+의 `ScopeInput`/`assertExactlyOneScope`/`listDocTypesForProject`
+(project 스코프 단일 조회로 수렴해 `listDocTypes`와 동일해졌으므로
+삭제) 제거. API 라우트 10개(팀·그룹 스코프 doc-types 생성/목록/
+상태/전이/guideline/standard-flow) + `requireOwnedDocTypeByTeam`/
+`ByGroup` 헬퍼, CLI 12개, MCP 12개 전부 삭제 - 프로젝트 스코프
+`doctype-*`(CLI/MCP/API)는 손대지 않고 그대로. `DocTypeManager.vue`
+는 `scope`/`scopeId` prop이 `projectId` 하나로 단순화됐다.
+**`TemplateFile`(CLAUDE.md/SKILL.md 템플릿의 팀/그룹/프로젝트
+override)은 완전히 별개 기능이라 이번 제거 대상이 아니다** - 이름이
+비슷해 혼동하기 쉬워 명시.
+
+**프런트엔드**: `TeamsView.vue`/`ProjectGroupsView.vue` 둘 다 "문서
+타입 관리" 토글+`DocTypeManager` 임베드 제거하고, 이름 수정(인라인)/
+(팀만) `enabled` 토글/삭제 버튼(비어있지 않으면 서버 에러 인라인
+표시) + "멤버 보기" 토글(관리자만 성공, 비관리자는 에러 메시지로
+안내)을 추가했다. 신규 `GroupAdminManager.vue`는 `TeamAdminManager.vue`
+를 그대로 본뜨되 `/project-groups/:id/admins`를 쓰고, 팀장 상속을
+설명하는 안내 문구를 추가했다. `ProjectSettingsView.vue`의 문서
+타입 섹션 안내 문구도 이제 없어진 그룹/팀 상속을 언급하던 옛 문구를
+지우고 갱신했다.
+
+**구현 중 실측으로 발견한 버그(같이 고침)**: `db:generate` →
+`tsc --noEmit`/`vue-tsc -b` 클린 확인 후 docker 인스턴스로 실사용
+검증하던 중, 방금 만든 빈 팀/그룹도 삭제가 항상 400(FK 제약 위반 -
+`ProjectGroupAdmin_projectGroupId_fkey`/`TeamAdmin_teamId_fkey`)으로
+실패하는 걸 발견했다. 원인은 `TeamAdmin.team`/`ProjectGroupAdmin.projectGroup`
+관계에 `onDelete: Cascade`가 없었던 것 - 이번 라운드 전에는 팀/그룹
+삭제 기능 자체가 없어 드러나지 않았던 문제가, 새로 만든 "생성자
+자동 관리자 등록" 기능 때문에 모든 팀/그룹이 항상 관리자 행을 최소
+하나 갖게 되면서 "비어 있으면 삭제 허용"을 실제로 막아버렸다. 이미
+`ApiKey.team`/`ApiKey.project` 관계에 적용돼 있던 동일 패턴(부모
+소멸 시 자식 권한/메타데이터 행도 같이 소멸)을 그대로 가져와
+3드라이버 스키마 전부에 추가하고 재생성 → 재현 후 수정 확인.
+
+**실사용 인스턴스로 실측 검증**(3개 계정 alice/bob/carol + 기존
+admin, REST API 직접 호출 + 웹 UI 클릭 양쪽):
+- 요구 1 회귀 없음: 비멤버가 `GET /projects/:id/members` → 403.
+- 요구 2: bob이 alice의 팀 산하에 그룹 생성 → bob 자동 그룹 관리자
+  등록 확인. carol이 그 그룹의 프로젝트를 만들어 멤버(owner)가 됨.
+  carol(프로젝트 멤버, 그룹 관리자 아님) → 그룹 멤버 조회 403. bob
+  (명시적 그룹 관리자) → 200(carol의 owner 행 포함 정상 조회). alice
+  (그룹 관리자로 등록된 적 없음, 팀장 상속으로만) → 200(상속 확인).
+- 요구 3: alice가 팀을 만들면 자동 팀장 등록 확인. `GET /teams/:id/members`
+  가 산하 그룹까지 전부 펼쳐 보여줌(groupName/projectName 포함),
+  비관리자(carol) → 403.
+- 보안 허점 수정 확인: carol이 자기 자신을 팀장으로 등록 시도 →
+  403(수정 전이었다면 200으로 성공했을 것). 그룹 관리자 자가 등록도
+  동일하게 403.
+- CRUD: 팀 이름 변경+`enabled` 비활성화 반영 확인, 그룹 이름 변경
+  반영 확인. 비어있지 않은 팀/그룹 삭제 시도 → 400 + 안내 메시지,
+  새로 만든 빈 팀/그룹 삭제 → 200(cascade 수정 후 확인). 웹 UI에서
+  같은 흐름 실제 클릭으로 재현 - 팀/그룹 화면에 "문서 타입 관리"
+  버튼이 안 보이는 것도 확인.
+- DocType 제거 확인: 제거된 CLI 12개 전부 `docs --help`에서 사라짐
+  (`doctype-*`만 프로젝트 스코프로 남음), MCP `doctype_*_team`/
+  `doctype_*_group` 12개 전부 서버 소스에서 제거 확인. 프로젝트
+  생성 시 기본 6종(SP/DC/PL/PD/RM/DS) 시딩 회귀 없음(carol이 만든
+  프로젝트로 실측).
+
+`npm run db:generate`(3드라이버) → `npx tsc --noEmit`(backend) →
+`vue-tsc -b`(frontend) 클린 확인. README.md 최신 라운드 + "지금 상태"
+DocType 항목, 본 문서 갱신.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

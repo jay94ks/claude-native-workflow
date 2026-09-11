@@ -56,50 +56,16 @@ export interface DocStatusTransition {
   label: string | null;
 }
 
-export interface ScopeInput {
-  teamId?: string;
-  projectGroupId?: string;
-  projectId?: string;
-}
-
-function assertExactlyOneScope(scope: ScopeInput): void {
-  const set = [scope.teamId, scope.projectGroupId, scope.projectId].filter(Boolean);
-  if (set.length !== 1) {
-    throw new Error("teamId/projectGroupId/projectId 중 정확히 하나만 지정해야 합니다");
-  }
-}
-
-export async function createDocType(scope: ScopeInput, code: string, label: string, guideline?: string): Promise<DocType> {
-  // 빈 문자열은 "안 넘김"으로 정규화 - createProjectGroup/createProject와
-  // 같은 이유(QA 2회차에서 발견) - 안 그러면 assertExactlyOneScope의
-  // truthy 체크를 통과해버려서 검증 없이 Prisma에 그대로 들어간다.
-  scope = {
-    teamId: scope.teamId || undefined,
-    projectGroupId: scope.projectGroupId || undefined,
-    projectId: scope.projectId || undefined,
-  };
-  assertExactlyOneScope(scope);
+export async function createDocType(projectId: string, code: string, label: string, guideline?: string): Promise<DocType> {
   if (!/^[A-Za-z]{2}$/.test(code)) {
     throw new Error(`타입 코드는 영문 2글자여야 합니다: ${code}`);
   }
   const db = getDb();
-  if (scope.teamId) {
-    const team = await db.team.findUnique({ where: { id: scope.teamId } });
-    if (!team) throw new Error(`팀을 찾을 수 없습니다: ${scope.teamId}`);
-  }
-  if (scope.projectGroupId) {
-    const group = await db.projectGroup.findUnique({ where: { id: scope.projectGroupId } });
-    if (!group) throw new Error(`projectGroup을 찾을 수 없습니다: ${scope.projectGroupId}`);
-  }
-  if (scope.projectId) {
-    const project = await db.project.findUnique({ where: { id: scope.projectId } });
-    if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${scope.projectId}`);
-  }
+  const project = await db.project.findUnique({ where: { id: projectId } });
+  if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${projectId}`);
   const row = await db.docType.create({
     data: {
-      teamId: scope.teamId ?? null,
-      projectGroupId: scope.projectGroupId ?? null,
-      projectId: scope.projectId ?? null,
+      projectId,
       code: code.toUpperCase(),
       label,
       guideline: guideline?.trim() || null,
@@ -153,15 +119,9 @@ export async function addDocStatusTransition(
   return { id: row.id, fromStatusId: row.fromStatusId, toStatusId: row.toStatusId, label: row.label };
 }
 
-export async function listDocTypes(scope: ScopeInput): Promise<DocType[]> {
+export async function listDocTypes(projectId: string): Promise<DocType[]> {
   const db = getDb();
-  const rows = await db.docType.findMany({
-    where: {
-      teamId: scope.teamId ?? undefined,
-      projectGroupId: scope.projectGroupId ?? undefined,
-      projectId: scope.projectId ?? undefined,
-    },
-  });
+  const rows = await db.docType.findMany({ where: { projectId } });
   return rows.map((r: DocType) => ({ id: r.id, code: r.code, label: r.label, guideline: r.guideline }));
 }
 
@@ -171,54 +131,13 @@ export async function listDocStatuses(docTypeId: string): Promise<DocStatus[]> {
   return rows.map((r: DocStatus) => ({ id: r.id, code: r.code, label: r.label, guideline: r.guideline, isTerminal: r.isTerminal }));
 }
 
-/** 프로젝트 스코프에 없으면 그 프로젝트의 group, 없으면 그 group의
- * team 순으로 찾는다(resolveTemplate()의 override 체인과 같은
- * 방식 - 구체적인 스코프가 우선). TemplateFile과 달리 DocType엔
- * "스코프 없는 전역 기본값" 개념이 없어 체인 끝에 전역 폴백은 없다 -
- * 셋 다 없으면 그냥 null. 유일한 호출부(documents.ts의
- * createDocument())가 자동으로 상속된 타입을 인식하게 된다. */
+/** 문서 타입은 이제 항상 그 프로젝트 자신에게만 정의된다(팀/그룹
+ * 단위로 획일화해 정하는 기능은 없음 - 설계자 확인). */
 export async function findDocTypeByCode(projectId: string, code: string): Promise<DocType | null> {
   const db = getDb();
-  const upperCode = code.toUpperCase();
-
-  const projectRow = await db.docType.findFirst({ where: { projectId, code: upperCode } });
-  if (projectRow) return { id: projectRow.id, code: projectRow.code, label: projectRow.label, guideline: projectRow.guideline };
-
-  const project = await db.project.findUnique({ where: { id: projectId } });
-  if (!project) return null;
-
-  const groupRow = await db.docType.findFirst({ where: { projectGroupId: project.projectGroupId, code: upperCode } });
-  if (groupRow) return { id: groupRow.id, code: groupRow.code, label: groupRow.label, guideline: groupRow.guideline };
-
-  const group = await db.projectGroup.findUnique({ where: { id: project.projectGroupId } });
-  if (group?.teamId) {
-    const teamRow = await db.docType.findFirst({ where: { teamId: group.teamId, code: upperCode } });
-    if (teamRow) {
-      return { id: teamRow.id, code: teamRow.code, label: teamRow.label, guideline: teamRow.guideline };
-    }
-  }
-
-  return null;
-}
-
-/** "이 프로젝트에서 실제로 쓸 수 있는 타입 전체" - project 자신 +
- * 소속 group + 그 group의 team에 정의된 타입을 전부 모아
- * 반환한다(findDocTypeByCode()와 같은 체인, 목록 버전). 같은 코드가
- * 여러 스코프에 동시에 있어도 중복 제거하지 않는다 - 그건 설계자가
- * 알아야 할 데이터 정합성 문제지 이 함수가 조용히 감출 일이 아니다. */
-export async function listDocTypesForProject(projectId: string): Promise<DocType[]> {
-  const db = getDb();
-  const project = await db.project.findUnique({ where: { id: projectId } });
-  if (!project) return [];
-
-  const group = await db.projectGroup.findUnique({ where: { id: project.projectGroupId } });
-
-  const [projectTypes, groupTypes, teamTypes] = await Promise.all([
-    listDocTypes({ projectId }),
-    listDocTypes({ projectGroupId: project.projectGroupId }),
-    group?.teamId ? listDocTypes({ teamId: group.teamId }) : Promise.resolve([]),
-  ]);
-  return [...projectTypes, ...groupTypes, ...teamTypes];
+  const row = await db.docType.findFirst({ where: { projectId, code: code.toUpperCase() } });
+  if (!row) return null;
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline };
 }
 
 export async function findDocStatusByCode(docTypeId: string, code: string): Promise<DocStatus | null> {
@@ -228,24 +147,12 @@ export async function findDocStatusByCode(docTypeId: string, code: string): Prom
   return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isTerminal: row.isTerminal };
 }
 
-/** API/CLI가 소유권(어느 스코프 소속인지) 확인할 때 쓴다 - DocType은
- * teamId/projectGroupId/projectId 중 하나만 채워지는 스코프라
- * 나머지 둘은 null이다. */
-export async function getDocTypeById(
-  docTypeId: string,
-): Promise<(DocType & { teamId: string | null; projectGroupId: string | null; projectId: string | null }) | null> {
+/** API/CLI가 소유권(어느 프로젝트 소속인지) 확인할 때 쓴다. */
+export async function getDocTypeById(docTypeId: string): Promise<(DocType & { projectId: string }) | null> {
   const db = getDb();
   const row = await db.docType.findUnique({ where: { id: docTypeId } });
   if (!row) return null;
-  return {
-    id: row.id,
-    code: row.code,
-    label: row.label,
-    guideline: row.guideline,
-    teamId: row.teamId,
-    projectGroupId: row.projectGroupId,
-    projectId: row.projectId,
-  };
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, projectId: row.projectId };
 }
 
 /** addDocStatusTransition()은 id 기반(seedDefaultDocTypes 내부용) -
@@ -354,7 +261,7 @@ const DEFAULT_TYPES: SeedSpec[] = [
  * 이후 자유롭게 추가/수정 가능(하드코딩 아님, 그냥 첫 데이터). */
 export async function seedDefaultDocTypes(projectId: string): Promise<void> {
   for (const spec of DEFAULT_TYPES) {
-    const docType = await createDocType({ projectId }, spec.code, spec.label, spec.guideline);
+    const docType = await createDocType(projectId, spec.code, spec.label, spec.guideline);
     await seedStandardStatusFlow(docType.id);
   }
 }

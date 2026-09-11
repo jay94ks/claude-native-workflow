@@ -94,6 +94,7 @@ model User {
   comments          Comment[]          @relation("CommentAuthor")
   messagesSent      Message[]          @relation("MessageAuthor")
   teamAdminships    TeamAdmin[]
+  projectGroupAdminships ProjectGroupAdmin[]
   accessOverrides   DocAccessOverride[]
   foldersCreated    Folder[]
   folderEntries     DocumentFolderEntry[]
@@ -144,7 +145,6 @@ model Team {
   createdAt DateTime @default(now())
 
   projectGroups ProjectGroup[]
-  docTypes      DocType[]
   templateFiles TemplateFile[]
   trackingCodes TrackingCode[]
   admins        TeamAdmin[]
@@ -157,7 +157,7 @@ model TeamAdmin {
   userId    String
   createdAt DateTime @default(now())
 
-  team Team @relation(fields: [teamId], references: [id])
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id])
 
   @@unique([teamId, userId])
@@ -170,12 +170,29 @@ model ProjectGroup {
   name      String
   createdAt DateTime @default(now())
 
-  team          Team?          @relation(fields: [teamId], references: [id])
+  team          Team?               @relation(fields: [teamId], references: [id])
   projects      Project[]
-  docTypes      DocType[]
   templateFiles TemplateFile[]
+  admins        ProjectGroupAdmin[]
 
   @@index([teamId])
+}
+
+// TeamAdmin과 동일한 모양 - 팀 관리자는 자기 팀 산하 모든 그룹에
+// 대해서도 자동으로 그룹 관리자 권한을 갖는다(core/projectGroupAdmins.ts
+// 의 isProjectGroupAdmin() 참고 - 위→아래로 흐르는 상속, DB에 별도
+// 행을 만들진 않음).
+model ProjectGroupAdmin {
+  id             String   @id @default(cuid())
+  projectGroupId String
+  userId         String
+  createdAt      DateTime @default(now())
+
+  projectGroup ProjectGroup @relation(fields: [projectGroupId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([projectGroupId, userId])
+  @@index([userId])
 }
 
 model Project {
@@ -239,26 +256,20 @@ model Member {
 // ---------------------------------------------------------------- 문서 체계 (정규화된 타입/상태/전이)
 
 model DocType {
-  id             String   @id @default(cuid())
-  teamId         String?
-  projectGroupId String?
-  projectId      String?
-  code           String // 영문 2글자
-  label          String
-  guideline      String?  @db.Text // "이 타입은 무엇을 하기 위한 것인가" 자연어 설명(선택)
-  createdAt      DateTime @default(now())
+  id        String   @id @default(cuid())
+  projectId String
+  code      String // 영문 2글자
+  label     String
+  guideline String?  @db.Text // "이 타입은 무엇을 하기 위한 것인가" 자연어 설명(선택)
+  createdAt DateTime @default(now())
 
-  team         Team?         @relation(fields: [teamId], references: [id])
-  projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
-  project      Project?      @relation(fields: [projectId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
 
   statuses        DocStatus[]
   transitions     DocStatusTransition[]
   documents       Document[]
   accessOverrides DocAccessOverride[]
 
-  @@index([teamId])
-  @@index([projectGroupId])
   @@index([projectId])
 }
 

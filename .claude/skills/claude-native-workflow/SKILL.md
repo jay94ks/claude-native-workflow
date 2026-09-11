@@ -67,7 +67,8 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 
 새 타입에 이 표준 흐름을 한 번에 심으려면(6개 상태 + draft를 제외한
 모든 조합의 전이) `docs doctype-apply-standard-flow <projectId>
-<docTypeId>`(그룹/팀 스코프는 `group-`/`team-` 접두사)를 쓴다. 상태를
+<docTypeId>`를 쓴다(문서 타입은 항상 프로젝트 자신에게만 정의된다 -
+그룹/팀 단위로 획일화해 정하는 기능은 없음). 상태를
 하나씩 붙이려면 `docs doctype-status-add <projectId> <docTypeId>
 <code>`(6개 표준 코드 중 하나만 허용 - 라벨/지침은 입력받지 않고
 고정값이 자동 적용된다), 전이는 `docs doctype-transition-add
@@ -248,10 +249,11 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 설계자 활동 이력 | `docs user activity <userId> [--limit <n>]` | `user_activity` |
 | 프로젝트 숨김/해제 | `docs project-hide <projectId> --hidden <bool>` | `project_hide` |
 | 팀장 등록/해제/목록 | `docs team-admin-add/team-admin-remove/team-admins` | `team_admin_add/remove/list` |
+| 그룹 관리자 등록/해제/목록 | `docs group-admin-add/group-admin-remove/group-admins` | `group_admin_add/remove/list` |
 | 세부 권한 설정/조회 | `docs access-set ...` / `docs access-list <projectId>` | `access_set` / `access_list` |
-| 표준 상태 흐름 일괄 적용 | `docs doctype-apply-standard-flow <projectId> <docTypeId>`(+`group-`/`team-`) | `doctype_apply_standard_flow`(+`_group`/`_team`) |
-| 상태 코드 추가(표준 6개 중) | `docs doctype-status-add <projectId> <docTypeId> <code>`(+`group-`/`team-`) | `doctype_status_add`(+`_group`/`_team`) |
-| 상태 전이 정의 | `docs doctype-transition-add <projectId> <docTypeId> <fromCode> <toCode>`(+`group-`/`team-`) | `doctype_transition_add`(+`_group`/`_team`) |
+| 표준 상태 흐름 일괄 적용 | `docs doctype-apply-standard-flow <projectId> <docTypeId>` | `doctype_apply_standard_flow` |
+| 상태 코드 추가(표준 6개 중) | `docs doctype-status-add <projectId> <docTypeId> <code>` | `doctype_status_add` |
+| 상태 전이 정의 | `docs doctype-transition-add <projectId> <docTypeId> <fromCode> <toCode>` | `doctype_transition_add` |
 | 저장소 연결(생성/이주) | `docs git link <projectId> [--import-from <url>] [--credential <id>]` | `git_link` |
 | 저장소 연결(외부 연동) | `docs git link-external <projectId> --provider <github\|gitlab> --url <url> [--credential <id>]` | `git_link_external` |
 | 연결 정보 조회 | `docs git repo <projectId>` | `git_repo` |

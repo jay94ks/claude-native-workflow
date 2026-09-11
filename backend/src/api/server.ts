@@ -19,7 +19,7 @@ import {
 } from "../core/auth.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
-import { createTeam, listTeams } from "../core/teams.js";
+import { createTeam, listTeams, updateTeam, deleteTeam, listMembersForTeam } from "../core/teams.js";
 import {
   ensureAllUsersGiteaAccountsConfigured,
   getGiteaAccessToken,
@@ -27,7 +27,20 @@ import {
 } from "../core/giteaAccounts.js";
 import { addTeamAdmin, removeTeamAdmin, listTeamAdmins, isTeamAllowedByActiveScope } from "../core/teamAdmins.js";
 import { getInstallConfig, getGiteaSystemWebhookSecret } from "../core/installConfig.js";
-import { createProjectGroup, listProjectGroups, isGroupAllowedByActiveScope } from "../core/projectGroups.js";
+import {
+  createProjectGroup,
+  listProjectGroups,
+  isGroupAllowedByActiveScope,
+  updateProjectGroup,
+  deleteProjectGroup,
+  listMembersForGroup,
+} from "../core/projectGroups.js";
+import {
+  addProjectGroupAdmin,
+  removeProjectGroupAdmin,
+  listProjectGroupAdmins,
+  isProjectGroupAdmin,
+} from "../core/projectGroupAdmins.js";
 import {
   createProject,
   getProject,
@@ -54,7 +67,6 @@ import { listUserActivity } from "../core/activity.js";
 import {
   createDocType,
   listDocTypes,
-  listDocTypesForProject,
   listDocStatuses,
   addDocStatus,
   getDocTypeById,
@@ -364,7 +376,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const { name } = req.body as { name?: string };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
-    res.json(await createTeam(name));
+    res.json(await createTeam(name, req.userId!));
   }),
 );
 
@@ -376,19 +388,73 @@ app.get(
   }),
 );
 
-// 팀장 관리 - 팀 스코프 쓰기는 지금까지 전부 authenticate만 요구해왔다
-// (설치 단위 admin role이 아직 없다는 기존 한계의 연장 - PUT /api/templates,
-// POST /api/teams/:id/doc-types 등과 동일). 이 "누가"(role) 검사가
-// 없는 것과 별개로, API 키의 "어느 팀까지"(스코프) 제한은 반드시
-// 걸어야 한다 - 안 그러면 프로젝트 하나로 좁혀진 키가 아무 팀에나
-// 팀장을 등록/해제할 수 있게 된다(스코프 확인 자체와 무관한 별개
-// 차원의 문제).
+app.put(
+  "/api/teams/:teamId",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isTeamAdmin(req.params.teamId, req.userId!))) {
+      res.status(403).json({ error: "이 팀의 관리자만 수정할 수 있습니다" });
+      return;
+    }
+    const { name, enabled } = req.body as { name?: string; enabled?: boolean };
+    res.json(await updateTeam(req.params.teamId, { name, enabled }));
+  }),
+);
+
+app.delete(
+  "/api/teams/:teamId",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isTeamAdmin(req.params.teamId, req.userId!))) {
+      res.status(403).json({ error: "이 팀의 관리자만 삭제할 수 있습니다" });
+      return;
+    }
+    await deleteTeam(req.params.teamId);
+    res.json({ ok: true });
+  }),
+);
+
+// 팀 멤버 가시성(보안 요구사항) - 그 팀 산하 전체 프로젝트의 멤버를
+// 관리자만 볼 수 있다.
+app.get(
+  "/api/teams/:teamId/members",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isTeamAdmin(req.params.teamId, req.userId!))) {
+      res.status(403).json({ error: "이 팀의 관리자만 멤버 목록을 볼 수 있습니다" });
+      return;
+    }
+    res.json(await listMembersForTeam(req.params.teamId));
+  }),
+);
+
+// 팀장 관리 - API 키의 "어느 팀까지"(스코프) 제한에 더해, 실제로 그
+// 팀의 팀장인지도 확인한다(과거엔 authenticate만 요구해 아무 설계자나
+// 자기 자신을 팀장으로 등록할 수 있었다 - 이번 보안 강화 라운드에서
+// 발견해 닫은 허점. 새로 만든 팀은 생성자가 자동으로 팀장 등록돼
+// 있으니 이 요구를 항상 만족한다).
 app.post(
   "/api/teams/:teamId/admins",
   authenticate,
   asyncRoute(async (req, res) => {
     if (!isTeamAllowedByActiveScope(req.params.teamId)) {
       res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isTeamAdmin(req.params.teamId, req.userId!))) {
+      res.status(403).json({ error: "이 팀의 관리자만 팀장을 등록할 수 있습니다" });
       return;
     }
     const { userId } = req.body as { userId?: string };
@@ -403,6 +469,10 @@ app.delete(
   asyncRoute(async (req, res) => {
     if (!isTeamAllowedByActiveScope(req.params.teamId)) {
       res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isTeamAdmin(req.params.teamId, req.userId!))) {
+      res.status(403).json({ error: "이 팀의 관리자만 팀장을 해제할 수 있습니다" });
       return;
     }
     await removeTeamAdmin(req.params.teamId, req.params.userId);
@@ -533,7 +603,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const { name, teamId } = req.body as { name?: string; teamId?: string };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
-    res.json(await createProjectGroup(name, teamId));
+    res.json(await createProjectGroup(name, teamId, req.userId!));
   }),
 );
 
@@ -542,6 +612,109 @@ app.get(
   authenticate,
   asyncRoute(async (req, res) => {
     res.json(await listProjectGroups(req.query.teamId as string | undefined));
+  }),
+);
+
+app.put(
+  "/api/project-groups/:groupId",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isProjectGroupAdmin(req.params.groupId, req.userId!))) {
+      res.status(403).json({ error: "이 그룹의 관리자만 수정할 수 있습니다" });
+      return;
+    }
+    const { name } = req.body as { name?: string };
+    if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
+    res.json(await updateProjectGroup(req.params.groupId, { name }));
+  }),
+);
+
+app.delete(
+  "/api/project-groups/:groupId",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isProjectGroupAdmin(req.params.groupId, req.userId!))) {
+      res.status(403).json({ error: "이 그룹의 관리자만 삭제할 수 있습니다" });
+      return;
+    }
+    await deleteProjectGroup(req.params.groupId);
+    res.json({ ok: true });
+  }),
+);
+
+// 그룹 멤버 가시성(보안 요구사항) - 그 그룹 산하 전체 프로젝트의
+// 멤버를 관리자만 볼 수 있다.
+app.get(
+  "/api/project-groups/:groupId/members",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isProjectGroupAdmin(req.params.groupId, req.userId!))) {
+      res.status(403).json({ error: "이 그룹의 관리자만 멤버 목록을 볼 수 있습니다" });
+      return;
+    }
+    res.json(await listMembersForGroup(req.params.groupId));
+  }),
+);
+
+// 그룹 관리자 관리 - 팀장 관리 라우트와 동일한 패턴(스코프 확인 +
+// 실제 관리자인지 확인). isProjectGroupAdmin()이 팀장 상속을 포함하므로
+// 그 그룹이 속한 팀의 팀장도 그룹 관리자를 등록/해제할 수 있다.
+app.post(
+  "/api/project-groups/:groupId/admins",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isProjectGroupAdmin(req.params.groupId, req.userId!))) {
+      res.status(403).json({ error: "이 그룹의 관리자만 그룹 관리자를 등록할 수 있습니다" });
+      return;
+    }
+    const { userId } = req.body as { userId?: string };
+    if (!userId) { res.status(400).json({ error: "userId가 필요합니다" }); return; }
+    res.json(await addProjectGroupAdmin(req.params.groupId, userId));
+  }),
+);
+
+app.delete(
+  "/api/project-groups/:groupId/admins/:userId",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isProjectGroupAdmin(req.params.groupId, req.userId!))) {
+      res.status(403).json({ error: "이 그룹의 관리자만 그룹 관리자를 해제할 수 있습니다" });
+      return;
+    }
+    await removeProjectGroupAdmin(req.params.groupId, req.params.userId);
+    res.json({ ok: true });
+  }),
+);
+
+app.get(
+  "/api/project-groups/:groupId/admins",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    res.json(await listProjectGroupAdmins(req.params.groupId));
   }),
 );
 
@@ -657,90 +830,22 @@ app.post(
   asyncRoute(async (req, res) => {
     const { code, label, guideline } = req.body as { code?: string; label?: string; guideline?: string };
     if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await createDocType({ projectId: req.params.projectId }, code, label, guideline));
+    res.json(await createDocType(req.params.projectId, code, label, guideline));
   }),
 );
 
+// 문서 타입은 항상 그 프로젝트 자신에게만 정의된다(팀/그룹 단위로
+// 획일화해 정하는 기능은 없음 - 설계자 확인) - 예전엔 이 라우트가
+// "상속분까지 포함한 전체", 별도 "/own"이 "직접 정의분만"이었지만
+// 상속 자체가 없어져 둘이 항상 같은 결과였다 - "/own"은 제거하고
+// 이 라우트 하나로 통일(DocTypeManager.vue도 이 라우트만 쓰도록
+// 정리).
 app.get(
   "/api/projects/:projectId/doc-types",
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    // 이 프로젝트 스코프뿐 아니라 소속 group/team에 상속된 타입도
-    // 같이 보여준다 - "이 프로젝트에서 실제로 쓸 수 있는 타입 전체"가
-    // 이 라우트의 실제 의미(문서 생성 화면 드롭다운이 이걸 씀).
-    res.json(await listDocTypesForProject(req.params.projectId));
-  }),
-);
-
-// 위 라우트와 달리 상속분을 빼고 이 프로젝트에 직접 정의된 타입만 -
-// 관리 화면(웹 UI의 DocTypeManager)이 "여기서 상태/전이를 추가해도 되는
-// 타입"을 구분할 때 쓴다(상속된 타입은 그걸 실제로 소유한 그룹/팀
-// 화면에서 관리해야 함).
-app.get(
-  "/api/projects/:projectId/doc-types/own",
-  authenticate,
-  requireProjectRole("viewer"),
-  asyncRoute(async (req, res) => {
-    res.json(await listDocTypes({ projectId: req.params.projectId }));
-  }),
-);
-
-// 팀/그룹 스코프 DocType - Member는 projectId에만 연결되고 팀/그룹
-// 단위 "관리자" 역할 개념이 아직 없다(설치 단위 admin role은 범위 밖 -
-// PUT /api/templates가 팀/그룹 스코프에 authenticate만 요구하는 것과
-// 같은, 이미 문서화된 한계를 그대로 따른다). "누가"와 별개로 "어느
-// 팀/그룹까지"는 API 키 스코프로 반드시 제한한다(위 팀장 관리 라우트와
-// 같은 이유).
-app.post(
-  "/api/teams/:teamId/doc-types",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
-      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    const { code, label, guideline } = req.body as { code?: string; label?: string; guideline?: string };
-    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await createDocType({ teamId: req.params.teamId }, code, label, guideline));
-  }),
-);
-
-app.get(
-  "/api/teams/:teamId/doc-types",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
-      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    res.json(await listDocTypes({ teamId: req.params.teamId }));
-  }),
-);
-
-app.post(
-  "/api/project-groups/:groupId/doc-types",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
-      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    const { code, label, guideline } = req.body as { code?: string; label?: string; guideline?: string };
-    if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
-    res.json(await createDocType({ projectGroupId: req.params.groupId }, code, label, guideline));
-  }),
-);
-
-app.get(
-  "/api/project-groups/:groupId/doc-types",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
-      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    res.json(await listDocTypes({ projectGroupId: req.params.groupId }));
+    res.json(await listDocTypes(req.params.projectId));
   }),
 );
 
@@ -752,21 +857,11 @@ app.get(
   }),
 );
 
-// docTypeId가 실제로 이 프로젝트 소속인지 확인 - 다른 프로젝트/팀
-// 스코프의 docTypeId를 잘못(또는 악의적으로) 겨냥하는 걸 막는다.
+// docTypeId가 실제로 이 프로젝트 소속인지 확인 - 다른 프로젝트의
+// docTypeId를 잘못(또는 악의적으로) 겨냥하는 걸 막는다.
 async function requireOwnedDocType(projectId: string, docTypeId: string): Promise<boolean> {
   const docType = await getDocTypeById(docTypeId);
   return docType !== null && docType.projectId === projectId;
-}
-
-async function requireOwnedDocTypeByTeam(teamId: string, docTypeId: string): Promise<boolean> {
-  const docType = await getDocTypeById(docTypeId);
-  return docType !== null && docType.teamId === teamId;
-}
-
-async function requireOwnedDocTypeByGroup(groupId: string, docTypeId: string): Promise<boolean> {
-  const docType = await getDocTypeById(docTypeId);
-  return docType !== null && docType.projectGroupId === groupId;
 }
 
 app.post(
@@ -828,165 +923,6 @@ app.post(
   asyncRoute(async (req, res) => {
     if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    await seedStandardStatusFlow(req.params.docTypeId);
-    res.json({ ok: true });
-  }),
-);
-
-// 팀/그룹 스코프 DocType에 상태/전이 붙이기 - 생성/목록 라우트와 같은
-// 인가 수준(authenticate만, 팀/그룹 단위 관리자 역할이 아직 없다는
-// 이미 문서화된 한계를 그대로 따름 - PUT /api/templates와 동일).
-app.post(
-  "/api/teams/:teamId/doc-types/:docTypeId/statuses",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
-      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    const { code } = req.body as { code?: string };
-    if (!code) { res.status(400).json({ error: "code가 필요합니다(draft/review/pending/approved/deprecated/archived 중 하나)" }); return; }
-    res.json(await addDocStatus(req.params.docTypeId, code));
-  }),
-);
-
-app.post(
-  "/api/teams/:teamId/doc-types/:docTypeId/transitions",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
-      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    const { fromStatusCode, toStatusCode, label } = req.body as {
-      fromStatusCode?: string;
-      toStatusCode?: string;
-      label?: string;
-    };
-    if (!fromStatusCode || !toStatusCode) {
-      res.status(400).json({ error: "fromStatusCode/toStatusCode가 필요합니다" });
-      return;
-    }
-    res.json(await addDocStatusTransitionByCode(req.params.docTypeId, fromStatusCode, toStatusCode, label));
-  }),
-);
-
-app.put(
-  "/api/teams/:teamId/doc-types/:docTypeId/guideline",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
-      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    const { guideline } = req.body as { guideline?: string };
-    if (guideline === undefined) { res.status(400).json({ error: "guideline이 필요합니다" }); return; }
-    res.json(await setDocTypeGuideline(req.params.docTypeId, guideline));
-  }),
-);
-
-app.post(
-  "/api/teams/:teamId/doc-types/:docTypeId/standard-flow",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
-      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    await seedStandardStatusFlow(req.params.docTypeId);
-    res.json({ ok: true });
-  }),
-);
-
-app.post(
-  "/api/project-groups/:groupId/doc-types/:docTypeId/statuses",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
-      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    const { code } = req.body as { code?: string };
-    if (!code) { res.status(400).json({ error: "code가 필요합니다(draft/review/pending/approved/deprecated/archived 중 하나)" }); return; }
-    res.json(await addDocStatus(req.params.docTypeId, code));
-  }),
-);
-
-app.post(
-  "/api/project-groups/:groupId/doc-types/:docTypeId/transitions",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
-      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    const { fromStatusCode, toStatusCode, label } = req.body as {
-      fromStatusCode?: string;
-      toStatusCode?: string;
-      label?: string;
-    };
-    if (!fromStatusCode || !toStatusCode) {
-      res.status(400).json({ error: "fromStatusCode/toStatusCode가 필요합니다" });
-      return;
-    }
-    res.json(await addDocStatusTransitionByCode(req.params.docTypeId, fromStatusCode, toStatusCode, label));
-  }),
-);
-
-app.put(
-  "/api/project-groups/:groupId/doc-types/:docTypeId/guideline",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
-      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    const { guideline } = req.body as { guideline?: string };
-    if (guideline === undefined) { res.status(400).json({ error: "guideline이 필요합니다" }); return; }
-    res.json(await setDocTypeGuideline(req.params.docTypeId, guideline));
-  }),
-);
-
-app.post(
-  "/api/project-groups/:groupId/doc-types/:docTypeId/standard-flow",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
-      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
-      return;
-    }
-    if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
       return;
     }
     await seedStandardStatusFlow(req.params.docTypeId);

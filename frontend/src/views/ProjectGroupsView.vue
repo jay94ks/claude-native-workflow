@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
-import DocTypeManager from "../components/DocTypeManager.vue";
+import GroupAdminManager from "../components/GroupAdminManager.vue";
+import UserRef from "../components/UserRef.vue";
 
 interface ProjectGroup {
   id: string;
@@ -12,6 +13,12 @@ interface Team {
   id: string;
   name: string;
 }
+interface GroupMemberRow {
+  projectId: string;
+  projectName: string;
+  userId: string;
+  role: string;
+}
 
 const groups = ref<ProjectGroup[]>([]);
 const teams = ref<Team[]>([]);
@@ -19,7 +26,15 @@ const newName = ref("");
 const newTeamId = ref("");
 const error = ref("");
 const loading = ref(true);
-const expandedId = ref<string | null>(null);
+const expandedAdminsId = ref<string | null>(null);
+const expandedMembersId = ref<string | null>(null);
+const members = ref<GroupMemberRow[]>([]);
+const membersError = ref("");
+
+const editingId = ref<string | null>(null);
+const editName = ref("");
+const editError = ref("");
+const deleteError = ref<Record<string, string>>({});
 
 async function load() {
   loading.value = true;
@@ -58,8 +73,52 @@ async function create() {
   }
 }
 
-function toggleManage(id: string) {
-  expandedId.value = expandedId.value === id ? null : id;
+function startEdit(group: ProjectGroup) {
+  editingId.value = group.id;
+  editName.value = group.name;
+  editError.value = "";
+}
+
+async function saveEdit(group: ProjectGroup) {
+  editError.value = "";
+  try {
+    await apiCall(`/project-groups/${group.id}`, { method: "PUT", body: JSON.stringify({ name: editName.value.trim() }) });
+    editingId.value = null;
+    await load();
+  } catch (err) {
+    editError.value = err instanceof ApiError ? err.message : "수정에 실패했습니다";
+  }
+}
+
+async function remove(group: ProjectGroup) {
+  deleteError.value = { ...deleteError.value, [group.id]: "" };
+  try {
+    await apiCall(`/project-groups/${group.id}`, { method: "DELETE" });
+    await load();
+  } catch (err) {
+    deleteError.value = {
+      ...deleteError.value,
+      [group.id]: err instanceof ApiError ? err.message : "삭제에 실패했습니다",
+    };
+  }
+}
+
+async function toggleMembers(id: string) {
+  if (expandedMembersId.value === id) {
+    expandedMembersId.value = null;
+    return;
+  }
+  expandedMembersId.value = id;
+  membersError.value = "";
+  try {
+    members.value = await apiCall<GroupMemberRow[]>(`/project-groups/${id}/members`);
+  } catch (err) {
+    membersError.value = err instanceof ApiError ? err.message : "멤버 목록을 불러오지 못했습니다(그 그룹의 관리자만 볼 수 있습니다)";
+  }
+}
+
+function toggleAdmins(id: string) {
+  expandedAdminsId.value = expandedAdminsId.value === id ? null : id;
 }
 
 onMounted(load);
@@ -80,14 +139,41 @@ onMounted(load);
   <ul v-else class="list">
     <li v-for="group in groups" :key="group.id">
       <div class="row">
-        <span>{{ group.name }}</span>
-        <span class="muted">{{ teamName(group.teamId) }}</span>
-        <button class="manage-btn" @click="toggleManage(group.id)">
-          {{ expandedId === group.id ? "문서 타입 관리 닫기" : "문서 타입 관리" }}
+        <template v-if="editingId === group.id">
+          <input v-model="editName" type="text" class="edit-input" />
+          <button class="manage-btn" @click="saveEdit(group)">저장</button>
+          <button class="manage-btn" @click="editingId = null">취소</button>
+        </template>
+        <template v-else>
+          <span>{{ group.name }}</span>
+          <span class="muted">{{ teamName(group.teamId) }}</span>
+          <button class="manage-btn" @click="startEdit(group)">이름 수정</button>
+        </template>
+        <button class="manage-btn" @click="toggleMembers(group.id)">
+          {{ expandedMembersId === group.id ? "멤버 닫기" : "멤버 보기" }}
         </button>
+        <button class="manage-btn" @click="toggleAdmins(group.id)">
+          {{ expandedAdminsId === group.id ? "그룹 관리자 닫기" : "그룹 관리자" }}
+        </button>
+        <button class="danger-btn" @click="remove(group)">삭제</button>
       </div>
-      <div v-if="expandedId === group.id" class="manage-panel">
-        <DocTypeManager scope="group" :scope-id="group.id" />
+      <p v-if="editError && editingId === group.id" class="error inline">{{ editError }}</p>
+      <p v-if="deleteError[group.id]" class="error inline">{{ deleteError[group.id] }}</p>
+
+      <div v-if="expandedMembersId === group.id" class="manage-panel">
+        <p class="hint">이 그룹 산하 모든 프로젝트의 멤버 - 그룹 관리자만 볼 수 있다.</p>
+        <p v-if="membersError" class="error">{{ membersError }}</p>
+        <ul class="member-list">
+          <li v-for="(m, i) in members" :key="i">
+            <UserRef :user-id="m.userId" />
+            <span class="muted">{{ m.role }}</span>
+            <span class="muted">{{ m.projectName }}</span>
+          </li>
+          <li v-if="!membersError && members.length === 0" class="muted">멤버가 없습니다.</li>
+        </ul>
+      </div>
+      <div v-if="expandedAdminsId === group.id" class="manage-panel">
+        <GroupAdminManager :group-id="group.id" />
       </div>
     </li>
     <li v-if="groups.length === 0" class="muted">아직 프로젝트 그룹이 없습니다.</li>
@@ -142,9 +228,15 @@ h1 {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+.edit-input {
+  padding: 5px 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 13px;
 }
 .manage-btn {
-  margin-left: auto;
   background: #fff;
   border: 1px solid #d8dae0;
   padding: 5px 10px;
@@ -154,8 +246,38 @@ h1 {
 .manage-btn:hover {
   background: #eef0f6;
 }
+.danger-btn {
+  margin-left: auto;
+  background: #fff;
+  border: 1px solid #e2a2ad;
+  color: #d1344b;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
 .manage-panel {
   padding: 0 16px 16px;
+}
+.member-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.member-list li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid #eee;
+  font-size: 13px;
+}
+.member-list li:last-child {
+  border-bottom: none;
+}
+.hint {
+  font-size: 12px;
+  color: #999;
+  margin: 0 0 8px;
 }
 .muted {
   color: #888;
@@ -164,5 +286,9 @@ h1 {
 .error {
   color: #d1344b;
   font-size: 13px;
+}
+.error.inline {
+  padding: 0 16px 8px;
+  margin: 0;
 }
 </style>

@@ -114,6 +114,27 @@ async function main() {
   );
   tool("team_admin_list", "팀장 목록", "그 팀의 팀장 목록.", { teamId: z.string() }, async (a) => call(`/api/teams/${a.teamId}/admins`));
   tool(
+    "team_update",
+    "팀 수정",
+    "팀 이름/활성 여부를 수정한다 - 그 팀의 관리자만 가능.",
+    { teamId: z.string(), name: z.string().optional(), enabled: z.boolean().optional() },
+    async (a) => call(`/api/teams/${a.teamId}`, { method: "PUT", body: JSON.stringify({ name: a.name, enabled: a.enabled }) }),
+  );
+  tool(
+    "team_delete",
+    "팀 삭제",
+    "팀을 삭제한다 - 소속 프로젝트 그룹이 하나라도 있으면 거부됨, 그 팀의 관리자만 가능.",
+    { teamId: z.string() },
+    async (a) => call(`/api/teams/${a.teamId}`, { method: "DELETE" }),
+  );
+  tool(
+    "team_members",
+    "팀 멤버 조회",
+    "그 팀 산하 모든 프로젝트 그룹·프로젝트의 멤버를 모아 보여준다 - 그 팀의 관리자만 가능(보안 요구사항).",
+    { teamId: z.string() },
+    async (a) => call(`/api/teams/${a.teamId}/members`),
+  );
+  tool(
     "group_create",
     "프로젝트 그룹 생성",
     "새 프로젝트 그룹을 만든다.",
@@ -124,6 +145,44 @@ async function main() {
     const qs = a.teamId ? `?teamId=${encodeURIComponent(String(a.teamId))}` : "";
     return call(`/api/project-groups${qs}`);
   });
+  tool(
+    "group_update",
+    "프로젝트 그룹 수정",
+    "그룹 이름을 수정한다 - 그 그룹의 관리자만 가능.",
+    { groupId: z.string(), name: z.string() },
+    async (a) => call(`/api/project-groups/${a.groupId}`, { method: "PUT", body: JSON.stringify({ name: a.name }) }),
+  );
+  tool(
+    "group_delete",
+    "프로젝트 그룹 삭제",
+    "그룹을 삭제한다 - 소속 프로젝트가 하나라도 있으면 거부됨, 그 그룹의 관리자만 가능.",
+    { groupId: z.string() },
+    async (a) => call(`/api/project-groups/${a.groupId}`, { method: "DELETE" }),
+  );
+  tool(
+    "group_members",
+    "프로젝트 그룹 멤버 조회",
+    "그 그룹 산하 모든 프로젝트의 멤버를 모아 보여준다 - 그 그룹의 관리자만 가능(보안 요구사항).",
+    { groupId: z.string() },
+    async (a) => call(`/api/project-groups/${a.groupId}/members`),
+  );
+  tool(
+    "group_admin_add",
+    "그룹 관리자 등록",
+    "그 프로젝트 그룹의 관리자로 사용자를 등록한다.",
+    { groupId: z.string(), userId: z.string() },
+    async (a) => call(`/api/project-groups/${a.groupId}/admins`, { method: "POST", body: JSON.stringify({ userId: a.userId }) }),
+  );
+  tool(
+    "group_admin_remove",
+    "그룹 관리자 해제",
+    "그 프로젝트 그룹의 관리자에서 사용자를 제외한다.",
+    { groupId: z.string(), userId: z.string() },
+    async (a) => call(`/api/project-groups/${a.groupId}/admins/${a.userId}`, { method: "DELETE" }),
+  );
+  tool("group_admin_list", "그룹 관리자 목록", "그 프로젝트 그룹의 관리자 목록.", { groupId: z.string() }, async (a) =>
+    call(`/api/project-groups/${a.groupId}/admins`),
+  );
   tool(
     "project_create",
     "프로젝트 생성",
@@ -179,49 +238,15 @@ async function main() {
     { projectId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
     async (a) => call(`/api/projects/${a.projectId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
   );
-  tool("doctype_list", "문서 타입 목록", "프로젝트에서 쓸 수 있는 문서 타입 목록(프로젝트 자신 + 소속 group/team에서 상속된 것 포함).", { projectId: z.string() }, async (a) =>
+  tool("doctype_list", "문서 타입 목록", "그 프로젝트에 정의된 문서 타입 목록(팀/그룹 단위로 획일화해 정하는 기능은 없음 - 항상 프로젝트 자신에게만 정의됨).", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/doc-types`),
   );
   tool(
     "doctype_guideline_set",
-    "프로젝트 스코프 문서 타입 지침 설정",
+    "문서 타입 지침 설정",
     "그 문서 타입이 무엇을 하기 위한 것인지 자연어 설명을 쓰거나 수정한다(빈 문자열이면 지움).",
     { projectId: z.string(), docTypeId: z.string(), guideline: z.string() },
     async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
-  );
-  tool(
-    "doctype_create_team",
-    "팀 스코프 문서 타입 생성",
-    "그 팀 소속 모든 프로젝트가 상속받는 문서 타입을 정의한다(code는 영문 2글자).",
-    { teamId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
-    async (a) => call(`/api/teams/${a.teamId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
-  );
-  tool("doctype_list_team", "팀 스코프 문서 타입 목록", "그 팀에 직접 정의된 문서 타입 목록.", { teamId: z.string() }, async (a) =>
-    call(`/api/teams/${a.teamId}/doc-types`),
-  );
-  tool(
-    "doctype_guideline_set_team",
-    "팀 스코프 문서 타입 지침 설정",
-    "그 문서 타입이 무엇을 하기 위한 것인지 자연어 설명을 쓰거나 수정한다(빈 문자열이면 지움).",
-    { teamId: z.string(), docTypeId: z.string(), guideline: z.string() },
-    async (a) => call(`/api/teams/${a.teamId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
-  );
-  tool(
-    "doctype_create_group",
-    "그룹 스코프 문서 타입 생성",
-    "그 프로젝트 그룹 소속 모든 프로젝트가 상속받는 문서 타입을 정의한다(code는 영문 2글자).",
-    { groupId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
-    async (a) => call(`/api/project-groups/${a.groupId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
-  );
-  tool("doctype_list_group", "그룹 스코프 문서 타입 목록", "그 프로젝트 그룹에 직접 정의된 문서 타입 목록.", { groupId: z.string() }, async (a) =>
-    call(`/api/project-groups/${a.groupId}/doc-types`),
-  );
-  tool(
-    "doctype_guideline_set_group",
-    "그룹 스코프 문서 타입 지침 설정",
-    "그 문서 타입이 무엇을 하기 위한 것인지 자연어 설명을 쓰거나 수정한다(빈 문자열이면 지움).",
-    { groupId: z.string(), docTypeId: z.string(), guideline: z.string() },
-    async (a) => call(`/api/project-groups/${a.groupId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
   );
   tool(
     "doctype_status_add",
@@ -259,65 +284,6 @@ async function main() {
     { docTypeId: z.string() },
     async (a) => call(`/api/doc-types/${a.docTypeId}/transitions`),
   );
-  tool(
-    "doctype_status_add_team",
-    "팀 스코프 문서 타입 상태 추가",
-    "팀 스코프 문서 타입에 표준 상태 코드 하나를 추가한다(draft/review/pending/approved/deprecated/archived 중 하나).",
-    { teamId: z.string(), docTypeId: z.string(), code: z.enum(["draft", "review", "pending", "approved", "deprecated", "archived"]) },
-    async (a) =>
-      call(`/api/teams/${a.teamId}/doc-types/${a.docTypeId}/statuses`, {
-        method: "POST",
-        body: JSON.stringify({ code: a.code }),
-      }),
-  );
-  tool(
-    "doctype_apply_standard_flow_team",
-    "팀 스코프 표준 상태 흐름 일괄 적용",
-    "표준 상태 6개와 전이를 한 번에 세팅한다.",
-    { teamId: z.string(), docTypeId: z.string() },
-    async (a) => call(`/api/teams/${a.teamId}/doc-types/${a.docTypeId}/standard-flow`, { method: "POST" }),
-  );
-  tool(
-    "doctype_transition_add_team",
-    "팀 스코프 문서 타입 상태 전이 추가",
-    "팀 스코프 문서 타입의 두 상태(코드로 지정) 사이 허용된 전이를 정의한다.",
-    { teamId: z.string(), docTypeId: z.string(), fromStatusCode: z.string(), toStatusCode: z.string(), label: z.string().optional() },
-    async (a) =>
-      call(`/api/teams/${a.teamId}/doc-types/${a.docTypeId}/transitions`, {
-        method: "POST",
-        body: JSON.stringify({ fromStatusCode: a.fromStatusCode, toStatusCode: a.toStatusCode, label: a.label }),
-      }),
-  );
-  tool(
-    "doctype_status_add_group",
-    "그룹 스코프 문서 타입 상태 추가",
-    "프로젝트 그룹 스코프 문서 타입에 표준 상태 코드 하나를 추가한다(draft/review/pending/approved/deprecated/archived 중 하나).",
-    { groupId: z.string(), docTypeId: z.string(), code: z.enum(["draft", "review", "pending", "approved", "deprecated", "archived"]) },
-    async (a) =>
-      call(`/api/project-groups/${a.groupId}/doc-types/${a.docTypeId}/statuses`, {
-        method: "POST",
-        body: JSON.stringify({ code: a.code }),
-      }),
-  );
-  tool(
-    "doctype_apply_standard_flow_group",
-    "그룹 스코프 표준 상태 흐름 일괄 적용",
-    "표준 상태 6개와 전이를 한 번에 세팅한다.",
-    { groupId: z.string(), docTypeId: z.string() },
-    async (a) => call(`/api/project-groups/${a.groupId}/doc-types/${a.docTypeId}/standard-flow`, { method: "POST" }),
-  );
-  tool(
-    "doctype_transition_add_group",
-    "그룹 스코프 문서 타입 상태 전이 추가",
-    "프로젝트 그룹 스코프 문서 타입의 두 상태(코드로 지정) 사이 허용된 전이를 정의한다.",
-    { groupId: z.string(), docTypeId: z.string(), fromStatusCode: z.string(), toStatusCode: z.string(), label: z.string().optional() },
-    async (a) =>
-      call(`/api/project-groups/${a.groupId}/doc-types/${a.docTypeId}/transitions`, {
-        method: "POST",
-        body: JSON.stringify({ fromStatusCode: a.fromStatusCode, toStatusCode: a.toStatusCode, label: a.label }),
-      }),
-  );
-
   // ---------------------------------------------------------------- 문서
 
   tool(

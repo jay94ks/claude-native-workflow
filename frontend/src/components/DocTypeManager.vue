@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 
-const props = defineProps<{ scope: "project" | "group" | "team"; scopeId: string }>();
+const props = defineProps<{ projectId: string }>();
 
 interface DocType {
   id: string;
@@ -26,19 +26,11 @@ interface DocStatusTransition {
   label: string | null;
 }
 
-// 스코프별로 생성/목록에 쓰는 API 접두사만 다르고 나머지는 동일 -
-// core/docTypes.ts의 세 스코프 라우트(teams/:id/doc-types,
-// project-groups/:id/doc-types, projects/:id/doc-types)를 그대로 거울처럼
-// 반영한다.
-const basePath = computed(() => {
-  if (props.scope === "team") return `/teams/${props.scopeId}/doc-types`;
-  if (props.scope === "group") return `/project-groups/${props.scopeId}/doc-types`;
-  return `/projects/${props.scopeId}/doc-types`;
-});
-// 프로젝트 스코프의 GET .../doc-types는 상속 병합 목록이라(문서 생성
-// 드롭다운용) 관리 화면은 "이 스코프에 직접 정의된 것"만 보는 /own을
-// 대신 쓴다 - 그룹/팀은 애초에 직접 정의분만 반환하는 라우트라 그대로.
-const listPath = computed(() => (props.scope === "project" ? `${basePath.value}/own` : basePath.value));
+// 문서 타입은 항상 그 프로젝트 자신에게만 정의된다(팀/그룹 단위로
+// 획일화해 정하는 기능은 없음 - 설계자 확인) - 스코프 분기가 필요
+// 없어졌다.
+const basePath = computed(() => `/projects/${props.projectId}/doc-types`);
+const listPath = basePath;
 
 const types = ref<DocType[]>([]);
 const loading = ref(true);
