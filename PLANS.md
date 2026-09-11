@@ -39,7 +39,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 6 | ✅ | `#folder-access-ui` | 의도된 설계로 확인 - 폴더는 개인화 기능, 공유 기능 추가 안 함 |
 | 7 | ✅ | `#access-overview-cross-project` | 설계자별 접근 제한 프로젝트 횡단 일괄 조회(본인 CLI/MCP/웹, 관리자 CLI/웹) |
 | 8 | ✅ | `#doctype-edit-delete` | DocType 이름 수정(기본 타입 제외)/삭제(문서 없을 때만) |
-| 9 | ⬜ | `#doctype-transition-delete` | DocStatusTransition 삭제 불가 |
+| 9 | ✅ | `#doctype-transition-delete` | DocStatusTransition 삭제(참조 무결성 가드 없음) |
 | 10 | ⬜ | `#document-bulk-actions` | 문서 일괄 상태 전이/폴더 이동 없음 |
 | 11 | ⬜ | `#folder-delete-recursive` | 폴더 재귀 삭제/상위로 끌어올리기 없음 |
 | 12 | ⬜ | `#question-bulk-ack` | 질문 일괄 ack 없음 |
@@ -62,12 +62,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
 
 ---
-
-## 2. 문서 타입/상태 체계
-
-### `#doctype-transition-delete`
-**정의한 `DocStatusTransition`을 지울 방법이 없다** - 잘못 그은 전이를
-되돌리려면 DB를 직접 만져야 한다(현재 유일한 경로).
 
 ## 3. 문서 CRUD
 

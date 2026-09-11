@@ -2891,6 +2891,44 @@ MCP는 `isError:true`로 정확히 전파됨) 실제 서버/클라이언트로 �
 스크린샷으로 확인. `npm run audit:cli-mcp`, `npx tsc --noEmit`
 (backend), `vue-tsc -b`(frontend) 전부 클린.
 
+## DocStatusTransition 삭제(`#doctype-transition-delete`) - 완료 (2026-09-12)
+
+PLANS.md 9번(`## 2. 문서 타입/상태 체계` 마지막 항목). 잘못 그은 상태
+전이를 지울 방법이 없어 DB를 직접 만져야 했다 - 바로 앞
+`#doctype-edit-delete` 라운드와 같은 모양의 CRUD 보강.
+
+`DocStatusTransition`은 다른 테이블이 그 id를 참조하는 FK가 전혀
+없다(`Document`는 현재 `statusId`만 기록, 어떤 전이를 거쳐 왔는지는
+안 남김) - `#doctype-edit-delete`의 "문서 있으면 삭제 거부" 같은
+가드가 이 항목엔 대응되지 않는다. `core/docTypes.ts` 신규
+`deleteDocStatusTransition(docTypeId, transitionId)` - `findFirst`로
+그 전이가 실제로 해당 docType 소속인지만 확인(다른 타입의 id를 잘못
+겨냥하는 것 방지) 후 바로 삭제.
+
+라우트 `DELETE /api/projects/:projectId/doc-types/:docTypeId/
+transitions/:transitionId`(기존 `requireOwnedDocType` 재사용), CLI
+`doctype-transition-delete`, MCP `doctype_transition_delete`(이름이
+CLI 태그와 그대로 맞아떨어져 `KNOWN_RENAMES` 불필요). 웹 UI
+(`DocTypeManager.vue`)는 전이 목록 각 행에 owner 전용 "삭제" 버튼을
+추가했다(성공 시 `loadDetail()`로 즉시 새로고침, 실패 시
+`transitionDeleteError`에 표시).
+
+**실측 검증**: docker 재빌드·재기동 후 admin 계정으로 HTTP 왕복 -
+기존 SP 타입의 전이 하나(25개 중 1개) 삭제 → 200 확인 → 목록이
+24개로 줄고 그 id가 실제로 빠졌는지 확인 → 다른 docType(DC) 소속인
+것처럼 같은 transitionId를 잘못 겨냥 → 거부(이미 지워졌다는 에러와
+동일한 경로로 자연스럽게 막힘 - 별도 404 분기를 안 만들어도
+`findFirst` 소속 확인 하나로 충분했음) → 이미 지운 전이를 다시
+삭제 시도해도 같은 방식으로 거부됨을 확인. CLI
+`doctype-transition-add`/`doctype-transition-delete`, MCP
+`doctype_transition_add`/`doctype_transition_delete`(MCP는
+`isError:true`로 에러가 정확히 전파됨) 실제 서버/클라이언트로 왕복.
+브라우저 - `DocTypeManager.vue` 전이 목록에서 삭제 버튼 클릭 →
+`read_network_requests`로 `DELETE .../transitions/:id` 200 확인 →
+그 행이 화면에서 즉시 사라지고 나머지 행은 그대로인지 스크린샷 확인.
+`npm run audit:cli-mcp`, `npx tsc --noEmit`(backend), `vue-tsc
+-b`(frontend) 전부 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

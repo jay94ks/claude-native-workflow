@@ -170,6 +170,17 @@ export async function addDocStatusTransition(
   return { id: row.id, fromStatusId: row.fromStatusId, toStatusId: row.toStatusId, label: row.label };
 }
 
+/** 다른 테이블이 DocStatusTransition.id를 참조하지 않아(Document는
+ * 현재 statusId만 기록, 어떤 전이를 거쳤는지는 안 남김) 삭제에
+ * 참조 무결성 가드가 필요 없다 - docTypeId 소속만 확인하고 바로
+ * 지운다. */
+export async function deleteDocStatusTransition(docTypeId: string, transitionId: string): Promise<void> {
+  const db = getDb();
+  const transition = await db.docStatusTransition.findFirst({ where: { id: transitionId, docTypeId } });
+  if (!transition) throw new Error("이 문서 타입에 해당 전이가 없습니다");
+  await db.docStatusTransition.delete({ where: { id: transitionId } });
+}
+
 export async function listDocTypes(projectId: string): Promise<DocType[]> {
   const db = getDb();
   const rows = await db.docType.findMany({ where: { projectId } });

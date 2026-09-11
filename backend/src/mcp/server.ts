@@ -328,6 +328,13 @@ async function main() {
     { docTypeId: z.string() },
     async (a) => call(`/api/doc-types/${a.docTypeId}/transitions`),
   );
+  tool(
+    "doctype_transition_delete",
+    "문서 타입 상태 전이 삭제",
+    "정의된 상태 전이를 지운다 - 다른 테이블이 참조하지 않아 삭제 자체엔 제약이 없다.",
+    { projectId: z.string(), docTypeId: z.string(), transitionId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/transitions/${a.transitionId}`, { method: "DELETE" }),
+  );
   // ---------------------------------------------------------------- 문서
 
   tool(

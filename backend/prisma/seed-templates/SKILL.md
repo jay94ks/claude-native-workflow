@@ -298,6 +298,7 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 표준 상태 흐름 일괄 적용 | `docs doctype-apply-standard-flow <projectId> <docTypeId>` | `doctype_apply_standard_flow` |
 | 상태 코드 추가(표준 6개 중) | `docs doctype-status-add <projectId> <docTypeId> <code>` | `doctype_status_add` |
 | 상태 전이 정의 | `docs doctype-transition-add <projectId> <docTypeId> <fromCode> <toCode>` | `doctype_transition_add` |
+| 상태 전이 삭제 | `docs doctype-transition-delete <projectId> <docTypeId> <transitionId>` | `doctype_transition_delete` |
 | 저장소 연결(생성/이주) | `docs git link <projectId> [--import-from <url>] [--credential <id>]` | `git_link` |
 | 저장소 연결(외부 연동) | `docs git link-external <projectId> --provider <github\|gitlab> --url <url> [--credential <id>]` | `git_link_external` |
 | 연결 정보 조회 | `docs git repo <projectId>` | `git_repo` |

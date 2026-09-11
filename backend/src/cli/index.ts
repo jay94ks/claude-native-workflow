@@ -588,6 +588,18 @@ program
   .command("doctype-transitions <projectId> <docTypeId>")
   .action((_projectId, docTypeId) => run(async () => printJson(await apiCall(`/api/doc-types/${docTypeId}/transitions`))));
 
+program
+  .command("doctype-transition-delete <projectId> <docTypeId> <transitionId>")
+  .action((projectId, docTypeId, transitionId) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/transitions/${transitionId}`, {
+          method: "DELETE",
+        }),
+      ),
+    ),
+  );
+
 // ---------------------------------------------------------------- 문서
 
 program

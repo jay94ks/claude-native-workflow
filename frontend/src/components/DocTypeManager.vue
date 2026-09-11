@@ -139,6 +139,7 @@ const newTransitionFrom = ref("");
 const newTransitionTo = ref("");
 const newTransitionLabel = ref("");
 const transitionAddError = ref("");
+const transitionDeleteError = ref("");
 
 function statusCode(statusId: string): string {
   return statuses.value.find((s) => s.id === statusId)?.code ?? statusId;
@@ -256,6 +257,17 @@ async function addTransition() {
   }
 }
 
+async function removeTransition(tr: DocStatusTransition) {
+  if (!expandedId.value) return;
+  transitionDeleteError.value = "";
+  try {
+    await apiCall(`${basePath.value}/${expandedId.value}/transitions/${tr.id}`, { method: "DELETE" });
+    await loadDetail(expandedId.value);
+  } catch (err) {
+    transitionDeleteError.value = err instanceof ApiError ? err.message : "전이 삭제에 실패했습니다";
+  }
+}
+
 onMounted(loadTypes);
 </script>
 
@@ -346,9 +358,11 @@ onMounted(loadTypes);
               <li v-for="tr in transitions" :key="tr.id">
                 {{ statusCode(tr.fromStatusId) }} → {{ statusCode(tr.toStatusId) }}
                 <span v-if="tr.label" class="muted">({{ tr.label }})</span>
+                <button v-if="isOwner" class="transition-delete-btn" @click="removeTransition(tr)">삭제</button>
               </li>
               <li v-if="transitions.length === 0" class="muted">정의된 전이가 없습니다.</li>
             </ul>
+            <p v-if="transitionDeleteError" class="error">{{ transitionDeleteError }}</p>
             <form v-if="isOwner" class="add-row" @submit.prevent="addTransition">
               <select v-model="newTransitionFrom">
                 <option value="">시작 상태</option>
@@ -505,6 +519,14 @@ onMounted(loadTypes);
 .statuses li,
 .transitions li {
   padding: 4px 0;
+}
+.transition-delete-btn {
+  margin-left: 8px;
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 11px;
 }
 .statuses code {
   background: #f0f1f5;
