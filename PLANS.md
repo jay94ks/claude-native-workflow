@@ -41,7 +41,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 8 | ✅ | `#doctype-edit-delete` | DocType 이름 수정(기본 타입 제외)/삭제(문서 없을 때만) |
 | 9 | ✅ | `#doctype-transition-delete` | DocStatusTransition 삭제(참조 무결성 가드 없음) |
 | 10 | ✅ | `#document-bulk-actions` | 문서 일괄 상태 전이(웹/CLI/MCP)/폴더 이동(웹 전용), 항목별 결과 |
-| 11 | ⬜ | `#folder-delete-recursive` | 폴더 재귀 삭제/상위로 끌어올리기 없음 |
+| 11 | ✅ | `#folder-delete-recursive` | 폴더 삭제 시 재귀 삭제/상위로 끌어올리기 선택 가능 |
 | 12 | ⬜ | `#question-bulk-ack` | 질문 일괄 ack 없음 |
 | 13 | ⬜ | `#question-withdraw` | 질문 취소/철회 기능 없음 |
 | 14 | ⬜ | `#comment-edit-delete` | 코멘트 수정/삭제 없음(해결 처리만 가능) |
@@ -62,13 +62,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
 
 ---
-
-## 4. 문서 정리 폴더
-
-### `#folder-delete-recursive`
-**폴더 삭제 시 재귀 삭제/상위로 끌어올리기 옵션이 없다**(설계 당시에도
-의도적으로 범위 밖으로 뺀 부분 - 폴더가 늘어난 프로젝트에서 실제로
-아쉬울 수 있어 재검토 후보로 남겨둔다).
 
 ## 5. 질의/응답 (Q&A)
 

@@ -1564,7 +1564,12 @@ app.delete(
   "/api/folders/:folderId",
   authenticate,
   asyncRoute(async (req, res) => {
-    await deleteFolder(req.params.folderId, req.userId!);
+    const mode = req.query.mode as string | undefined;
+    if (mode !== undefined && mode !== "recursive" && mode !== "promote") {
+      res.status(400).json({ error: "mode는 recursive/promote 중 하나여야 합니다" });
+      return;
+    }
+    await deleteFolder(req.params.folderId, req.userId!, mode as "recursive" | "promote" | undefined);
     res.json({ ok: true });
   }),
 );

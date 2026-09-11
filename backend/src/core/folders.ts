@@ -84,17 +84,67 @@ export async function renameFolder(folderId: string, newName: string, userId: st
   return { id: row.id, projectId: row.projectId, parentFolderId: row.parentFolderId, name: row.name, order: row.order, createdBy: row.createdBy };
 }
 
-export async function deleteFolder(folderId: string, userId: string): Promise<void> {
-  await assertOwnsFolder(folderId, userId);
+// 프론트(FolderTree.vue)가 이 정확한 문자열로 "빈 폴더가 아니라
+// mode 선택이 필요하다"를 구분한다(GitRepoPanel.vue의 git_auth_required
+// 정확 일치 분기와 같은 패턴) - 메시지를 바꾸면 그쪽도 같이 바꿔야 함.
+export const FOLDER_NOT_EMPTY_MESSAGE =
+  "비어있지 않은 폴더는 삭제할 수 없습니다 - 재귀 삭제(recursive)나 상위로 끌어올리기(promote) 중 하나를 선택하세요";
+
+export type FolderDeleteMode = "recursive" | "promote";
+
+/** mode 없이 호출하면 비어있을 때만 삭제(기존 동작 그대로). 비어있지
+ * 않은데 mode가 없으면 FOLDER_NOT_EMPTY_MESSAGE로 거부한다.
+ *
+ * - "recursive": 가드 없이 바로 지운다 - Folder.parentFolder와
+ *   DocumentFolderEntry.folder 둘 다 onDelete: Cascade라 DB가 하위
+ *   폴더/문서 배치를 전부 재귀적으로 정리한다(문서 자신은 안 지워짐,
+ *   배치 메타데이터만 사라짐). 폴더는 항상 단일 소유자 트리라(하위
+ *   폴더/배치를 만들려면 항상 상위 폴더 소유권이 필요) 다른 설계자의
+ *   데이터를 건드릴 수 없다.
+ * - "promote": 직속 하위 폴더/직속 문서 배치를 이 폴더의 부모로 한
+ *   단계 끌어올린 뒤 빈 폴더가 된 대상을 지운다. 대상이 최상위였다면
+ *   하위 폴더는 새 최상위가 되고, 직속 문서 배치는
+ *   DocumentFolderEntry.folderId가 NOT NULL이라 옮길 곳이 없어 배치
+ *   자체가 삭제된다("폴더 없음" 상태 - moveDocumentToFolder(folderId:
+ *   null)와 동일한 결과, 문서는 안 지워짐). */
+export async function deleteFolder(folderId: string, userId: string, mode?: FolderDeleteMode): Promise<void> {
+  const folder = await assertOwnsFolder(folderId, userId);
   const db = getDb();
   const [childCount, entryCount] = await Promise.all([
     db.folder.count({ where: { parentFolderId: folderId } }),
     db.documentFolderEntry.count({ where: { folderId } }),
   ]);
-  if (childCount > 0 || entryCount > 0) {
-    throw new Error("비어있지 않은 폴더는 삭제할 수 없습니다 - 먼저 하위 폴더/문서를 옮기거나 지우세요");
+
+  if (childCount === 0 && entryCount === 0) {
+    await db.folder.delete({ where: { id: folderId } });
+    return;
   }
-  await db.folder.delete({ where: { id: folderId } });
+  if (!mode) {
+    throw new Error(FOLDER_NOT_EMPTY_MESSAGE);
+  }
+  if (mode === "recursive") {
+    await db.folder.delete({ where: { id: folderId } });
+    return;
+  }
+
+  // mode === "promote"
+  const destParentId = folder.parentFolderId;
+  const [children, siblingCountAtDest] = await Promise.all([
+    db.folder.findMany({ where: { parentFolderId: folderId } }),
+    db.folder.count({ where: { projectId: folder.projectId, createdBy: userId, parentFolderId: destParentId } }),
+  ]);
+  for (const child of children) {
+    await assertNoSiblingWithName(folder.projectId, userId, destParentId, child.name, child.id);
+  }
+  await db.$transaction([
+    ...children.map((child: { id: string }, i: number) =>
+      db.folder.update({ where: { id: child.id }, data: { parentFolderId: destParentId, order: siblingCountAtDest + i } }),
+    ),
+    ...(destParentId
+      ? [db.documentFolderEntry.updateMany({ where: { folderId }, data: { folderId: destParentId } })]
+      : [db.documentFolderEntry.deleteMany({ where: { folderId } })]),
+    db.folder.delete({ where: { id: folderId } }),
+  ]);
 }
 
 /** 인접한 형제(같은 부모+소유자)와 order 값을 맞바꾼다 - 맨 위/맨

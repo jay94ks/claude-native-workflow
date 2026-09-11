@@ -19,6 +19,13 @@ const folders = ref<FolderItem[]>([]);
 const error = ref("");
 const selected = ref<string | null>(null);
 
+// core/folders.ts의 FOLDER_NOT_EMPTY_MESSAGE와 정확히 같은 문자열이어야
+// 한다(GitRepoPanel.vue의 git_auth_required 정확 일치 분기와 같은 패턴) -
+// 백엔드 메시지를 바꾸면 이쪽도 같이 바꿔야 함.
+const FOLDER_NOT_EMPTY_MESSAGE =
+  "비어있지 않은 폴더는 삭제할 수 없습니다 - 재귀 삭제(recursive)나 상위로 끌어올리기(promote) 중 하나를 선택하세요";
+const pendingDeleteChoice = ref<string | null>(null);
+
 const newFolderParent = ref<string | null>(null);
 const newFolderName = ref("");
 const showNewForm = ref<string | "root" | null>(null);
@@ -95,13 +102,38 @@ async function rename() {
 
 async function remove(id: string) {
   error.value = "";
+  pendingDeleteChoice.value = null;
   try {
     await apiCall(`/folders/${id}`, { method: "DELETE" });
     if (selected.value === id) select(null);
     await load();
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다(비어있지 않은 폴더일 수 있음)";
+    if (err instanceof ApiError && err.message === FOLDER_NOT_EMPTY_MESSAGE) {
+      pendingDeleteChoice.value = id;
+      return;
+    }
+    error.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
   }
+}
+
+async function removeWithMode(id: string, mode: "recursive" | "promote") {
+  error.value = "";
+  pendingDeleteChoice.value = null;
+  try {
+    await apiCall(`/folders/${id}?mode=${mode}`, { method: "DELETE" });
+    if (selected.value === id) select(null);
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
+  }
+}
+
+function confirmRecursiveDelete(id: string) {
+  const confirmed = window.confirm(
+    "이 폴더와 모든 하위 폴더, 그 안의 문서 배치가 함께 사라집니다.\n문서 자체는 삭제되지 않습니다(이 폴더에 있다는 정리 정보만 사라짐).\n되돌릴 수 없습니다.",
+  );
+  if (!confirmed) return;
+  removeWithMode(id, "recursive");
 }
 
 async function reorder(id: string, direction: "up" | "down") {
@@ -147,6 +179,12 @@ onMounted(load);
               <button class="add-btn" @click.stop="openNewForm(node.id)">+</button>
               <button class="remove-btn" @click.stop="remove(node.id)">삭제</button>
             </template>
+          </div>
+          <div v-if="pendingDeleteChoice === node.id" class="delete-choice" @click.stop>
+            <span class="delete-choice-label">비어있지 않음:</span>
+            <button class="choice-btn danger" @click="confirmRecursiveDelete(node.id)">재귀 삭제</button>
+            <button class="choice-btn" @click="removeWithMode(node.id, 'promote')">상위로 끌어올리기</button>
+            <button class="choice-btn" @click="pendingDeleteChoice = null">취소</button>
           </div>
           <form v-if="showNewForm === node.id" class="new-form" @submit.prevent="createFolder">
             <input v-model="newFolderName" type="text" placeholder="하위 폴더 이름" />
@@ -226,6 +264,28 @@ onMounted(load);
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
+}
+.delete-choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 8px;
+}
+.delete-choice-label {
+  font-size: 11px;
+  color: #d1344b;
+}
+.choice-btn {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.choice-btn.danger {
+  border-color: #e2a2ad;
+  color: #d1344b;
 }
 .children {
   list-style: none;

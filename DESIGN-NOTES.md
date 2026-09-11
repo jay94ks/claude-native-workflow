@@ -2991,6 +2991,76 @@ Express는 라우트를 등록 순서대로 매칭하므로, `bulk-folder`처럼
 "폴더에서 빼기" 버튼과 함께) 스크린샷 확인. `npx tsc
 --noEmit`(backend), `vue-tsc -b`(frontend) 전부 클린.
 
+## 폴더 재귀 삭제/상위로 끌어올리기(`#folder-delete-recursive`) - 완료 (2026-09-12)
+
+PLANS.md 11번(`## 4. 문서 정리 폴더` 유일 항목). `deleteFolder()`가
+하위 폴더나 문서 배치가 하나라도 있으면 무조건 거부했다 - 재귀
+삭제나 "상위로 끌어올리기" 옵션이 없어, 설계 당시에도 의도적으로
+범위 밖으로 뺐던 부분(재검토 후보로 남겨둔 항목).
+
+**재귀 삭제는 거의 공짜였다** - `Folder.parentFolder`와
+`DocumentFolderEntry.folder` 관계가 둘 다 이미 `onDelete: Cascade`로
+선언돼 있어서, 가드를 건너뛰고 그냥 `db.folder.delete()`를 부르면
+DB가 하위 폴더와 그 안의 문서 배치를 전부 재귀적으로 정리해준다 -
+문서(Document) 자신은 전혀 안 지워지고 "이 폴더에 있다"는 배치
+메타데이터만 사라진다. 새 재귀 순회 코드는 한 줄도 안 짰다.
+
+"상위로 끌어올리기"(`mode: "promote"`)는 실제 새 로직이 필요했다 -
+직속 하위 폴더의 `parentFolderId`를 대상의 부모로, 직속
+`DocumentFolderEntry`의 `folderId`도 같은 곳으로 옮기고(대상이
+최상위였다면 문서 배치는 `folderId`가 NOT NULL이라 옮길 곳이 없어
+삭제됨 - `moveDocumentToFolder(folderId: null)`과 동일한 "폴더 없음"
+결과), 빈 폴더가 된 대상을 삭제하는 트랜잭션 하나로 구현했다.
+`DocumentFolderEntry`가 `@@unique([documentId, userId])`뿐이고
+`folderId`는 그 유니크에 안 들어가므로(한 설계자는 문서 하나당
+배치를 딱 하나만 가짐) `folderId`만 그냥 갱신해도 유니크 충돌이 날
+수 없다는 것도 확인. 목적지에 이름이 겹치는 폴더가 있으면 기존
+`assertNoSiblingWithName()`을 그대로 재사용해 거부(새 검증 로직
+불필요). 폴더는 항상 단일 소유자 트리라(하위 폴더/배치를 만들려면
+항상 상위 폴더 소유권이 필요) 재귀 삭제가 다른 설계자의 데이터를
+건드릴 가능성은 구조적으로 없다.
+
+라우트 `DELETE /api/folders/:folderId`에 `?mode=recursive|promote`
+쿼리 파라미터를 추가(둘 다 선택적 - 안 주면 기존 "비어있을 때만
+삭제" 동작 그대로). 웹 UI(`FolderTree.vue`) - 삭제가 "비어있지
+않음" 에러로 실패하면 일반 에러 텍스트 대신 그 폴더 행에 "재귀
+삭제"/"상위로 끌어올리기"/"취소" 3버튼을 보여준다. 에러 구분은
+`GitRepoPanel.vue:78`의 `git_auth_required` 정확 일치 분기와 같은
+패턴 - 백엔드가 던지는 고정 문자열(`FOLDER_NOT_EMPTY_MESSAGE`,
+`core/folders.ts`에 상수로 선언)을 프론트에도 똑같이 복사해 정확히
+일치할 때만 선택 UI로 분기한다(다른 에러는 그냥 에러 메시지). "재귀
+삭제"는 `ProjectSettingsView.vue`의 프로젝트 삭제와 같은
+`window.confirm()`으로 확인을 받고("문서 자체는 안 지워진다"는
+점도 문구에 명시), "상위로 끌어올리기"는 데이터를 안 지우고
+재배치만 하므로 확인 없이 바로 실행한다. 폴더는 CLI/MCP가 모르는
+웹 전용 기능이라(단건 삭제도 이미 그렇듯) 이번에도 CLI/MCP 변경
+없음.
+
+**참고**: `FolderTree.vue`는 최상위 폴더의 직계 자식까지만 액션
+버튼(▲▼+삭제)이 있고 그 아래(손자 이하)는 트리에 렌더링조차 안
+된다 - 이번 라운드와 별개인 기존 한계라 그대로 뒀다(재귀 삭제 자체는
+API/DB 레벨에서 몇 단계든 정확히 동작 확인됨 - 트리 UI가 깊은
+폴더를 못 보여줄 뿐).
+
+**실측 검증**: docker 재빌드·재기동 후 admin 계정으로 HTTP 왕복 -
+다단계 트리(A→B→문서 배치)를 만들어 mode 없이 A 삭제 시도 → 고정
+에러 메시지 확인 → `mode=recursive`로 재시도 → 200, A/B 둘 다
+사라지고 문서 배치도 사라졌지만 문서 자신은 `GET /documents/...`로
+여전히 조회됨 확인. 별도 트리(C→D, C에 직접 문서 배치)를 만들어
+`mode=promote`로 C 삭제 → D가 새 최상위가 되고 C의 직접 배치는
+"폴더 없음" 상태가 됨 확인. 이름이 겹치는 경우(F 밑에 X, F의 자식
+E 밑에도 X)로 E를 promote 시도 → "같은 위치에 이미 "X" 폴더가
+있습니다"로 거부 확인. 잘못된 mode 값 → 400 확인. 브라우저 -
+비어있지 않은 폴더 삭제 클릭 → 3버튼 선택 UI 노출 확인 →
+`window.confirm()`이 이 자동화 환경에서 자동 거부되는 걸 이용해
+"재귀 삭제" 클릭이 확인 없이는 아무 요청도 안 보낸다는 걸
+`read_network_requests`로 역으로 확인(의도한 게이팅이 실제로
+막고 있다는 증거) → 같은 폴더에서 "상위로 끌어올리기" 클릭 → 확인
+없이 바로 `?mode=promote` 요청이 나가고(200) 화면에서 하위 폴더가
+즉시 최상위로 올라온 것을 스크린샷으로 확인. `npx tsc
+--noEmit`(backend), `vue-tsc -b`(frontend), `npm run audit:cli-mcp`
+(변경 없음 재확인) 전부 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
