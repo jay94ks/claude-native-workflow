@@ -118,6 +118,12 @@ export async function listDocuments(projectId: string, docTypeId?: string): Prom
   return listDocumentsFromIndex({ projectId, docTypeId });
 }
 
+/** 홈 대시보드 "최근 변경 문서" + 그 "더보기" 전체 목록 둘 다 이걸
+ * 쓴다(limit만 다르게 호출) - 변경(updatedAt) 순 정렬. */
+export async function listRecentDocuments(projectId: string, limit = 5): Promise<SearchableDocument[]> {
+  return searchDocuments("", { projectId, limit, sort: ["updatedAt:desc"] });
+}
+
 export async function searchProjectDocuments(
   projectId: string,
   query: string,

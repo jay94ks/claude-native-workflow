@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import FolderTree from "../components/FolderTree.vue";
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
+const route = useRoute();
+const isRecentMode = computed(() => route.query.recent === "1");
 
 interface DocumentSummary {
   trackingCode: string;
@@ -43,7 +45,10 @@ async function load() {
   error.value = "";
   try {
     docTypes.value = await apiCall<DocType[]>(`/projects/${props.id}/doc-types`);
-    if (selectedFolderId.value) {
+    if (isRecentMode.value) {
+      // 홈 대시보드 "더보기" - 폴더/타입 필터 무시하고 변경 순 전체를 보여준다.
+      documents.value = await apiCall<DocumentSummary[]>(`/projects/${props.id}/documents/recent?limit=100`);
+    } else if (selectedFolderId.value) {
       // 폴더 전용 목록은 상태 코드를 안 담고 있어 표시용으로 "-"를 채운다
       // (폴더는 DB 전용 정리 기능이라 검색 인덱스를 안 거치는 별도 경로).
       const folderDocs = await apiCall<FolderDocument[]>(`/folders/${selectedFolderId.value}/documents`);
@@ -126,24 +131,28 @@ watch(filterTypeId, load);
 
 <template>
   <div class="layout">
-    <FolderTree :project-id="id" @select="onFolderSelect" />
+    <FolderTree v-if="!isRecentMode" :project-id="id" @select="onFolderSelect" />
 
     <div class="main">
-      <div class="filter-row">
-        <select v-if="!selectedFolderId" v-model="filterTypeId">
-          <option value="">전체 타입</option>
-          <option v-for="t in docTypes" :key="t.id" :value="t.id">{{ t.code }} · {{ t.label }}</option>
-        </select>
-      </div>
+      <h2 v-if="isRecentMode" class="recent-heading">최근 변경된 문서(변경 순)</h2>
 
-      <form class="create-row" @submit.prevent="create">
-        <input v-model="newTitle" type="text" placeholder="새 문서 제목" />
-        <select v-model="newTypeCode">
-          <option v-for="t in docTypes" :key="t.id" :value="t.code">{{ t.code }}</option>
-        </select>
-        <button type="submit">만들기</button>
-      </form>
-      <p v-if="selectedTypeGuideline" class="guideline-hint">{{ selectedTypeGuideline }}</p>
+      <template v-if="!isRecentMode">
+        <div class="filter-row">
+          <select v-if="!selectedFolderId" v-model="filterTypeId">
+            <option value="">전체 타입</option>
+            <option v-for="t in docTypes" :key="t.id" :value="t.id">{{ t.code }} · {{ t.label }}</option>
+          </select>
+        </div>
+
+        <form class="create-row" @submit.prevent="create">
+          <input v-model="newTitle" type="text" placeholder="새 문서 제목" />
+          <select v-model="newTypeCode">
+            <option v-for="t in docTypes" :key="t.id" :value="t.code">{{ t.code }}</option>
+          </select>
+          <button type="submit">만들기</button>
+        </form>
+        <p v-if="selectedTypeGuideline" class="guideline-hint">{{ selectedTypeGuideline }}</p>
+      </template>
 
       <p v-if="error" class="error">{{ error }}</p>
       <p v-if="moveError" class="error">{{ moveError }}</p>
@@ -196,6 +205,10 @@ watch(filterTypeId, load);
   border: 1px solid #d8dae0;
   border-radius: 6px;
   font-size: 11px;
+}
+.recent-heading {
+  font-size: 15px;
+  margin: 0 0 12px;
 }
 .filter-row {
   margin-bottom: 12px;

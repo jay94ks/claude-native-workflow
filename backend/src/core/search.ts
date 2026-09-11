@@ -79,6 +79,9 @@ export interface SearchOptions {
   docTypeId?: string;
   statusCode?: string;
   limit?: number;
+  /** 예: ["updatedAt:desc"] - ensureSearchIndexes()가 등록한 sortable
+   * 속성(createdAt/updatedAt)만 쓸 수 있다. */
+  sort?: string[];
 }
 
 export async function searchDocuments(query: string, opts: SearchOptions = {}): Promise<SearchableDocument[]> {
@@ -91,6 +94,7 @@ export async function searchDocuments(query: string, opts: SearchOptions = {}): 
     .search(query, {
       filter: filters.length ? filters.join(" AND ") : undefined,
       limit: opts.limit ?? 50,
+      sort: opts.sort,
     });
   return res.hits as SearchableDocument[];
 }

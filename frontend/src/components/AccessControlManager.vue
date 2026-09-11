@@ -2,6 +2,9 @@
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import UserRef from "./UserRef.vue";
+import { useNicknamesStore } from "../stores/nicknames";
+
+const nicknames = useNicknamesStore();
 
 const props = defineProps<{ projectId: string }>();
 
@@ -19,7 +22,6 @@ interface AccessOverride {
   userId: string;
   docTypeId: string | null;
   documentId: string | null;
-  folderId: string | null;
   canRead: boolean | null;
   canWrite: boolean | null;
   canDelete: boolean | null;
@@ -53,6 +55,7 @@ async function load() {
     members.value = m;
     docTypes.value = d;
     overrides.value = o;
+    for (const member of m) nicknames.ensure(member.userId);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "접근 권한 정보를 불러오지 못했습니다";
   } finally {
@@ -117,7 +120,7 @@ onMounted(load);
       <form class="form" @submit.prevent="save">
         <select v-model="targetUserId">
           <option value="">대상 설계자 선택</option>
-          <option v-for="m in members" :key="m.userId" :value="m.userId">{{ m.userId }} ({{ m.role }})</option>
+          <option v-for="m in members" :key="m.userId" :value="m.userId">{{ nicknames.labels[m.userId] ?? m.userId }} ({{ m.role }})</option>
         </select>
         <div class="scope-tabs">
           <button type="button" :class="{ active: scope === 'common' }" @click="scope = 'common'">공통</button>
@@ -147,9 +150,7 @@ onMounted(load);
                 ? `문서(${o.documentId})`
                 : o.docTypeId
                   ? `타입(${docTypeLabel(o.docTypeId)})`
-                  : o.folderId
-                    ? `폴더(${o.folderId})`
-                    : "공통"
+                  : "공통"
             }}
           </span>
           <span class="flags-view">읽기:{{ flagText(o.canRead) }} 쓰기:{{ flagText(o.canWrite) }} 삭제:{{ flagText(o.canDelete) }}</span>

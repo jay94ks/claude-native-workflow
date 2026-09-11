@@ -24,6 +24,10 @@ interface NextStatus {
   label: string;
   guideline: string | null;
 }
+interface SourceLink {
+  id: string;
+  filePath: string;
+}
 
 const doc = ref<DocumentDetail | null>(null);
 const body = ref("");
@@ -36,6 +40,10 @@ const mode = ref<"read" | "edit">("read");
 const nextStatuses = ref<NextStatus[]>([]);
 const toStatusCode = ref("");
 const transitionError = ref("");
+
+const sourceLinks = ref<SourceLink[]>([]);
+const sourceLinksError = ref("");
+const newSourcePath = ref("");
 
 const deleting = ref(false);
 const deleteError = ref("");
@@ -74,6 +82,44 @@ async function loadNextStatuses() {
   }
 }
 
+async function loadSourceLinks() {
+  try {
+    sourceLinks.value = await apiCall<SourceLink[]>(`/documents/${props.trackingCode}/source-links`);
+  } catch {
+    sourceLinks.value = [];
+  }
+}
+
+async function addSourceLink() {
+  const filePath = newSourcePath.value.trim();
+  if (!filePath) return;
+  sourceLinksError.value = "";
+  try {
+    await apiCall(`/documents/${props.trackingCode}/source-links`, {
+      method: "POST",
+      body: JSON.stringify({ filePath }),
+    });
+    newSourcePath.value = "";
+    await loadSourceLinks();
+  } catch (err) {
+    sourceLinksError.value = err instanceof ApiError ? err.message : "연결에 실패했습니다";
+  }
+}
+
+async function removeSourceLink(id: string) {
+  sourceLinksError.value = "";
+  try {
+    await apiCall(`/document-source-links/${id}?trackingCode=${encodeURIComponent(props.trackingCode)}`, { method: "DELETE" });
+    await loadSourceLinks();
+  } catch (err) {
+    sourceLinksError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
+  }
+}
+
+function openSourceFile(filePath: string) {
+  router.push(`/projects/${props.id}/source?path=${encodeURIComponent(filePath)}`);
+}
+
 async function load() {
   loading.value = true;
   error.value = "";
@@ -81,7 +127,7 @@ async function load() {
     doc.value = await fetchDocument(true);
     body.value = doc.value.body;
     mode.value = "read";
-    await loadNextStatuses();
+    await Promise.all([loadNextStatuses(), loadSourceLinks()]);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "문서를 불러오지 못했습니다";
   } finally {
@@ -243,6 +289,22 @@ onMounted(load);
       </div>
     </template>
 
+    <section class="source-links">
+      <h2>연관된 소스 코드</h2>
+      <p v-if="sourceLinksError" class="error">{{ sourceLinksError }}</p>
+      <ul v-if="sourceLinks.length > 0" class="source-list">
+        <li v-for="link in sourceLinks" :key="link.id">
+          <button type="button" class="source-path" @click="openSourceFile(link.filePath)">{{ link.filePath }}</button>
+          <button type="button" class="remove-btn" @click="removeSourceLink(link.id)">해제</button>
+        </li>
+      </ul>
+      <p v-else class="muted">연결된 소스코드가 없습니다.</p>
+      <form class="source-form" @submit.prevent="addSourceLink">
+        <input v-model="newSourcePath" type="text" placeholder="소스 파일 경로(예: backend/src/core/auth.ts)" />
+        <button type="submit">연결</button>
+      </form>
+    </section>
+
     <QAPanel :project-id="id" :tracking-code="trackingCode" class="qa" @status-transitioned="refreshStatus" />
     <CommentsPanel :project-id="id" :tracking-code="trackingCode" />
   </template>
@@ -372,6 +434,69 @@ button:disabled {
 }
 .qa {
   margin-top: 28px;
+}
+.source-links {
+  margin-top: 28px;
+}
+.source-links h2 {
+  font-size: 15px;
+  margin: 0 0 10px;
+}
+.source-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+.source-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
+}
+.source-list li:last-child {
+  border-bottom: none;
+}
+.source-path {
+  background: none;
+  border: none;
+  color: #3454d1;
+  font-size: 12px;
+  text-align: left;
+  font-family: monospace;
+}
+.remove-btn {
+  background: none;
+  border: none;
+  color: #999;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.remove-btn:hover {
+  color: #d1344b;
+}
+.source-form {
+  display: flex;
+  gap: 8px;
+}
+.source-form input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.source-form button {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+.muted {
+  color: #888;
+  font-size: 13px;
 }
 .error {
   color: #d1344b;

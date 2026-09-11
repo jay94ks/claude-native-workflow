@@ -13,6 +13,10 @@ export interface Me {
   phone: string | null;
   emailVisible: boolean;
   phoneVisible: boolean;
+  nickname: string | null;
+  nicknameNumber: number;
+  displayLabel: string;
+  nicknameChangedAt: string | null;
 }
 
 export const useAuthStore = defineStore("auth", {

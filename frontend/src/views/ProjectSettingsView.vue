@@ -4,6 +4,7 @@ import { apiCall, ApiError } from "../api/client";
 import DocTypeManager from "../components/DocTypeManager.vue";
 import GitRepoPanel from "../components/GitRepoPanel.vue";
 import AccessControlManager from "../components/AccessControlManager.vue";
+import UserRef from "../components/UserRef.vue";
 
 const props = defineProps<{ id: string }>();
 
@@ -104,7 +105,7 @@ onMounted(load);
       </p>
       <ul class="list">
         <li v-for="m in members" :key="m.id">
-          <span>{{ m.userId }}</span>
+          <UserRef :user-id="m.userId" />
           <span class="muted">{{ m.role }}</span>
         </li>
         <li v-if="members.length === 0" class="muted">멤버가 없습니다.</li>

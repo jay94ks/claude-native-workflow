@@ -90,6 +90,34 @@ export interface RegisterInput {
 
 const MIN_PASSWORD_LENGTH = 8;
 
+// ---------------------------------------------------------------- 닉네임 넘버링
+
+const DEFAULT_NICKNAME_LABEL = "설계자";
+const NICKNAME_COOLDOWN_DAYS = 7;
+
+/** nickname이 null인 계정은 표시상 공통 라벨 "설계자"를 쓴다 - where
+ * 절도 그 규칙 그대로: label이 "설계자"면 nickname IS NULL인 행들이
+ * 그 풀, 아니면 nickname === label인 행들이 그 풀. */
+function nicknameWhereForLabel(label: string) {
+  return label === DEFAULT_NICKNAME_LABEL ? { nickname: null } : { nickname: label };
+}
+
+/** 그 라벨 풀 안에서 다음 순번(1부터) - 매번 다시 세지 않고 닉네임이
+ * 바뀌는 시점(가입 시 "설계자" 풀 편입 포함)에만 계산해 User.nicknameNumber
+ * 에 확정 저장한다. */
+async function nextNicknameNumber(db: ReturnType<typeof getDb>, label: string): Promise<number> {
+  const top = await db.user.findFirst({
+    where: nicknameWhereForLabel(label),
+    orderBy: { nicknameNumber: "desc" },
+    select: { nicknameNumber: true },
+  });
+  return (top?.nicknameNumber ?? 0) + 1;
+}
+
+function formatDisplayLabel(nickname: string | null, nicknameNumber: number): string {
+  return `${nickname ?? DEFAULT_NICKNAME_LABEL} #${nicknameNumber}`;
+}
+
 export async function register(
   input: RegisterInput,
 ): Promise<{ id: string; username: string; email: string | null }> {
@@ -111,8 +139,9 @@ export async function register(
     );
   }
   const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+  const nicknameNumber = await nextNicknameNumber(db, DEFAULT_NICKNAME_LABEL);
   const user = await db.user.create({
-    data: { username: input.username, email: input.email ?? null, passwordHash },
+    data: { username: input.username, email: input.email ?? null, passwordHash, nicknameNumber },
   });
   return { id: user.id, username: user.username, email: user.email };
 }
@@ -184,6 +213,10 @@ export interface MeProfile {
   phone: string | null;
   emailVisible: boolean;
   phoneVisible: boolean;
+  nickname: string | null;
+  nicknameNumber: number;
+  displayLabel: string;
+  nicknameChangedAt: string | null;
 }
 
 export async function getMe(userId: string): Promise<MeProfile> {
@@ -197,6 +230,10 @@ export async function getMe(userId: string): Promise<MeProfile> {
     phone: user.phone,
     emailVisible: user.emailVisible,
     phoneVisible: user.phoneVisible,
+    nickname: user.nickname,
+    nicknameNumber: user.nicknameNumber,
+    displayLabel: formatDisplayLabel(user.nickname, user.nicknameNumber),
+    nicknameChangedAt: user.nicknameChangedAt ? user.nicknameChangedAt.toISOString() : null,
   };
 }
 
@@ -205,10 +242,34 @@ export interface UpdateMeInput {
   phone?: string;
   emailVisible?: boolean;
   phoneVisible?: boolean;
+  nickname?: string;
 }
 
 export async function updateMe(userId: string, input: UpdateMeInput): Promise<MeProfile> {
   const db = getDb();
+  const current = await db.user.findUnique({ where: { id: userId } });
+  if (!current) throw new AuthError(`사용자를 찾을 수 없습니다: ${userId}`);
+
+  let nicknameUpdate: { nickname: string | null; nicknameNumber: number; nicknameChangedAt: Date } | undefined;
+  if (input.nickname !== undefined) {
+    const trimmed = input.nickname.trim();
+    const newValue = trimmed || null;
+    if (newValue !== current.nickname) {
+      if (current.nicknameChangedAt) {
+        const elapsedMs = Date.now() - current.nicknameChangedAt.getTime();
+        const remainingDays = NICKNAME_COOLDOWN_DAYS - elapsedMs / (24 * 60 * 60 * 1000);
+        if (remainingDays > 0) {
+          throw new AuthError(
+            `닉네임은 마지막 변경 후 ${NICKNAME_COOLDOWN_DAYS}일간 다시 변경할 수 없습니다(약 ${Math.ceil(remainingDays)}일 후 가능)`,
+          );
+        }
+      }
+      const label = newValue ?? DEFAULT_NICKNAME_LABEL;
+      const nicknameNumber = await nextNicknameNumber(db, label);
+      nicknameUpdate = { nickname: newValue, nicknameNumber, nicknameChangedAt: new Date() };
+    }
+  }
+
   const user = await db.user.update({
     where: { id: userId },
     data: {
@@ -216,6 +277,7 @@ export async function updateMe(userId: string, input: UpdateMeInput): Promise<Me
       phone: input.phone !== undefined ? input.phone.trim() || null : undefined,
       emailVisible: input.emailVisible,
       phoneVisible: input.phoneVisible,
+      ...nicknameUpdate,
     },
   });
   return {
@@ -225,6 +287,10 @@ export async function updateMe(userId: string, input: UpdateMeInput): Promise<Me
     phone: user.phone,
     emailVisible: user.emailVisible,
     phoneVisible: user.phoneVisible,
+    nickname: user.nickname,
+    nicknameNumber: user.nicknameNumber,
+    displayLabel: formatDisplayLabel(user.nickname, user.nicknameNumber),
+    nicknameChangedAt: user.nicknameChangedAt ? user.nicknameChangedAt.toISOString() : null,
   };
 }
 
@@ -233,11 +299,15 @@ export interface PublicProfile {
   username: string;
   email: string | null;
   phone: string | null;
+  nickname: string | null;
+  nicknameNumber: number;
+  displayLabel: string;
 }
 
 /** 본인이면 email/phone 전체 공개, 아니면 emailVisible/phoneVisible에
  * 따라 가린다 - username/id는 이미 CLI 로그인 아이디로도 쓰이는 값이라
- * 민감정보로 취급하지 않고 항상 공개. */
+ * 민감정보로 취급하지 않고 항상 공개. 닉네임(표시용 라벨)도 애초에
+ * 비공개 개념이 아니라 항상 공개(emailVisible류 토글 대상 아님). */
 export async function getPublicProfile(viewerId: string, targetUserId: string): Promise<PublicProfile> {
   const db = getDb();
   const user = await db.user.findUnique({ where: { id: targetUserId } });
@@ -248,5 +318,8 @@ export async function getPublicProfile(viewerId: string, targetUserId: string): 
     username: user.username,
     email: isSelf || user.emailVisible ? user.email : null,
     phone: isSelf || user.phoneVisible ? user.phone : null,
+    nickname: user.nickname,
+    nicknameNumber: user.nicknameNumber,
+    displayLabel: formatDisplayLabel(user.nickname, user.nicknameNumber),
   };
 }

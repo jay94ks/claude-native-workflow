@@ -9,6 +9,7 @@ interface FolderItem {
   id: string;
   parentFolderId: string | null;
   name: string;
+  order: number;
 }
 interface Node extends FolderItem {
   children: Node[];
@@ -103,23 +104,36 @@ async function remove(id: string) {
   }
 }
 
+async function reorder(id: string, direction: "up" | "down") {
+  error.value = "";
+  try {
+    await apiCall(`/folders/${id}/reorder`, { method: "POST", body: JSON.stringify({ direction }) });
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "순서 변경에 실패했습니다";
+  }
+}
+
 onMounted(load);
 </script>
 
 <template>
   <div class="tree">
     <p v-if="error" class="error">{{ error }}</p>
-    <div class="node root" :class="{ active: selected === null }" @click="select(null)">
-      <span>(폴더 없음 - 전체 문서)</span>
-      <button class="add-btn" @click.stop="openNewForm('root')">+</button>
+    <div class="toolbar">
+      <button class="new-root-btn" @click="openNewForm('root')">+ 새 폴더</button>
     </div>
     <form v-if="showNewForm === 'root'" class="new-form" @submit.prevent="createFolder">
       <input v-model="newFolderName" type="text" placeholder="폴더 이름" />
       <button type="submit">생성</button>
     </form>
 
+    <div class="node root" :class="{ active: selected === null }" @click="select(null)">
+      <span>(폴더 없음 - 전체 문서)</span>
+    </div>
+
     <ul class="children">
-      <template v-for="node in tree" :key="node.id">
+      <template v-for="(node, i) in tree" :key="node.id">
         <li>
           <div class="node" :class="{ active: selected === node.id }" @click="select(node.id)" @dblclick="startRename(node)">
             <template v-if="renamingId === node.id">
@@ -128,6 +142,8 @@ onMounted(load);
             </template>
             <template v-else>
               <span>{{ node.name }}</span>
+              <button class="order-btn" :disabled="i === 0" @click.stop="reorder(node.id, 'up')">▲</button>
+              <button class="order-btn" :disabled="i === tree.length - 1" @click.stop="reorder(node.id, 'down')">▼</button>
               <button class="add-btn" @click.stop="openNewForm(node.id)">+</button>
               <button class="remove-btn" @click.stop="remove(node.id)">삭제</button>
             </template>
@@ -181,7 +197,8 @@ onMounted(load);
   white-space: nowrap;
 }
 .add-btn,
-.remove-btn {
+.remove-btn,
+.order-btn {
   background: none;
   border: none;
   color: #999;
@@ -189,8 +206,26 @@ onMounted(load);
   flex-shrink: 0;
 }
 .add-btn:hover,
-.remove-btn:hover {
+.remove-btn:hover,
+.order-btn:hover:not(:disabled) {
   color: #3454d1;
+}
+.order-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.toolbar {
+  margin-bottom: 6px;
+}
+.new-root-btn {
+  width: 100%;
+  background: #3454d1;
+  color: #fff;
+  border: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
 }
 .children {
   list-style: none;

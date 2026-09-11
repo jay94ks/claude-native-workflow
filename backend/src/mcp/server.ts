@@ -374,6 +374,37 @@ async function main() {
     async (a) => call(`/api/documents/${a.trackingCode}`, { method: "DELETE" }),
   );
 
+  // ---------------------------------------------------------------- 연관된 소스코드
+
+  tool(
+    "document_link_source",
+    "소스코드 링크 추가",
+    "이 문서와 연관된 소스코드 파일 경로를 연결한다(git 저장소 루트 기준 상대 경로).",
+    { trackingCode: z.string(), filePath: z.string() },
+    async (a) =>
+      call(`/api/documents/${a.trackingCode}/source-links`, {
+        method: "POST",
+        body: JSON.stringify({ filePath: a.filePath }),
+      }),
+  );
+  tool(
+    "document_unlink_source",
+    "소스코드 링크 제거",
+    "연결된 소스코드 링크를 제거한다.",
+    { trackingCode: z.string(), linkId: z.string() },
+    async (a) =>
+      call(`/api/document-source-links/${a.linkId}?trackingCode=${encodeURIComponent(a.trackingCode as string)}`, {
+        method: "DELETE",
+      }),
+  );
+  tool(
+    "document_source_links",
+    "연관된 소스코드 목록",
+    "이 문서와 연관된 소스코드 파일 경로 목록.",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/documents/${a.trackingCode}/source-links`),
+  );
+
   // ---------------------------------------------------------------- 세부 접근 권한
 
   tool(

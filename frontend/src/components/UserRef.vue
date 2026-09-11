@@ -1,23 +1,12 @@
 <script setup lang="ts">
-defineProps<{ userId: string }>();
+import { computed, onMounted } from "vue";
+import { useNicknamesStore } from "../stores/nicknames";
+
+const props = defineProps<{ userId: string }>();
+const store = useNicknamesStore();
+onMounted(() => store.ensure(props.userId));
+const label = computed(() => store.labels[props.userId] ?? "...");
 </script>
-
 <template>
-  <router-link :to="`/users/${userId}`" class="user-ref"><code>[{{ userId }}]</code></router-link>
+  <router-link :to="`/users/${userId}`" class="user-ref"><code>[{{ label }}]</code></router-link>
 </template>
-
-<style scoped>
-.user-ref {
-  color: #3454d1;
-  text-decoration: none;
-}
-.user-ref code {
-  background: #f0f1f5;
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 12px;
-}
-.user-ref:hover code {
-  background: #e4e9fb;
-}
-</style>

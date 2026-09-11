@@ -612,6 +612,40 @@ program
   .description("이 문서에서 지금 선택 가능한 다음 상태 목록(코드/라벨/지침)")
   .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/next-statuses`))));
 
+// ---------------------------------------------------------------- 연관된 소스코드
+
+program
+  .command("link-source <trackingCode> <path>")
+  .description("이 문서와 연관된 소스코드 파일 경로를 연결한다(git 저장소 루트 기준 상대 경로)")
+  .action((trackingCode, path) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/documents/${trackingCode}/source-links`, {
+          method: "POST",
+          body: JSON.stringify({ filePath: path }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("unlink-source <trackingCode> <linkId>")
+  .description("연결된 소스코드 링크를 제거한다")
+  .action((trackingCode, linkId) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/document-source-links/${linkId}?trackingCode=${encodeURIComponent(trackingCode)}`, {
+          method: "DELETE",
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("source-links <trackingCode>")
+  .description("이 문서와 연관된 소스코드 파일 경로 목록")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/source-links`))));
+
 // ---------------------------------------------------------------- 세부 접근 권한
 
 program

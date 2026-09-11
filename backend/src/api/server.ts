@@ -44,6 +44,7 @@ import {
   createDocument,
   getDocument,
   listDocuments,
+  listRecentDocuments,
   searchProjectDocuments,
   saveDocumentBody,
   transitionDocumentStatus,
@@ -52,6 +53,7 @@ import {
   listDocumentRevisions,
   deleteDocument,
 } from "../core/documents.js";
+import { addSourceLink, removeSourceLink, listSourceLinks } from "../core/documentSourceLinks.js";
 import { createReport } from "../core/report.js";
 import {
   addQuestion,
@@ -62,11 +64,11 @@ import {
   acknowledgeQuestion,
   countPendingQuestions,
 } from "../core/questions.js";
-import { addComment, listComments, resolveComment } from "../core/comments.js";
+import { addComment, listComments, listRecentComments, resolveComment } from "../core/comments.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
 import { ensureSearchIndexes } from "../core/search.js";
 import { resolveEffectivePermission, setAccessOverride, listAccessOverrides } from "../core/permissions.js";
-import { createFolder, renameFolder, deleteFolder, listFolders, listFolderDocuments, moveDocumentToFolder, getFolderById } from "../core/folders.js";
+import { createFolder, renameFolder, deleteFolder, reorderFolder, listFolders, listFolderDocuments, moveDocumentToFolder } from "../core/folders.js";
 import {
   createApiKey,
   listProjectKeys,
@@ -251,13 +253,14 @@ app.put(
   authenticate,
   requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
-    const { email, phone, emailVisible, phoneVisible } = req.body as {
+    const { email, phone, emailVisible, phoneVisible, nickname } = req.body as {
       email?: string;
       phone?: string;
       emailVisible?: boolean;
       phoneVisible?: boolean;
+      nickname?: string;
     };
-    res.json(await updateMe(req.userId!, { email, phone, emailVisible, phoneVisible }));
+    res.json(await updateMe(req.userId!, { email, phone, emailVisible, phoneVisible, nickname }));
   }),
 );
 
@@ -937,6 +940,18 @@ app.get(
   }),
 );
 
+// 홈 대시보드 "최근 변경 문서" + 그 "더보기"(더 큰 limit으로 재호출)
+// 둘 다 이 라우트 하나를 쓴다.
+app.get(
+  "/api/projects/:projectId/documents/recent",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const limit = Number(req.query.limit ?? 5);
+    res.json(await listRecentDocuments(req.params.projectId, limit));
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/search",
   authenticate,
@@ -1048,6 +1063,49 @@ app.get(
   }),
 );
 
+// "연관된 소스코드" 링크 - 코멘트/폴더와 달리 AI 작업과 직접 관련된
+// 신호라 CLI/MCP에도 노출된다(완전성 원칙).
+app.post(
+  "/api/documents/:trackingCode/source-links",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    const { filePath } = req.body as { filePath?: string };
+    if (!filePath) { res.status(400).json({ error: "filePath가 필요합니다" }); return; }
+    res.json(await addSourceLink(req.params.trackingCode, filePath, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/source-links",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(await listSourceLinks(req.params.trackingCode));
+  }),
+);
+
+app.delete(
+  "/api/document-source-links/:id",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const trackingCode = req.query.trackingCode as string | undefined;
+    if (!trackingCode) { res.status(400).json({ error: "trackingCode 쿼리가 필요합니다" }); return; }
+    const doc = await getDocument(trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    await removeSourceLink(req.params.id, trackingCode);
+    res.json({ ok: true });
+  }),
+);
+
 app.delete(
   "/api/documents/:trackingCode",
   authenticate,
@@ -1126,12 +1184,15 @@ app.get(
   }),
 );
 
-// ---------------------------------------------------------------- 문서 정리용 폴더 (웹 전용 - AI는 모름, CLI/MCP는 절대 호출하지 않음)
+// ---------------------------------------------------------------- 문서 정리용 개인 폴더 (웹 전용 - AI는 모름, CLI/MCP는 절대 호출하지 않음)
+// 폴더는 만든 설계자 개인 소유라(core/folders.ts) 프로젝트 멤버면(viewer
+// 포함) 누구나 자기 폴더를 만들고 관리할 수 있다 - 소유권 확인은 core
+// 함수 내부에서 한다.
 
 app.post(
   "/api/projects/:projectId/folders",
   authenticate,
-  requireProjectRole("editor"),
+  requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const { name, parentFolderId } = req.body as { name?: string; parentFolderId?: string };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
@@ -1158,12 +1219,23 @@ app.delete(
   }),
 );
 
+app.post(
+  "/api/folders/:folderId/reorder",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { direction } = req.body as { direction?: "up" | "down" };
+    if (direction !== "up" && direction !== "down") { res.status(400).json({ error: "direction은 up/down이어야 합니다" }); return; }
+    await reorderFolder(req.params.folderId, direction, req.userId!);
+    res.json({ ok: true });
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/folders",
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    res.json(await listFolders(req.params.projectId));
+    res.json(await listFolders(req.params.projectId, req.userId!));
   }),
 );
 
@@ -1171,27 +1243,7 @@ app.get(
   "/api/folders/:folderId/documents",
   authenticate,
   asyncRoute(async (req, res) => {
-    res.json(await listFolderDocuments(req.params.folderId));
-  }),
-);
-
-app.put(
-  "/api/folders/:folderId/access",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    const folder = await getFolderById(req.params.folderId);
-    if (!folder) { res.status(404).json({ error: "폴더를 찾을 수 없습니다" }); return; }
-    const role = await getMemberRole(folder.projectId, req.userId!);
-    if (role !== "owner") { res.status(403).json({ error: "프로젝트 owner만 접근 권한을 설정할 수 있습니다" }); return; }
-    const { userId, canRead, canWrite, canDelete } = req.body as {
-      userId?: string;
-      canRead?: boolean;
-      canWrite?: boolean;
-      canDelete?: boolean;
-    };
-    if (!userId) { res.status(400).json({ error: "userId가 필요합니다" }); return; }
-    await setAccessOverride(folder.projectId, userId, { folderId: folder.id }, { canRead, canWrite, canDelete });
-    res.json({ ok: true });
+    res.json(await listFolderDocuments(req.params.folderId, req.userId!));
   }),
 );
 
@@ -1201,8 +1253,10 @@ app.put(
   asyncRoute(async (req, res) => {
     const doc = await getDocument(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    // 개인 폴더 배치는 문서 내용을 안 바꾸는 순수 메타데이터라 read
+    // 권한이면 충분하다(write 요구 안 함).
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
-    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
     const { folderId } = req.body as { folderId?: string | null };
     await moveDocumentToFolder(req.params.trackingCode, folderId ?? null, req.userId!);
     res.json({ ok: true });
@@ -1323,6 +1377,18 @@ app.post(
   asyncRoute(async (req, res) => {
     await resolveComment(req.params.id, req.params.projectId);
     res.json({ ok: true });
+  }),
+);
+
+// 홈 대시보드 "최근 코멘트" + 그 "더보기" - 웹 전용(코멘트는 CLI/MCP에
+// 의도적으로 없음, G 예외 그대로 유지).
+app.get(
+  "/api/projects/:projectId/comments/recent",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const limit = Number(req.query.limit ?? 5);
+    res.json(await listRecentComments(req.params.projectId, limit));
   }),
 );
 

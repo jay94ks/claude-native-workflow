@@ -14,6 +14,8 @@ interface PublicProfile {
   username: string;
   email: string | null;
   phone: string | null;
+  nickname: string | null;
+  displayLabel: string;
 }
 interface ActivityItem {
   type: string;
@@ -34,8 +36,18 @@ const emailDraft = ref("");
 const phoneDraft = ref("");
 const emailVisibleDraft = ref(false);
 const phoneVisibleDraft = ref(false);
+const nicknameDraft = ref("");
 const saveError = ref("");
 const saving = ref(false);
+
+const NICKNAME_COOLDOWN_DAYS = 7;
+const nicknameCooldownRemainingDays = computed(() => {
+  const changedAt = auth.me?.nicknameChangedAt;
+  if (!changedAt) return 0;
+  const elapsedMs = Date.now() - new Date(changedAt).getTime();
+  const remaining = NICKNAME_COOLDOWN_DAYS - elapsedMs / (24 * 60 * 60 * 1000);
+  return remaining > 0 ? Math.ceil(remaining) : 0;
+});
 
 async function load() {
   loading.value = true;
@@ -59,6 +71,7 @@ function startEdit() {
   phoneDraft.value = auth.me?.phone ?? "";
   emailVisibleDraft.value = auth.me?.emailVisible ?? false;
   phoneVisibleDraft.value = auth.me?.phoneVisible ?? false;
+  nicknameDraft.value = auth.me?.nickname ?? "";
   saveError.value = "";
   editing.value = true;
 }
@@ -74,6 +87,7 @@ async function save() {
         phone: phoneDraft.value,
         emailVisible: emailVisibleDraft.value,
         phoneVisible: phoneVisibleDraft.value,
+        nickname: nicknameDraft.value,
       }),
     });
     await auth.loadMe();
@@ -99,11 +113,18 @@ watch(() => props.id, load);
     <section class="card">
       <h2>연락처</h2>
       <template v-if="!editing">
+        <div class="field"><span class="label">닉네임</span> <span>{{ profile.displayLabel }}</span></div>
         <div class="field"><span class="label">이메일</span> <span>{{ profile.email ?? "비공개" }}</span></div>
         <div class="field"><span class="label">전화번호</span> <span>{{ profile.phone ?? "비공개" }}</span></div>
         <button v-if="isSelf" class="edit-btn" @click="startEdit">수정</button>
       </template>
       <template v-else>
+        <div class="field">
+          <label>닉네임 <input v-model="nicknameDraft" type="text" placeholder="설정하지 않으면 '설계자'로 표시됩니다" /></label>
+          <p v-if="nicknameCooldownRemainingDays > 0" class="hint">
+            최근 변경 후 {{ nicknameCooldownRemainingDays }}일간 다시 변경할 수 없습니다(값을 바꾸지 않으면 그대로 저장 가능).
+          </p>
+        </div>
         <div class="field">
           <label>이메일 <input v-model="emailDraft" type="text" /></label>
           <label class="checkbox"><input v-model="emailVisibleDraft" type="checkbox" /> 다른 사람에게 공개</label>
@@ -174,6 +195,11 @@ h2 {
   margin-left: 10px;
   font-size: 12px;
   color: #666;
+}
+.hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #b58a00;
 }
 .edit-btn,
 .actions button {

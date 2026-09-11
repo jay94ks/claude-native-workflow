@@ -186,11 +186,14 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 검색 | `docs search <projectId> <query>` | `document_search` |
 | 본문 갱신 | `docs save <trackingCode> <file>` | `document_save` |
 | 상태 전이 | `docs transition <trackingCode> <toStatusCode>` | `document_transition` |
-| 다음 가능 상태 조회 | `docs document next-statuses <trackingCode>` | `document_next_statuses` |
+| 다음 가능 상태 조회 | `docs next-statuses <trackingCode>` | `document_next_statuses` |
 | 문서 삭제 | `docs delete <trackingCode>` | `document_delete` |
 | 문서 링크 | `docs link <from> <to>` | `document_link` |
 | 역참조 조회 | `docs backlinks <trackingCode>` | `document_backlinks` |
 | 버전 이력 조회 | `docs revisions <trackingCode>` | `document_revisions` |
+| 연관 소스코드 연결 | `docs link-source <trackingCode> <path>` | `document_link_source` |
+| 연관 소스코드 해제 | `docs unlink-source <trackingCode> <linkId>` | `document_unlink_source` |
+| 연관 소스코드 목록 | `docs source-links <trackingCode>` | `document_source_links` |
 | 보고서 생성 | `docs report-new <projectId> --title <t> --body <file>` | `report_new` |
 | 질의 등록(+참고 문서) | `docs question <trackingCode> <text> [--refs <codes>]` | `question_add` |
 | 문서의 전체 질의/답변 | `docs questions <trackingCode>` | `question_list` |

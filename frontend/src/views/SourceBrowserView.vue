@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
 import { languageForPath } from "../utils/language";
 
 const props = defineProps<{ id: string }>();
+const route = useRoute();
 
 interface TreeEntry {
   name: string;
@@ -59,23 +61,27 @@ function parentDir(dirPath: string): string {
   return parts.join("/");
 }
 
-async function openEntry(entry: TreeEntry) {
-  if (entry.type === "dir") {
-    await loadTree(entry.path);
-    return;
-  }
+async function openFile(path: string) {
   fileLoading.value = true;
   fileError.value = "";
   saveMessage.value = "";
   try {
-    const file = await apiCall<{ content: string }>(`/projects/${props.id}/git/file?path=${encodeURIComponent(entry.path)}`);
-    selectedPath.value = entry.path;
+    const file = await apiCall<{ content: string }>(`/projects/${props.id}/git/file?path=${encodeURIComponent(path)}`);
+    selectedPath.value = path;
     fileContent.value = file.content;
   } catch (err) {
     fileError.value = err instanceof ApiError ? err.message : "파일을 불러오지 못했습니다";
   } finally {
     fileLoading.value = false;
   }
+}
+
+async function openEntry(entry: TreeEntry) {
+  if (entry.type === "dir") {
+    await loadTree(entry.path);
+    return;
+  }
+  await openFile(entry.path);
 }
 
 function openNewFile() {
@@ -109,7 +115,14 @@ async function save() {
 
 onMounted(async () => {
   await checkRepo();
-  if (hasRepo.value) await loadTree("");
+  if (!hasRepo.value) return;
+  const initialPath = route.query.path as string | undefined;
+  if (initialPath) {
+    await loadTree(parentDir(initialPath));
+    await openFile(initialPath);
+  } else {
+    await loadTree("");
+  }
 });
 </script>
 

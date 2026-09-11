@@ -53,6 +53,32 @@ export async function listComments(trackingCode: string): Promise<CommentDetail[
   }));
 }
 
+export interface RecentComment extends CommentDetail {
+  documentTitle: string;
+}
+
+/** 홈 대시보드 "최근 코멘트" + 그 "더보기" 전체 목록 둘 다 이걸 쓴다
+ * (limit만 다르게 호출) - Comment가 이미 projectId를 갖고 있어(문서
+ * 경유 없이) 프로젝트 전체 조회가 바로 된다. */
+export async function listRecentComments(projectId: string, limit = 5): Promise<RecentComment[]> {
+  const db = getDb();
+  const rows = await db.comment.findMany({
+    where: { projectId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    include: { document: true },
+  });
+  return rows.map((r: CommentDetail & { document: { title: string } }) => ({
+    id: r.id,
+    trackingCode: r.trackingCode,
+    body: r.body,
+    authorId: r.authorId,
+    createdAt: r.createdAt,
+    resolvedAt: r.resolvedAt,
+    documentTitle: r.document.title,
+  }));
+}
+
 export async function resolveComment(id: string, projectId: string): Promise<void> {
   const db = getDb();
   const row = await db.comment.findUnique({ where: { id } });

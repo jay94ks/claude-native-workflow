@@ -3,8 +3,10 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { apiCall, apiCallText, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { diffLines } from "diff";
+import { useNicknamesStore } from "../stores/nicknames";
 
 const props = defineProps<{ id: string }>();
+const nicknames = useNicknamesStore();
 
 // ---------------------------------------------------------------- git 커밋 로그
 
@@ -117,9 +119,10 @@ async function loadRevisions() {
       apiCall<Revision[]>(`/documents/${selectedDoc.value}/revisions`),
       apiCall<DocumentDetail>(`/documents/${selectedDoc.value}`),
     ]);
+    await Promise.all(revisions.map((r) => nicknames.ensure(r.editedBy)));
     const entries: TimelineEntry[] = revisions.map((r) => ({
       id: r.id,
-      label: `${new Date(r.editedAt).toLocaleString()} (${r.editedBy})`,
+      label: `${new Date(r.editedAt).toLocaleString()} (${nicknames.labels[r.editedBy] ?? r.editedBy})`,
       body: r.body,
     }));
     entries.push({ id: "current", label: "현재", body: doc.body });

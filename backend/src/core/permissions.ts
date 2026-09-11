@@ -12,7 +12,6 @@ export interface EffectivePermission {
 export interface AccessScope {
   docTypeId?: string;
   documentId?: string;
-  folderId?: string;
 }
 
 function roleDefault(role: string | null): { read: boolean; write: boolean; delete: boolean } {
@@ -29,8 +28,8 @@ function formatPermissionBanner(effective: { read: boolean; write: boolean; dele
 
 /** 문서/문서타입/프로젝트 공통 3단계 오버라이드 체인(문서가 가장
  * 구체적) - owner 자신을 대상으로 한 오버라이드는 무시한다(자기 자신을
- * 실수로 잠그는 사고 방지). folder 스코프는 이 체인과 별개로 독립
- * 취급(문서의 상위 스코프가 아니므로 - core/folders.ts가 직접 조회). */
+ * 실수로 잠그는 사고 방지). 폴더는 개인 소유 정리용 기능이라 이 권한
+ * 체인과 무관 - core/folders.ts가 소유권(createdBy)만으로 직접 판단. */
 export async function resolveEffectivePermission(
   projectId: string,
   userId: string,
@@ -55,7 +54,7 @@ export async function resolveEffectivePermission(
   let overridden = false;
 
   const common = await db.docAccessOverride.findFirst({
-    where: { projectId, userId, docTypeId: null, documentId: null, folderId: null },
+    where: { projectId, userId, docTypeId: null, documentId: null },
   });
   if (common) {
     effective = applyOverride(effective, common);
@@ -64,7 +63,7 @@ export async function resolveEffectivePermission(
 
   if (scope.docTypeId) {
     const docTypeOverride = await db.docAccessOverride.findFirst({
-      where: { projectId, userId, docTypeId: scope.docTypeId, documentId: null, folderId: null },
+      where: { projectId, userId, docTypeId: scope.docTypeId, documentId: null },
     });
     if (docTypeOverride) {
       effective = applyOverride(effective, docTypeOverride);
@@ -74,7 +73,7 @@ export async function resolveEffectivePermission(
 
   if (scope.documentId) {
     const documentOverride = await db.docAccessOverride.findFirst({
-      where: { projectId, userId, documentId: scope.documentId, folderId: null },
+      where: { projectId, userId, documentId: scope.documentId },
     });
     if (documentOverride) {
       effective = applyOverride(effective, documentOverride);
@@ -96,32 +95,15 @@ function applyOverride(
   };
 }
 
-/** 폴더 스코프 write 권한 - core/folders.ts가 "상위 폴더에 쓰기 권한이
- * 있는가"를 확인할 때 쓴다. 문서 체인과 완전히 독립(폴더는 문서의 상위
- * 스코프가 아니므로 project-common과 합성하지 않고 폴더 단위 오버라이드
- * 하나만 본다 - 없으면 프로젝트 기본 role의 write). */
-export async function resolveFolderWritePermission(projectId: string, userId: string, folderId: string | null): Promise<boolean> {
-  if (!(await isProjectAllowedByActiveScope(projectId))) return false;
-  const db = getDb();
-  const role = await getMemberRole(projectId, userId);
-  const base = roleDefault(role).write;
-  if (!folderId || role === "owner") return base;
-  const override = await db.docAccessOverride.findFirst({
-    where: { projectId, userId, folderId, docTypeId: null, documentId: null },
-  });
-  if (!override || override.canWrite === null) return base;
-  return override.canWrite;
-}
-
 export interface SetAccessOverrideInput {
   canRead?: boolean;
   canWrite?: boolean;
   canDelete?: boolean;
 }
 
-/** scope 중 최대 하나만 채워짐(docTypeId/documentId/folderId), 셋 다
- * 없으면 "프로젝트 공통" 레벨 - null 스코프 유니크 문제(TemplateFile과
- * 같은 이유)로 DB 제약이 아니라 findFirst 후 update/create. */
+/** scope 중 최대 하나만 채워짐(docTypeId/documentId), 둘 다 없으면
+ * "프로젝트 공통" 레벨 - null 스코프 유니크 문제(TemplateFile과 같은
+ * 이유)로 DB 제약이 아니라 findFirst 후 update/create. */
 export async function setAccessOverride(
   projectId: string,
   userId: string,
@@ -134,7 +116,6 @@ export async function setAccessOverride(
     userId,
     docTypeId: scope.docTypeId ?? null,
     documentId: scope.documentId ?? null,
-    folderId: scope.folderId ?? null,
   };
   const existing = await db.docAccessOverride.findFirst({ where });
   const data = {
@@ -154,7 +135,6 @@ export interface AccessOverrideRow {
   userId: string;
   docTypeId: string | null;
   documentId: string | null;
-  folderId: string | null;
   canRead: boolean | null;
   canWrite: boolean | null;
   canDelete: boolean | null;
@@ -168,7 +148,6 @@ export async function listAccessOverrides(projectId: string): Promise<AccessOver
     userId: r.userId,
     docTypeId: r.docTypeId,
     documentId: r.documentId,
-    folderId: r.folderId,
     canRead: r.canRead,
     canWrite: r.canWrite,
     canDelete: r.canDelete,
