@@ -287,37 +287,34 @@ docker compose up -d --build
 대시보드나 설정 화면 자체가 없다. 문서 검색/목록 조회가 전부 이
 서비스를 거치므로(핵심 기능), 이 값만은 반드시 채워야 한다.
 
-#### EMQX(실시간 메시징) - 1회성으로 대시보드에 직접 들어가야 한다
+#### EMQX(실시간 메시징) - Meilisearch와 마찬가지로 대시보드가 필요 없다
 
-EMQX는 REST API 키를 이미지가 미리 만들어주지 않아서, 최초 기동 후
-딱 한 번 사람이 직접 발급받아야 한다. `EMQX_API_KEY`/`EMQX_API_SECRET`
-를 안 채워도 시스템 자체는 정상 기동한다 - 다만 실시간 알림(변경
+`EMQX_API_KEY`/`EMQX_API_SECRET`도 Meilisearch 키와 똑같이 **본인이
+직접 정하는 값**이다 - EMQX 대시보드에 로그인해서 발급받는 게 아니다.
+`.env`에 이 두 값(및 `EMQX_SERVICE_USERNAME`/`EMQX_SERVICE_PASSWORD`,
+`message wait`가 내부적으로 쓰는 전용 계정 - 이것도 마찬가지로
+직접 정하는 값)을 채우고 `docker compose up -d --build`로 띄우면 그걸로
+끝이다. EMQX 자체는 REST API 키를 이미지가 기본으로 안 만들어주지만,
+이 프로젝트의 `docker-compose.yml`이 EMQX의 "부트스트랩 파일" 기능
+(`api_key.bootstrap_file`, 실제 `emqx/emqx:5.8` 컨테이너로 동작 검증
+완료)으로 `.env`의 두 값을 기동 시점에 그대로 API 키로 등록해준다 -
+대시보드 로그인·발급 절차 자체가 필요 없다.
+
+값을 비워두면(기본값) 시스템 자체는 정상 기동하되 실시간 알림(변경
 추적 뷰·메시징 패널이 새로고침 없이 갱신되는 것, `message wait` 롱폴)
-만 조용히 꺼진 채로 동작한다. 나중에 아래 순서대로 채워 넣고
-`docker compose up -d --build`를 다시 돌리면 그 순간부터 켜진다.
+만 조용히 꺼진 채로 동작한다 - 나중에 값을 채우고 다시 띄우면 켜진다.
 
-1. `docker compose up -d --build`로 먼저 전체를 한 번 띄운다(EMQX
-   값이 비어 있어도 무방 - 위 설명대로 기동엔 지장 없음).
-2. 브라우저에서 `http://localhost:18083`(EMQX 대시보드)에 접속한다.
-3. 기본 계정 `admin` / 비밀번호 `public`으로 로그인한다(최초 로그인 시
-   비밀번호 변경을 요구할 수 있다 - 바꿔도 되고, 바꾼 뒤엔 그 새
-   비밀번호로 다음에 로그인하면 된다. 이건 대시보드 접속용 계정일
-   뿐이라 시스템 동작과는 무관).
-4. 왼쪽 메뉴에서 **System → API Key**로 이동한다.
-5. **Create**로 새 API 키를 만든다(이름은 아무거나, 권한은 기본값
-   그대로 둬도 된다).
-6. 생성 직후 화면에 **API Key**와 **Secret Key** 두 값이 뜬다 - Secret
-   Key는 **이 화면을 벗어나면 다시 볼 수 없다**(EMQX 자체의 정책 -
-   이 화면을 닫기 전에 반드시 복사해둔다. 놓쳤으면 API Key를
-   지우고(Delete) 다시 만들면 된다).
-7. `.env`를 열어 `EMQX_API_KEY`에는 API Key를, `EMQX_API_SECRET`에는
-   Secret Key를 붙여넣는다.
-8. `EMQX_SERVICE_USERNAME`/`EMQX_SERVICE_PASSWORD`는 (Meilisearch
-   키와 마찬가지로) **어디서 받아오는 값이 아니라 아무 무작위 문자열을
-   직접 정해서** 채운다(`message wait`가 내부적으로 쓰는 전용 계정 -
-   EMQX 대시보드에 로그인하거나 뭔가를 조회할 때 쓰는 계정이 아님).
-9. `docker compose up -d --build`를 다시 실행한다 - 이제부터 실시간
-   기능이 켜진다.
+**주의**: 컨테이너가 이미 떠 있는 상태에서 `.env`의 이 값들을 바꿨다면
+`docker compose up -d --build`만으로는 반영이 안 될 수 있다(부트스트랩
+파일 내용이 바뀐 것만으로는 EMQX 컨테이너를 자동으로 재생성하지
+않음 - 실측 확인) - `docker compose up -d --force-recreate emqx`처럼
+명시적으로 재생성해야 새 값이 적용된다. 최초 설치(컨테이너가 아직
+없는 상태)는 이 문제와 무관하게 항상 바로 적용된다.
+
+(참고: EMQX 대시보드는 `http://localhost:18083`, 기본 계정
+`admin`/`public`으로 여전히 접속 가능하다 - 부트스트랩으로 만든 키를
+직접 눈으로 확인하고 싶거나, 나중에 키를 하나 더 추가하고 싶을 때
+같은 용도로 쓸 수 있지만, 최초 설치 시엔 이제 들어갈 필요가 없다.)
 
 #### Gitea(선택 - git 저장소를 이 시스템 안에서 직접 관리하려는 경우만)
 

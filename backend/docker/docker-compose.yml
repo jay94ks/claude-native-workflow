@@ -24,17 +24,34 @@ services:
       - meili-data:/meili_data
     restart: unless-stopped
 
-  # EMQX REST API 키는 이미지가 기본으로 만들어주지 않는다 - 최초
-  # 기동 후 대시보드(http://localhost:18083, 기본 admin/public)에
-  # 로그인해서 API Key 하나를 발급받아 .env의 EMQX_API_KEY/
-  # EMQX_API_SECRET에 채워 넣어야 한다(1회성 수동 단계 - JWT_SECRET
-  # 같은 다른 시크릿과 동일하게 설치 시 직접 채우는 항목).
+  # EMQX REST API 키는 이미지가 기본으로 만들어주지 않지만, 대시보드에
+  # 수동으로 로그인해서 발급받을 필요는 없다 - `api_key.bootstrap_file`
+  # (env로는 EMQX_API_KEY__BOOTSTRAP_FILE)에 "key:secret" 형식 파일을
+  # 지정하면 기동 시점에 그 키를 그대로 만들어준다(실제 emqx/emqx:5.8
+  # 컨테이너에 대고 확인함 - 대시보드로 만든 키와 동일하게 REST API가
+  # 인증됨, `/api/v5/authentication`·`/api/v5/authorization/sources`
+  # 양쪽 다 200 확인). 아래 `configs.emqx_api_key_bootstrap`가 .env의
+  # EMQX_API_KEY/EMQX_API_SECRET 값을 그대로 그 파일 내용으로 채운다 -
+  # Meilisearch의 MEILI_MASTER_KEY와 똑같이 "본인이 정하는 값을 그냥
+  # .env에 적는다"로 통일된다. 두 값이 비어 있으면(기본값) EMQX가 그
+  # 줄을 무시하고 경고만 남긴 채 정상 기동한다(직접 재현 확인 - 배포가
+  # 안 깨짐, 그냥 이 기능만 꺼진 채로 지금까지와 동일하게 동작).
+  # **주의**: 이미 떠 있는 상태에서 .env의 두 값을 바꿨다면
+  # `docker compose up -d --force-recreate emqx`처럼 명시적으로 재생성
+  # 해야 반영된다(평범한 `up -d`는 설정 파일 내용 변경만으로는 자동
+  # 재생성을 안 한다는 것도 실제로 확인함) - 최초 설치(컨테이너가 아직
+  # 없는 상태)는 이 문제와 무관하게 항상 바로 적용된다.
   emqx:
     image: emqx/emqx:5.8
+    environment:
+      EMQX_API_KEY__BOOTSTRAP_FILE: /opt/emqx/etc/api_key_bootstrap
+    configs:
+      - source: emqx_api_key_bootstrap
+        target: /opt/emqx/etc/api_key_bootstrap
     volumes:
       - emqx-data:/opt/emqx/data
     ports:
-      - "18083:18083" # 대시보드/REST API - API 키 발급 때만 필요, 평소엔 안 열어도 됨
+      - "18083:18083" # 대시보드/REST API - 평소엔 안 열어도 되지만, 부트스트랩이 아닌 수동 키 발급/운영 확인용으로 남겨둠
       # MQTT-over-WebSocket(8083) - 이미지 기본 리스너, 별도 설정 없이 이미
       # 켜져 있다. 웹 UI(Phase 5 3/3)가 변경 추적 뷰/메시징 패널 실시간
       # 갱신을 위해 브라우저에서 직접 붙는 통로 - PUBLIC_EMQX_WS_URL과 짝.
@@ -103,3 +120,12 @@ volumes:
   meili-data:
   emqx-data:
   gitea-data:
+
+configs:
+  # emqx 서비스의 EMQX_API_KEY__BOOTSTRAP_FILE이 가리키는 파일 내용 -
+  # .env의 EMQX_API_KEY/EMQX_API_SECRET을 그대로 "key:secret" 한 줄로
+  # 채운다(Compose가 .env 값을 여기 보간해준다 - 실제 emqx:5.8 컨테이너로
+  # 검증 완료).
+  emqx_api_key_bootstrap:
+    content: |
+      ${EMQX_API_KEY}:${EMQX_API_SECRET}

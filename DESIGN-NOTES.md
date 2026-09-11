@@ -1346,6 +1346,67 @@ teamId로 위 함수에 위임, 팀 없는 그룹은 unrestricted만) 신규 추
 무결성, 본문 내용(한글 포함) 그대로 보존되는지, 검색/목록이 즉시
 정상 조회되는지 전부 대조. `npx tsc --noEmit` 클린.
 
+## push 훅 IDOR 수정 + 기능별 QA 시나리오 문서 - 완료 (2026-09-11)
+
+"push 훅 자동화 + 템플릿 배포 점검"을 시작하려고 `core/pushHookPrompts.ts`
+를 읽다가 진짜 인가 버그를 발견했다 - `acknowledgeQueueEntry()`/
+`completeQueueEntry()`가 큐 항목을 **id만으로** 조회해, 라우트의
+`:projectId` 경로 파라미터(그 프로젝트의 `requireProjectRole("editor")`
+검사 대상)와 실제 변경 대상(`id`가 가리키는 큐 항목)이 서로 다른
+프로젝트에 속해도 걸러내지 못했다 - A 프로젝트의 editor가 B 프로젝트
+큐 항목의 id를 알면(또는 순차 id를 추측하면) 그대로 ack/done을 걸 수
+있는 IDOR. `deletePushHookPrompt()`가 이미 쓰던 "조회 후 projectId
+일치 확인" 패턴을 `transitionQueueEntry()`에도 적용해 수정(코드
+수정·타입체크 완료, 다만 실제 Gitea 웹훅 왕복으로는 아직 재검증 못함).
+
+이 조사를 이어가려던 참에 설계자가 "사용 시나리오를 기능별로 만들고
+QA/개발 계획을 작성하자"로 방향을 틀어, 새 `QA-SCENARIOS.md`(저장소
+루트)를 만들었다 - README(기능 요약)/DESIGN-NOTES(라운드 로그)와
+성격이 다른 세 번째 문서로, 16개 기능 영역마다 "사용 시나리오 →
+QA 체크리스트(실측 `[x]`/미확인 `[ ]` 구분) → 승인 대기 중인 추가
+개발 계획"을 정리했다. `CLAUDE.md`가 이제 이 문서도 함께 가리킨다.
+
+## EMQX/Meilisearch 설치 안내 - 대시보드 없이 부트스트랩으로 통일 - 완료 (2026-09-11)
+
+설계자가 "설치를 결정한 사람이 EMQX/Meilisearch 설정 방법을 모를 때"의
+안내를 요청 - 처음엔 README에 단계별 안내(EMQX 대시보드 로그인 →
+System → API Key → Create → 값 복사)를 자세히 써서 반영했는데, 설계자가
+곧바로 "EMQX는 bootstrap 파일을 주면 REST API 키를 원하는 대로 만들 수
+있다"고 알려줘서 - 대시보드 수동 발급 자체를 없앨 수 있는지 확인하고
+실제로 없앴다.
+
+**검증 과정**(전부 실제 `emqx/emqx:5.8` 컨테이너로 확인 - 이 프로젝트가
+Gitea API를 다룰 때 써온 것과 같은 "문서만 보고 추측하지 않는다"
+원칙): `EMQX_API_KEY__BOOTSTRAP_FILE`(`api_key.bootstrap_file`)에
+`key:secret` 한 줄짜리 파일을 지정하면 기동 시점에 그 키가 실제로
+만들어지고, 대시보드에서 만든 키와 동일하게 REST API가 인증됨을
+`/api/v5/authentication`(GET·POST 둘 다) 200으로 확인. 빈 값(`:`)을
+주면 EMQX가 그 줄만 무시하고 경고 로그를 남긴 채 정상 기동(크래시
+없음 - 지금까지 "EMQX 값 비우면 기능만 꺼짐"이라던 기존 fail-soft
+설명과 그대로 맞아떨어짐). 같은 키 이름으로 시크릿을 바꿔 강제
+재생성(`--force-recreate`)하면 옛 시크릿은 즉시 무효화되고 새 시크릿만
+동작(로테이션 가능) - 단, 평범한 `docker compose up -d --build`만으로는
+Compose가 `configs.content` 변경을 감지해 자동 재생성하지 않는다는
+것도 함께 확인(그래서 "재생성 필요" 안내를 명시적으로 남김). 마지막으로
+프로젝트의 실제 `docker-compose.yml`(meilisearch에 임시로만 포트를
+연) + 로컬로 띄운 backend로 전체 사슬을 통합 검증 - 백엔드가 기동
+직후 `ensureEmqxAuthConfigured()`로 그 부트스트랩 키를 써서
+`POST /api/v5/authentication`/`POST /api/v5/authorization/sources`를
+실제로 호출해 훅을 등록하는 것까지 확인(임시 `.env`/오버라이드 파일은
+검증 후 삭제, 커밋 대상 아님).
+
+**반영**: `backend/docker/docker-compose.yml`의 `emqx` 서비스에
+`EMQX_API_KEY__BOOTSTRAP_FILE` 환경변수 + 새 최상위 `configs:` 섹션
+(`.env`의 `EMQX_API_KEY`/`EMQX_API_SECRET`를 Compose가 그대로 파일
+내용으로 보간)을 추가. `.env.example`의 두 값을 빈 문자열에서
+`change-me`(다른 발명 값들과 같은 패턴)로 바꾸고 주석을 "발급받는
+값"에서 "직접 정하는 값"으로 교정. `README.md`의 Docker Compose
+설치 절을 다시 써서 Meilisearch/EMQX 둘 다 "본인이 값을 정한다"로
+통일하고, EMQX 대시보드는 "확인/재발급용으로 여전히 쓸 수 있지만 최초
+설치엔 더 이상 필요 없음"으로 격을 낮췄다 - 재생성 필요 조건(`--force-
+recreate`)도 명시. Gitea는 이런 부트스트랩 메커니즘이 없어 여전히
+수동 마법사+PAT 발급이 필요하다(이번 범위 밖, 그대로 유지).
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.
