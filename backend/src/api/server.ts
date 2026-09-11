@@ -114,6 +114,7 @@ import {
   getQuestionProjectId,
   acknowledgeQuestion,
   countPendingQuestions,
+  withdrawQuestion,
 } from "../core/questions.js";
 import {
   addComment,
@@ -1915,6 +1916,17 @@ app.post(
       return;
     }
     res.json(await acknowledgeQuestion(req.params.trackingCode));
+  }),
+);
+
+// 소유권 확인(본인이 등록한 질의만)은 withdrawQuestion() 내부에서
+// 처리한다 - editComment/deleteComment와 같은 패턴(라우트는
+// authenticate만, "본인 소유물만" 거부는 core가 에러로).
+app.post(
+  "/api/questions/:trackingCode/withdraw",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await withdrawQuestion(req.params.trackingCode, req.userId!));
   }),
 );
 

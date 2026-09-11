@@ -4,6 +4,7 @@ import { allowedNextStatuses } from "./docTypes.js";
 import { resyncDocumentIndex, getDocument } from "./documents.js";
 import { getKanbanCardByTrackingCode } from "./kanban.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
+import { isSuperAdmin } from "./auth.js";
 
 const QUESTION_TYPE_CODE = "QU";
 
@@ -24,7 +25,7 @@ export interface QuestionDetail {
   kind: string; // "approval" | "answer"
   text: string;
   askedBy: string;
-  status: string; // open(AI 질의, 설계자 답변 대기) | pending(설계자 답변 완료, AI 확인 대기) | resolved(AI 확인 완료)
+  status: string; // open(AI 질의, 설계자 답변 대기) | pending(설계자 답변 완료, AI 확인 대기) | resolved(AI 확인 완료) | withdrawn(질의를 낸 본인이 철회 - open일 때만 가능)
   refs: string[];
   options: QuestionOptionDetail[];
 }
@@ -395,6 +396,40 @@ export async function acknowledgeQuestion(questionTrackingCode: string): Promise
     throw new Error(`답변 대기 중이거나 이미 처리된 질의입니다: ${questionTrackingCode}`);
   }
   const updated = await db.question.update({ where: { id: question.id }, data: { status: "resolved" } });
+  const refRows = await db.questionReference.findMany({ where: { questionId: question.id } });
+  const optionRows = await db.questionOption.findMany({ where: { questionId: question.id }, orderBy: { order: "asc" } });
+  return {
+    trackingCode: updated.trackingCode,
+    projectId: updated.projectId,
+    targetType: updated.targetType,
+    targetKey: updated.targetKey,
+    ordinal: updated.ordinal,
+    kind: updated.kind,
+    text: updated.text,
+    askedBy: updated.askedBy,
+    status: updated.status,
+    refs: refRows.map((x: { trackingCode: string }) => x.trackingCode),
+    options: optionRows.map((o: { label: string; detail: string | null }) => ({ label: o.label, detail: o.detail })),
+  };
+}
+
+/** 질의를 낸 본인(또는 superAdmin)이 "더 이상 유효하지 않다"고 표시 -
+ * 아직 아무도 답변하지 않은(open) 질의만 철회할 수 있다(설계자가 이미
+ * 답변을 남긴 pending 질의를 되돌리는 건 다른 성격의 동작이라 범위
+ * 밖 - 그 경우는 ack로 마무리). withdrawn은 answerQuestion/
+ * acknowledgeQuestion/listPendingQuestions의 기존 상태 화이트리스트
+ * 밖이라 별도 가드 없이도 자동으로 배제된다. */
+export async function withdrawQuestion(questionTrackingCode: string, requesterId: string): Promise<QuestionDetail> {
+  const db = getDb();
+  const question = await db.question.findUnique({ where: { trackingCode: questionTrackingCode } });
+  if (!question) throw new Error(`질문을 찾을 수 없습니다: ${questionTrackingCode}`);
+  if (question.askedBy !== requesterId && !(await isSuperAdmin(requesterId))) {
+    throw new Error("본인이 등록한 질문만 철회할 수 있습니다");
+  }
+  if (question.status !== "open") {
+    throw new Error(`아직 답변되지 않은 질문만 철회할 수 있습니다: ${questionTrackingCode}`);
+  }
+  const updated = await db.question.update({ where: { id: question.id }, data: { status: "withdrawn" } });
   const refRows = await db.questionReference.findMany({ where: { questionId: question.id } });
   const optionRows = await db.questionOption.findMany({ where: { questionId: question.id }, orderBy: { order: "asc" } });
   return {

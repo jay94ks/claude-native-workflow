@@ -287,6 +287,7 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 답변 | `docs reply <questionTrackingCode> [answer] [--decision <approved\|rejected>] [--note <text>]` | `question_reply` |
 | 질의 확인 완료 처리 | `docs question-ack <trackingCode>` | `question_ack` |
 | 질의 일괄 확인 완료 처리 | `docs question-ack-bulk <trackingCode...>` | `question_ack_bulk` |
+| 질의 철회 | `docs question-withdraw <trackingCode>` | `question_withdraw` |
 | 본인 프로필 조회/whoami | `docs auth whoami` | `auth_whoami` |
 | 본인 프로필 수정 | `docs profile set [옵션...]` | `profile_set` |
 | 타 설계자 프로필 조회 | `docs user get <userId>` | `user_get` |

@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import { useAuthStore } from "../stores/auth";
 import { nextDialogZIndex } from "../dialogZIndex";
 import UserRef from "./UserRef.vue";
 import TrackingCodeText from "./TrackingCodeText.vue";
@@ -23,6 +24,7 @@ const props = withDefaults(
 const emit = defineEmits<{ statusTransitioned: [statusCode: string] }>();
 
 const entityPicker = useEntityPickerStore();
+const auth = useAuthStore();
 
 // KanbanCardDialog/TargetPanelDialog를 통해 열리면 ProjectShellView의
 // provide 트리 밖이라 inject를 못 쓴다 - DocumentExplorer.vue와 같은
@@ -86,11 +88,12 @@ const asking = ref(false);
 const answerDrafts = ref<Record<string, string>>({});
 const answering = ref<Record<string, boolean>>({});
 const acking = ref<Record<string, boolean>>({});
+const withdrawing = ref<Record<string, boolean>>({});
 const transitionNotice = ref("");
 const openOptionsFor = ref<string | null>(null);
 const optionsZIndex = ref(1100);
 
-const STATUS_LABEL: Record<string, string> = { open: "미답변", pending: "확인 대기", resolved: "처리 완료" };
+const STATUS_LABEL: Record<string, string> = { open: "미답변", pending: "확인 대기", resolved: "처리 완료", withdrawn: "철회됨" };
 const KIND_LABEL: Record<string, string> = { answer: "답변 요청", approval: "승인 요청" };
 
 let disconnect: (() => void) | null = null;
@@ -226,6 +229,23 @@ async function ack(q: QuestionItem) {
   }
 }
 
+function canWithdraw(q: QuestionItem): boolean {
+  return q.status === "open" && (q.askedBy === auth.me?.id || !!auth.me?.isSuperAdmin);
+}
+
+async function withdraw(q: QuestionItem) {
+  withdrawing.value = { ...withdrawing.value, [q.trackingCode]: true };
+  error.value = "";
+  try {
+    await apiCall(`/questions/${q.trackingCode}/withdraw`, { method: "POST" });
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "철회에 실패했습니다";
+  } finally {
+    withdrawing.value = { ...withdrawing.value, [q.trackingCode]: false };
+  }
+}
+
 onMounted(async () => {
   await loadMyRole();
   await load();
@@ -265,6 +285,9 @@ onUnmounted(() => disconnect?.());
           <span class="kind">{{ KIND_LABEL[q.kind] ?? q.kind }}</span>
           <span class="status" :class="q.status">{{ STATUS_LABEL[q.status] ?? q.status }}</span>
           <span class="text"><TrackingCodeText :text="q.text" /></span>
+          <button v-if="canWithdraw(q)" class="withdraw-btn" :disabled="withdrawing[q.trackingCode]" @click="withdraw(q)">
+            철회
+          </button>
         </div>
         <div class="q-meta">
           질의자 <UserRef :user-id="q.askedBy" />
@@ -424,6 +447,10 @@ h2 {
   background: #fdf0e3;
   color: #b96a1a;
 }
+.status.withdrawn {
+  background: #f0f1f5;
+  color: #888;
+}
 .text {
   flex: 1;
 }
@@ -551,6 +578,15 @@ h2 {
   font-size: 11px;
   font-weight: 600;
   margin-top: 2px;
+}
+.withdraw-btn {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  color: #d1344b;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  flex-shrink: 0;
 }
 .answer-row {
   display: flex;

@@ -3091,6 +3091,60 @@ CLI `question-ack-bulk`, MCP `question_ack_bulk`(이미 resolved인
 질의로 실패 케이스까지) 실제 서버/클라이언트로 왕복. `npm run
 audit:cli-mcp`, `npx tsc --noEmit`(backend) 클린(프론트 변경 없음).
 
+## 질문 철회(`#question-withdraw`) - 완료 (2026-09-12)
+
+PLANS.md 13번(`## 5. 질의/응답 (Q&A)` 마지막 항목). 클로드가 등록한
+질문이 더 이상 유효하지 않게 됐을 때(예: 관련 결정이 다른 경로로
+이미 내려짐) 상태를 "철회"로 표시할 방법이 없어, 그냥 방치되어 open
+목록에 계속 남아있었다.
+
+`Question.status`가 Postgres enum이 아니라 그냥 `String
+@default("open")`이라 "withdrawn"을 추가하는 데 스키마 변경이
+전혀 없었다 - 순수 애플리케이션 레벨 값 추가. 기존
+`answerQuestion()`(status !== "open"이면 거부)·
+`acknowledgeQuestion()`(status !== "pending"이면 거부)·
+`listPendingQuestions()`(status가 open|pending인 것만 조회) 셋 다
+"withdrawn"을 자동으로 배제해서 추가 가드 코드도 필요 없었다.
+
+신규 `withdrawQuestion(questionTrackingCode, requesterId)` -
+`core/comments.ts`의 `editComment`/`deleteComment`가 이미 쓰던
+"본인 소유물만(+ superAdmin 우회)" 패턴(`existing.authorId !==
+requesterId && !(await isSuperAdmin(requesterId))`)을 `askedBy`
+기준으로 그대로 재사용했다. **철회는 아직 아무도 답변하지 않은
+(open) 질문만 가능**하다고 범위를 좁혔다 - 설계자가 이미 답변을
+남긴(pending) 질문을 되돌리는 건 그 노력을 무의미하게 만드는 다른
+성격의 동작이라("더 이상 유효하지 않은 질문 정리"라는 이 항목의
+취지와 다름), 그런 경우는 그냥 `ack`로 마무리하도록 남겨뒀다.
+
+라우트 `POST /api/questions/:trackingCode/withdraw`(소유권 확인은
+core 안에서 - 코멘트 라우트와 동일하게 `authenticate`만),
+CLI `question-withdraw`, MCP `question_withdraw`(CLI 태그와 그대로
+맞아떨어져 `KNOWN_RENAMES` 불필요). 웹 UI(`QAPanel.vue`) - `useAuthStore`
+를 새로 import해 `q.status === 'open' && (q.askedBy === auth.me?.id
+|| auth.me?.isSuperAdmin)`일 때만 "철회" 버튼을 노출, `STATUS_LABEL`
+에 `withdrawn: "철회됨"` 추가.
+
+**부수 발견**: 같은 조사 중에 `#comment-edit-delete`(PLANS.md 14번)
+가 **이미 완전히 구현·배포돼 있다는 걸 확인했다** -
+`core/comments.ts`의 `editComment`/`deleteComment`가 `PUT`/`DELETE
+/api/comments/:id`로 이미 노출돼 있고 FEATURES.md에도 이미 반영돼
+있다(예전 "코멘트/질의응답 통폐합" 라운드에서 끝난 작업 - PLANS.md
+행만 ✅로 안 바뀌고 남아있었다). 코드 변경 없이 PLANS.md 14번 행만
+같이 ✅로 정리했다.
+
+**실측 검증**: docker 재빌드·재기동 후 admin + 신규 계정 B로 HTTP
+왕복 - admin이 낸 open 질문을 B가 철회 시도 → 소유권 거부 확인 →
+admin 본인이 철회 → 200, `status: "withdrawn"` 확인 → 그 질문에
+답변 시도 → 거부(이미 open 아님) 확인 → `GET /pending`에서 안 보임
+확인 → 이미 답변된(pending) 질문을 철회 시도 → 거부 확인 → B가 낸
+open 질문을 admin(superAdmin)이 철회 → 우회 성공 확인(200). CLI
+`question-withdraw`, MCP `question_withdraw`(이미 철회된 질문
+재시도로 `isError:true` 케이스까지) 실제 서버/클라이언트로 왕복.
+브라우저 - `QAPanel.vue`에서 본인이 낸 open 질문에만 "철회" 버튼이
+보이고 이미 철회/답변된 질문엔 안 보이는지, 클릭 후 배지가
+"철회됨"으로 바로 바뀌는지 스크린샷 확인. `npm run audit:cli-mcp`,
+`npx tsc --noEmit`(backend), `vue-tsc -b`(frontend) 전부 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

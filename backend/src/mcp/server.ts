@@ -626,6 +626,13 @@ async function main() {
     { trackingCodes: z.array(z.string()) },
     async (a) => call(`/api/questions/bulk-ack`, { method: "POST", body: JSON.stringify({ trackingCodes: a.trackingCodes }) }),
   );
+  tool(
+    "question_withdraw",
+    "질의 철회",
+    "본인이 등록한 질문 중 아직 답변되지 않은(open) 것을 철회한다 - 더 이상 유효하지 않게 된 질문을 정리할 때 씀.",
+    { questionTrackingCode: z.string() },
+    async (a) => call(`/api/questions/${a.questionTrackingCode}/withdraw`, { method: "POST" }),
+  );
 
   // 코멘트는 설계자들끼리만 쓰는 채널이다(웹 UI 전용) - AI의 참고
   // 지표가 될 수 없어 의도적으로 도구를 두지 않는다("CLI/MCP 명령어

@@ -43,8 +43,8 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 10 | ✅ | `#document-bulk-actions` | 문서 일괄 상태 전이(웹/CLI/MCP)/폴더 이동(웹 전용), 항목별 결과 |
 | 11 | ✅ | `#folder-delete-recursive` | 폴더 삭제 시 재귀 삭제/상위로 끌어올리기 선택 가능 |
 | 12 | ✅ | `#question-bulk-ack` | 질문 일괄 ack(CLI/MCP 전용, 항목별 결과) |
-| 13 | ⬜ | `#question-withdraw` | 질문 취소/철회 기능 없음 |
-| 14 | ⬜ | `#comment-edit-delete` | 코멘트 수정/삭제 없음(해결 처리만 가능) |
+| 13 | ✅ | `#question-withdraw` | 질문 철회(open 상태·본인만, CLI/MCP/웹) |
+| 14 | ✅ | `#comment-edit-delete` | 이미 구현돼 있었음 - 문서만 정리(코드 변경 없음) |
 | 15 | ⬜ | `#message-edit-delete` | 메시지 수정/삭제 없음 |
 | 16 | ⬜ | `#message-wait-timeout-cap` | `message wait` 최대 타임아웃 상한 미정 |
 | 17 | ⬜ | `#meilisearch-spof` | Meilisearch 장애 시 에러 메시지 품질 미점검 |
@@ -62,21 +62,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
 
 ---
-
-## 5. 질의/응답 (Q&A)
-
-### `#question-withdraw`
-**질문을 취소/철회하는 기능이 없다** - 클로드가 등록한 질문이 더 이상
-유효하지 않게 됐을 때(예: 관련 결정이 다른 경로로 이미 내려짐) 상태를
-"철회"로 표시할 방법이 없다 - 지금은 그냥 방치되어 `pending list`에
-계속 남는다.
-
-## 6. 코멘트
-
-### `#comment-edit-delete`
-**코멘트 수정/삭제가 없다** - 등록 후 오탈자를 고치거나 잘못 단
-코멘트를 지울 방법이 없다(해결 처리만 가능). 설계자 전용 채널이라
-덜 급하지만 실사용 시 자주 걸릴 만한 공백.
 
 ## 7. 메시징
 

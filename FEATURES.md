@@ -218,11 +218,14 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
 - **질의는 AI가 등록, 설계자는 답변만** - `kind`로 `answer`(자유
   텍스트 답변)/`approval`(승인·거부만, 텍스트 대신 `--decision`)
   구분.
-- 상태 3단계: `open`(질의 등록, 답변 대기) → `pending`(설계자 답변
-  완료, AI 확인 대기 - 종결 아님) → `resolved`(AI가 확인 완료 표시).
+- 상태: `open`(질의 등록, 답변 대기) → `pending`(설계자 답변 완료,
+  AI 확인 대기 - 종결 아님) → `resolved`(AI가 확인 완료 표시).
   확인 완료 표시는 CLI `question-ack-bulk`/MCP `question_ack_bulk`로
   여러 건을 한 번에 처리할 수도 있다(항목별 결과 반환, 마이그레이션
   직후처럼 pending이 몰려 있을 때 - 웹 UI엔 없음, CLI/MCP 전용).
+  **`withdrawn`**(질의를 낸 본인 또는 관리자가 철회) - 더 이상
+  유효하지 않게 된 질문을 정리한다. `open` 상태일 때만 철회 가능
+  (이미 답변된 질문은 되돌리지 않고 그대로 `ack`로 마무리).
 - 판단에 참고한 문서를 `--refs`로 구조적으로 태깅(`QuestionReference`).
 - **AI가 선택지를 제안 가능**(각 옵션에 라벨 + 부가 설명) - 클릭하면
   답변 입력칸에 채워짐.

@@ -971,6 +971,13 @@ program
   );
 
 program
+  .command("question-withdraw <trackingCode>")
+  .description("본인이 등록한 질문 중 아직 답변되지 않은(open) 것을 철회한다")
+  .action((trackingCode) =>
+    run(async () => printJson(await apiCall(`/api/questions/${trackingCode}/withdraw`, { method: "POST" }))),
+  );
+
+program
   .command("pending <projectId>")
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/pending`))));
 
