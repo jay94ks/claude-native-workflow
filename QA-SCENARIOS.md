@@ -378,11 +378,17 @@
   재시도.
 - [x] `git blame` 미지원의 명확한 에러(Gitea API 자체 한계, 실측으로
   확인).
-- [ ] **동기화 제안(`git sync-status`/`git sync-proposal`)을 이번
-  세션의 범위 안에서 다시 실측한 적이 없다** - Gitea 도입 라운드
-  (Phase 2) 이후로 재확인 안 됨, 그 사이 API 키 스코프 게이트가
-  이 라우트들에도 (`requireProjectRole` 경유로) 자동 적용됐는지는
-  구조적으로는 맞지만 직접 호출까지 해보지 않았다.
+- [x] **동기화 제안(`git sync-status`/`git sync-proposal`) 재실측** -
+  완료. 새 스크래치 프로젝트("QA Sync Test")를 공개 GitHub 저장소
+  (`octocat/Hello-World`)에 옵션 3(외부 연동)으로 연결 → Gitea에
+  `-mirror`(mirror:true)/`-work`(mirror:false) 두 저장소가 실제로
+  생겼는지 대조(각각 21456/21445바이트로 실제 클론된 내용) → 소스
+  에디터로 `README` 파일을 수정(work 저장소에 커밋) → `POST .../git/
+  sync-status`로 트리거(`scheduled` 응답) → `GET`으로 폴링해
+  `status:"ready", changed:["README"]`를 확인 → `GET .../git/
+  sync-proposal`이 방금 수정한 실제 내용을 그대로 반환하는지 확인.
+  API 키 스코프도 같이 확인 - 다른 프로젝트 전용 키로 이 두 라우트를
+  호출하면 둘 다 403(스코프 게이트가 자동 적용됨을 실측으로 확인).
 - [ ] **push 훅 자동화 라운드에서 하려던 실제 Gitea 웹훅 왕복 테스트를
   이번 대화에서 사용자가 다른 작업(시나리오 문서화)으로 전환하면서
   중단함** - 아래 12절 개발 계획의 우선 재개 후보.
@@ -420,16 +426,29 @@
   ack/done 처리할 수 있었던 IDOR 취약점을 `pushHookPrompt.projectId`
   대조로 수정(코드 수정 완료, **아직 실제 웹훅 왕복으로 재검증
   안 됨** - 아래 참고).
-- [ ] **실제 Gitea 컨테이너로 웹훅이 도착 → `PushHookQueueEntry` 생성
-  → ack → done 전체 왕복** - 이번 대화에서 스크래치 Gitea를 막
-  띄우려던 참에 사용자가 시나리오 문서화로 전환해 중단됨. **다음
-  세션에서 최우선으로 재개할 항목.**
-- [ ] 방금 고친 IDOR 수정이 실제로 막는지(다른 프로젝트의 대기열
-  항목 id로 ack 시도 → 404 확인)도 이 재개 작업에 포함.
-- [ ] `triggerBranch` 지정/미지정(전체 브랜치) 매칭 분기.
-- [ ] API 키 스코프(프로젝트 키/팀 키)가 이 라우트들에도 제대로
-  걸리는지 - `requireProjectRole`을 쓰므로 구조적으로는 자동 적용
-  되어야 하나 직접 호출 검증은 안 함.
+- [x] **실제 Gitea 컨테이너로 웹훅이 도착 → `PushHookQueueEntry` 생성
+  → ack → done 전체 왕복** - 실측 완료. QA Project(자체 호스팅 Gitea
+  저장소, 웹훅 이미 자동 등록돼 있음)에 트리거 브랜치 없음(전체 매칭)
+  프롬프트를 등록한 뒤, Gitea Contents API로 실제 커밋을 만들어(백엔드를
+  거치지 않고 Gitea가 직접 웹훅을 쏨) `PushHookQueueEntry`가 그 커밋
+  sha로 정확히 생성되는지, 이어서 `ack`→`done` 상태 전이까지 API로
+  확인.
+- [x] 방금 고친 IDOR 수정이 실제로 막는지 - 실측 완료. QA Project의
+  대기열 항목 id를 admin이 owner인 **다른** 프로젝트(QA Project B)의
+  `:projectId` 경로로 ack 시도 → `400 "큐 항목을 찾을 수 없습니다"`로
+  거부되고 항목 상태도 그대로 `pending`으로 안 바뀌는지 확인(같은
+  사용자가 두 프로젝트 다 owner라 role 검사만으로는 안 걸리고, 오직
+  `pushHookPrompt.projectId` 대조가 막는 케이스라는 걸 정확히 겨냥).
+- [x] `triggerBranch` 지정/미지정(전체 브랜치) 매칭 분기 - 실측 완료.
+  같은 push에 대해 `triggerBranch: null`(전체) 프롬프트는 큐 항목이
+  생기고, `triggerBranch: "release/x"`(main과 불일치) 프롬프트는 생기지
+  않는지 한 번의 실제 웹훅으로 동시에 대조 확인.
+- [x] API 키 스코프(프로젝트 키/팀 키)가 이 라우트들에도 제대로
+  걸리는지 - 실측 완료. QA Project B 전용 프로젝트 키로 QA Project의
+  큐 조회/프롬프트 생성 시도 → 둘 다 403(`getMemberRole`이 스코프
+  밖이라 null 반환 → `requireProjectRole`이 거부) - 같은 키로 자기
+  프로젝트(B) 조회는 200으로 정상 동작해 스코프 게이트가 "이 라우트만
+  막힘"이 아니라 "이 라우트도 자동으로 걸림"임을 확인.
 
 ### 추가 개발 계획 (승인 대기)
 1. **`PushHookPrompt` 수정(update) 라우트가 없다** - 생성/삭제만

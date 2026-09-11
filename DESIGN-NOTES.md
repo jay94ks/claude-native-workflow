@@ -1750,6 +1750,38 @@ CommentsPanel과 CLI `docs questions <trackingCode>`(ordinal asc 배열
 클린 확인(Prisma 스키마 변경 없음 - 신규 로컬 파일 캐시만 추가,
 `.gitignore`에 `backend/.cache/` 등록).
 
+## QA 패스: push 훅 웹훅 왕복 + git 동기화 제안 재실측 - 완료 (2026-09-11)
+
+`QA-SCENARIOS.md`에 "다음 세션에서 최우선으로 재개할 항목"으로 명시적
+표시가 남아있던 두 가지를 실사용 인스턴스(`backend/docker/`, 계속
+재사용 중인 스택)로 실측했다 - 코드 변경 없이 검증만 진행.
+
+**push 훅 자동화(12절)**: QA Project(이미 Gitea 저장소가 연결돼 있고
+웹훅도 자동 등록돼 있던 상태)에 트리거 브랜치 없음(전체 매칭)
+프롬프트와 `release/x`(불일치) 프롬프트를 하나씩 등록 → Gitea Contents
+API로 실제 커밋 하나를 만들어(백엔드를 거치지 않고 Gitea가 직접
+웹훅을 쏨) 전체 매칭 프롬프트에서만 `PushHookQueueEntry`가 생기고
+불일치 프롬프트에서는 안 생기는지 확인 → `ack`→`done` 상태 전이까지
+확인. **IDOR 수정 재검증** - 이 큐 항목 id를, 같은 사용자가 owner인
+**다른** 프로젝트의 `:projectId` 경로로 ack 시도 → `pushHookPrompt.
+projectId` 대조 덕분에 role 검사와 무관하게 `400`으로 거부되고 상태도
+안 바뀌는지 확인(직전 라운드에서 코드만 고치고 실제 웹훅으로 재현은
+못 했던 부분). **API 키 스코프**도 같이 확인 - 다른 프로젝트 전용
+키로 이 프로젝트의 큐 조회/프롬프트 생성을 시도하면 403(스코프 게이트
+자동 적용), 같은 키로 자기 프로젝트 조회는 정상 동작.
+
+**git 동기화 제안(11절)**: 새 스크래치 프로젝트를 공개 GitHub 저장소
+(`octocat/Hello-World`)에 옵션 3(외부 연동)으로 연결 → Gitea에
+`-mirror`(읽기 전용 미러)/`-work`(실제 커밋 대상) 두 저장소가 실제
+생겼는지 바이트 수까지 대조 → 소스 에디터로 work 저장소의 `README`를
+수정 → `POST .../git/sync-status`(트리거, 비동기)→`GET`(폴링)으로
+`changed:["README"]` 확인 → `GET .../git/sync-proposal`이 수정된 실제
+내용을 그대로 반환하는지 확인. 이 두 라우트도 API 키 스코프로 정상
+막히는지 같이 확인.
+
+`QA-SCENARIOS.md`의 두 절 모두 해당 체크리스트 항목을 `[x]`로 갱신.
+코드 변경이 전혀 없는 순수 QA 라운드라 `tsc`/빌드 재확인은 생략.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.
