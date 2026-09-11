@@ -174,7 +174,7 @@ onUnmounted(() => disconnect?.());
       <li v-if="comments.length === 0" class="muted">아직 코멘트가 없습니다.</li>
     </ul>
     <form class="add-row" @submit.prevent="add">
-      <input v-model="newComment" type="text" placeholder="코멘트 입력..." />
+      <textarea v-model="newComment" rows="2" placeholder="코멘트 입력... (여러 줄 입력 가능)"></textarea>
       <button type="submit" :disabled="adding">등록</button>
     </form>
   </section>
@@ -296,11 +296,14 @@ textarea {
   display: flex;
   gap: 8px;
 }
-.add-row input {
+.add-row textarea {
   flex: 1;
   padding: 8px 10px;
   border: 1px solid #d8dae0;
   border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
 }
 .add-row button {
   background: #3454d1;
@@ -309,6 +312,7 @@ textarea {
   padding: 8px 16px;
   border-radius: 6px;
   font-weight: 600;
+  align-self: flex-start;
 }
 .add-row button:disabled {
   opacity: 0.6;

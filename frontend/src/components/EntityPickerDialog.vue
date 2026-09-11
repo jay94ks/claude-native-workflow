@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import { nextDialogZIndex } from "../dialogZIndex";
 import Pagination from "./Pagination.vue";
 
 interface Item {
@@ -17,6 +18,7 @@ const error = ref("");
 const search = ref("");
 const selected = ref<Set<string>>(new Set());
 const manualEntry = ref("");
+const zIndex = ref(1100);
 
 interface DocumentSummary {
   trackingCode: string;
@@ -102,6 +104,7 @@ watch(
   () => store.open,
   (open) => {
     if (!open) return;
+    zIndex.value = nextDialogZIndex();
     search.value = "";
     manualEntry.value = "";
     selected.value = new Set(store.options?.initialSelected ?? []);
@@ -160,7 +163,7 @@ const kindTitle = computed(() => {
 </script>
 
 <template>
-  <div v-if="store.open" class="overlay" @click.self="store.cancel()">
+  <div v-if="store.open" class="overlay" :style="{ zIndex }" @click.self="store.cancel()">
     <div class="dialog">
       <div class="header">
         <h2>{{ kindTitle }}</h2>

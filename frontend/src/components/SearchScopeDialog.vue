@@ -2,17 +2,20 @@
 import { ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useSearchScopeStore } from "../stores/searchScope";
+import { nextDialogZIndex } from "../dialogZIndex";
 
 const store = useSearchScopeStore();
 const router = useRouter();
 
 const scope = ref<"project" | "group" | "team">("project");
 const includeSource = ref(false);
+const zIndex = ref(1100);
 
 watch(
   () => store.open,
   (open) => {
     if (!open) return;
+    zIndex.value = nextDialogZIndex();
     scope.value = "project";
     includeSource.value = false;
   },
@@ -30,7 +33,7 @@ function run() {
 </script>
 
 <template>
-  <div v-if="store.open" class="overlay" @click.self="store.close()">
+  <div v-if="store.open" class="overlay" :style="{ zIndex }" @click.self="store.close()">
     <div class="dialog">
       <div class="header">
         <h2>"{{ store.keyword }}" 검색</h2>

@@ -2,6 +2,7 @@
 import { ref, watch } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { useDocumentDialogStore } from "../stores/documentDialog";
+import { nextDialogZIndex } from "../dialogZIndex";
 import MarkdownBody from "./MarkdownBody.vue";
 
 interface DocumentDetail {
@@ -16,6 +17,17 @@ const dialog = useDocumentDialogStore();
 const doc = ref<DocumentDetail | null>(null);
 const loading = ref(false);
 const error = ref("");
+const zIndex = ref(1000);
+
+// 다른 다이얼로그(예: 칸반 카드) 안에서 이 다이얼로그를 열 수도 있고
+// 반대 방향도 가능해(양방향 참조) 열릴 때마다 공유 카운터에서 새
+// z-index를 받아야 항상 마지막에 연 게 위로 온다.
+watch(
+  () => dialog.open,
+  (open) => {
+    if (open) zIndex.value = nextDialogZIndex();
+  },
+);
 
 watch(
   () => [dialog.open, dialog.trackingCode],
@@ -36,7 +48,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="dialog.open" class="overlay" @click.self="dialog.close()">
+  <div v-if="dialog.open" class="overlay" :style="{ zIndex }" @click.self="dialog.close()">
     <div class="dialog">
       <button class="close-btn" @click="dialog.close()">닫기 ✕</button>
       <p v-if="loading" class="muted">불러오는 중...</p>

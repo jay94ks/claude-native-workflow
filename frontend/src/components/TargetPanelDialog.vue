@@ -1,13 +1,23 @@
 <script setup lang="ts">
+import { ref, watch } from "vue";
 import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
+import { nextDialogZIndex } from "../dialogZIndex";
 import QAPanel from "./QAPanel.vue";
 import CommentsPanel from "./CommentsPanel.vue";
 
 const dialog = useTargetPanelDialogStore();
+const zIndex = ref(1000);
+
+watch(
+  () => dialog.open,
+  (open) => {
+    if (open) zIndex.value = nextDialogZIndex();
+  },
+);
 </script>
 
 <template>
-  <div v-if="dialog.open && dialog.projectId && dialog.targetKey" class="overlay" @click.self="dialog.close()">
+  <div v-if="dialog.open && dialog.projectId && dialog.targetKey" class="overlay" :style="{ zIndex }" @click.self="dialog.close()">
     <div class="dialog">
       <button class="close-btn" @click="dialog.close()">닫기 ✕</button>
       <QAPanel

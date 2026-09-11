@@ -43,7 +43,11 @@ const parts = computed<Part[]>(() => {
 </template>
 
 <style scoped>
+span {
+  white-space: pre-wrap;
+}
 .tcode {
+  white-space: normal;
   background: #f0f1f5;
   padding: 1px 5px;
   border-radius: 4px;

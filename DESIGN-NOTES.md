@@ -1879,6 +1879,50 @@ prop 추가 후에도 회귀 없이 정상 동작하는지 확인.
 resolvedAt`→`status`) → `npx tsc --noEmit`(backend) →
 `vue-tsc -b && npm run build`(frontend) 클린 확인.
 
+## 코멘트/질의/답변 여러 줄 입력 + 다이얼로그 표시 순서 제어 - 완료 (2026-09-11)
+
+설계자가 실사용 중 발견한 두 가지 문제.
+
+1. **여러 줄 입력**: 코멘트 작성, 새 질문 등록, 답변/승인 메모 입력이
+   전부 `<input type="text">`(한 줄)였다 - `<textarea>`로 교체
+   (`CommentsPanel.vue`의 코멘트 작성, `QAPanel.vue`의 질문/답변/승인
+   메모 셋 다). Enter 키는 이제 폼 제출이 아니라 줄바꿈으로 동작(브라우저
+   기본 동작 그대로 - textarea는 Enter로 제출 안 됨, 별도 처리 불필요).
+   `QAPanel.vue`의 `.ask-row`/`.approval-row`는 가로 한 줄 레이아웃에서
+   "textarea 위 + 버튼들 아래 행"(`.ask-controls`/`.approval-actions`)
+   구조로 재배치 - 여러 줄로 늘어나는 textarea와 버튼이 가로로 나란히
+   있으면 어색해짐. 표시 쪽은 `TrackingCodeText.vue`(코멘트/질문/답변
+   본문을 렌더링하는 공용 컴포넌트)의 루트 `<span>`에 `white-space:
+   pre-wrap`을 추가해 줄바꿈이 실제로 화면에 반영되게 했다(이전엔
+   textarea로 줄바꿈을 입력해도 HTML이 공백으로 뭉개 한 줄로 보였을
+   것).
+2. **다이얼로그 표시 순서**: 칸반 카드 다이얼로그(`KanbanCardDialog.vue`)
+   에서 "근거 문서" 링크를 누르면 뜨는 문서 다이얼로그
+   (`DocumentPreviewDialog.vue`)가 칸반 다이얼로그에 가려 안 보이는
+   버그 - 둘 다 `.overlay`에 고정 `z-index: 1000`을 쓰고 있어서, 같은
+   값이면 어느 게 위로 오는지가 DOM 마운트 순서로 결정되고(`AppLayout.
+   vue`에 마운트된 순서) 논리적으로 "나중에 연" 다이얼로그가 오히려
+   먼저 마운트된 쪽 밑에 깔릴 수 있었다. 문서가 `KB-` 코드로 칸반
+   카드를 열 수도 있어(양방향 참조) 한쪽에 고정으로 더 높은 z-index를
+   주는 식으로는 반대 방향에서 다시 같은 문제가 난다 - 신규
+   `frontend/src/dialogZIndex.ts`(`nextDialogZIndex()` - 공유
+   증가 카운터)를 만들어, 오버레이형 다이얼로그가 열릴 때마다(store의
+   `open`이 false→true로 바뀔 때) 새 z-index를 받아 인라인 `style`로
+   적용하게 했다 - `DocumentPreviewDialog`/`KanbanCardDialog`/
+   `TargetPanelDialog`/`EntityPickerDialog`/`SearchScopeDialog`/
+   `QAPanel`의 "제안 목록" 미니 다이얼로그까지 전부 적용해, 몇 단계로
+   중첩되든 항상 마지막에 연 것이 최상단에 오도록 통일.
+
+실사용 인스턴스로 실측: 코멘트/질문에 여러 줄 텍스트를 입력해 저장 후
+줄바꿈이 그대로 보이는지 확인. 칸반 카드 다이얼로그 → 문서 참고 링크
+클릭 → 문서 다이얼로그가 칸반 다이얼로그 위에 온전히 보이는지, 반대
+방향(문서 본문에 `KB-` 코드를 넣어 문서 다이얼로그 → 다른 칸반 카드
+클릭 → 그 칸반 다이얼로그가 위로)도 확인해 3단계 중첩(칸반→문서→
+칸반)까지 항상 마지막에 연 것이 맨 위로 오는지 실제로 확인.
+
+`vue-tsc -b`(frontend) 클린 확인(백엔드 변경 없음 - 순수 프런트엔드
+수정).
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

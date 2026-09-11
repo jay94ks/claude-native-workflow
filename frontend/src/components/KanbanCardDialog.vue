@@ -3,6 +3,7 @@ import { ref, watch } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
 import { useDocumentDialogStore } from "../stores/documentDialog";
+import { nextDialogZIndex } from "../dialogZIndex";
 import UserRef from "./UserRef.vue";
 import CommentsPanel from "./CommentsPanel.vue";
 import QAPanel from "./QAPanel.vue";
@@ -25,6 +26,14 @@ const documentDialog = useDocumentDialogStore();
 const card = ref<KanbanCardDetail | null>(null);
 const loading = ref(false);
 const error = ref("");
+const zIndex = ref(1000);
+
+watch(
+  () => dialog.open,
+  (open) => {
+    if (open) zIndex.value = nextDialogZIndex();
+  },
+);
 
 watch(
   () => [dialog.open, dialog.trackingCode],
@@ -45,7 +54,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="dialog.open" class="overlay" @click.self="dialog.close()">
+  <div v-if="dialog.open" class="overlay" :style="{ zIndex }" @click.self="dialog.close()">
     <div class="dialog">
       <button class="close-btn" @click="dialog.close()">닫기 ✕</button>
       <p v-if="loading" class="muted">불러오는 중...</p>

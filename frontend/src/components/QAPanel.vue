@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import { nextDialogZIndex } from "../dialogZIndex";
 import UserRef from "./UserRef.vue";
 import TrackingCodeText from "./TrackingCodeText.vue";
 import Pagination from "./Pagination.vue";
@@ -72,6 +73,7 @@ const answering = ref<Record<string, boolean>>({});
 const acking = ref<Record<string, boolean>>({});
 const transitionNotice = ref("");
 const openOptionsFor = ref<string | null>(null);
+const optionsZIndex = ref(1100);
 
 const STATUS_LABEL: Record<string, string> = { open: "미답변", pending: "확인 대기", resolved: "처리 완료" };
 const KIND_LABEL: Record<string, string> = { answer: "답변 요청", approval: "승인 요청" };
@@ -267,10 +269,10 @@ onUnmounted(() => disconnect?.());
           </ul>
           <!-- 페이지에 직접 박힌 경우: 버튼 뒤 별도 다이얼로그로 -->
           <template v-else>
-            <button type="button" class="options-toggle" @click="openOptionsFor = q.trackingCode">
+            <button type="button" class="options-toggle" @click="optionsZIndex = nextDialogZIndex(); openOptionsFor = q.trackingCode">
               제안 목록 ({{ q.options.length }})
             </button>
-            <div v-if="openOptionsFor === q.trackingCode" class="options-overlay" @click.self="openOptionsFor = null">
+            <div v-if="openOptionsFor === q.trackingCode" class="options-overlay" :style="{ zIndex: optionsZIndex }" @click.self="openOptionsFor = null">
               <div class="options-dialog">
                 <button type="button" class="close-btn" @click="openOptionsFor = null">닫기 ✕</button>
                 <ul class="options-list">
@@ -297,13 +299,15 @@ onUnmounted(() => disconnect?.());
         </div>
         <template v-else-if="q.kind === 'approval'">
           <div class="approval-row">
-            <input v-model="answerDrafts[q.trackingCode]" type="text" placeholder="메모(선택)" />
-            <button type="button" class="approve" :disabled="answering[q.trackingCode]" @click="decide(q, 'approved')">승인</button>
-            <button type="button" class="reject" :disabled="answering[q.trackingCode]" @click="decide(q, 'rejected')">거부</button>
+            <textarea v-model="answerDrafts[q.trackingCode]" rows="2" placeholder="메모(선택, 여러 줄 입력 가능)"></textarea>
+            <div class="approval-actions">
+              <button type="button" class="approve" :disabled="answering[q.trackingCode]" @click="decide(q, 'approved')">승인</button>
+              <button type="button" class="reject" :disabled="answering[q.trackingCode]" @click="decide(q, 'rejected')">거부</button>
+            </div>
           </div>
         </template>
         <form v-else class="answer-row" @submit.prevent="answer(q)">
-          <input v-model="answerDrafts[q.trackingCode]" type="text" placeholder="답변 입력..." />
+          <textarea v-model="answerDrafts[q.trackingCode]" rows="2" placeholder="답변 입력... (여러 줄 입력 가능)"></textarea>
           <button type="submit" :disabled="answering[q.trackingCode]">답변</button>
         </form>
       </li>
@@ -311,13 +315,15 @@ onUnmounted(() => disconnect?.());
     </ul>
     <Pagination :page="page" :total-pages="totalPages" @update:page="goToPage" />
     <form class="ask-row" @submit.prevent="askQuestion">
-      <input v-model="newQuestion" type="text" placeholder="새 질문 등록..." />
-      <select v-model="newKind">
-        <option value="answer">답변 요청</option>
-        <option value="approval">승인 요청</option>
-      </select>
-      <button type="button" class="refs-btn" @click="pickRefs">근거 문서 ({{ newRefs.length }})</button>
-      <button type="submit" :disabled="asking">질문 등록</button>
+      <textarea v-model="newQuestion" rows="2" placeholder="새 질문 등록... (여러 줄 입력 가능)"></textarea>
+      <div class="ask-controls">
+        <select v-model="newKind">
+          <option value="answer">답변 요청</option>
+          <option value="approval">승인 요청</option>
+        </select>
+        <button type="button" class="refs-btn" @click="pickRefs">근거 문서 ({{ newRefs.length }})</button>
+        <button type="submit" :disabled="asking">질문 등록</button>
+      </div>
     </form>
   </section>
 </template>
@@ -530,27 +536,41 @@ h2 {
   font-weight: 600;
   margin-top: 2px;
 }
-.answer-row,
-.ask-row,
-.approval-row {
+.answer-row {
   display: flex;
   gap: 8px;
   margin-top: 6px;
-  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.ask-row,
+.approval-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
 }
 .ask-row {
   margin-top: 0;
 }
-.answer-row input,
-.ask-row input,
-.approval-row input {
+.answer-row textarea,
+.ask-row textarea,
+.approval-row textarea {
   flex: 1;
   padding: 8px 10px;
   border: 1px solid #d8dae0;
   border-radius: 6px;
   min-width: 100px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
 }
-.ask-row select {
+.ask-controls,
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ask-controls select {
   padding: 8px 10px;
   border: 1px solid #d8dae0;
   border-radius: 6px;
@@ -563,7 +583,7 @@ h2 {
   font-size: 12px;
 }
 .answer-row button,
-.ask-row button {
+.ask-controls button {
   background: #3454d1;
   color: #fff;
   border: none;
@@ -572,10 +592,10 @@ h2 {
   font-weight: 600;
 }
 .answer-row button:disabled,
-.ask-row button:disabled {
+.ask-controls button:disabled {
   opacity: 0.6;
 }
-.approval-row .approve {
+.approval-actions .approve {
   background: #1f9254;
   color: #fff;
   border: none;
@@ -583,7 +603,7 @@ h2 {
   border-radius: 6px;
   font-weight: 600;
 }
-.approval-row .reject {
+.approval-actions .reject {
   background: #d1344b;
   color: #fff;
   border: none;
@@ -591,7 +611,7 @@ h2 {
   border-radius: 6px;
   font-weight: 600;
 }
-.approval-row button:disabled {
+.approval-actions button:disabled {
   opacity: 0.6;
 }
 .muted {
