@@ -86,3 +86,15 @@ export function requireUnrestrictedScope(req: AuthedRequest, res: Response, next
   }
   next();
 }
+
+/** 다른 조건과 OR로 섞이지 않는 "admin 전용" 라우트에 건다(예: 사용자
+ * 관리 화면) - API 키 배제처럼 "본인 또는 owner 또는 admin"과 같이
+ * 다른 권한과 섞이는 경우는 지금까지처럼 라우트에서 isSuperAdmin()을
+ * 직접 호출해 OR로 묶는다. */
+export async function requireSuperAdmin(req: AuthedRequest, res: Response, next: NextFunction): Promise<void> {
+  if (!(await isSuperAdmin(req.userId!))) {
+    res.status(403).json({ error: "최고 관리자만 접근할 수 있습니다" });
+    return;
+  }
+  next();
+}

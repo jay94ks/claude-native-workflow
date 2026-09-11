@@ -139,6 +139,8 @@ const KNOWN_CLI_ONLY = new Set([
   "key_list",
   "key_revoke",
   "git_my_token", // Gitea PAT 재발급 - key_create와 같은 급의 1회 노출 비밀 발급
+  "user_list", // admin 전용 전체 사용자 목록 - 신원 관리 동작
+  "user_reset_password", // admin 대행 비밀번호 재설정 - key_create와 같은 급의 1회 노출 비밀 발급
 ]);
 
 // CLI는 명령 자체가 이미 특정 리소스 전용 화면/맥락 안에 있어(예: 이

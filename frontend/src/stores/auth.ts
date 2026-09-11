@@ -18,6 +18,7 @@ export interface Me {
   displayLabel: string;
   nicknameChangedAt: string | null;
   giteaUsername: string | null;
+  isSuperAdmin: boolean;
 }
 
 export const useAuthStore = defineStore("auth", {

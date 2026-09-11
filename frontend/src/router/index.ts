@@ -11,6 +11,7 @@ const router = createRouter({
     { path: "/groups", name: "groups", component: () => import("../views/ProjectGroupsView.vue") },
     { path: "/projects", name: "projects", component: () => import("../views/ProjectsView.vue") },
     { path: "/users/:id", name: "user-profile", component: () => import("../views/UserProfileView.vue"), props: true },
+    { path: "/admin/users", name: "admin-users", component: () => import("../views/AdminUsersView.vue") },
     {
       path: "/projects/:id",
       component: () => import("../views/ProjectShellView.vue"),

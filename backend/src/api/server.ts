@@ -17,6 +17,8 @@ import {
   getPublicProfile,
   listUsers,
   isSuperAdmin,
+  listAllUsersForAdmin,
+  resetPasswordAsAdmin,
 } from "../core/auth.js";
 import { LoginRateLimitError } from "../core/loginRateLimit.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
@@ -141,7 +143,13 @@ import {
   revokeApiKey,
   ApiKeyError,
 } from "../core/apiKeys.js";
-import { authenticate, requireProjectRole, requireUnrestrictedScope, type AuthedRequest } from "../middleware/auth.js";
+import {
+  authenticate,
+  requireProjectRole,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  type AuthedRequest,
+} from "../middleware/auth.js";
 import {
   linkSelfHostedRepo,
   linkExternalAsPrimary,
@@ -341,6 +349,30 @@ app.post(
     const token = await regenerateGiteaAccessToken(req.userId!);
     const user = await getMe(req.userId!);
     res.json({ username: user.giteaUsername, token });
+  }),
+);
+
+// ---------------------------------------------------------------- 관리자 전용 사용자 관리
+// /api/admin/* - admin 전용임을 경로 자체가 드러낸다(이 저장소 첫
+// admin 네임스페이스). 이메일 발송 인프라가 없어 self-service 비밀번호
+// 재설정 대신 admin이 대행한다(설계자 확정 - #password-reset).
+app.get(
+  "/api/admin/users",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (_req, res) => {
+    res.json(await listAllUsersForAdmin());
+  }),
+);
+
+app.post(
+  "/api/admin/users/:userId/reset-password",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (req, res) => {
+    res.json(await resetPasswordAsAdmin(req.params.userId));
   }),
 );
 

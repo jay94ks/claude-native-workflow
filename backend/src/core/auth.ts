@@ -92,6 +92,10 @@ export interface RegisterInput {
 
 const MIN_PASSWORD_LENGTH = 8;
 
+function hashPassword(plain: string): Promise<string> {
+  return argon2.hash(plain, { type: argon2.argon2id });
+}
+
 // ---------------------------------------------------------------- 닉네임 넘버링
 
 const DEFAULT_NICKNAME_LABEL = "설계자";
@@ -140,7 +144,7 @@ export async function register(
       existing.username === input.username ? "이미 사용 중인 아이디입니다" : "이미 사용 중인 이메일입니다",
     );
   }
-  const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+  const passwordHash = await hashPassword(input.password);
   const nicknameNumber = await nextNicknameNumber(db, DEFAULT_NICKNAME_LABEL);
   const user = await db.user.create({
     data: { username: input.username, email: input.email ?? null, passwordHash, nicknameNumber },
@@ -250,6 +254,7 @@ export interface MeProfile {
   displayLabel: string;
   nicknameChangedAt: string | null;
   giteaUsername: string | null;
+  isSuperAdmin: boolean;
 }
 
 export async function getMe(userId: string): Promise<MeProfile> {
@@ -268,6 +273,7 @@ export async function getMe(userId: string): Promise<MeProfile> {
     displayLabel: formatDisplayLabel(user.nickname, user.nicknameNumber),
     nicknameChangedAt: user.nicknameChangedAt ? user.nicknameChangedAt.toISOString() : null,
     giteaUsername: user.giteaUsername,
+    isSuperAdmin: await isSuperAdmin(user.id),
   };
 }
 
@@ -326,6 +332,7 @@ export async function updateMe(userId: string, input: UpdateMeInput): Promise<Me
     displayLabel: formatDisplayLabel(user.nickname, user.nicknameNumber),
     nicknameChangedAt: user.nicknameChangedAt ? user.nicknameChangedAt.toISOString() : null,
     giteaUsername: user.giteaUsername,
+    isSuperAdmin: await isSuperAdmin(user.id),
   };
 }
 
@@ -389,4 +396,53 @@ export async function listUsers(search?: string, limit = 50): Promise<UserListIt
     username: u.username,
     displayLabel: formatDisplayLabel(u.nickname, u.nicknameNumber),
   }));
+}
+
+export interface AdminUserListItem {
+  id: string;
+  username: string;
+  email: string | null;
+  nickname: string | null;
+  displayLabel: string;
+  createdAt: string;
+}
+
+/** admin 전용 "사용자 관리" 화면용 - listUsers()(엔티티 선택기용,
+ * {id,username,displayLabel}만)와 달리 이메일/가입일까지 포함한다.
+ * 다른 화면이 listUsers()의 좁은 응답 모양에 의존하므로 그 함수는
+ * 그대로 두고 이 함수를 따로 둔다. admin 여부 확인은 라우트의
+ * requireSuperAdmin이 담당(이 함수 자체는 조회만). */
+export async function listAllUsersForAdmin(): Promise<AdminUserListItem[]> {
+  const db = getDb();
+  const rows = await db.user.findMany({ orderBy: { createdAt: "desc" } });
+  return rows.map(
+    (u: { id: string; username: string; email: string | null; nickname: string | null; nicknameNumber: number; createdAt: Date }) => ({
+      id: u.id,
+      username: u.username,
+      email: u.email,
+      nickname: u.nickname,
+      displayLabel: formatDisplayLabel(u.nickname, u.nicknameNumber),
+      createdAt: u.createdAt.toISOString(),
+    }),
+  );
+}
+
+function generateTemporaryPassword(): string {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+/** admin이 다른 설계자의 비밀번호를 잊었을 때 대신 재설정한다(이
+ * 시스템엔 이메일 발송 인프라가 없어 self-service 플로우 대신 이
+ * 방식을 택함 - "admin이 곧 설치자"라는 기존 전제와 일치). 새 임시
+ * 비밀번호는 이 반환값에만 평문으로 담기고 어디에도 저장되지 않는다
+ * (API 키 secret 발급과 동일한 "1회 노출" 원칙). admin 여부 확인은
+ * 라우트의 requireSuperAdmin이 담당 - 이 함수는 대상 존재만 검증. */
+export async function resetPasswordAsAdmin(targetUserId: string): Promise<{ username: string; temporaryPassword: string }> {
+  const db = getDb();
+  const user = await db.user.findUnique({ where: { id: targetUserId } });
+  if (!user) throw new AuthError(`사용자를 찾을 수 없습니다: ${targetUserId}`);
+  const temporaryPassword = generateTemporaryPassword();
+  const passwordHash = await hashPassword(temporaryPassword);
+  await db.user.update({ where: { id: targetUserId }, data: { passwordHash } });
+  return { username: user.username, temporaryPassword };
 }

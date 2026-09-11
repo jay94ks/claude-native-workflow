@@ -50,6 +50,7 @@ function handleLogout() {
         <router-link v-if="teamsEnabled" to="/teams">팀</router-link>
         <router-link to="/groups">프로젝트 그룹</router-link>
         <router-link to="/projects">프로젝트</router-link>
+        <router-link v-if="auth.me?.isSuperAdmin" to="/admin/users">사용자 관리</router-link>
       </nav>
       <router-link v-if="auth.me" :to="`/users/${auth.me.id}`" class="me-link">내 정보</router-link>
       <button class="logout" @click="handleLogout">로그아웃</button>

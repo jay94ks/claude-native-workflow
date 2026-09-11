@@ -215,6 +215,10 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 - **`git my-token`** - 내 Gitea 개인 접근 토큰을 재발급하고 1회
   노출하는 명령. `key create`와 같은 급의 "1회 노출 비밀 발급" 동작이라
   CLI 전용이고 MCP엔 없다.
+- **`user list`/`user reset-password`(admin 전용)** - 전체 사용자
+  목록 조회와 다른 설계자의 비밀번호 강제 재설정. 신원을 직접 다루는
+  관리자 동작이라 CLI 전용이고 MCP엔 없다 - AI 세션이 다른 사람의
+  계정 비밀번호를 재설정할 일은 없어야 한다.
 - **칸반 카드 코멘트** - 칸반 보드 자체(분류/카드 생성·조회·이동)는
   아래 표의 `kanban-*` 명령으로 AI에게 완전히 열려 있지만, 카드에
   달리는 코멘트만은 위 코멘트(comment)와 같은 채널(`targetType:

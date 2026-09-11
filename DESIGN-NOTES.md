@@ -2500,7 +2500,67 @@ admin 로그인 후 내 정보 화면에서 "7일 후 만료" 선택해 키 생�
 흐리게 표시되는 것을 스크린샷으로 확인. `npx tsc --noEmit`(backend),
 `vue-tsc -b`(frontend) 클린 확인.
 
+## admin 대행 비밀번호 재설정 - 완료 (2026-09-12)
+
+PLANS.md `#password-reset` 착수(색인 표 4번). 조사 결과 이 스택엔
+이메일 발송 인프라가 전혀 없고(SMTP 라이브러리/서비스/환경변수
+없음), admin 대행/사용자 관리 화면도 없어 설계자에게 방식을 확인 -
+"admin이 사용자 목록에서 계정을 골라 임시 비밀번호를 발급"하는
+방식으로 결정(SMTP self-service 대신 - "admin이 곧 설치자"라는 기존
+전제와 일치, 새 인프라 불필요).
+
+스키마 변경 없이 기존 `User.passwordHash`만 갱신한다. `core/auth.ts`
+- `register()`가 인라인으로 하던 argon2 해시를 `hashPassword()`
+헬퍼로 뽑아 재사용, `resetPasswordAsAdmin(targetUserId)` 신규(32자
+hex 임시 비밀번호 생성 → 해시 → 갱신, 평문은 반환값에만 담고
+저장 안 함 - API 키 secret과 동일한 1회 노출 원칙), `listAllUsersForAdmin()`
+신규(기존 `listUsers()`는 엔티티 선택기용으로 `{id,username,
+displayLabel}`만 반환해 다른 화면이 그 모양에 의존하므로 건드리지
+않고 이메일/가입일까지 포함한 별도 함수로 분리). `MeProfile`/`getMe()`
+/`updateMe()`에 `isSuperAdmin: boolean` 신규 - 지금까지 admin 전용
+UI는 전부 프로젝트/팀 스코프의 서버 계산 필드로만 처리했는데, 이번엔
+전역 nav 링크 노출 여부를 결정할 전역 신호가 처음 필요해져 기존
+`isSuperAdmin()` 함수를 한 번 더 호출해 채움(실제 보안 경계는 항상
+서버의 `requireSuperAdmin`, 이 필드는 UI 노출 여부만 결정).
+
+`middleware/auth.ts`에 `requireSuperAdmin` 신규(`requireUnrestrictedScope`
+와 같은 스타일) - 지금까지 `isSuperAdmin()`은 다른 조건과 OR로
+묶어 라우트에서 인라인 호출해왔지만(API 키 배제 라우트가 유일한
+예), 이번엔 admin 전용(OR 없음) 라우트가 2개 생겨 재사용 가능한
+미들웨어로 분리. 이 저장소 첫 `/api/admin/*` 네임스페이스로
+`GET /api/admin/users`/`POST /api/admin/users/:userId/reset-password`
+신설(둘 다 `authenticate, requireUnrestrictedScope, requireSuperAdmin`).
+CLI `user` 그룹에 `list`(admin 전용, raw JSON)/`reset-password
+<userId>`(`key create`/`git my-token`과 동일한 1회 노출 경고) 추가.
+MCP는 그대로 없음 - `key create/list/revoke`와 같은 급의 신원 관리
+동작이라 완전성 원칙의 의도적 예외에 새로 편입(SKILL.md 양쪽 사본
+갱신, `audit-cli-mcp.ts`의 `KNOWN_CLI_ONLY`에 `user_list`/
+`user_reset_password` 추가).
+
+웹 UI - `stores/auth.ts`의 `Me`에 `isSuperAdmin` 추가,
+`AppLayout.vue`의 비-프로젝트 nav에 `v-if="auth.me?.isSuperAdmin"`인
+"사용자 관리" 링크(`/admin/users`) 추가. 신규
+`AdminUsersView.vue` - 사용자 목록(아이디/닉네임/이메일/가입일) +
+"비밀번호 재설정" 버튼, 클릭 시 `PersonalKeysManager.vue`의 1회
+노출 박스(reveal-box, 복사 버튼)와 동일한 패턴으로 새 임시 비밀번호
+표시. `auth.me?.isSuperAdmin`이 false면(직접 URL 접근 등) 안내
+문구만 표시(실제 차단은 서버 403).
+
+**실측 검증**: 테스트 계정 등록 후 admin/일반 계정 둘 다 로그인해
+`GET /api/admin/users`/`POST .../reset-password`를 일반 계정으로
+호출 시 403, admin으론 200 확인. 실제로 테스트 계정 비밀번호를
+재설정해 기존 비밀번호는 더 이상 로그인 안 되고 새 임시 비밀번호로는
+즉시 로그인되는 것 확인. `GET /api/auth/me`가 admin엔
+`isSuperAdmin: true`, 일반 계정엔 `false` 반환 확인. CLI `docs user
+list`/`user reset-password <id>` 왕복 확인(CLI로 발급한 임시
+비밀번호로 실제 웹 UI 로그인까지 성공 확인). 브라우저로 admin
+로그인 시 "사용자 관리" 링크와 목록·재설정·1회 노출 박스 전부 확인,
+같은 브라우저에서 일반 계정으로 로그인하면 그 링크가 없고 `/admin/
+users` 직접 접근 시 안내 문구만 뜨는 것까지 확인. `npm run
+audit:cli-mcp` 클린 재확인(CLI 108개, 허용 예외 10개). `npx tsc
+--noEmit`(backend), `vue-tsc -b`(frontend) 클린.
+
 ## 다음 단계
 
-PLANS.md에 정리된 백로그(24개 항목, 태그로 QA-SCENARIOS.md와 연결)
-중 다음 우선순위를 설계자와 함께 정한다.
+PLANS.md 색인 표(맨 위 완료✅/⬜ 표시 - 이번 라운드부터 도입,
+CLAUDE.md에도 이 규칙을 명시)를 기준으로 다음 우선순위를 고른다.

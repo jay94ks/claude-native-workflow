@@ -168,6 +168,25 @@ userCmd
     }),
   );
 
+userCmd
+  .command("list")
+  .description("전체 사용자 목록 조회(관리자 전용)")
+  .action(() => run(async () => printJson(await apiCall("/api/admin/users"))));
+
+userCmd
+  .command("reset-password <userId>")
+  .description("다른 설계자의 비밀번호를 임시 비밀번호로 재설정한다(관리자 전용)")
+  .action((userId) =>
+    run(async () => {
+      const result = await apiCall<{ username: string; temporaryPassword: string }>(
+        `/api/admin/users/${userId}/reset-password`,
+        { method: "POST" },
+      );
+      console.log(`이 값은 지금 한 번만 표시됩니다 - 안전한 곳에 저장하세요:`);
+      printJson(result);
+    }),
+  );
+
 // ---------------------------------------------------------------- API 키(신원 위임 인증, 3종)
 // MCP 도구는 의도적으로 없음(auth register/login과 같은 급의 신원
 // 관리 동작 - CLI 전용, 사람이 터미널에서 직접 하는 동작으로 제한).

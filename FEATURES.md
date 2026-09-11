@@ -36,6 +36,12 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   붙는다. 코멘트/메시지/질의/리비전/멤버 목록 등 사용자 참조가 전부
   `[닉네임 #N]`(`[userId]` 태그, 클릭 시 프로필로 이동) 형식으로 표시.
 - git 자격증명 저장(AES-256-GCM 암호화, 외부 저장소 인증용, 재사용 가능).
+- **admin 대행 비밀번호 재설정** - 이 시스템엔 이메일 발송 인프라가
+  없어 self-service 찾기/재설정 대신, 웹 UI "사용자 관리" 화면(또는
+  `docs user reset-password`)에서 admin이 다른 설계자를 골라 임시
+  비밀번호를 1회 노출로 발급한다(API 키 secret과 동일한 노출 패턴).
+  admin 여부는 `GET /api/auth/me`의 `isSuperAdmin` 필드로 프런트에
+  노출되지만, 실제 접근 제어는 항상 서버(`requireSuperAdmin`)가 한다.
 
 ## 2. API 키 (신원 위임 인증, 3종)
 
