@@ -1716,7 +1716,7 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    await acknowledgeQueueEntry(req.params.id);
+    await acknowledgeQueueEntry(req.params.id, req.params.projectId);
     res.json({ ok: true });
   }),
 );
@@ -1726,7 +1726,7 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    await completeQueueEntry(req.params.id);
+    await completeQueueEntry(req.params.id, req.params.projectId);
     res.json({ ok: true });
   }),
 );

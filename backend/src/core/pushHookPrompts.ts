@@ -81,20 +81,29 @@ export async function listQueueEntries(projectId: string, status?: string): Prom
   }));
 }
 
-async function transitionQueueEntry(id: string, allowedFrom: string[], to: string): Promise<void> {
+// queue entry는 PushHookPrompt를 통해서만 프로젝트에 연결되고(자기
+// 자신은 projectId를 안 들고 있음) - 라우트가 :projectId/:id 두 경로
+// 파라미터를 받으므로, id만으로 찾아 바로 전이시키면 :projectId
+// 쪽의 requireProjectRole 검사가 사실상 무의미해진다(그 프로젝트의
+// editor면 남의 프로젝트 id를 넣어도 통과 - 실측으로 재현 확인한
+// 버그). deletePushHookPrompt()가 이미 하고 있는 "조회 후 projectId
+// 일치 확인" 패턴을 여기도 그대로 적용한다.
+async function transitionQueueEntry(id: string, projectId: string, allowedFrom: string[], to: string): Promise<void> {
   const db = getDb();
-  const row = await db.pushHookQueueEntry.findUnique({ where: { id } });
-  if (!row) throw new Error(`큐 항목을 찾을 수 없습니다: ${id}`);
+  const row = await db.pushHookQueueEntry.findUnique({ where: { id }, include: { pushHookPrompt: true } });
+  if (!row || (row as { pushHookPrompt: { projectId: string } }).pushHookPrompt.projectId !== projectId) {
+    throw new Error(`큐 항목을 찾을 수 없습니다: ${id}`);
+  }
   if (!allowedFrom.includes(row.status)) {
     throw new Error(`상태가 ${allowedFrom.join("|")}일 때만 가능합니다(현재: ${row.status})`);
   }
   await db.pushHookQueueEntry.update({ where: { id }, data: { status: to } });
 }
 
-export async function acknowledgeQueueEntry(id: string): Promise<void> {
-  await transitionQueueEntry(id, ["pending"], "acknowledged");
+export async function acknowledgeQueueEntry(id: string, projectId: string): Promise<void> {
+  await transitionQueueEntry(id, projectId, ["pending"], "acknowledged");
 }
 
-export async function completeQueueEntry(id: string): Promise<void> {
-  await transitionQueueEntry(id, ["pending", "acknowledged"], "done");
+export async function completeQueueEntry(id: string, projectId: string): Promise<void> {
+  await transitionQueueEntry(id, projectId, ["pending", "acknowledged"], "done");
 }
