@@ -55,6 +55,10 @@ async function pickNewMember() {
   if (result && result[0]) newMemberUserId.value = result[0];
 }
 
+function isSelfOwner(m: Member): boolean {
+  return m.userId === auth.me?.id && m.role === "owner";
+}
+
 async function addMember() {
   if (!newMemberUserId.value.trim()) return;
   memberError.value = "";
@@ -134,7 +138,12 @@ onMounted(load);
         <li v-for="m in members" :key="m.id">
           <UserRef :user-id="m.userId" />
           <span class="member-controls">
-            <select :value="m.role" @change="changeMemberRole(m, ($event.target as HTMLSelectElement).value)">
+            <select
+              :value="m.role"
+              :disabled="isSelfOwner(m)"
+              :title="isSelfOwner(m) ? '본인의 owner 권한은 스스로 해제할 수 없습니다' : ''"
+              @change="changeMemberRole(m, ($event.target as HTMLSelectElement).value)"
+            >
               <option value="owner">owner</option>
               <option value="editor">editor</option>
               <option value="viewer">viewer</option>

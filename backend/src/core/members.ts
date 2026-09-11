@@ -22,9 +22,18 @@ export async function addMember(projectId: string, userId: string, role: string)
   return { id: row.id, projectId: row.projectId, userId: row.userId, role: row.role };
 }
 
-export async function updateMemberRole(projectId: string, userId: string, role: string): Promise<Member> {
+export async function updateMemberRole(projectId: string, userId: string, role: string, actingUserId: string): Promise<Member> {
   if (!VALID_ROLES.has(role)) {
     throw new Error(`알 수 없는 role: ${role} (owner|editor|viewer 중 하나)`);
+  }
+  // 이 라우트는 owner만 호출 가능하므로(requireProjectRole("owner")),
+  // 여기 도달한 actingUserId는 항상 현재 owner다 - 자기 자신을 대상으로
+  // owner가 아닌 role로 바꾸려는 시도만 막으면 "유일한 owner가 스스로를
+  // 내림"과 "owner가 여럿이어도 자기 자신은 못 내림" 둘 다 커버된다
+  // (다른 owner가 그 사람을 내리는 건 그대로 허용 - 그건 actingUserId가
+  // 다르므로 이 조건에 안 걸림).
+  if (userId === actingUserId && role !== "owner") {
+    throw new Error("본인의 owner 권한은 스스로 해제할 수 없습니다 - 다른 owner가 변경해야 합니다");
   }
   const db = getDb();
   const row = await db.member.update({ where: { projectId_userId: { projectId, userId } }, data: { role } });

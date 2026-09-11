@@ -634,7 +634,7 @@ app.put(
   asyncRoute(async (req, res) => {
     const { role } = req.body as { role?: string };
     if (!role) { res.status(400).json({ error: "role이 필요합니다" }); return; }
-    res.json(await updateMemberRole(req.params.projectId, req.params.userId, role));
+    res.json(await updateMemberRole(req.params.projectId, req.params.userId, role, req.userId!));
   }),
 );
 

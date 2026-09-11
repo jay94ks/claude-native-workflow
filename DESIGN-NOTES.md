@@ -2075,13 +2075,31 @@ clone → 파일 수정 후 `git push` → 실제로 성공하고 Gitea 커밋 �
 `npm run db:generate`(3드라이버) → `npx tsc --noEmit`(backend) →
 `vue-tsc -b`(frontend) 클린 확인.
 
+## 멤버 역할 변경 - 본인의 owner 권한 스스로 해제 금지 - 완료 (2026-09-11)
+
+설계자 요청 - 프로젝트 멤버 관리에서 (1) owner가 자신 한 명뿐이어도,
+(2) 다른 owner가 더 있어도, 자기 자신을 owner가 아닌 role로 스스로
+바꿀 수는 없어야 한다. `PUT /api/projects/:projectId/members/:userId`
+라우트는 이미 `requireProjectRole("owner")`라 이 핸들러에 도달하는
+호출자는 항상 그 프로젝트의 현재 owner다 - `core/members.ts`의
+`updateMemberRole()`에 4번째 인자 `actingUserId`를 추가해 "대상
+userId가 호출자 자신이고 새 role이 owner가 아니면" 거부하는 것
+하나로 두 요구사항을 동시에 충족한다(다른 owner가 그 사람을 내리는
+건 `userId !== actingUserId`라 그대로 허용 - 정상적인 owner 간 관리는
+안 막힘). `ProjectSettingsView.vue`의 역할 select도 본인+owner인
+행에서는 비활성화(기존 "본인 제거 버튼 비활성화" 패턴과 동일한 UX로
+통일, 툴팁으로 이유 안내).
+
+실사용 인스턴스로 실측: 프로젝트를 만들면 자동으로 owner가 되는
+설계자가 스스로를 editor/viewer로 내리려 하면 400 + 안내 메시지
+확인 → 두 번째 설계자를 owner로 추가해도 첫 owner는 여전히 스스로를
+못 내리는지 확인 → 그 두 번째 owner가 첫 owner를 editor로 내리는
+건(자기 자신이 아니므로) 정상 성공하는지 확인 → 웹 UI에서 본인+owner
+행의 select가 비활성화(회색)로 보이고 타 설계자 행은 그대로 조작
+가능한지 실제 클릭으로 확인.
+
+`npx tsc --noEmit`(backend) → `vue-tsc -b`(frontend) 클린 확인.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.
-
-이전 라운드까지 만들어진 프로젝트들의 Gitea 저장소가 옛
-`admin/project-...` 네임스페이스에 남아있다(조직 네임스페이스로의
-전환이 새로 연결되는 저장소부터만 적용되는 브레이킹 체인지 -
-마이그레이션 스크립트 없음, 기존 관행). 실사용 전환 시 필요하면
-그 저장소들을 Gitea 어드민 UI/API로 `cnwk-projects` 조직에 수동
-이관하거나 다시 연결해야 한다.
