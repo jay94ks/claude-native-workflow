@@ -105,3 +105,16 @@ export async function apiCallText(pathSuffix: string, init: RequestInit = {}): P
   }
   return res.text();
 }
+
+// git/file/raw처럼 raw 바이트를 반환하는 엔드포인트용(이미지/영상
+// 미리보기, "원본 다운로드") - <img src>/<video src>는 인증 헤더를
+// 못 실으므로, 인증된 fetch()로 Blob을 받아 URL.createObjectURL()로
+// src를 만든다.
+export async function apiCallBlob(pathSuffix: string, init: RequestInit = {}): Promise<Blob> {
+  const res = await callWithRefresh(pathSuffix, init);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new ApiError(res.status, (body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return res.blob();
+}

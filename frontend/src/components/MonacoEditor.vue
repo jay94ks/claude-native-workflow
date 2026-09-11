@@ -55,6 +55,13 @@ watch(
     if (model) monaco.editor.setModelLanguage(model, language);
   },
 );
+
+watch(
+  () => props.readOnly,
+  (readOnly) => {
+    editor.value?.updateOptions({ readOnly });
+  },
+);
 </script>
 
 <template>

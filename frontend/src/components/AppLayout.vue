@@ -9,6 +9,7 @@ import KanbanCardDialog from "./KanbanCardDialog.vue";
 import EntityPickerDialog from "./EntityPickerDialog.vue";
 import SidebarSearchBox from "./SidebarSearchBox.vue";
 import SearchScopeDialog from "./SearchScopeDialog.vue";
+import TargetPanelDialog from "./TargetPanelDialog.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -60,6 +61,7 @@ function handleLogout() {
     <KanbanCardDialog />
     <EntityPickerDialog />
     <SearchScopeDialog />
+    <TargetPanelDialog />
   </div>
 </template>
 

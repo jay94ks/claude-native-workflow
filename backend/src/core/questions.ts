@@ -136,6 +136,38 @@ export interface QuestionWithAnswer extends QuestionDetail {
   answer: AnswerDetail | null;
 }
 
+interface QuestionRow {
+  trackingCode: string;
+  projectId: string;
+  targetType: string;
+  targetKey: string;
+  ordinal: number;
+  kind: string;
+  text: string;
+  askedBy: string;
+  status: string;
+  refs: { trackingCode: string }[];
+  answer: { decision: string | null; body: string | null; answeredBy: string; answeredAt: Date } | null;
+}
+
+function mapQuestionRow(r: QuestionRow): QuestionWithAnswer {
+  return {
+    trackingCode: r.trackingCode,
+    projectId: r.projectId,
+    targetType: r.targetType,
+    targetKey: r.targetKey,
+    ordinal: r.ordinal,
+    kind: r.kind,
+    text: r.text,
+    askedBy: r.askedBy,
+    status: r.status,
+    refs: r.refs.map((x) => x.trackingCode),
+    answer: r.answer
+      ? { decision: r.answer.decision, body: r.answer.body, answeredBy: r.answer.answeredBy, answeredAt: r.answer.answeredAt }
+      : null,
+  };
+}
+
 /** 대상 하나의 전체 질문(open+pending+resolved) 스레드. */
 export async function listQuestions(targetType: string, targetKey: string): Promise<QuestionWithAnswer[]> {
   const db = getDb();
@@ -144,35 +176,50 @@ export async function listQuestions(targetType: string, targetKey: string): Prom
     include: { answer: true, refs: true },
     orderBy: { ordinal: "asc" },
   });
-  return rows.map(
-    (r: {
-      trackingCode: string;
-      projectId: string;
-      targetType: string;
-      targetKey: string;
-      ordinal: number;
-      kind: string;
-      text: string;
-      askedBy: string;
-      status: string;
-      refs: { trackingCode: string }[];
-      answer: { decision: string | null; body: string | null; answeredBy: string; answeredAt: Date } | null;
-    }) => ({
-      trackingCode: r.trackingCode,
-      projectId: r.projectId,
-      targetType: r.targetType,
-      targetKey: r.targetKey,
-      ordinal: r.ordinal,
-      kind: r.kind,
-      text: r.text,
-      askedBy: r.askedBy,
-      status: r.status,
-      refs: r.refs.map((x) => x.trackingCode),
-      answer: r.answer
-        ? { decision: r.answer.decision, body: r.answer.body, answeredBy: r.answer.answeredBy, answeredAt: r.answer.answeredAt }
-        : null,
+  return rows.map(mapQuestionRow);
+}
+
+export interface QuestionPage {
+  items: QuestionWithAnswer[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+/** 문서 탭 분리(질의/답변) + 소스 코드/칸반 카드 다이얼로그가 공유해서
+ * 쓰는 페이지네이션+검색+최신순 목록 - CLI/MCP가 쓰는 listQuestions()
+ * (ordinal asc, 배열)는 그대로 두고 웹 전용 자매 함수로 추가한다. */
+export async function listQuestionsPaged(
+  targetType: string,
+  targetKey: string,
+  opts: { page: number; pageSize: number; q?: string },
+): Promise<QuestionPage> {
+  const db = getDb();
+  const safePage = Math.max(1, opts.page);
+  const q = opts.q?.trim();
+  const where = {
+    targetType,
+    targetKey,
+    ...(q ? { OR: [{ text: { contains: q } }, { answer: { body: { contains: q } } }] } : {}),
+  };
+  const [rows, total] = await Promise.all([
+    db.question.findMany({
+      where,
+      include: { answer: true, refs: true },
+      orderBy: { createdAt: "desc" },
+      skip: (safePage - 1) * opts.pageSize,
+      take: opts.pageSize,
     }),
-  );
+    db.question.count({ where }),
+  ]);
+  return {
+    items: rows.map(mapQuestionRow),
+    page: safePage,
+    pageSize: opts.pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / opts.pageSize)),
+  };
 }
 
 export interface PendingQuestion extends QuestionDetail {

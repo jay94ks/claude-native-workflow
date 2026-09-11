@@ -74,6 +74,7 @@ import {
   listPendingQuestions,
   answerQuestion,
   listQuestions,
+  listQuestionsPaged,
   getQuestionProjectId,
   acknowledgeQuestion,
   countPendingQuestions,
@@ -1584,6 +1585,40 @@ app.get(
   }),
 );
 
+// 문서 탭 분리(질의/답변) + 소스 코드/칸반 카드 다이얼로그가 공유하는
+// 웹 전용 자매 라우트(페이지네이션+검색+최신순) - CLI/MCP가 쓰는 위
+// 배열 응답 라우트는 그대로 둔다.
+app.get(
+  "/api/questions/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const trackingCode = req.query.trackingCode as string | undefined;
+    if (!trackingCode) { res.status(400).json({ error: "trackingCode 쿼리가 필요합니다" }); return; }
+    const target = await resolveTargetByTrackingCode(trackingCode);
+    if (!target) { res.status(404).json({ error: "대상을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(target.projectId, req.userId!);
+    if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    const q = req.query.q as string | undefined;
+    res.json(await listQuestionsPaged(target.targetType, trackingCode, { page, pageSize, q }));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/questions/source/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const path = req.query.path as string | undefined;
+    if (!path) { res.status(400).json({ error: "path 쿼리가 필요합니다" }); return; }
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    const q = req.query.q as string | undefined;
+    res.json(await listQuestionsPaged("source", path, { page, pageSize, q }));
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/pending",
   authenticate,
@@ -2061,6 +2096,24 @@ app.put(
     await gitea.putFileContent(slug, filePath, content, message || `docs: update ${filePath}`);
     await syncSourceFileOnSave(req.params.projectId, filePath, content);
     res.json({ ok: true });
+  }),
+);
+
+// 이미지/영상 미리보기 + "원본 다운로드" 전용 - blob sha 기반 로컬
+// 캐시에서 raw 바이트를 그대로 서빙한다(JSON+base64 아님). 인증
+// 미들웨어를 거치므로 <img src>/<video src>로 직접 못 부른다 - 프런트는
+// 인증된 fetch()로 이 라우트를 호출해 Blob을 받고 object URL을 만든다.
+app.get(
+  "/api/projects/:projectId/git/file/raw",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const filePath = req.query.path as string | undefined;
+    if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
+    const raw = await gitea.getFileRaw(slug, filePath, req.query.ref as string | undefined);
+    res.type(gitea.mimeTypeForPath(filePath));
+    res.sendFile(raw.cachePath);
   }),
 );
 

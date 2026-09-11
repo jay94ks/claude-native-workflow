@@ -6,12 +6,14 @@ import MonacoEditor from "../components/MonacoEditor.vue";
 import MarkdownBody from "../components/MarkdownBody.vue";
 import UserRef from "../components/UserRef.vue";
 import QAPanel from "../components/QAPanel.vue";
-import CommentsPanel from "../components/CommentsPanel.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
 
 const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
 const entityPicker = useEntityPickerStore();
+const targetPanelDialog = useTargetPanelDialogStore();
+const activeTab = ref<"view" | "qa">("view");
 
 interface DocumentDetail {
   trackingCode: string;
@@ -262,63 +264,77 @@ onMounted(load);
       <p v-for="(n, i) in doc.notices" :key="i">⚠ {{ n }}</p>
     </div>
 
-    <p v-if="error" class="error">{{ error }}</p>
-    <p v-if="saveMessage" class="saved">{{ saveMessage }}</p>
-    <p v-if="messageSent" class="saved">메시지를 보냈습니다.</p>
-
-    <div class="toolbar">
-      <select v-model="toStatusCode">
-        <option value="">상태 전이...</option>
-        <option v-for="s in nextStatuses" :key="s.code" :value="s.code">{{ statusOptionLabel(s) }}</option>
-      </select>
-      <button class="secondary" :disabled="!toStatusCode" @click="transition">전이</button>
-      <span v-if="transitionError" class="error">{{ transitionError }}</span>
-
+    <div class="tabs">
+      <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
+      <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
       <span class="spacer"></span>
-
-      <button v-if="mode === 'read'" class="secondary" @click="messageOpen = !messageOpen">메시지로 지시</button>
-      <button v-if="mode === 'read'" class="secondary" @click="startEdit">편집</button>
-      <button v-if="mode === 'read'" class="danger" :disabled="deleting" @click="remove">
-        {{ deleting ? "삭제 중..." : "삭제" }}
+      <button
+        class="secondary"
+        @click="targetPanelDialog.show('comments', id, 'document', trackingCode)"
+      >
+        코멘트
       </button>
     </div>
-    <p v-if="deleteError" class="error">{{ deleteError }}</p>
 
-    <div v-if="messageOpen" class="message-compose">
-      <textarea v-model="messageDraft" rows="2" :placeholder="`[${trackingCode}] 지시할 내용을 입력...`"></textarea>
-      <div class="message-actions">
-        <button :disabled="messageSending" @click="sendInstructionMessage">전송</button>
-        <button type="button" class="secondary" @click="messageOpen = false">취소</button>
+    <template v-if="activeTab === 'view'">
+      <p v-if="error" class="error">{{ error }}</p>
+      <p v-if="saveMessage" class="saved">{{ saveMessage }}</p>
+      <p v-if="messageSent" class="saved">메시지를 보냈습니다.</p>
+
+      <div class="toolbar">
+        <select v-model="toStatusCode">
+          <option value="">상태 전이...</option>
+          <option v-for="s in nextStatuses" :key="s.code" :value="s.code">{{ statusOptionLabel(s) }}</option>
+        </select>
+        <button class="secondary" :disabled="!toStatusCode" @click="transition">전이</button>
+        <span v-if="transitionError" class="error">{{ transitionError }}</span>
+
+        <span class="spacer"></span>
+
+        <button v-if="mode === 'read'" class="secondary" @click="messageOpen = !messageOpen">메시지로 지시</button>
+        <button v-if="mode === 'read'" class="secondary" @click="startEdit">편집</button>
+        <button v-if="mode === 'read'" class="danger" :disabled="deleting" @click="remove">
+          {{ deleting ? "삭제 중..." : "삭제" }}
+        </button>
       </div>
-      <p v-if="messageError" class="error">{{ messageError }}</p>
-    </div>
+      <p v-if="deleteError" class="error">{{ deleteError }}</p>
 
-    <template v-if="mode === 'read'">
-      <MarkdownBody :body="doc.body" class="body-view" />
+      <div v-if="messageOpen" class="message-compose">
+        <textarea v-model="messageDraft" rows="2" :placeholder="`[${trackingCode}] 지시할 내용을 입력...`"></textarea>
+        <div class="message-actions">
+          <button :disabled="messageSending" @click="sendInstructionMessage">전송</button>
+          <button type="button" class="secondary" @click="messageOpen = false">취소</button>
+        </div>
+        <p v-if="messageError" class="error">{{ messageError }}</p>
+      </div>
+
+      <template v-if="mode === 'read'">
+        <MarkdownBody :body="doc.body" class="body-view" />
+      </template>
+      <template v-else>
+        <MonacoEditor v-model="body" language="markdown" class="editor" />
+        <div class="edit-actions">
+          <button :disabled="saving" @click="save">{{ saving ? "저장 중..." : "저장" }}</button>
+          <button type="button" class="secondary" @click="cancelEdit">취소</button>
+        </div>
+      </template>
+
+      <section class="source-links">
+        <h2>연관된 소스 코드</h2>
+        <p v-if="sourceLinksError" class="error">{{ sourceLinksError }}</p>
+        <ul v-if="sourceLinks.length > 0" class="source-list">
+          <li v-for="link in sourceLinks" :key="link.id">
+            <button type="button" class="source-path" @click="openSourceFile(link.filePath)">{{ link.filePath }}</button>
+            <button type="button" class="remove-btn" @click="removeSourceLink(link.id)">해제</button>
+          </li>
+        </ul>
+        <p v-else class="muted">연결된 소스코드가 없습니다.</p>
+        <button type="button" class="secondary" @click="pickSourceLink">+ 소스 파일 연결</button>
+      </section>
     </template>
     <template v-else>
-      <MonacoEditor v-model="body" language="markdown" class="editor" />
-      <div class="edit-actions">
-        <button :disabled="saving" @click="save">{{ saving ? "저장 중..." : "저장" }}</button>
-        <button type="button" class="secondary" @click="cancelEdit">취소</button>
-      </div>
+      <QAPanel :project-id="id" target-type="document" :target-key="trackingCode" @status-transitioned="refreshStatus" />
     </template>
-
-    <section class="source-links">
-      <h2>연관된 소스 코드</h2>
-      <p v-if="sourceLinksError" class="error">{{ sourceLinksError }}</p>
-      <ul v-if="sourceLinks.length > 0" class="source-list">
-        <li v-for="link in sourceLinks" :key="link.id">
-          <button type="button" class="source-path" @click="openSourceFile(link.filePath)">{{ link.filePath }}</button>
-          <button type="button" class="remove-btn" @click="removeSourceLink(link.id)">해제</button>
-        </li>
-      </ul>
-      <p v-else class="muted">연결된 소스코드가 없습니다.</p>
-      <button type="button" class="secondary" @click="pickSourceLink">+ 소스 파일 연결</button>
-    </section>
-
-    <QAPanel :project-id="id" target-type="document" :target-key="trackingCode" class="qa" @status-transitioned="refreshStatus" />
-    <CommentsPanel :project-id="id" target-type="document" :target-key="trackingCode" />
   </template>
 </template>
 
@@ -370,6 +386,24 @@ h1 {
   margin: 2px 0;
   font-size: 13px;
   color: #7a5c00;
+}
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.tabs button {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.tabs button.active {
+  background: #3454d1;
+  color: #fff;
+  border-color: #3454d1;
 }
 .toolbar {
   display: flex;
@@ -443,9 +477,6 @@ button:disabled {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
-}
-.qa {
-  margin-top: 28px;
 }
 .source-links {
   margin-top: 28px;

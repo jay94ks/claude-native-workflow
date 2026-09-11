@@ -10,3 +10,7 @@
 # 스크래치 SQLite DB(backend/.gitignore가 *.db는 이미 막지만, 저널
 # 파일은 별도 확장자라 안 걸림)
 *.db-journal
+
+# 소스 코드 뷰어의 로컬 raw 콘텐츠 캐시(blob sha로 이름 붙은 디코드된
+# 파일들 - Gitea에서 언제든 다시 받아올 수 있는 파생 데이터)
+backend/.cache/

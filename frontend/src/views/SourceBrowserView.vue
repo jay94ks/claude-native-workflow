@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { apiCall, ApiError } from "../api/client";
+import { apiCall, apiCallBlob, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
 import Pagination from "../components/Pagination.vue";
-import CommentsPanel from "../components/CommentsPanel.vue";
-import QAPanel from "../components/QAPanel.vue";
 import { languageForPath } from "../utils/language";
+import { classifyFileKind, type FileKind } from "../utils/fileKind";
+import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
 
 const props = defineProps<{ id: string }>();
 const route = useRoute();
+const targetPanelDialog = useTargetPanelDialogStore();
 const ENTRIES_PAGE_SIZE = 30;
 const entriesPage = ref(1);
 
@@ -30,13 +31,21 @@ const treeError = ref("");
 const treeLoading = ref(true);
 
 const selectedPath = ref("");
+const fileKind = ref<FileKind>("text");
 const fileContent = ref("");
+const originalContent = ref("");
+const editMode = ref(false);
+const mediaObjectUrl = ref<string | null>(null);
 const fileError = ref("");
 const fileLoading = ref(false);
 const saving = ref(false);
 const saveMessage = ref("");
+const downloading = ref(false);
+const downloadError = ref("");
 
 const newFilePath = ref("");
+
+const hasChanges = computed(() => fileContent.value !== originalContent.value);
 
 async function checkRepo() {
   try {
@@ -72,14 +81,34 @@ function parentDir(dirPath: string): string {
   return parts.join("/");
 }
 
+function revokeMediaUrl() {
+  if (mediaObjectUrl.value) {
+    URL.revokeObjectURL(mediaObjectUrl.value);
+    mediaObjectUrl.value = null;
+  }
+}
+
 async function openFile(path: string) {
   fileLoading.value = true;
   fileError.value = "";
   saveMessage.value = "";
+  const kind = classifyFileKind(path);
   try {
-    const file = await apiCall<{ content: string }>(`/projects/${props.id}/git/file?path=${encodeURIComponent(path)}`);
-    selectedPath.value = path;
-    fileContent.value = file.content;
+    if (kind === "text") {
+      const file = await apiCall<{ content: string }>(`/projects/${props.id}/git/file?path=${encodeURIComponent(path)}`);
+      revokeMediaUrl();
+      selectedPath.value = path;
+      fileKind.value = "text";
+      fileContent.value = file.content;
+      originalContent.value = file.content;
+      editMode.value = false;
+    } else {
+      const blob = await apiCallBlob(`/projects/${props.id}/git/file/raw?path=${encodeURIComponent(path)}`);
+      revokeMediaUrl();
+      selectedPath.value = path;
+      fileKind.value = kind;
+      mediaObjectUrl.value = URL.createObjectURL(blob);
+    }
   } catch (err) {
     fileError.value = err instanceof ApiError ? err.message : "파일을 불러오지 못했습니다";
   } finally {
@@ -98,11 +127,25 @@ async function openEntry(entry: TreeEntry) {
 function openNewFile() {
   const path = newFilePath.value.trim();
   if (!path) return;
+  revokeMediaUrl();
   selectedPath.value = path;
+  fileKind.value = "text";
   fileContent.value = "";
+  originalContent.value = "";
+  editMode.value = true;
   fileError.value = "";
   saveMessage.value = "";
   newFilePath.value = "";
+}
+
+function startEdit() {
+  editMode.value = true;
+  saveMessage.value = "";
+}
+
+function cancelEdit() {
+  fileContent.value = originalContent.value;
+  editMode.value = false;
 }
 
 async function save() {
@@ -115,12 +158,35 @@ async function save() {
       method: "PUT",
       body: JSON.stringify({ content: fileContent.value, message: `docs: update ${selectedPath.value}` }),
     });
+    originalContent.value = fileContent.value;
+    editMode.value = false;
     saveMessage.value = "커밋됨";
     if (currentDir.value === parentDir(selectedPath.value)) await loadTree(currentDir.value);
   } catch (err) {
     fileError.value = err instanceof ApiError ? err.message : "저장에 실패했습니다";
   } finally {
     saving.value = false;
+  }
+}
+
+async function downloadOriginal() {
+  if (!selectedPath.value) return;
+  downloading.value = true;
+  downloadError.value = "";
+  try {
+    const blob = await apiCallBlob(`/projects/${props.id}/git/file/raw?path=${encodeURIComponent(selectedPath.value)}`);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = selectedPath.value.split("/").pop() || selectedPath.value;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    downloadError.value = err instanceof ApiError ? err.message : "다운로드에 실패했습니다";
+  } finally {
+    downloading.value = false;
   }
 }
 
@@ -135,6 +201,8 @@ onMounted(async () => {
     await loadTree("");
   }
 });
+
+onBeforeUnmount(() => revokeMediaUrl());
 </script>
 
 <template>
@@ -164,15 +232,49 @@ onMounted(async () => {
       <template v-if="selectedPath">
         <div class="editor-header">
           <code>{{ selectedPath }}</code>
-          <button :disabled="saving" @click="save">{{ saving ? "저장 중..." : "저장(커밋)" }}</button>
+          <div class="header-actions">
+            <button
+              type="button"
+              class="secondary"
+              @click="targetPanelDialog.show('qa', id, 'source', selectedPath)"
+            >
+              질의/답변
+            </button>
+            <button
+              type="button"
+              class="secondary"
+              @click="targetPanelDialog.show('comments', id, 'source', selectedPath)"
+            >
+              코멘트
+            </button>
+            <button type="button" class="secondary" :disabled="downloading" @click="downloadOriginal">
+              {{ downloading ? "받는 중..." : "원본 다운로드" }}
+            </button>
+            <template v-if="fileKind === 'text'">
+              <template v-if="!editMode">
+                <button type="button" @click="startEdit">편집</button>
+              </template>
+              <template v-else>
+                <button v-if="hasChanges" :disabled="saving" @click="save">{{ saving ? "저장 중..." : "저장" }}</button>
+                <button type="button" class="secondary" @click="cancelEdit">편집 취소</button>
+              </template>
+            </template>
+          </div>
         </div>
         <p v-if="fileError" class="error">{{ fileError }}</p>
+        <p v-if="downloadError" class="error">{{ downloadError }}</p>
         <p v-if="saveMessage" class="saved">{{ saveMessage }}</p>
-        <p v-if="fileLoading">불러오는 중...</p>
-        <MonacoEditor v-else v-model="fileContent" :language="languageForPath(selectedPath)" class="editor" />
-        <div class="source-side-panels">
-          <QAPanel :project-id="id" target-type="source" :target-key="selectedPath" />
-          <CommentsPanel :project-id="id" target-type="source" :target-key="selectedPath" />
+        <div class="content-area">
+          <p v-if="fileLoading">불러오는 중...</p>
+          <template v-else-if="fileKind === 'text'">
+            <MonacoEditor v-model="fileContent" :language="languageForPath(selectedPath)" :read-only="!editMode" class="editor" />
+          </template>
+          <template v-else-if="fileKind === 'image'">
+            <img v-if="mediaObjectUrl" :src="mediaObjectUrl" class="media-preview" :alt="selectedPath" />
+          </template>
+          <template v-else-if="fileKind === 'video'">
+            <video v-if="mediaObjectUrl" :src="mediaObjectUrl" controls class="media-preview" />
+          </template>
         </div>
       </template>
       <p v-else class="muted">왼쪽에서 파일을 선택하세요.</p>
@@ -259,13 +361,16 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 .editor-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-bottom: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .editor-header code {
   font-size: 12px;
@@ -273,7 +378,13 @@ onMounted(async () => {
   padding: 2px 6px;
   border-radius: 4px;
 }
-.editor-header button {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.header-actions button {
   background: #3454d1;
   color: #fff;
   border: none;
@@ -282,16 +393,27 @@ onMounted(async () => {
   font-weight: 600;
   font-size: 13px;
 }
-.editor-header button:disabled {
+.header-actions button.secondary {
+  background: #fff;
+  color: #333;
+  border: 1px solid #d8dae0;
+  font-weight: 500;
+}
+.header-actions button:disabled {
   opacity: 0.6;
 }
-.editor {
-  height: 500px;
-  flex-shrink: 0;
+.content-area {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
 }
-.source-side-panels {
-  margin-top: 20px;
-  flex-shrink: 0;
+.editor {
+  height: 100%;
+  min-height: 400px;
+}
+.media-preview {
+  max-width: 100%;
+  display: block;
 }
 .muted {
   color: #888;

@@ -5,6 +5,7 @@ import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import UserRef from "./UserRef.vue";
 import TrackingCodeText from "./TrackingCodeText.vue";
+import Pagination from "./Pagination.vue";
 
 const props = defineProps<{ projectId: string; targetType: "document" | "source" | "kanbanCard"; targetKey: string }>();
 const emit = defineEmits<{ statusTransitioned: [statusCode: string] }>();
@@ -28,9 +29,22 @@ interface QuestionItem {
   answer: AnswerDetail | null;
 }
 
+interface QuestionPageResponse {
+  items: QuestionItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 const questions = ref<QuestionItem[]>([]);
 const loading = ref(true);
 const error = ref("");
+const page = ref(1);
+const totalPages = ref(1);
+const pageSize = 20;
+const searchQuery = ref("");
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 const newQuestion = ref("");
 const newKind = ref<"answer" | "approval">("answer");
@@ -47,10 +61,18 @@ const KIND_LABEL: Record<string, string> = { answer: "답변 요청", approval: 
 
 let disconnect: (() => void) | null = null;
 
-const listPath = () =>
-  props.targetType === "source"
-    ? `/projects/${props.projectId}/questions/source?path=${encodeURIComponent(props.targetKey)}`
-    : `/questions?trackingCode=${encodeURIComponent(props.targetKey)}`;
+const listPath = () => {
+  const qs = new URLSearchParams();
+  qs.set("page", String(page.value));
+  qs.set("pageSize", String(pageSize));
+  if (searchQuery.value.trim()) qs.set("q", searchQuery.value.trim());
+  if (props.targetType === "source") {
+    qs.set("path", props.targetKey);
+    return `/projects/${props.projectId}/questions/source/page?${qs}`;
+  }
+  qs.set("trackingCode", props.targetKey);
+  return `/questions/page?${qs}`;
+};
 
 const createPath = () => (props.targetType === "source" ? `/projects/${props.projectId}/questions/source` : `/questions`);
 
@@ -58,12 +80,28 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    questions.value = await apiCall<QuestionItem[]>(listPath());
+    const result = await apiCall<QuestionPageResponse>(listPath());
+    questions.value = result.items;
+    page.value = result.page;
+    totalPages.value = result.totalPages;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "질문을 불러오지 못했습니다";
   } finally {
     loading.value = false;
   }
+}
+
+function onSearchInput() {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    page.value = 1;
+    load();
+  }, 300);
+}
+
+function goToPage(p: number) {
+  page.value = p;
+  load();
 }
 
 async function pickRefs() {
@@ -92,6 +130,7 @@ async function askQuestion() {
     await apiCall(createPath(), { method: "POST", body: JSON.stringify(body) });
     newQuestion.value = "";
     newRefs.value = [];
+    page.value = 1;
     await load();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "질문 등록에 실패했습니다";
@@ -166,7 +205,14 @@ onUnmounted(() => disconnect?.());
 <template>
   <section class="panel">
     <h2>질의/답변</h2>
-    <p class="hint">질의는 AI(클로드)가 등록하고, 설계자가 답변한다.</p>
+    <p class="hint">질의는 AI(클로드)가 등록하고, 설계자가 답변한다. 최신순으로 표시된다.</p>
+    <input
+      v-model="searchQuery"
+      type="text"
+      class="search-input"
+      placeholder="질의/답변 내용 검색..."
+      @input="onSearchInput"
+    />
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="transitionNotice" class="notice">{{ transitionNotice }}</p>
     <p v-if="loading" class="muted">불러오는 중...</p>
@@ -209,6 +255,7 @@ onUnmounted(() => disconnect?.());
       </li>
       <li v-if="questions.length === 0" class="muted">아직 질문이 없습니다.</li>
     </ul>
+    <Pagination :page="page" :total-pages="totalPages" @update:page="goToPage" />
     <form class="ask-row" @submit.prevent="askQuestion">
       <input v-model="newQuestion" type="text" placeholder="새 질문 등록..." />
       <select v-model="newKind">
@@ -233,6 +280,15 @@ h2 {
   font-size: 12px;
   color: #999;
   margin: 0 0 10px;
+}
+.search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 10px;
 }
 .questions {
   list-style: none;

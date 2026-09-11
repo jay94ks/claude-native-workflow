@@ -1673,6 +1673,83 @@ Gitea 관리자 계정을 처음 부트스트랩(설치 마법사+PAT 발급)하
 `npx tsc --noEmit`(backend) → `vue-tsc -b && npm run build`(frontend)
 클린 확인(Prisma 스키마 변경 없음 - Meilisearch 인덱스만 추가).
 
+## 문서 탭 분리(보기/질의응답) + 소스 코드 뷰어 개편(파일 타입/편집 분리) - 완료 (2026-09-11)
+
+두 요청 - (1) 문서 화면의 질의/답변이 덩치가 커져 문서 페이지를
+[보기]/[질의·답변] 두 하위 탭으로 나누고 질의/답변엔 페이지네이션
+(최신순)+검색을 붙였다. 코멘트는 탭도 아니고 인라인도 아닌 별도
+다이얼로그로 뺐다. (2) 소스 코드 뷰어는 모든 파일을 텍스트로 취급해
+Monaco에 바로 물렸는데, 실제로는 이미지/영상 같은 텍스트가 아닌
+파일이 있을 수 있다 - 텍스트는 "보기"(읽기 전용)/"편집" 모드를
+분리하고, 이미지/영상은 편집 없이 브라우저에서 바로 렌더링만 한다.
+
+**Q&A/코멘트 다이얼로그를 하나로 통일** - `QAPanel`/`CommentsPanel`을
+각각 감싸는 컴포넌트 두 개 대신, 신규 `stores/targetPanelDialog.ts`
+(`{panel: "qa"|"comments", projectId, targetType, targetKey}`)와
+`components/TargetPanelDialog.vue` 하나로 통일(`panel` 값에 따라
+QAPanel 또는 CommentsPanel을 그대로 끼워 넣음). 칸반 카드 다이얼로그는
+이미 자기 자신이 다이얼로그라 스크롤 문제가 없어 QAPanel/CommentsPanel
+인라인을 그대로 유지(이번 변경 대상 아님).
+
+**`QAPanel.vue`를 페이지네이션+검색+최신순으로 확장** - 문서 탭뿐
+아니라 다이얼로그로 쓰이는 소스 코드/칸반 카드에서도 같은 컴포넌트를
+그대로 쓰므로 한 번의 확장으로 전부 혜택을 받는다. 기존 CLI/MCP가
+쓰는 `GET /api/questions?trackingCode=`/`GET /api/projects/:id/
+questions/source?path=`는 손대지 않고(정렬도 기존 `ordinal asc` 그대로),
+자매 라우트 `GET /api/questions/page`/`GET /api/projects/:id/questions/
+source/page`를 새로 추가(`/documents/page` 선례와 동일 패턴) -
+`createdAt desc`, `q`는 `Question.text` OR `Answer.body`에 대한 Prisma
+`contains`(SQLite 호환을 위해 `mode:"insensitive"` 안 씀).
+
+**소스 코드 파일 타입 분류는 이미지/영상 확장자 화이트리스트 두
+종류뿐 - 블랙리스트 없음**: 신규 `frontend/src/utils/fileKind.ts`가
+`"text"|"image"|"video"`를 반환한다. 처음엔 "그 외 바이너리 확장자
+블랙리스트"로 "미지원" 분류를 계획했으나, 설계자 피드백으로 방향을
+바꿨다 - **블랙리스트를 만들 필요 없이, 텍스트로 열었을 때 내용이
+깨져 보여도 "원본 다운로드" 링크가 항상 그 자리에서 탈출구를 제공**
+하면 된다(알려지지 않은/애매한 확장자를 걸러내려고 바이너리 목록을
+유지·관리할 필요가 없다는 판단). 이미지/영상·"원본 다운로드"는
+처음엔 base64 JSON 응답으로 계획했으나, 역시 설계자 피드백으로
+**백엔드 로컬 디스크 캐시(`backend/.cache/git-raw/<blob sha>`)에서
+raw 바이트를 `res.sendFile()`로 직접 서빙**하는 방식으로 바꿨다 - sha가
+이미 내용의 고유 식별자라 내용이 바뀌면 캐시가 자연히 무효화되고,
+같은 내용이면 프로젝트가 달라도 캐시가 재사용된다. 신규 `GET
+/api/projects/:id/git/file/raw?path=` 라우트(`getFileRaw()`+
+`mimeTypeForPath()`, `core/gitea.ts`) - 여전히 `authenticate`를 거치므로
+`<img src>`로 직접 못 불러, 프런트는 인증된 `fetch()`(`apiCallBlob()`,
+신규)로 `Blob`을 받아 `URL.createObjectURL()`로 렌더링/다운로드한다.
+
+**텍스트 파일의 "보기"/"편집" 토글**: `MonacoEditor.vue`의 `readOnly`
+prop이 지금까지 생성 시점에만 적용되고 이후 변경을 반영 안 했던 것을
+`watch`로 고쳤다. 보기 상태(readOnly)면 "편집" 버튼 하나, 편집 상태에서
+원본과 내용이 같으면 "편집 취소" 하나(저장할 변경 자체가 없으므로),
+내용이 다르면 "저장"+"편집 취소" 두 개로 분리. "질의/답변"·"코멘트"·
+"원본 다운로드" 버튼은 파일 종류 상관없이 저장 버튼 왼쪽에 상시
+노출(인라인 QAPanel/CommentsPanel을 다이얼로그로 빼면서, 지난 라운드가
+인라인으로 붙이며 생겼던 뷰 영역 스크롤 문제도 같이 해소됨) -
+`.editor-pane`을 헤더(고정)+콘텐츠(`flex:1; overflow:auto`)로 재구성.
+
+실사용 인스턴스(`backend/docker/`)로 실측: 25개 질문을 시드해 페이지네이션
+(20개/페이지, 2페이지)·최신순·검색("number 7"로 필터링해 "number 17"은
+안 걸리는지)까지 확인, 답변 등록→"확인 대기" 상태 전이 확인. 코멘트
+다이얼로그가 문서/소스 코드 양쪽에서 정상 동작(기존 코멘트 목록+수정/
+삭제 버튼 노출) 확인. 텍스트 파일 열람 시 실제로 타이핑이 막히는지
+("Cannot edit in read-only editor" 메시지 확인)→편집→저장→다시 읽기
+전용 복귀까지 왕복 확인. 1x1 PNG를 Gitea Contents API로 직접 커밋해
+이미지 미리보기(`naturalWidth/Height=1`, `complete=true`)와 원본
+다운로드(바이트 단위로 PNG 매직 넘버 확인)까지 실측, 알 수 없는
+확장자(`mystery.dat`)에 임의 바이너리(NUL/0xFF/0xC0 0xAF 등 포함)를
+커밋해 텍스트로 깨져 보이되 앱이 죽지 않고 "원본 다운로드"로 정확히
+원본과 바이트 단위로 동일한 내용을 받을 수 있는지 확인. `backend/
+.cache/git-raw/`에 blob sha 파일명으로 캐시 파일이 실제로 생기는지
+컨테이너 안에서 직접 확인. 칸반 카드 다이얼로그의 인라인 QAPanel/
+CommentsPanel과 CLI `docs questions <trackingCode>`(ordinal asc 배열
+응답)가 이번 변경으로 회귀 없는지 확인.
+
+`npx tsc --noEmit`(backend) → `vue-tsc -b && npm run build`(frontend)
+클린 확인(Prisma 스키마 변경 없음 - 신규 로컬 파일 캐시만 추가,
+`.gitignore`에 `backend/.cache/` 등록).
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

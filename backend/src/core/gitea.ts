@@ -2,6 +2,10 @@
 // 다룬다 - 실제 clone/push는 설계자가 Gitea의 HTTP(S) git 프로토콜로
 // 직접 한다(백엔드가 프록시하지 않음, SSH 키 관리 부담도 없앰).
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 interface GiteaConfig {
   apiUrl: string;
   token: string;
@@ -280,6 +284,58 @@ export async function getFileContent(slug: string, filePath: string, ref?: strin
   }
   const file = raw as { path: string; content: string; sha: string };
   return { path: file.path, content: Buffer.from(file.content, "base64").toString("utf-8"), sha: file.sha };
+}
+
+const RAW_CACHE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".cache", "git-raw");
+
+export interface RawFile {
+  cachePath: string;
+  sha: string;
+  size: number;
+}
+
+/** 이미지/영상 미리보기·"원본 다운로드" 전용 - Gitea에서 받은 내용을
+ * JSON+base64로 바로 감싸 응답하지 않고, blob sha를 파일명 삼아 로컬
+ * 디스크 캐시(backend/.cache/git-raw/<sha>)에 디코드해 저장한 뒤 그
+ * 파일 경로를 반환한다(호출부가 res.sendFile()로 서빙 - Content-Type/
+ * ETag/Last-Modified/Range를 Express가 전부 알아서 처리). sha가 이미
+ * 내용의 고유 식별자라 내용이 바뀌면 sha도 바뀌어 캐시가 자연히
+ * 무효화되고, 같은 내용이면 프로젝트가 달라도 캐시가 재사용된다. */
+export async function getFileRaw(slug: string, filePath: string, ref?: string): Promise<RawFile> {
+  const raw = await getContentsRaw(slug, filePath, ref);
+  if (Array.isArray(raw)) {
+    throw new Error(`${filePath}는 파일이 아니라 디렉터리입니다`);
+  }
+  const file = raw as { sha: string; content: string };
+  const cachePath = path.join(RAW_CACHE_DIR, file.sha);
+  if (!fs.existsSync(cachePath)) {
+    fs.mkdirSync(RAW_CACHE_DIR, { recursive: true });
+    fs.writeFileSync(cachePath, Buffer.from(file.content, "base64"));
+  }
+  return { cachePath, sha: file.sha, size: fs.statSync(cachePath).size };
+}
+
+const RAW_MIME_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+  svg: "image/svg+xml",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  avi: "video/x-msvideo",
+  mkv: "video/x-matroska",
+  m4v: "video/x-m4v",
+};
+
+export function mimeTypeForPath(filePath: string): string {
+  const dotIdx = filePath.lastIndexOf(".");
+  const ext = dotIdx < 0 ? "" : filePath.slice(dotIdx + 1).toLowerCase();
+  return RAW_MIME_TYPES[ext] ?? "application/octet-stream";
 }
 
 /** 파일이 있으면 갱신, 없으면 생성 - CLAUDE.md/SKILL.md 템플릿 배포용. */
