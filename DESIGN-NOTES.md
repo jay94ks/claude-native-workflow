@@ -1278,6 +1278,74 @@ teamId로 위 함수에 위임, 팀 없는 그룹은 unrestricted만) 신규 추
 동작들이 이번 수정 전후로 동일하게 되는지(회귀 없음, 새 권한 요구가
 안 생겼는지) 전부 실측 대조.
 
+## 가이디드 마이그레이션 워크플로우 점검 - 완료 (2026-09-11)
+
+`docs migrate scan/apply`(Phase 6, 지금까지 합성 테스트로만 검증했던
+기능)를 **`concept` 브랜치의 실제 문서로** 처음 점검했다 -
+`git worktree add`로 `concept`을 스크래치 경로에 체크아웃해 진짜
+`docs/` 트리(spec 4/decision 3/design 1/done 1/logs 4/plan 1/review 1
+= 15개 후보, `.tracking.json` 카운터와 실제 파일 수 대조로 스캔 결과
+정확성 확인)를 스캔 대상으로 썼다.
+
+**발견·수정한 버그 3건**(전부 실제로 재현 후 수정, 재검증까지 완료):
+
+1. **Meilisearch write-through 경합**(가장 심각, 마이그레이션 범위를
+   넘어 시스템 전체에 영향) - `core/search.ts`의 `indexSyncUpsert()`/
+   `indexSyncDelete()`가 meilisearch SDK(`^0.51.0`)의
+   `EnqueuedTaskPromise`를 그냥 `await`만 했다. 이 값은 "색인 작업이
+   큐에 들어갔다"는 HTTP 응답이 오는 즉시 resolve되고, Meilisearch가
+   실제로 그 작업을 처리했다는 보장이 전혀 없다(SDK가 별도로 제공하는
+   `.waitTask()`를 호출해야 진짜 완료를 기다림). `migrate apply`가
+   문서를 연달아 만들고 곧바로 그 문서들 사이에 링크를 거는 루프에서
+   이 경합이 실측으로 뚜렷하게 재현됐다 - 방금 막 만든 문서를 링크
+   대상으로 걸면 `POST .../links`가 "not found"로 실패(검색 인덱스
+   기반 조회인 `getDocument()`가 아직 색인 안 된 문서를 못 찾음),
+   같은 요청을 몇 초 뒤 수동으로 재시도하면 성공했다. `indexSyncUpsert`/
+   `indexSyncDelete` 둘 다 `.waitTask()`를 붙여 실제 완료까지 기다리게
+   고쳤다 - "쓰기 시점에 바로 동기화"라는 Phase 0부터의 write-through
+   설계 원칙이 실제로 그 이름값을 하게 된 근본 수정으로, 문서를 다루는
+   모든 생성/저장/삭제 경로에 전부 적용된다(마이그레이션만이 아니라
+   일반 사용에서도 "막 만든 문서를 바로 링크/검색"하는 모든 경우가
+   이 수정의 수혜자). 검증: 수정 전엔 배치 내 링크 20여 건이 전부
+   "not found"로 실패했는데, 수정 후 같은 매니페스트로 재실행하니 배치
+   범위 밖(DN-00001 - 애초에 대상 DocType이 없어 생성 자체가 실패)을
+   가리키는 링크 2건만 "이번 배치에 없어 건너뜀" 경고로 남고 나머지는
+   전부 성공, `docs backlinks`로 실제 역참조까지 대조 확인. 일반 검색/
+   목록 조회도 회귀 없이 정상 동작하는지 재확인.
+2. **`migrate apply`가 매니페스트 JSON의 UTF-8 BOM을 못 읽음** -
+   Windows PowerShell의 `>` 리다이렉트(README/SKILL.md가 안내하는
+   정확히 그 명령, `docs migrate scan ... > manifest.json`)가 기본으로
+   파일 앞에 BOM을 쓴다는 걸 실측으로 확인 - `JSON.parse`가
+   `Unexpected token '﻿'`로 즉시 깨졌다(문서화된 golden path를
+   그대로 따라도 재현되는 버그).
+3. **`scanDirectory`가 BOM으로 시작하는 옛 문서 파일을 조용히
+   건너뜀** - `splitFrontmatter`의 `content.startsWith("---")` 검사가
+   BOM 때문에 항상 실패해, 그 파일은 **에러 없이** 스캔 후보 목록에서
+   빠진다(에러가 나는 2번 버그보다 더 위험한 실패 모드 - 사용자가 파일
+   하나가 통째로 누락된 사실조차 모르게 됨). `Out-File -Encoding
+   utf8`로 만든 BOM 파일로 직접 재현(빈 배열 반환 확인) 후 수정.
+
+`cli/migrate.ts`에 `stripBom()` 공용 헬퍼를 추가해 세 지점(스캔
+대상 .md 읽기, apply의 매니페스트 JSON 읽기, apply가 각 항목의 본문을
+다시 읽는 지점 - 이 세 번째 지점은 기존에 같은 파일을 두 번 읽던 중복도
+같이 정리됨) 전부에 적용했다.
+
+**의도된 동작으로 재확인한 것**(버그 아님, 기존 "알려진 제한"과 일치) -
+옛 시스템의 상태 어휘(`active`/`applied`/`answered`/`done` 등)가 새
+표준 6개 코드와 이름부터 다르므로, 실제 마이그레이션에서는 상태 전이
+시도가 대부분 실패해 경고로 남고 문서가 초기 상태(draft)로 유지된다 -
+이건 `migrate apply`가 대상 상태를 알아서 맞춰주지 않는다는 기존
+설계(자동 변환 안 함, `docs transition`으로 설계자가 직접) 그대로다.
+같은 이유로 옛 시스템 전용 타입(`RV`/`LG`/`DN`)은 새 프로젝트의 기본
+6개 타입에 없어 `errors`로 보고되는 것도 확인(문서화된 대로 자동
+생성 안 함).
+
+**검증**: 스크래치 SQLite+Meilisearch로 실제 `concept` 문서 15개
+전부 스캔 → 매니페스트를 파일로 저장(PowerShell `>` 리다이렉트로,
+버그 재현 조건 그대로) → apply 2회(수정 전/후 비교) → 링크/백링크
+무결성, 본문 내용(한글 포함) 그대로 보존되는지, 검색/목록이 즉시
+정상 조회되는지 전부 대조. `npx tsc --noEmit` 클린.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

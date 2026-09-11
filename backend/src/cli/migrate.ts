@@ -3,6 +3,18 @@ import path from "node:path";
 import { load as loadYaml } from "js-yaml";
 import { apiCall } from "./apiclient.js";
 
+// Windows PowerShell의 `>` 리다이렉트(README/SKILL.md가 안내하는
+// `docs migrate scan ... > manifest.json` 그대로)와 `Out-File -Encoding
+// utf8`은 기본적으로 UTF-8 BOM(U+FEFF)을 파일 맨 앞에 쓴다 - 이걸 안
+// 벗기면 옛 문서 파일은 frontmatter 검사(`startsWith("---")`)가 조용히
+// 실패해 스캔 후보에서 소리 없이 빠지고(가장 위험한 실패 모드 - 사용자가
+// 놓친 줄도 모름), 매니페스트 JSON은 파싱 자체가 깨진다(실측으로 재현
+// 확인). 파일을 읽는 두 지점(스캔 대상 .md, apply가 읽는 manifest.json)
+// 전부 이 함수를 거친다.
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
 // 가이디드 마이그레이션(Phase 6) - concept 브랜치 스타일 파일 기반
 // 프로젝트(YAML frontmatter + 마크다운 본문)를 이 DB 기반 시스템으로
 // 옮긴다. scan은 로컬 파일 시스템만 읽는다(HTTP 호출 없음 - 옛 프로젝트의
@@ -56,7 +68,7 @@ function walk(dir: string): string[] {
 export function scanDirectory(sourceDir: string): MigrateCandidate[] {
   const candidates: MigrateCandidate[] = [];
   for (const file of walk(sourceDir)) {
-    const content = fs.readFileSync(file, "utf-8");
+    const content = stripBom(fs.readFileSync(file, "utf-8"));
     const split = splitFrontmatter(content);
     if (!split) continue;
     let fm: OldFrontmatter;
@@ -95,7 +107,7 @@ interface CreatedDocument {
  * → 이번 배치 안에서 해석되는 링크만 연결한다. 개별 항목 실패가 배치
  * 전체를 막지 않는다(리뷰를 거친 배치라도 항목별 실패는 생길 수 있음). */
 export async function applyManifest(projectId: string, manifestPath: string): Promise<ApplyResult> {
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as MigrateCandidate[];
+  const manifest = JSON.parse(stripBom(fs.readFileSync(manifestPath, "utf-8"))) as MigrateCandidate[];
   const result: ApplyResult = { created: [], errors: [], warnings: [] };
   const oldIdToTrackingCode = new Map<string, string>();
   const linksByTrackingCode = new Map<string, string[]>();
@@ -103,8 +115,9 @@ export async function applyManifest(projectId: string, manifestPath: string): Pr
   for (const item of manifest) {
     if (item.skip) continue;
     try {
-      const split = splitFrontmatter(fs.readFileSync(item.sourcePath, "utf-8"));
-      const body = split ? split.body : fs.readFileSync(item.sourcePath, "utf-8");
+      const sourceContent = stripBom(fs.readFileSync(item.sourcePath, "utf-8"));
+      const split = splitFrontmatter(sourceContent);
+      const body = split ? split.body : sourceContent;
 
       const doc = await apiCall<CreatedDocument>(`/api/projects/${projectId}/documents`, {
         method: "POST",

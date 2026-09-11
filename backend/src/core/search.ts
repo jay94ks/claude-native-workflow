@@ -49,12 +49,21 @@ export async function ensureSearchIndexes(): Promise<void> {
   await index.updateSortableAttributes(["createdAt", "updatedAt"]);
 }
 
+// meilisearch SDK의 addDocuments()/deleteDocument()는 "큐에 들어갔다"는
+// 응답만 오면 바로 resolve되는 EnqueuedTaskPromise를 반환한다 - 이 값
+// 자체를 await해도 Meilisearch가 실제로 색인을 끝냈다는 보장이 없다
+// (실측으로 발견: 문서를 만든 직후 같은 요청 흐름 안에서 바로 그
+// 문서를 대상으로 링크를 걸면 "not found"로 실패하는 경합 - 가이디드
+// 마이그레이션처럼 생성을 쉼 없이 연달아 호출하는 경로에서 특히 잘
+// 드러남). SDK가 각 EnqueuedTaskPromise에 실어주는 `.waitTask()`로
+// 실제 처리 완료까지 기다려야 "쓰기 직후 바로 읽어도 항상 보인다"는
+// write-through 설계 원칙이 이름값을 한다.
 export async function indexSyncUpsert(doc: SearchableDocument): Promise<void> {
-  await meili().index(DOCUMENTS_INDEX).addDocuments([doc]);
+  await meili().index(DOCUMENTS_INDEX).addDocuments([doc]).waitTask();
 }
 
 export async function indexSyncDelete(trackingCode: string): Promise<void> {
-  await meili().index(DOCUMENTS_INDEX).deleteDocument(trackingCode);
+  await meili().index(DOCUMENTS_INDEX).deleteDocument(trackingCode).waitTask();
 }
 
 export async function getDocumentFromIndex(trackingCode: string): Promise<SearchableDocument | null> {

@@ -9,6 +9,34 @@ Claude와 함께 쓰는 문서/워크플로우 관리 시스템 - 단일 설치�
 (대화 세션에서 작성, 저장소에는 아직 커밋 안 됨 - 진행 상황은
 [DESIGN-NOTES.md](DESIGN-NOTES.md) 참고)를 참고.
 
+## 이번 라운드: 가이디드 마이그레이션 점검 - Meilisearch write-through 경합 수정
+
+`docs migrate scan/apply`를 `concept` 브랜치의 실제 문서로 점검하다가
+세 가지 진짜 버그를 발견해 고쳤다. 가장 중요한 건 **`core/search.ts`의
+`indexSyncUpsert()`/`indexSyncDelete()`가 Meilisearch SDK의
+`EnqueuedTaskPromise`를 그냥 `await`만 했다는 것** - 이 값은 "색인 작업이
+큐에 들어갔다"는 응답이 오면 바로 풀리고, 실제로 색인이 끝났다는 보장이
+없다. 문서를 만든 직후 바로 그 문서를 대상으로 다른 쓰기(링크 연결,
+상태 전이)를 거는 순간 검색 엔진이 아직 그 문서를 못 찾는 경합이
+실제로 재현됐다(마이그레이션처럼 생성을 쉼 없이 연달아 호출하는
+경로에서 특히 잘 드러남 - 사람이 명령을 하나씩 치는 보통의 CLI
+사용에서는 명령 사이 시간이 충분해 거의 안 보임). SDK가 반환하는
+`EnqueuedTaskPromise`의 `.waitTask()`로 실제 처리 완료까지 기다리도록
+고쳐 "쓰기 시점에 바로 동기화"라는 이 시스템의 write-through 설계
+원칙이 이름값을 하게 만들었다 - 문서를 다루는 모든 쓰기 경로(생성/
+저장/삭제)에 영향을 주는 근본적인 수정이라 마이그레이션 외의 일반
+사용에도 안정성이 올라간다.
+
+나머지 둘은 Windows PowerShell의 `>` 리다이렉트(README/SKILL.md가
+안내하는 정확히 그 명령, `docs migrate scan ... > manifest.json`)가
+기본으로 UTF-8 BOM을 파일 앞에 쓰는 데서 비롯됐다 - `migrate apply`가
+그 매니페스트를 읽을 때 `JSON.parse`가 깨졌고(에러로 바로 드러남),
+옛 문서 파일 자체가 BOM으로 시작하면 `scanDirectory`가 frontmatter를
+못 찾아 **에러 없이 조용히 후보에서 빠졌다**(가장 위험한 실패 모드 -
+사용자가 파일 하나가 통째로 누락된 줄도 모르게 됨). `cli/migrate.ts`가
+읽는 세 지점(스캔 대상 .md, 매니페스트 JSON, apply가 다시 읽는 원본
+파일) 전부 BOM을 벗기도록 고쳤다.
+
 ## 지금 상태: Phase 0~6 완료 (로드맵 전체)
 
 - Prisma 스키마(PostgreSQL/MySQL/SQLite 3드라이버, 완전 정규화 - JSON
