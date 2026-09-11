@@ -7,6 +7,8 @@ import DocumentExplorer from "./DocumentExplorer.vue";
 import DocumentPreviewDialog from "./DocumentPreviewDialog.vue";
 import KanbanCardDialog from "./KanbanCardDialog.vue";
 import EntityPickerDialog from "./EntityPickerDialog.vue";
+import SidebarSearchBox from "./SidebarSearchBox.vue";
+import SearchScopeDialog from "./SearchScopeDialog.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -40,6 +42,7 @@ function handleLogout() {
       <div class="brand">claude-native-workflow</div>
       <template v-if="activeProjectId">
         <router-link to="/projects" class="back-link">← 전체 프로젝트</router-link>
+        <SidebarSearchBox :project-id="activeProjectId" />
         <DocumentExplorer :project-id="activeProjectId" />
       </template>
       <nav v-else>
@@ -56,6 +59,7 @@ function handleLogout() {
     <DocumentPreviewDialog />
     <KanbanCardDialog />
     <EntityPickerDialog />
+    <SearchScopeDialog />
   </div>
 </template>
 

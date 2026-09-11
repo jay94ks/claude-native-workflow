@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { getDb } from "./db.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
+import { syncSourceFilesForPush } from "./sourceIndex.js";
 
 // 웹훅 수신 인프라(Phase 2 범위) - PushHookPrompt를 만들고 매칭 규칙을
 // 관리하는 CRUD/CLI는 아직 없다(Phase 3 몫). 지금은 이미 존재하는
@@ -10,7 +11,7 @@ import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realti
 export interface ParsedPush {
   branch: string;
   headSha: string;
-  commits: { sha: string; message: string }[];
+  commits: { sha: string; message: string; added: string[]; modified: string[]; removed: string[] }[];
 }
 
 function headerValue(v: string | string[] | undefined): string | undefined {
@@ -25,8 +26,18 @@ function timingSafeEqualStr(a: string, b: string): boolean {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
+function stringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
 // Gitea/GitHub/GitLab의 push 웹훅 페이로드는 거의 같은 모양이다 -
 // ref/after(또는 checkout_sha)/commits[].id(또는 .sha)/message로 정규화.
+// commits[].added/modified/removed(파일 경로 목록)도 Gitea/GitHub 페이로드에
+// 이미 포함돼 있어 새 API 호출 없이 소스 코드 색인 증분 동기화에 그대로
+// 쓴다(core/sourceIndex.ts) - GitLab은 이 필드가 없을 수 있지만, 이
+// 시스템에서 브라우징 가능한 git 콘텐츠는 항상 Gitea가 호스팅하는
+// 저장소(자체 호스팅 또는 외부 연동의 "작업 저장소")뿐이라 웹훅은 항상
+// Gitea 발신이라 문제 없다.
 function normalizePush(json: Record<string, unknown>): ParsedPush {
   const ref = String(json.ref ?? "");
   const branch = ref.replace(/^refs\/heads\//, "");
@@ -35,6 +46,9 @@ function normalizePush(json: Record<string, unknown>): ParsedPush {
   const commits = rawCommits.map((c) => ({
     sha: String((c.id as string | undefined) ?? (c.sha as string | undefined) ?? ""),
     message: String(c.message ?? ""),
+    added: stringArray(c.added),
+    modified: stringArray(c.modified),
+    removed: stringArray(c.removed),
   }));
   return { branch, headSha, commits };
 }
@@ -86,5 +100,11 @@ export async function recordPushEvent(projectId: string, parsed: ParsedPush): Pr
   // 지금까지 아무도 안 썼다).
   const event: ChangeEvent = { entity: "project", action: "update", id: projectId, at: new Date().toISOString() };
   await realtimePublish(projectChangesTopic(projectId), event);
+
+  // 소스 코드 검색 인덱스 증분 동기화 - 웹훅 응답을 붙잡지 않도록
+  // 기다리지 않고 실행(실패해도 syncSourceFilesForPush 내부에서 로그만
+  // 남기고 조용히 끝남).
+  void syncSourceFilesForPush(projectId, parsed);
+
   return prompts.length;
 }

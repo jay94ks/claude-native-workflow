@@ -105,3 +105,50 @@ export async function assertProjectExists(projectId: string): Promise<void> {
   const row = await db.project.findUnique({ where: { id: projectId } });
   if (!row) throw new Error(`프로젝트를 찾을 수 없습니다: ${projectId}`);
 }
+
+export type SearchScope = "project" | "group" | "team";
+
+/** 사이드바 다중 스코프 검색(웹 전용) 전용 - anchorProjectId를 기준점
+ * 삼아 그 범위(프로젝트 자신/소속 그룹/소속 팀)의 프로젝트 id들을
+ * 반환하되, 항상 실제 멤버십(getMemberRole 비어있지 않음)으로 거른다.
+ * listProjects()는 숨김 아닌 프로젝트를 비멤버에게도 존재를 보여주지만
+ * (목록 화면의 기존 동작), 문서/소스 코드 내용 읽기는 항상
+ * requireProjectRole("viewer")(실제 Member)를 요구해왔다 - 검색 결과도
+ * 내용을 그대로 노출하므로 같은 기준을 적용한다. */
+export async function listAccessibleProjectIdsInScope(
+  anchorProjectId: string,
+  scope: SearchScope,
+  userId: string,
+): Promise<string[]> {
+  const db = getDb();
+  if (scope === "project") {
+    return (await getMemberRole(anchorProjectId, userId)) ? [anchorProjectId] : [];
+  }
+
+  const anchor = await db.project.findUnique({ where: { id: anchorProjectId } });
+  if (!anchor) throw new Error(`프로젝트를 찾을 수 없습니다: ${anchorProjectId}`);
+
+  let candidates: { id: string }[];
+  if (scope === "group") {
+    candidates = await db.project.findMany({ where: { projectGroupId: anchor.projectGroupId }, select: { id: true } });
+  } else {
+    const teamId = await getOwningTeamId(anchorProjectId);
+    if (!teamId) throw new Error("이 프로젝트는 팀에 속해 있지 않습니다");
+    candidates = await db.project.findMany({ where: { projectGroup: { teamId } }, select: { id: true } });
+  }
+
+  const accessible: string[] = [];
+  for (const c of candidates as { id: string }[]) {
+    if (await getMemberRole(c.id, userId)) accessible.push(c.id);
+  }
+  return accessible;
+}
+
+/** 검색 결과가 여러 프로젝트에 걸칠 때(그룹/팀 스코프) 각 결과에
+ * 프로젝트 이름 배지를 붙이는 데 쓴다 - id → name 맵으로 반환. */
+export async function getProjectNamesByIds(ids: string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+  const db = getDb();
+  const rows = await db.project.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
+  return new Map((rows as { id: string; name: string }[]).map((r) => [r.id, r.name]));
+}

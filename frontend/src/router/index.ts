@@ -20,6 +20,7 @@ const router = createRouter({
         { path: "", name: "project-detail", component: () => import("../views/ProjectHomeView.vue"), props: true },
         { path: "messages", name: "project-messages", component: () => import("../views/MessagesView.vue"), props: true },
         { path: "comments", name: "project-comments", component: () => import("../views/RecentCommentsView.vue"), props: true },
+        { path: "search", name: "project-search", component: () => import("../views/SearchResultsView.vue"), props: true },
         { path: "documents", name: "documents", component: () => import("../views/DocumentsView.vue"), props: true },
         {
           path: "documents/:trackingCode",

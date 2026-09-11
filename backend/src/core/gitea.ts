@@ -139,6 +139,10 @@ export interface FullTreeEntry {
   path: string;
   sha: string;
   type: "blob" | "tree";
+  /** 바이트 크기 - Gitea git trees API 응답에 blob마다 이미 포함돼
+   * 있는 필드(내용을 안 받고도 크기 제한을 먼저 걸러낼 수 있음, 소스
+   * 코드 색인 백필용). */
+  size?: number;
 }
 
 /** 재귀 전체 blob 목록(path+sha) - listTree()(Contents API, 1단계씩만
@@ -148,10 +152,10 @@ export interface FullTreeEntry {
 export async function getFullTree(slug: string, ref = "HEAD"): Promise<FullTreeEntry[]> {
   const { owner } = config();
   const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/git/trees/${ref}?recursive=true`);
-  const json = (await res.json()) as { tree: { path: string; sha: string; type: string }[] };
+  const json = (await res.json()) as { tree: { path: string; sha: string; type: string; size?: number }[] };
   return json.tree
     .filter((e) => e.type === "blob")
-    .map((e) => ({ path: e.path, sha: e.sha, type: "blob" as const }));
+    .map((e) => ({ path: e.path, sha: e.sha, type: "blob" as const, size: e.size }));
 }
 
 export async function createWebhook(slug: string, targetUrl: string, secret: string): Promise<void> {

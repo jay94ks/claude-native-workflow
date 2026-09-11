@@ -1,4 +1,5 @@
-import { MeiliSearch } from "meilisearch";
+import crypto from "node:crypto";
+import { MeiliSearch, type Task } from "meilisearch";
 
 // 클로드가 호출하는 모든 조회 경로(get/list/tree/pending/search 등)는
 // DB를 직접 안 타고 이 검색 엔진을 거친다(설계자 지시) - Document는
@@ -20,6 +21,16 @@ function meili(): MeiliSearch {
 }
 
 const DOCUMENTS_INDEX = "documents";
+const SOURCE_FILES_INDEX = "sourceFiles";
+
+// 검색 결과 스니펫에 매치 구간을 표시하되, 그 내용이 임의의 소스
+// 코드(리터럴 <script>/<img onerror=...> 텍스트일 수 있음)라 절대
+// v-html로 안전하지 않다 - 그래서 <mark> 같은 HTML 태그 대신 일반
+// 텍스트에 나타날 일이 없는 제어 문자 한 쌍을 구분자로 쓴다.
+// 프런트엔드는 이 두 문자로 문자열을 쪼개 각 조각을 텍스트 노드로만
+// 렌더링하고, 구분자 사이 조각만 <mark>로 감싼다(v-html 전혀 안 씀).
+export const SNIPPET_HIGHLIGHT_START = "";
+export const SNIPPET_HIGHLIGHT_END = "";
 
 // trackingCode를 Meilisearch의 primary key로 그대로 쓴다 - 호출부(CLI/
 // MCP/API)가 문서를 가리킬 때 항상 trackingCode를 쓰므로, "get by
@@ -47,6 +58,10 @@ export async function ensureSearchIndexes(): Promise<void> {
   });
   await index.updateFilterableAttributes(["projectId", "docTypeId", "statusId", "statusCode"]);
   await index.updateSortableAttributes(["createdAt", "updatedAt"]);
+
+  const sourceIndex = meili().index(SOURCE_FILES_INDEX);
+  await meili().createIndex(SOURCE_FILES_INDEX, { primaryKey: "id" }).catch(() => {});
+  await sourceIndex.updateFilterableAttributes(["projectId"]);
 }
 
 // meilisearch SDK의 addDocuments()/deleteDocument()는 "큐에 들어갔다"는
@@ -58,12 +73,26 @@ export async function ensureSearchIndexes(): Promise<void> {
 // 드러남). SDK가 각 EnqueuedTaskPromise에 실어주는 `.waitTask()`로
 // 실제 처리 완료까지 기다려야 "쓰기 직후 바로 읽어도 항상 보인다"는
 // write-through 설계 원칙이 이름값을 한다.
+//
+// waitTask()는 실패한 태스크에도 그냥 resolve한다(throw 안 함 - SDK가
+// 보장하는 건 "처리가 끝날 때까지 기다린다"이지 "성공했다"가 아니다) -
+// 반환값을 확인 안 하고 버리면 색인 쓰기가 조용히 실패해도 호출부는
+// 성공한 줄 안다(소스 코드 색인 기능 추가 중 실제로 이렇게
+// 겪었다 - 잘못된 문서 id 형식으로 매 쓰기가 계속 실패했는데 아무
+// 에러도 안 나서 한참 헤맴). 그래서 모든 waitTask() 뒤에 이 함수로
+// status를 확인한다.
+function assertTaskSucceeded(task: Task): void {
+  if (task.status !== "succeeded") {
+    throw new Error(`Meilisearch 색인 작업 실패(status=${task.status}): ${JSON.stringify(task.error)}`);
+  }
+}
+
 export async function indexSyncUpsert(doc: SearchableDocument): Promise<void> {
-  await meili().index(DOCUMENTS_INDEX).addDocuments([doc]).waitTask();
+  assertTaskSucceeded(await meili().index(DOCUMENTS_INDEX).addDocuments([doc]).waitTask());
 }
 
 export async function indexSyncDelete(trackingCode: string): Promise<void> {
-  await meili().index(DOCUMENTS_INDEX).deleteDocument(trackingCode).waitTask();
+  assertTaskSucceeded(await meili().index(DOCUMENTS_INDEX).deleteDocument(trackingCode).waitTask());
 }
 
 export async function getDocumentFromIndex(trackingCode: string): Promise<SearchableDocument | null> {
@@ -76,6 +105,9 @@ export async function getDocumentFromIndex(trackingCode: string): Promise<Search
 
 export interface SearchOptions {
   projectId?: string;
+  /** 여러 프로젝트를 한 번에(다중 스코프 검색 - 그룹/팀) - projectId와
+   * 함께 오면 둘 다 AND로 적용되지만, 호출부는 보통 둘 중 하나만 쓴다. */
+  projectIds?: string[];
   docTypeId?: string;
   statusCode?: string;
   limit?: number;
@@ -95,6 +127,9 @@ export interface SearchPage {
 function buildFilter(opts: SearchOptions): string | undefined {
   const filters: string[] = [];
   if (opts.projectId) filters.push(`projectId = "${opts.projectId}"`);
+  if (opts.projectIds && opts.projectIds.length > 0) {
+    filters.push(`projectId IN [${opts.projectIds.map((id) => `"${id}"`).join(", ")}]`);
+  }
   if (opts.docTypeId) filters.push(`docTypeId = "${opts.docTypeId}"`);
   if (opts.statusCode) filters.push(`statusCode = "${opts.statusCode}"`);
   return filters.length ? filters.join(" AND ") : undefined;
@@ -127,4 +162,124 @@ export async function listDocumentsFromIndex(opts: SearchOptions = {}): Promise<
  * 여전히 배열만 주는 listDocumentsFromIndex를 그대로 쓴다). */
 export async function listDocumentsFromIndexPaged(opts: SearchOptions = {}): Promise<SearchPage> {
   return rawSearch("", opts);
+}
+
+// ---------------------------------------------------------------- 사이드바 다중 스코프 검색(웹 전용) - 스니펫 포함
+
+export interface DocumentSnippetHit {
+  trackingCode: string;
+  projectId: string;
+  title: string;
+  statusCode: string;
+  snippet: string;
+}
+
+/** 사이드바 검색 결과 전용 - 문서 본문 전체가 아니라 매치 주변만 잘라
+ * 반환한다(여러 프로젝트를 넘나드는 결과라 payload를 작게 유지). 하이라이트
+ * 구분자는 <mark>가 아니라 SNIPPET_HIGHLIGHT_START/END 제어 문자 - 문서
+ * 본문도 결국 사람이 쓴 마크다운이라 원칙적으론 안전하지만, 소스 코드
+ * 검색과 응답 형태를 통일해 프런트엔드가 하나의 렌더링 로직만 쓰게 한다. */
+export async function searchDocumentsWithSnippets(query: string, opts: SearchOptions = {}): Promise<DocumentSnippetHit[]> {
+  const res = await meili()
+    .index(DOCUMENTS_INDEX)
+    .search(query, {
+      filter: buildFilter(opts),
+      limit: opts.limit ?? 20,
+      attributesToCrop: ["body"],
+      cropLength: 40,
+      attributesToHighlight: ["body"],
+      highlightPreTag: SNIPPET_HIGHLIGHT_START,
+      highlightPostTag: SNIPPET_HIGHLIGHT_END,
+    });
+  return (res.hits as (SearchableDocument & { _formatted?: { body?: string } })[]).map((hit) => ({
+    trackingCode: hit.trackingCode,
+    projectId: hit.projectId,
+    title: hit.title,
+    statusCode: hit.statusCode,
+    snippet: hit._formatted?.body ?? "",
+  }));
+}
+
+// ---------------------------------------------------------------- 소스 파일 색인(웹 전용) - core/sourceIndex.ts가 이 함수들을 조합해서 씀
+
+export interface SearchableSourceFile {
+  id: string; // sourceFileId(projectId, path) - Meilisearch primary key
+  projectId: string;
+  path: string;
+  content: string;
+  updatedAt: number; // epoch ms
+}
+
+// Meilisearch 문서 id는 영숫자/하이픈/언더스코어만 허용한다(":"나 "/"는
+// 안 됨) - 파일 경로는 거의 항상 "/"를 포함하므로 그대로 못 쓴다. 경로를
+// 해시로 바꿔 projectId와 언더스코어로 합치면 경로에 어떤 문자가 와도
+// 항상 안전하다(실측으로 발견 - "<projectId>:<path>"를 그대로 썼더니
+// Meilisearch가 매 upsert를 invalid_document_id로 조용히 실패시켰다,
+// waitTask()가 실패해도 throw하지 않는 것과 맞물려 한참 못 알아챔).
+export function sourceFileId(projectId: string, path: string): string {
+  const hash = crypto.createHash("sha1").update(path).digest("hex");
+  return `${projectId}_${hash}`;
+}
+
+export async function indexSourceFileUpsert(doc: SearchableSourceFile): Promise<void> {
+  assertTaskSucceeded(await meili().index(SOURCE_FILES_INDEX).addDocuments([doc]).waitTask());
+}
+
+/** 백필/푸시 증분 동기화처럼 여러 파일을 한 번에 넣을 때 - addDocuments
+ * 한 번 호출 + waitTask 한 번으로 묶어서, 파일마다 개별 upsert보다
+ * 훨씬 빠르다. */
+export async function indexSourceFilesBulkUpsert(docs: SearchableSourceFile[]): Promise<void> {
+  if (docs.length === 0) return;
+  assertTaskSucceeded(await meili().index(SOURCE_FILES_INDEX).addDocuments(docs).waitTask());
+}
+
+export async function indexSourceFileDelete(projectId: string, path: string): Promise<void> {
+  assertTaskSucceeded(await meili().index(SOURCE_FILES_INDEX).deleteDocument(sourceFileId(projectId, path)).waitTask());
+}
+
+export async function indexSourceFilesBulkDelete(projectId: string, paths: string[]): Promise<void> {
+  if (paths.length === 0) return;
+  assertTaskSucceeded(
+    await meili()
+      .index(SOURCE_FILES_INDEX)
+      .deleteDocuments(paths.map((p) => sourceFileId(projectId, p)))
+      .waitTask(),
+  );
+}
+
+/** 저장소를 새로 연결했을 때 그 프로젝트의 이전 색인을 깨끗이 비운다 -
+ * 재연결(다른 저장소로 바뀌는 경우)에 대비한 안전장치. */
+export async function clearSourceFileIndexForProject(projectId: string): Promise<void> {
+  assertTaskSucceeded(
+    await meili()
+      .index(SOURCE_FILES_INDEX)
+      .deleteDocuments({ filter: `projectId = "${projectId}"` })
+      .waitTask(),
+  );
+}
+
+export interface SourceFileSnippetHit {
+  projectId: string;
+  path: string;
+  snippet: string;
+}
+
+export async function searchSourceFiles(query: string, opts: { projectIds: string[]; limit?: number }): Promise<SourceFileSnippetHit[]> {
+  if (opts.projectIds.length === 0) return [];
+  const res = await meili()
+    .index(SOURCE_FILES_INDEX)
+    .search(query, {
+      filter: `projectId IN [${opts.projectIds.map((id) => `"${id}"`).join(", ")}]`,
+      limit: opts.limit ?? 20,
+      attributesToCrop: ["content"],
+      cropLength: 40,
+      attributesToHighlight: ["content"],
+      highlightPreTag: SNIPPET_HIGHLIGHT_START,
+      highlightPostTag: SNIPPET_HIGHLIGHT_END,
+    });
+  return (res.hits as (SearchableSourceFile & { _formatted?: { content?: string } })[]).map((hit) => ({
+    projectId: hit.projectId,
+    path: hit.path,
+    snippet: hit._formatted?.content ?? "",
+  }));
 }

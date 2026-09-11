@@ -23,7 +23,17 @@ import { createTeam, listTeams } from "../core/teams.js";
 import { addTeamAdmin, removeTeamAdmin, listTeamAdmins, isTeamAllowedByActiveScope } from "../core/teamAdmins.js";
 import { getInstallConfig } from "../core/installConfig.js";
 import { createProjectGroup, listProjectGroups, isGroupAllowedByActiveScope } from "../core/projectGroups.js";
-import { createProject, getProject, listProjects, canSeeHiddenProject, setProjectHidden, getOwningTeamId } from "../core/projects.js";
+import {
+  createProject,
+  getProject,
+  listProjects,
+  canSeeHiddenProject,
+  setProjectHidden,
+  getOwningTeamId,
+  listAccessibleProjectIdsInScope,
+  getProjectNamesByIds,
+  type SearchScope,
+} from "../core/projects.js";
 import { addMember, listMembers, getMemberRole, roleSatisfies, isProjectAllowedByActiveScope } from "../core/members.js";
 import { isTeamAdmin } from "../core/teamAdmins.js";
 import { getActiveKeyScope } from "../core/requestScope.js";
@@ -78,7 +88,8 @@ import {
   resolveComment,
 } from "../core/comments.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
-import { ensureSearchIndexes } from "../core/search.js";
+import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
+import { backfillProjectSourceIndex, syncSourceFileOnSave } from "../core/sourceIndex.js";
 import { resolveEffectivePermission, setAccessOverride, listAccessOverrides } from "../core/permissions.js";
 import { createFolder, renameFolder, deleteFolder, reorderFolder, listFolders, listFolderDocuments, moveDocumentToFolder } from "../core/folders.js";
 import {
@@ -1011,6 +1022,47 @@ app.get(
   }),
 );
 
+// 사이드바 다중 스코프 검색(웹 전용) - CLI/MCP는 위 단일 프로젝트
+// /search를 그대로 쓰고, 이 라우트는 AI가 아니라 설계자의 브라우징
+// 편의 기능이라 완전성 원칙 대상이 아니다. scope가 "team"인데 앵커
+// 프로젝트가 팀에 속하지 않으면 listAccessibleProjectIdsInScope()가
+// 명확한 에러를 던진다(팝업이 사전 조회 없이 "먼저 시도, 실패하면
+// 안내" 방식으로 처리).
+app.get(
+  "/api/projects/:projectId/search/multi",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const q = (req.query.q as string | undefined) ?? "";
+    const scope = (req.query.scope as string | undefined) ?? "project";
+    if (scope !== "project" && scope !== "group" && scope !== "team") {
+      res.status(400).json({ error: "scope는 project|group|team 중 하나여야 합니다" });
+      return;
+    }
+    const includeSource = req.query.includeSource === "true";
+    const limit = req.query.limit ? Number(req.query.limit) : 20;
+
+    const projectIds = await listAccessibleProjectIdsInScope(req.params.projectId, scope as SearchScope, req.userId!);
+    if (projectIds.length === 0) {
+      res.json({ documents: [], sourceFiles: [] });
+      return;
+    }
+
+    const docHits = await searchDocumentsWithSnippets(q, { projectIds, limit });
+    const docProjectNames = await getProjectNamesByIds([...new Set(docHits.map((h) => h.projectId))]);
+    const documents = docHits.map((h) => ({ ...h, projectName: docProjectNames.get(h.projectId) ?? h.projectId }));
+
+    let sourceFiles: (Awaited<ReturnType<typeof searchSourceFiles>>[number] & { projectName: string })[] = [];
+    if (includeSource) {
+      const srcHits = await searchSourceFiles(q, { projectIds, limit });
+      const srcProjectNames = await getProjectNamesByIds([...new Set(srcHits.map((h) => h.projectId))]);
+      sourceFiles = srcHits.map((h) => ({ ...h, projectName: srcProjectNames.get(h.projectId) ?? h.projectId }));
+    }
+
+    res.json({ documents, sourceFiles });
+  }),
+);
+
 // 문서는 trackingCode로만 식별되고(경로에 projectId 없음) 지금까지
 // requireProjectRole을 못 걸어 GET/PUT/transition/links가 authenticate만
 // 걸린 채 남아있었다(신규 버그 수정 - questions/comments 라우트에서
@@ -1847,6 +1899,7 @@ app.post(
         req.params.projectId,
         importFrom?.repoUrl ? { repoUrl: importFrom.repoUrl, gitCredentialId: importFrom.gitCredentialId } : undefined,
       );
+      void backfillProjectSourceIndex(req.params.projectId);
       res.json(result);
     } catch (err) {
       if (err instanceof GitAuthRequiredError) {
@@ -1874,7 +1927,9 @@ app.post(
     }
     if (!repoUrl) { res.status(400).json({ error: "repoUrl이 필요합니다" }); return; }
     try {
-      res.json(await linkExternalAsPrimary(req.params.projectId, provider, repoUrl, gitCredentialId));
+      const result = await linkExternalAsPrimary(req.params.projectId, provider, repoUrl, gitCredentialId);
+      void backfillProjectSourceIndex(req.params.projectId);
+      res.json(result);
     } catch (err) {
       if (err instanceof GitAuthRequiredError) {
         res.status(422).json({ error: "git_auth_required", hostPattern: hostOf(repoUrl) });
@@ -2004,6 +2059,7 @@ app.put(
     const { content, message } = req.body as { content?: string; message?: string };
     if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
     await gitea.putFileContent(slug, filePath, content, message || `docs: update ${filePath}`);
+    await syncSourceFileOnSave(req.params.projectId, filePath, content);
     res.json({ ok: true });
   }),
 );
