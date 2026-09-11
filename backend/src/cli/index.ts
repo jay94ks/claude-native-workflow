@@ -624,6 +624,22 @@ program
   );
 
 program
+  .command("priority-set <trackingCode> <n>")
+  .description("문서 우선순위(정수)를 설정/갱신한다 - 문서 상태가 review 또는 pending일 때만 가능")
+  .action((trackingCode, n) =>
+    run(async () => {
+      const priority = Number(n);
+      if (!Number.isInteger(priority)) throw new Error("n은 정수여야 합니다");
+      printJson(
+        await apiCall(`/api/documents/${trackingCode}/priority`, {
+          method: "PUT",
+          body: JSON.stringify({ priority }),
+        }),
+      );
+    }),
+  );
+
+program
   .command("link <fromTrackingCode> <toTrackingCode>")
   .option("--type <linkType>")
   .action((from, to, opts) =>

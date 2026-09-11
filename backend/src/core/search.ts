@@ -45,6 +45,7 @@ export interface SearchableDocument {
   body: string;
   statusId: string;
   statusCode: string;
+  priority: number | null;
   createdBy: string;
   createdAt: number; // epoch ms - Meilisearch 정렬/필터용
   updatedAt: number;
@@ -56,8 +57,8 @@ export async function ensureSearchIndexes(): Promise<void> {
     // 이미 있으면 무시 - createIndex는 존재해도 에러 안 내는 버전도 있지만
     // 버전 차이를 신경 안 쓰려고 방어적으로 catch.
   });
-  await index.updateFilterableAttributes(["projectId", "docTypeId", "statusId", "statusCode"]);
-  await index.updateSortableAttributes(["createdAt", "updatedAt"]);
+  await index.updateFilterableAttributes(["projectId", "docTypeId", "statusId", "statusCode", "priority"]);
+  await index.updateSortableAttributes(["createdAt", "updatedAt", "priority"]);
 
   const sourceIndex = meili().index(SOURCE_FILES_INDEX);
   await meili().createIndex(SOURCE_FILES_INDEX, { primaryKey: "id" }).catch(() => {});

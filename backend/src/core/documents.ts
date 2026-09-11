@@ -13,6 +13,7 @@ export interface DocumentDetail {
   body: string;
   statusId: string;
   statusCode: string;
+  priority: number | null;
   createdBy: string;
 }
 
@@ -24,6 +25,7 @@ function toSearchable(doc: {
   title: string;
   body: string;
   statusId: string;
+  priority: number | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -37,11 +39,18 @@ function toSearchable(doc: {
     body: doc.body,
     statusId: doc.statusId,
     statusCode,
+    priority: doc.priority,
     createdBy: doc.createdBy,
     createdAt: doc.createdAt.getTime(),
     updatedAt: doc.updatedAt.getTime(),
   };
 }
+
+// review/pending은 문서 상태(DocStatus.code)의 표준 어휘 - Q&A의
+// Question.status에도 같은 이름 "pending"이 있지만 완전히 다른
+// 개념(설계자 답변 완료 대기)이다. 여기서 검사하는 건 항상 문서 자체의
+// 상태.
+const PRIORITY_ALLOWED_STATUS_CODES = new Set(["review", "pending"]);
 
 async function syncAndPublish(
   doc: SearchableDocument,
@@ -104,6 +113,7 @@ export async function createDocument(input: CreateDocumentInput): Promise<Docume
     body: row.body,
     statusId: row.statusId,
     statusCode: status.code,
+    priority: row.priority,
     createdBy: row.createdBy,
   };
 }
@@ -216,6 +226,7 @@ export async function saveDocumentBody(
     body: row.body,
     statusId: row.statusId,
     statusCode: status.code,
+    priority: row.priority,
     createdBy: row.createdBy,
   };
 }
@@ -246,6 +257,39 @@ export async function transitionDocumentStatus(trackingCode: string, toStatusCod
     body: row.body,
     statusId: row.statusId,
     statusCode: target.code,
+    priority: row.priority,
+    createdBy: row.createdBy,
+  };
+}
+
+/** review/pending 상태일 때만 우선순위(정수)를 설정/갱신할 수 있다
+ * (설계자 확정) - 그 범위를 벗어나도 기존 값을 자동으로 지우진
+ * 않는다(요청 문구엔 "그 범위일 때만 설정 가능"만 있고 자동 초기화는
+ * 없음, 필요해지면 별도 요청으로). */
+export async function setDocumentPriority(trackingCode: string, priority: number): Promise<DocumentDetail> {
+  const db = getDb();
+  const existing = await db.document.findUnique({ where: { trackingCode } });
+  if (!existing) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const status = await db.docStatus.findUnique({ where: { id: existing.statusId } });
+  if (!status || !PRIORITY_ALLOWED_STATUS_CODES.has(status.code)) {
+    throw new Error(
+      `문서 상태가 "review" 또는 "pending"일 때만 우선순위를 설정할 수 있습니다(현재: "${status?.code ?? existing.statusId}")`,
+    );
+  }
+
+  const row = await db.document.update({ where: { trackingCode }, data: { priority } });
+  const searchable = toSearchable(row, status.code);
+  await syncAndPublish(searchable, "update");
+
+  return {
+    trackingCode: row.trackingCode,
+    projectId: row.projectId,
+    docTypeId: row.docTypeId,
+    title: row.title,
+    body: row.body,
+    statusId: row.statusId,
+    statusCode: status.code,
+    priority: row.priority,
     createdBy: row.createdBy,
   };
 }

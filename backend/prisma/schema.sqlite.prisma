@@ -315,6 +315,7 @@ model Document {
   title        String
   body         String
   statusId     String
+  priority     Int?
   createdBy    String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

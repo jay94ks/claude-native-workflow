@@ -344,6 +344,13 @@ async function main() {
     async (a) => call(`/api/documents/${a.trackingCode}/transition`, { method: "POST", body: JSON.stringify({ toStatusCode: a.toStatusCode }) }),
   );
   tool(
+    "document_priority_set",
+    "문서 우선순위 설정",
+    "문서 우선순위(정수)를 설정/갱신한다 - 문서 상태가 review 또는 pending일 때만 가능(Q&A의 별개 pending 개념과는 무관).",
+    { trackingCode: z.string(), priority: z.number().int() },
+    async (a) => call(`/api/documents/${a.trackingCode}/priority`, { method: "PUT", body: JSON.stringify({ priority: a.priority }) }),
+  );
+  tool(
     "document_link",
     "문서 링크 추가",
     "한 문서에서 다른 문서로의 링크를 추가한다.",

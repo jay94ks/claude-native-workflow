@@ -59,7 +59,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 26 | ⬜ | `#responsive-dark-mode` | 반응형/다크 모드 미지원 |
 | 27 | ⬜ | `#large-list-pagination` | 대량 목록 페이지네이션 미확인 |
 | 28 | ✅ | `#private-visibility-default` | 팀/그룹/프로젝트 기본 비공개 가시성(소속 없으면 안 보임, 공개 설정 시 예외) |
-| 29 | ⬜ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
+| 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
 
 ---
 
@@ -100,14 +100,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 **일괄 작업이 없다** - 문서 여러 개를 한 번에 상태 전이하거나 폴더로
 옮기는 기능이 없다(하나씩 해야 함). 마이그레이션 직후처럼 문서가
 몰려 있을 때 특히 아쉬움.
-
-### `#document-priority`
-**문서별 우선순위 지정 기능이 필요하다**(설계자 직접 요청) - 단순
-정수로 지정하고, 값이 바뀔 때마다 "갱신"할 수 있다. 유효 범위는
-문서 상태가 `review` 또는 `pending`(표준 상태 코드, Q&A의 별개
-`pending` 개념과 다름 - 혼동 주의)일 때만 - 그 외 상태에서는 설정을
-거부한다. CLI/MCP/SKILL.md에도 명시적으로 반영해야 한다(AI가 문서
-우선순위를 조회·설정할 수 있어야 함).
 
 ## 4. 문서 정리 폴더
 

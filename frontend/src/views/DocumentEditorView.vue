@@ -28,10 +28,15 @@ interface DocumentDetail {
   title: string;
   body: string;
   statusCode: string;
+  priority: number | null;
   createdBy: string;
   perm: { read: boolean; write: boolean; delete: boolean };
   notices?: string[];
 }
+
+// review/pending은 문서 상태(statusCode)의 표준 코드 - Q&A의 별개
+// "pending"(질문 상태)과는 무관.
+const PRIORITY_EDITABLE_STATUSES = new Set(["review", "pending"]);
 interface NextStatus {
   code: string;
   label: string;
@@ -53,6 +58,10 @@ const mode = ref<"read" | "edit">("read");
 const nextStatuses = ref<NextStatus[]>([]);
 const toStatusCode = ref("");
 const transitionError = ref("");
+
+const priorityInput = ref<string | number>("");
+const priorityError = ref("");
+const savingPriority = ref(false);
 
 const sourceLinks = ref<SourceLink[]>([]);
 const sourceLinksError = ref("");
@@ -152,6 +161,7 @@ async function load() {
   try {
     doc.value = await fetchDocument(true);
     body.value = doc.value.body;
+    priorityInput.value = doc.value.priority === null ? "" : String(doc.value.priority);
     mode.value = "read";
     await Promise.all([loadNextStatuses(), loadSourceLinks()]);
   } catch (err) {
@@ -189,10 +199,13 @@ async function save() {
   saveMessage.value = "";
   error.value = "";
   try {
-    doc.value = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}`, {
+    // transition()/savePriority()와 같은 이유로 병합(본문 저장 응답에도
+    // perm이 없음).
+    const updated = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}`, {
       method: "PUT",
       body: JSON.stringify({ body: body.value }),
     });
+    doc.value = doc.value ? { ...doc.value, ...updated } : updated;
     saveMessage.value = "저장됨";
     mode.value = "read";
   } catch (err) {
@@ -206,14 +219,45 @@ async function transition() {
   if (!toStatusCode.value) return;
   transitionError.value = "";
   try {
-    doc.value = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}/transition`, {
+    // 전이 응답엔 perm이 없다(GET 단건 조회만 얹어줌) - 통째로
+    // 바꿔치면 doc.perm이 undefined가 돼 툴바의 v-if="doc.perm.write"
+    // 가 깨진다(실측 중 발견). 기존 doc 위에 병합해 perm을 보존한다.
+    const updated = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}/transition`, {
       method: "POST",
       body: JSON.stringify({ toStatusCode: toStatusCode.value }),
     });
+    doc.value = doc.value ? { ...doc.value, ...updated } : updated;
     toStatusCode.value = "";
     await loadNextStatuses();
   } catch (err) {
     transitionError.value = err instanceof ApiError ? err.message : "상태 전이에 실패했습니다";
+  }
+}
+
+async function savePriority() {
+  // v-model이 type="number" 입력에는 값을 문자열이 아니라 숫자로
+  // 자동 캐스팅한다(Vue 3 - .number 수식어 없이도) - 그래서 빈 값이면
+  // ""(문자열)로 남고, 뭔가 입력되면 숫자로 바뀐다. 둘 다 안전하게
+  // 처리한다.
+  const raw = priorityInput.value;
+  const priority = Number(raw);
+  if (raw === "" || !Number.isInteger(priority)) {
+    priorityError.value = "정수를 입력하세요";
+    return;
+  }
+  savingPriority.value = true;
+  priorityError.value = "";
+  try {
+    // transition()과 같은 이유로 병합(priority 응답에도 perm이 없음).
+    const updated = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}/priority`, {
+      method: "PUT",
+      body: JSON.stringify({ priority }),
+    });
+    doc.value = doc.value ? { ...doc.value, ...updated } : updated;
+  } catch (err) {
+    priorityError.value = err instanceof ApiError ? err.message : "우선순위 저장에 실패했습니다";
+  } finally {
+    savingPriority.value = false;
   }
 }
 
@@ -270,6 +314,7 @@ onMounted(load);
         <div class="meta">작성자 <UserRef :user-id="doc.createdBy" /></div>
       </div>
       <div class="actions">
+        <span v-if="doc.priority !== null" class="priority-badge">우선순위 {{ doc.priority }}</span>
         <span class="status">{{ doc.statusCode }}</span>
       </div>
     </div>
@@ -303,6 +348,14 @@ onMounted(load);
           </select>
           <button class="secondary" :disabled="!toStatusCode" @click="transition">전이</button>
           <span v-if="transitionError" class="error">{{ transitionError }}</span>
+        </template>
+
+        <template v-if="doc.perm.write && PRIORITY_EDITABLE_STATUSES.has(doc.statusCode)">
+          <input v-model="priorityInput" type="number" step="1" class="priority-input" placeholder="우선순위" />
+          <button class="secondary" :disabled="savingPriority" @click="savePriority">
+            {{ savingPriority ? "저장 중..." : "우선순위 저장" }}
+          </button>
+          <span v-if="priorityError" class="error">{{ priorityError }}</span>
         </template>
 
         <span class="spacer"></span>
@@ -391,6 +444,20 @@ h1 {
   background: #eef0f6;
   padding: 4px 10px;
   border-radius: 999px;
+}
+.priority-badge {
+  font-size: 12px;
+  color: #8a5a1a;
+  background: #fbeee0;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.priority-input {
+  width: 90px;
+  padding: 6px 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 13px;
 }
 .notice-banner {
   background: #fbf3d9;

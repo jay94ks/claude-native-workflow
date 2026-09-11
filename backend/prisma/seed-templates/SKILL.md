@@ -83,6 +83,13 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 있는 다음 상태 목록(라벨+지침 포함)은 `docs document next-statuses
 <trackingCode>`로 확인한다.
 
+**문서 우선순위(정수)** - `docs priority-set <trackingCode> <n>`로
+정수 우선순위를 설정/갱신한다. **문서 상태가 `review` 또는 `pending`
+일 때만** 설정할 수 있다(그 외 상태에서 시도하면 거부) - 위 표의
+`pending`(문서 상태 코드)과 아래 Q&A 절의 `pending`(질문 상태)은
+이름만 같을 뿐 완전히 다른 개념이니 혼동하지 않는다. 상태가 바뀌어
+범위를 벗어나도 기존 값은 자동으로 지워지지 않는다.
+
 ## 설계자 프로필 / 활동 이력
 
 `docs auth whoami`로 본인 프로필(id/username/email/phone 등)을,
@@ -249,6 +256,7 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 검색 | `docs search <projectId> <query>` | `document_search` |
 | 본문 갱신 | `docs save <trackingCode> <file>` | `document_save` |
 | 상태 전이 | `docs transition <trackingCode> <toStatusCode>` | `document_transition` |
+| 우선순위 설정(review/pending 전용) | `docs priority-set <trackingCode> <n>` | `document_priority_set` |
 | 다음 가능 상태 조회 | `docs next-statuses <trackingCode>` | `document_next_statuses` |
 | 문서 삭제 | `docs delete <trackingCode>` | `document_delete` |
 | 문서 링크 | `docs link <from> <to>` | `document_link` |

@@ -92,6 +92,7 @@ import {
   searchProjectDocuments,
   saveDocumentBody,
   transitionDocumentStatus,
+  setDocumentPriority,
   addDocumentLink,
   listBacklinks,
   listDocumentRevisions,
@@ -1206,6 +1207,25 @@ app.post(
     const { toStatusCode } = req.body as { toStatusCode?: string };
     if (!toStatusCode) { res.status(400).json({ error: "toStatusCode가 필요합니다" }); return; }
     res.json(withNotices(await transitionDocumentStatus(req.params.trackingCode, toStatusCode), perm.notice));
+  }),
+);
+
+// review/pending 상태일 때만 설정 가능(setDocumentPriority가 검증) -
+// 그 외 권한 요구는 transition/save와 동일(쓰기 권한).
+app.put(
+  "/api/documents/:trackingCode/priority",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocument(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    const { priority } = req.body as { priority?: number };
+    if (priority === undefined || !Number.isInteger(priority)) {
+      res.status(400).json({ error: "priority(정수)가 필요합니다" });
+      return;
+    }
+    res.json(withNotices(await setDocumentPriority(req.params.trackingCode, priority), perm.notice));
   }),
 );
 

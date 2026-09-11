@@ -2690,10 +2690,63 @@ project_public` 실제 MCP 클라이언트로 왕복 확인. 브라우저로 세
 `npm run audit:cli-mcp` 클린 재확인. `npx tsc --noEmit`(backend),
 `vue-tsc -b`(frontend) 클린.
 
+## 문서 우선순위(`#document-priority`) - 완료 (2026-09-12)
+
+PLANS.md 29번(설계자 직접 요청). 문서에 단순 정수 우선순위를 매기되,
+`review`/`pending`(표준 DocStatus 코드 - Q&A의 별개 `pending` 개념과
+이름만 같음) 상태일 때만 설정/갱신 가능해야 함.
+
+이 시스템은 "조회는 DB가 아니라 Meilisearch를 거친다"는 확고한
+원칙이 있어(`core/search.ts` 상단 주석), 필드 하나 추가가 스키마
+하나로 안 끝났다 - `Document.priority Int?`(3드라이버) 외에도
+`SearchableDocument`에 `priority` 추가, `ensureSearchIndexes()`의
+filterable/sortable 속성에 `"priority"` 등록(나중에 "review 대기열을
+우선순위순 정렬" 같은 기능이 인덱스 재구성 없이 가능해지도록 미리
+등록 - 비용 거의 없음), `createDocument`/`saveDocumentBody`/
+`transitionDocumentStatus` 세 곳 전부 `toSearchable()` 호출과
+`DocumentDetail` 반환에 `priority`를 실어주도록 갱신. 신규
+`setDocumentPriority()`(`core/documents.ts`) - 현재 상태 코드가
+`review`/`pending`이 아니면 명확한 한국어 에러로 거부, 범위를
+벗어나도 기존 값은 자동으로 안 지움(요청 문구에 자동 초기화 언급
+없음). 라우트 `PUT /api/documents/:trackingCode/priority`(기존
+`transition`/`save`와 동일한 `resolveEffectivePermission(...).write`
+권한), CLI `priority-set <trackingCode> <n>`, MCP
+`document_priority_set` - CLI가 짧고(`priority-set`) MCP가 리소스
+접두어(`document_priority_set`)를 쓰는 기존 명명 규칙 차이라
+`audit-cli-mcp.ts`의 `KNOWN_RENAMES`에 한 쌍 추가.
+
+웹 UI(`DocumentEditorView.vue`) - 상태 배지 옆에 값이 있으면
+"우선순위 N" 배지, `doc.perm.write && statusCode가 review/pending`
+일 때만 숫자 입력+저장 버튼(기존 전이 컨트롤과 같은 자리).
+
+**실측 중 드러낸 기존 버그(같이 수정)**: `transition()`/`save()`/
+새로 만든 `savePriority()` 셋 다 뮤테이션 라우트 응답을
+`doc.value`에 통째로 덮어썼는데, 그 응답엔 `perm` 필드가 없다(GET
+단건 조회 라우트만 `perm`을 얹어줌, `transition`/`save`/`priority`
+라우트는 `withNotices()`만 거침 - `notices`만 추가하고 `perm`은
+안 건드림). 그래서 전이/저장/우선순위 설정 직후 `doc.perm`이
+`undefined`가 되고, 곧바로 `v-if="doc.perm.write"`가 있는 툴바가
+`Cannot read properties of undefined (reading 'write')`로 런타임
+예외를 내며 화면이 통째로 사라지는 걸 브라우저 실측 중 직접
+재현했다(`priority-set` 기능을 새로 추가하면서 같은 패턴을 그대로
+베꼈다가 발견 - 원래 `transition`/`save`에도 잠재해 있던 결함).
+세 함수 전부 `doc.value = { ...doc.value, ...응답 }`으로 병합하도록
+고쳐 `perm`을 보존시켰다.
+
+**실측 검증**: `draft` 상태에서 설정 시도 → 400 확인 → `review`로
+전이 → 설정 → 200 + `GET`(Meilisearch 경유)에 값이 실제로 보이는지
+확인(인덱스 등록을 빠뜨렸으면 여기서 드러남) → 다른 값으로 갱신 →
+`approved`로 전이 후 재시도 → 400, 기존 값은 그대로 남는지 확인 →
+쓰기 권한 없는 계정 → 403. CLI `priority-set`/MCP
+`document_priority_set` 실제 클라이언트로 왕복. 브라우저로 저장
+버튼 클릭 → 배지 갱신 확인 → 페이지가 안 깨지고 나머지 버튼들이
+그대로 남아있는지(perm 보존 확인) → 승인됨으로 전이 → 입력/저장
+버튼은 사라지고 배지는 그대로 남는지(자동 초기화 안 함) 확인.
+`npm run audit:cli-mcp` 클린 재확인. `npx tsc --noEmit`(backend),
+`vue-tsc -b`(frontend) 클린.
+
 ## 다음 단계
 
-설계자가 이어서 요청한 "문서 우선순위"(review/pending 상태에서만
-유효한 정수 우선순위, CLI/MCP/SKILL 반영)를 다음 라운드로 진행한다.
-그 다음엔 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 우선순위를
+PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
 고른다 - 보류 중인 `#folder-access-ui`(폴더 공유+ACL)도 그 표에
 남아있다.
