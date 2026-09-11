@@ -243,10 +243,14 @@
   `doctype_*_group` 12개가 서버에서 사라짐, 팀/그룹 화면에서 "문서
   타입 관리" 버튼 자체가 안 보임, 제거 후에도 프로젝트 스코프 기본
   6종(SP/DC/PL/PD/RM/DS) 시딩이 회귀 없이 그대로 동작 - 전부 실측.
+- [x] DocType 이름(code/label) 수정/삭제 - 기본 6종은 이름 수정
+  시도 시 거부(삭제만 가능), 관리자가 직접 만든 타입은 이름 수정
+  가능, 어느 쪽이든 그 타입으로 만든 문서가 남아있으면 삭제 거부(문서
+  삭제 후 재시도하면 성공) - CLI/MCP/브라우저 전부 실측. 이름을 바꿔도
+  이미 발급된 추적 코드 접두어는 안 바뀌는 것도 확인.
 
 ### 추가 개발 계획
-`#doctype-edit-delete` `#doctype-transition-delete` - 상세는
-[PLANS.md](PLANS.md) 참고.
+`#doctype-transition-delete` - 상세는 [PLANS.md](PLANS.md) 참고.
 
 ---
 

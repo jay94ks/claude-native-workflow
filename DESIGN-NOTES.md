@@ -2829,6 +2829,68 @@ access-overview <userId>`(관리자) 실제 서버로 왕복 확인. MCP
 확인. `npm run audit:cli-mcp`, `npx tsc --noEmit`(backend), `vue-tsc
 -b`(frontend) 전부 클린.
 
+## DocType 이름 수정/삭제(`#doctype-edit-delete`) - 완료 (2026-09-12)
+
+PLANS.md 8번. 생성 후 지침(guideline)만 고칠 수 있던 DocType에
+code/label 수정과 삭제를 추가했다.
+
+**설계자 확인(반려 후 정정)**: 처음 계획은 모든 DocType의 이름을
+자유롭게 수정 가능하게 했는데, 설계자가 반려하며 정정: **"기본
+생성되는 것들은 삭제만 가능하다. 문서 분류를 삭제하려면 속한
+문서들을 다 지워야 한다."** - 프로젝트 생성 시 자동으로 심어지는
+기본 6종(`seedDefaultDocTypes`)은 이름을 못 바꾸고 삭제만 가능,
+관리자가 나중에 직접 만든 타입만 이름도 자유롭게 고칠 수 있다는
+뜻. 이 구분을 위해 `DocType`에 `isDefault Boolean @default(false)`
+컬럼을 새로 추가(3드라이버) - `createDocType()`에 다섯 번째 매개변수
+`isDefault = false`를 넣고 `seedDefaultDocTypes()`의 호출부만
+`true`를 넘기도록 했다.
+
+`core/docTypes.ts` 신규 `updateDocType(docTypeId, {code?, label?})` -
+`isDefault`면 즉시 거부(`기본으로 생성된 문서 분류는 이름을 바꿀 수
+없습니다 - 삭제만 가능합니다`), 아니면 `createDocType`과 같은 코드
+형식 검증(`/^[A-Za-z]{2}$/`) 후 갱신. 신규 `deleteDocType(docTypeId)`
+는 기본/커스텀 구분 없이 `db.document.count({where:{docTypeId}})`
+확인 → 0보다 크면 거부(`deleteTeam()`의 "비어있지 않으면 명확한
+에러로 거부" 패턴과 동일) - `Document.docType`이 `onDelete: Cascade`
+라 이 가드가 없으면 타입을 지울 때 그 타입 문서가 통째로 같이
+삭제될 뻔했다. DocStatus/DocStatusTransition/DocAccessOverride는
+스키마의 Cascade가 알아서 정리.
+
+라우트 `PUT`/`DELETE /api/projects/:projectId/doc-types/:docTypeId`
+(기존 `requireOwnedDocType` 재사용), CLI `doctype-update`/
+`doctype-delete`, MCP `doctype_update`/`doctype_delete`(이름이 CLI
+태그와 그대로 맞아떨어져 `KNOWN_RENAMES` 불필요). `doctype_list`
+응답에도 `isDefault`가 실려 AI가 미리 구분 가능.
+
+웹 UI(`DocTypeManager.vue`) - 기본 타입은 "기본 타입" 배지 + "삭제"
+버튼만, 커스텀 타입은 "이름 수정"(인라인 code/label 편집, 기존
+guideline 편집 상태와 별개)도 노출. 삭제는 `TeamsView.vue`처럼 확인
+다이얼로그 없이 바로 호출하고 실패 시 그 자리에 에러(문서 개수
+때문에 거부되면 그 메시지)를 보여준다.
+
+**트래킹 코드는 이름 변경과 무관하게 발급 시점에 영구 고정된다** -
+`generateTrackingCode(typeCode)`가 문서 생성 시점의 DocType.code를
+그대로 새겨 넣으므로(`core/tracking.ts`), 나중에 타입을 "ZZ"→"ZQ"로
+개명해도 그 타입으로 이미 만든 문서의 추적 코드는 계속 "ZZ-..."로
+남는다 - 버그가 아니라 "발급 시점 스냅샷" 설계의 당연한 결과.
+
+**실측 검증**: docker 재빌드·재기동(스키마 push로 `isDefault` 컬럼
+반영 확인) 후 admin 계정 하나로 HTTP 왕복 - 기본 타입(SP) 이름 수정
+시도 → 400 거부 확인 → 커스텀 타입 생성(`isDefault:false` 확인) →
+표준 상태 흐름 적용 → 그 타입으로 문서 생성(추적 코드 `ZZ-...`) →
+삭제 시도 → "문서가 아직 1개 있습니다" 거부 확인 → 이름을 ZZ→ZQ로
+수정(성공) → 문서의 추적 코드가 여전히 `ZZ-...`인지 재확인(고정
+확인) → 문서 삭제 → 타입 삭제 재시도 → 200 확인 → 기본 타입(DS,
+문서 0개)도 삭제 성공 확인. CLI `doctype-update`/`doctype-delete`,
+MCP `doctype_update`/`doctype_delete`(기본 타입 거부 케이스 포함,
+MCP는 `isError:true`로 정확히 전파됨) 실제 서버/클라이언트로 왕복.
+브라우저 - 기본 타입 행엔 "이름 수정" 버튼이 아예 없고 "기본 타입"
+배지만 있는지, 커스텀 타입은 인라인 편집으로 이름이 바뀌는지,
+문서가 있는 커스텀 타입을 삭제 시도하면 그 자리에 에러가 뜨고
+목록에서 안 빠지는지, 빈 타입은 삭제 시 즉시 목록에서 빠지는지
+스크린샷으로 확인. `npm run audit:cli-mcp`, `npx tsc --noEmit`
+(backend), `vue-tsc -b`(frontend) 전부 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

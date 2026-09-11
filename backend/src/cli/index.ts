@@ -513,6 +513,28 @@ program
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/doc-types`))));
 
 program
+  .command("doctype-update <projectId> <docTypeId>")
+  .option("--code <c>", "타입 코드(영문 2글자) - 기본 시드 타입은 거부됨")
+  .option("--label <l>")
+  .action((projectId, docTypeId, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}`, {
+          method: "PUT",
+          body: JSON.stringify({ code: opts.code, label: opts.label }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("doctype-delete <projectId> <docTypeId>")
+  .description("문서 타입 삭제 - 이 타입으로 만든 문서가 하나라도 남아있으면 거부됨")
+  .action((projectId, docTypeId) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}`, { method: "DELETE" }))),
+  );
+
+program
   .command("doctype-guideline-set <projectId> <docTypeId> <guideline...>")
   .action((projectId, docTypeId, guidelineParts) =>
     run(async () =>

@@ -13,6 +13,7 @@ export interface DocType {
   code: string;
   label: string;
   guideline: string | null;
+  isDefault: boolean;
 }
 
 export interface DocStatus {
@@ -56,7 +57,13 @@ export interface DocStatusTransition {
   label: string | null;
 }
 
-export async function createDocType(projectId: string, code: string, label: string, guideline?: string): Promise<DocType> {
+export async function createDocType(
+  projectId: string,
+  code: string,
+  label: string,
+  guideline?: string,
+  isDefault = false,
+): Promise<DocType> {
   if (!/^[A-Za-z]{2}$/.test(code)) {
     throw new Error(`타입 코드는 영문 2글자여야 합니다: ${code}`);
   }
@@ -69,20 +76,64 @@ export async function createDocType(projectId: string, code: string, label: stri
       code: code.toUpperCase(),
       label,
       guideline: guideline?.trim() || null,
+      isDefault,
     },
   });
-  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline };
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isDefault: row.isDefault };
 }
 
 /** DocType 생성 후 지침을 새로 쓰거나 수정한다 - 빈 문자열은 "지침
- * 지우기"로 취급(null 정규화, createDocType과 같은 관례). */
+ * 지우기"로 취급(null 정규화, createDocType과 같은 관례). 기본
+ * 타입이라도 지침은 자유롭게 고칠 수 있다(이름과 달리 제한 없음). */
 export async function setDocTypeGuideline(docTypeId: string, guideline: string): Promise<DocType> {
   const db = getDb();
   const row = await db.docType.update({
     where: { id: docTypeId },
     data: { guideline: guideline.trim() || null },
   });
-  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline };
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isDefault: row.isDefault };
+}
+
+export interface UpdateDocTypeInput {
+  code?: string;
+  label?: string;
+}
+
+/** 이름(code/label) 수정 - 기본 시드 타입(`isDefault`)은 거부한다
+ * (설계자 확인: 기본 타입은 삭제만 가능, 이름은 못 바꿈). code
+ * 형식 검증은 createDocType과 동일. */
+export async function updateDocType(docTypeId: string, patch: UpdateDocTypeInput): Promise<DocType> {
+  const db = getDb();
+  const existing = await db.docType.findUnique({ where: { id: docTypeId } });
+  if (!existing) throw new Error(`문서 타입을 찾을 수 없습니다: ${docTypeId}`);
+  if (existing.isDefault) {
+    throw new Error("기본으로 생성된 문서 분류는 이름을 바꿀 수 없습니다 - 삭제만 가능합니다");
+  }
+  if (patch.code !== undefined && !/^[A-Za-z]{2}$/.test(patch.code)) {
+    throw new Error(`타입 코드는 영문 2글자여야 합니다: ${patch.code}`);
+  }
+  const row = await db.docType.update({
+    where: { id: docTypeId },
+    data: {
+      code: patch.code !== undefined ? patch.code.toUpperCase() : undefined,
+      label: patch.label,
+    },
+  });
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isDefault: row.isDefault };
+}
+
+/** 문서가 하나라도 남아있으면 거부(Document.docType이 onDelete:
+ * Cascade라 그냥 지우면 문서가 통째로 같이 삭제됨 - deleteTeam()의
+ * "비어있지 않으면 명확한 에러로 거부" 원칙과 동일). 기본/커스텀
+ * 타입 구분 없이 이 규칙은 동일하게 적용된다. 상태/전이/세부 권한
+ * 오버라이드는 스키마의 Cascade가 알아서 정리한다. */
+export async function deleteDocType(docTypeId: string): Promise<void> {
+  const db = getDb();
+  const documentCount = await db.document.count({ where: { docTypeId } });
+  if (documentCount > 0) {
+    throw new Error(`이 타입으로 만든 문서가 아직 ${documentCount}개 있습니다 - 문서를 정리한 뒤 다시 시도하세요`);
+  }
+  await db.docType.delete({ where: { id: docTypeId } });
 }
 
 /** code는 STANDARD_DOC_STATUSES 6개 중 하나여야 한다(대소문자 무관) -
@@ -122,7 +173,7 @@ export async function addDocStatusTransition(
 export async function listDocTypes(projectId: string): Promise<DocType[]> {
   const db = getDb();
   const rows = await db.docType.findMany({ where: { projectId } });
-  return rows.map((r: DocType) => ({ id: r.id, code: r.code, label: r.label, guideline: r.guideline }));
+  return rows.map((r: DocType) => ({ id: r.id, code: r.code, label: r.label, guideline: r.guideline, isDefault: r.isDefault }));
 }
 
 export async function listDocStatuses(docTypeId: string): Promise<DocStatus[]> {
@@ -137,7 +188,7 @@ export async function findDocTypeByCode(projectId: string, code: string): Promis
   const db = getDb();
   const row = await db.docType.findFirst({ where: { projectId, code: code.toUpperCase() } });
   if (!row) return null;
-  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline };
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isDefault: row.isDefault };
 }
 
 export async function findDocStatusByCode(docTypeId: string, code: string): Promise<DocStatus | null> {
@@ -152,7 +203,7 @@ export async function getDocTypeById(docTypeId: string): Promise<(DocType & { pr
   const db = getDb();
   const row = await db.docType.findUnique({ where: { id: docTypeId } });
   if (!row) return null;
-  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, projectId: row.projectId };
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isDefault: row.isDefault, projectId: row.projectId };
 }
 
 /** addDocStatusTransition()은 id 기반(seedDefaultDocTypes 내부용) -
@@ -258,10 +309,12 @@ const DEFAULT_TYPES: SeedSpec[] = [
 
 /** createProject() 직후 호출 - 새 프로젝트가 타입 체계 없이 시작하지
  * 않도록 기본 타입 몇 개를 그 프로젝트 스코프로 심어준다. 관리자는
- * 이후 자유롭게 추가/수정 가능(하드코딩 아님, 그냥 첫 데이터). */
+ * 이후 자유롭게 새 타입을 추가할 수 있지만, 여기서 심어진 타입
+ * 자신의 이름(code/label)은 `isDefault: true`라 못 바꾼다(삭제만
+ * 가능 - 설계자 확인, updateDocType() 참고). */
 export async function seedDefaultDocTypes(projectId: string): Promise<void> {
   for (const spec of DEFAULT_TYPES) {
-    const docType = await createDocType(projectId, spec.code, spec.label, spec.guideline);
+    const docType = await createDocType(projectId, spec.code, spec.label, spec.guideline, true);
     await seedStandardStatusFlow(docType.id);
   }
 }

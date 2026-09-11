@@ -81,6 +81,8 @@ import {
   listDocStatusTransitions,
   seedStandardStatusFlow,
   setDocTypeGuideline,
+  updateDocType,
+  deleteDocType,
   allowedNextStatuses,
 } from "../core/docTypes.js";
 import {
@@ -1001,6 +1003,34 @@ async function requireOwnedDocType(projectId: string, docTypeId: string): Promis
   const docType = await getDocTypeById(docTypeId);
   return docType !== null && docType.projectId === projectId;
 }
+
+app.put(
+  "/api/projects/:projectId/doc-types/:docTypeId",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    const { code, label } = req.body as { code?: string; label?: string };
+    res.json(await updateDocType(req.params.docTypeId, { code, label }));
+  }),
+);
+
+app.delete(
+  "/api/projects/:projectId/doc-types/:docTypeId",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
+      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
+      return;
+    }
+    await deleteDocType(req.params.docTypeId);
+    res.json({ ok: true });
+  }),
+);
 
 app.post(
   "/api/projects/:projectId/doc-types/:docTypeId/statuses",

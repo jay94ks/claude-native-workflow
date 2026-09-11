@@ -52,7 +52,15 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 문서 **분류(DocType)**는 관리자가 자유롭게 정의한다(코드/라벨/지침).
 새 프로젝트는 기본으로 여섯 타입을 갖고 시작한다: `SP`(설계 명세),
 `DC`(결정 요구사항 및 요청), `PL`(실행 계획), `PD`(실행 결과 보고),
-`RM`(지시 사항/지침), `DS`(설계 결정).
+`RM`(지시 사항/지침), `DS`(설계 결정). 이 기본 여섯 타입은
+**이름(code/label)을 바꿀 수 없고 삭제만 가능**하다(`docs doctypes
+<projectId>` 응답의 `isDefault`로 구분) - 관리자가 나중에 직접 만든
+타입만 `docs doctype-update <projectId> <docTypeId> [--code <c>]
+[--label <l>]`로 이름을 고칠 수 있다. 삭제(`docs doctype-delete
+<projectId> <docTypeId>`)는 기본/커스텀 구분 없이 **그 타입으로 만든
+문서가 하나라도 남아있으면 거부**된다 - 먼저 문서를 정리해야 한다.
+이름을 바꿔도 이미 발급된 문서의 추적 코드 접두어는 그대로 남는다
+(추적 코드는 발급 시점의 코드를 영구 고정).
 
 **문서의 "현재 상태"(DocStatus)는 분류와 달리 자유 정의가 아니라
 아래 6개 표준 코드로 고정돼 있다** - 어떤 문서 타입이든 상태는 항상
@@ -285,6 +293,8 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 팀장 등록/해제/목록 | `docs team-admin-add/team-admin-remove/team-admins` | `team_admin_add/remove/list` |
 | 그룹 관리자 등록/해제/목록 | `docs group-admin-add/group-admin-remove/group-admins` | `group_admin_add/remove/list` |
 | 세부 권한 설정/조회 | `docs access-set ...` / `docs access-list <projectId>` | `access_set` / `access_list` |
+| 문서 타입 이름 수정 | `docs doctype-update <projectId> <docTypeId> [--code <c>] [--label <l>]` | `doctype_update` |
+| 문서 타입 삭제 | `docs doctype-delete <projectId> <docTypeId>` | `doctype_delete` |
 | 표준 상태 흐름 일괄 적용 | `docs doctype-apply-standard-flow <projectId> <docTypeId>` | `doctype_apply_standard_flow` |
 | 상태 코드 추가(표준 6개 중) | `docs doctype-status-add <projectId> <docTypeId> <code>` | `doctype_status_add` |
 | 상태 전이 정의 | `docs doctype-transition-add <projectId> <docTypeId> <fromCode> <toCode>` | `doctype_transition_add` |

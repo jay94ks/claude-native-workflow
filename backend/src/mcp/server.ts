@@ -264,8 +264,26 @@ async function main() {
     { projectId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
     async (a) => call(`/api/projects/${a.projectId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
   );
-  tool("doctype_list", "문서 타입 목록", "그 프로젝트에 정의된 문서 타입 목록(팀/그룹 단위로 획일화해 정하는 기능은 없음 - 항상 프로젝트 자신에게만 정의됨).", { projectId: z.string() }, async (a) =>
+  tool("doctype_list", "문서 타입 목록", "그 프로젝트에 정의된 문서 타입 목록(팀/그룹 단위로 획일화해 정하는 기능은 없음 - 항상 프로젝트 자신에게만 정의됨. 각 항목의 isDefault로 기본 시드 타입인지 구분 가능).", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/doc-types`),
+  );
+  tool(
+    "doctype_update",
+    "문서 타입 이름 수정",
+    "code/label을 수정한다 - 프로젝트 생성 시 자동으로 심어진 기본 타입(isDefault: true)은 거부됨(삭제만 가능).",
+    { projectId: z.string(), docTypeId: z.string(), code: z.string().optional(), label: z.string().optional() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}`, {
+        method: "PUT",
+        body: JSON.stringify({ code: a.code, label: a.label }),
+      }),
+  );
+  tool(
+    "doctype_delete",
+    "문서 타입 삭제",
+    "문서 타입을 삭제한다 - 이 타입으로 만든 문서가 하나라도 남아있으면 거부됨(기본/커스텀 타입 구분 없이 동일하게 적용).",
+    { projectId: z.string(), docTypeId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}`, { method: "DELETE" }),
   );
   tool(
     "doctype_guideline_set",

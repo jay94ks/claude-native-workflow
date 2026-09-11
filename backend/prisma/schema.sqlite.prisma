@@ -263,6 +263,7 @@ model DocType {
   code      String // 영문 2글자
   label     String
   guideline String? // "이 타입은 무엇을 하기 위한 것인가" 자연어 설명(선택)
+  isDefault Boolean  @default(false) // 프로젝트 생성 시 자동으로 심어진 기본 타입인지 - true면 이름(code/label) 수정 불가, 삭제만 가능
   createdAt DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

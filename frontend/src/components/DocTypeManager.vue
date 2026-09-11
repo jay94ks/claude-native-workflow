@@ -16,6 +16,7 @@ interface DocType {
   code: string;
   label: string;
   guideline: string | null;
+  isDefault: boolean;
 }
 interface DocStatus {
   id: string;
@@ -74,6 +75,50 @@ async function createType() {
     await loadTypes();
   } catch (err) {
     createError.value = err instanceof ApiError ? err.message : "생성에 실패했습니다";
+  }
+}
+
+// ---------------------------------------------------------------- 이름(code/label) 수정 · 삭제
+
+const editingId = ref<string | null>(null);
+const editCode = ref("");
+const editLabel = ref("");
+const editError = ref("");
+const deleteError = ref<Record<string, string>>({});
+
+function startEditName(t: DocType) {
+  editingId.value = t.id;
+  editCode.value = t.code;
+  editLabel.value = t.label;
+  editError.value = "";
+}
+
+async function saveEditName() {
+  if (!editingId.value) return;
+  editError.value = "";
+  try {
+    await apiCall(`${basePath.value}/${editingId.value}`, {
+      method: "PUT",
+      body: JSON.stringify({ code: editCode.value.trim(), label: editLabel.value.trim() }),
+    });
+    editingId.value = null;
+    await loadTypes();
+  } catch (err) {
+    editError.value = err instanceof ApiError ? err.message : "수정에 실패했습니다";
+  }
+}
+
+async function removeType(t: DocType) {
+  deleteError.value = { ...deleteError.value, [t.id]: "" };
+  try {
+    await apiCall(`${basePath.value}/${t.id}`, { method: "DELETE" });
+    if (expandedId.value === t.id) expandedId.value = null;
+    await loadTypes();
+  } catch (err) {
+    deleteError.value = {
+      ...deleteError.value,
+      [t.id]: err instanceof ApiError ? err.message : "삭제에 실패했습니다",
+    };
   }
 }
 
@@ -236,10 +281,25 @@ onMounted(loadTypes);
     <ul v-else class="types">
       <li v-for="t in types" :key="t.id">
         <div class="type-row" @click="toggleExpand(t.id)">
-          <code>{{ t.code }}</code>
-          <span>{{ t.label }}</span>
+          <template v-if="editingId === t.id">
+            <input v-model="editCode" type="text" maxlength="2" class="code-input" @click.stop />
+            <input v-model="editLabel" type="text" @click.stop />
+            <button class="edit-btn" @click.stop="saveEditName">저장</button>
+            <button class="edit-btn" @click.stop="editingId = null">취소</button>
+          </template>
+          <template v-else>
+            <code>{{ t.code }}</code>
+            <span>{{ t.label }}</span>
+            <span v-if="t.isDefault" class="badge">기본 타입</span>
+            <template v-if="isOwner">
+              <button v-if="!t.isDefault" class="edit-btn" @click.stop="startEditName(t)">이름 수정</button>
+              <button class="edit-btn" @click.stop="removeType(t)">삭제</button>
+            </template>
+          </template>
           <span class="toggle">{{ expandedId === t.id ? "▲" : "▼" }}</span>
         </div>
+        <p v-if="editError && editingId === t.id" class="error inline">{{ editError }}</p>
+        <p v-if="deleteError[t.id]" class="error inline">{{ deleteError[t.id] }}</p>
         <div v-if="expandedId === t.id" class="detail">
           <p v-if="detailError" class="error">{{ detailError }}</p>
           <p v-if="detailLoading" class="muted">불러오는 중...</p>
@@ -322,11 +382,12 @@ onMounted(loadTypes);
   gap: 8px;
   margin-bottom: 4px;
 }
-.create-row .code-input {
+.code-input {
   width: 70px;
   text-transform: uppercase;
 }
-.create-row input {
+.create-row input,
+.type-row input {
   padding: 6px 8px;
   border: 1px solid #d8dae0;
   border-radius: 6px;
@@ -508,5 +569,9 @@ onMounted(loadTypes);
 .error {
   color: #d1344b;
   font-size: 13px;
+}
+.error.inline {
+  padding: 0 4px 6px;
+  margin: 0;
 }
 </style>
