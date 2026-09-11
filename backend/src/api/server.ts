@@ -123,7 +123,12 @@ import {
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
 import { backfillProjectSourceIndex, syncSourceFileOnSave } from "../core/sourceIndex.js";
-import { resolveEffectivePermission, setAccessOverride, listAccessOverrides } from "../core/permissions.js";
+import {
+  resolveEffectivePermission,
+  setAccessOverride,
+  listAccessOverrides,
+  listAccessOverridesForUser,
+} from "../core/permissions.js";
 import { createFolder, renameFolder, deleteFolder, reorderFolder, listFolders, listFolderDocuments, moveDocumentToFolder } from "../core/folders.js";
 import {
   createKanbanColumn,
@@ -355,6 +360,16 @@ app.post(
   }),
 );
 
+// "이 설계자가 전체 설치에서 어떤 제한을 받고 있는지" 자기 자신 조회 -
+// role 체크 불필요(누구나 자기 자신의 오버라이드는 볼 수 있어야 함).
+app.get(
+  "/api/auth/me/access-overview",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listAccessOverridesForUser(req.userId!));
+  }),
+);
+
 // ---------------------------------------------------------------- 관리자 전용 사용자 관리
 // /api/admin/* - admin 전용임을 경로 자체가 드러낸다(이 저장소 첫
 // admin 네임스페이스). 이메일 발송 인프라가 없어 self-service 비밀번호
@@ -376,6 +391,16 @@ app.post(
   requireSuperAdmin,
   asyncRoute(async (req, res) => {
     res.json(await resetPasswordAsAdmin(req.params.userId));
+  }),
+);
+
+app.get(
+  "/api/admin/users/:userId/access-overview",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (req, res) => {
+    res.json(await listAccessOverridesForUser(req.params.userId));
   }),
 );
 

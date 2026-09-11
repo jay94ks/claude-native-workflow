@@ -633,6 +633,7 @@ model DocAccessOverride {
   document Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([projectId, userId])
+  @@index([userId])
   @@index([docTypeId])
   @@index([documentId])
 }

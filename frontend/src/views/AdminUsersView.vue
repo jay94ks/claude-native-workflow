@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { useAuthStore } from "../stores/auth";
+import AccessOverviewPanel from "../components/AccessOverviewPanel.vue";
 
 interface AdminUserListItem {
   id: string;
@@ -20,6 +21,11 @@ const resettingId = ref("");
 const revealedFor = ref("");
 const revealedPassword = ref("");
 const copied = ref(false);
+const expandedAccessId = ref("");
+
+function toggleAccess(u: AdminUserListItem) {
+  expandedAccessId.value = expandedAccessId.value === u.id ? "" : u.id;
+}
 
 async function load() {
   loading.value = true;
@@ -91,11 +97,19 @@ onMounted(load);
       <p v-if="loading" class="muted">불러오는 중...</p>
       <ul v-else class="list">
         <li v-for="u in users" :key="u.id">
-          <span class="username">{{ u.username }}</span>
-          <span class="label">{{ u.displayLabel }}</span>
-          <span class="email">{{ u.email || "(이메일 없음)" }}</span>
-          <span class="at">{{ new Date(u.createdAt).toLocaleString() }}</span>
-          <button class="reset-btn" :disabled="resettingId === u.id" @click="resetPassword(u)">비밀번호 재설정</button>
+          <div class="row">
+            <span class="username">{{ u.username }}</span>
+            <span class="label">{{ u.displayLabel }}</span>
+            <span class="email">{{ u.email || "(이메일 없음)" }}</span>
+            <span class="at">{{ new Date(u.createdAt).toLocaleString() }}</span>
+            <button class="reset-btn" @click="toggleAccess(u)">
+              {{ expandedAccessId === u.id ? "접근 제한 닫기" : "접근 제한 보기" }}
+            </button>
+            <button class="reset-btn" :disabled="resettingId === u.id" @click="resetPassword(u)">비밀번호 재설정</button>
+          </div>
+          <div v-if="expandedAccessId === u.id" class="access-panel">
+            <AccessOverviewPanel :endpoint="`/admin/users/${u.id}/access-overview`" />
+          </div>
         </li>
         <li v-if="users.length === 0" class="muted">사용자가 없습니다.</li>
       </ul>
@@ -164,15 +178,23 @@ h2 {
   margin: 0;
 }
 .list li {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   padding: 8px 0;
   border-bottom: 1px solid #eee;
   font-size: 12px;
 }
 .list li:last-child {
   border-bottom: none;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.access-panel {
+  margin-top: 8px;
+  padding: 10px;
+  background: #f7f8fb;
+  border-radius: 6px;
 }
 .username {
   font-weight: 600;

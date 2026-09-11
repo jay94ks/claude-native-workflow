@@ -2764,6 +2764,71 @@ PLANS.md 6번. 착수 조사로 이 항목의 원래 전제("웹 UI 탭만 빠�
 안 맞음)만 실제 상태에 맞게 정리했다. 같은 조사를 나중에 반복하지
 않도록 이 절에 결론을 남겨둔다.
 
+## 설계자별 접근 제한 프로젝트 횡단 조회(`#access-overview-cross-project`) - 완료 (2026-09-12)
+
+PLANS.md 7번. 기존 `listAccessOverrides(projectId)`는 프로젝트
+단위로만 조회돼, "이 설계자가 전체 설치에서 어떤 제한을 받고 있는지"
+보려면 프로젝트마다 따로 불러야 했다 - `userId` 하나로 전체 설치를
+가로지르는 조회가 없었고, 자기 자신의 오버라이드를 스스로 조회하는
+기능 자체도 없었다(그린필드).
+
+**스키마**(3드라이버): `DocAccessOverride`에 `@@index([userId])`
+추가(기존 `[projectId, userId]` 복합 인덱스는 유지 - 선두 컬럼이
+`projectId`라 `userId` 단독 조회엔 못 쓰임).
+
+**`core/permissions.ts`** 신규 `listAccessOverridesForUser(userId)` -
+`docAccessOverride.findMany({where:{userId}, include:{project,docType,
+document}})`를 프로젝트명/문서타입명/문서제목+추적코드까지 곁들인
+평면 행으로 매핑. 자기 자신 조회든 admin이 남을 조회하든 항상 이
+함수 하나 - 프로젝트 가시성(`canSeeProject`)과 무관하게 전부
+반환한다(나를 제한하는 이유를 나에게 숨길 이유가 없고, admin은
+`getMemberRole()`의 superAdmin 우회로 어차피 모든 프로젝트를 owner로
+본다).
+
+**라우트**: `GET /api/auth/me/access-overview`(인증만, role 체크
+불필요 - 자기 자신 조회), `GET /api/admin/users/:userId/access-
+overview`(`requireUnrestrictedScope` + `requireSuperAdmin`, 기존
+`/api/admin/users/*` 네임스페이스 확장).
+
+**CLI**: 최상위 `access-overview`(본인), `user` 그룹에
+`access-overview <userId>`(관리자 전용).
+
+**MCP**: `access_overview`(본인, 인자 없음)는 그대로 노출. 관리자용
+`user_access_overview`는 **의도적으로 MCP에 노출하지 않았다** -
+CLI 태그(`user_access-overview`)와 이름은 그대로 맞아떨어지지만
+(`audit-cli-mcp.ts`의 `KNOWN_RENAMES` 불필요), 같은 `user` 관리자
+그룹의 나머지 두 항목(`user_list`, `user_reset_password`)이 이미
+"신원 관리 동작이라 CLI 전용"으로 `KNOWN_CLI_ONLY`에 있던 전례를
+따라 셋을 한데 묶었다 - 임의의 다른 설계자를 지목해 그의 접근 제한
+사유를 조회하는 것도 AI 세션이 스스로 할 일은 아니라고 판단.
+`KNOWN_CLI_ONLY`에 `user_access_overview` 추가 후 `npm run
+audit:cli-mcp` 클린 재확인, 두 SKILL.md 사본(`.claude/skills/
+claude-native-workflow/SKILL.md`, `backend/prisma/seed-templates/
+SKILL.md`)의 "CLI/MCP에 의도적으로 없는 기능" 절도 같이 갱신.
+
+**웹 UI**: 신규 공용 컴포넌트 `AccessOverviewPanel.vue`(prop
+`endpoint`) - 프로젝트명/스코프(공통·문서타입·문서)/읽기·쓰기·삭제
+플래그를 목록으로 렌더링. `UserProfileView.vue`에 `isSelf`일 때만
+("내 접근 제한" 섹션, endpoint `/auth/me/access-overview`),
+`AdminUsersView.vue`에 사용자 행마다 "접근 제한 보기" 토글(기존
+`TeamsView.vue`의 `expandedMembersId` 패턴, endpoint
+`/admin/users/:id/access-overview`).
+
+**실측 검증**: docker 스택 재빌드·재기동 후 실계정 2개(일반 설계자
+A - 서로 다른 프로젝트 2곳에 각각 프로젝트 공통/문서타입 스코프
+오버라이드, admin)로 HTTP 왕복 - A의 `GET /auth/me/access-overview`가
+두 프로젝트를 한 번에 반환(평소 그 프로젝트를 볼 수 있는지와 무관),
+비admin 계정의 `GET /admin/users/:A/access-overview` → 403, admin →
+200(A와 동일 데이터). CLI `access-overview`(본인)/`user
+access-overview <userId>`(관리자) 실제 서버로 왕복 확인. MCP
+`access_overview` 실제 클라이언트로 왕복(빈 배열 - admin 자신에게
+걸린 오버라이드 없음), `tools/list`에 `user_access_overview`가 없는지
+확인. 브라우저 - A 계정 프로필 화면의 "내 접근 제한" 섹션과 admin
+계정 사용자 관리 화면의 행 확장이 같은 내용을 보여주는지 스크린샷
+확인, `read_network_requests`로 두 access-overview 호출 모두 200
+확인. `npm run audit:cli-mcp`, `npx tsc --noEmit`(backend), `vue-tsc
+-b`(frontend) 전부 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

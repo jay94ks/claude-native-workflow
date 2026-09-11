@@ -443,6 +443,13 @@ async function main() {
   tool("access_list", "세부 접근 권한 목록", "프로젝트에 설정된 모든 오버라이드 목록.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/access`),
   );
+  tool(
+    "access_overview",
+    "내 접근 제한 전체 조회",
+    "이 설계자가 전체 설치에서 어떤 접근 제한을 받고 있는지 프로젝트를 가로질러 한 번에 조회한다.",
+    {},
+    async () => call("/api/auth/me/access-overview"),
+  );
 
   // ---------------------------------------------------------------- 칸반 보드
   // 코멘트/폴더와 달리 이 기능은 AI에게 완전히 노출된다 - 컬럼 순서/숨김

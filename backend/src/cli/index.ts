@@ -187,6 +187,11 @@ userCmd
     }),
   );
 
+userCmd
+  .command("access-overview <userId>")
+  .description("이 설계자가 전체 설치에서 어떤 접근 제한을 받고 있는지 프로젝트를 가로질러 한 번에 조회(관리자 전용)")
+  .action((userId) => run(async () => printJson(await apiCall(`/api/admin/users/${userId}/access-overview`))));
+
 // ---------------------------------------------------------------- API 키(신원 위임 인증, 3종)
 // MCP 도구는 의도적으로 없음(auth register/login과 같은 급의 신원
 // 관리 동작 - CLI 전용, 사람이 터미널에서 직접 하는 동작으로 제한).
@@ -742,6 +747,11 @@ program
 program
   .command("access-list <projectId>")
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/access`))));
+
+program
+  .command("access-overview")
+  .description("내가 전체 설치에서 어떤 접근 제한을 받고 있는지 프로젝트를 가로질러 한 번에 조회")
+  .action(() => run(async () => printJson(await apiCall("/api/auth/me/access-overview"))));
 
 // ---------------------------------------------------------------- 칸반 보드
 // 코멘트/폴더와 달리 이 기능은 AI에게 완전히 노출된다 - 컬럼 순서/숨김

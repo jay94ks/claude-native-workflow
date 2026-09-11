@@ -6,6 +6,7 @@ import UserRef from "../components/UserRef.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
 import PersonalKeysManager from "../components/PersonalKeysManager.vue";
 import GiteaTokenCard from "../components/GiteaTokenCard.vue";
+import AccessOverviewPanel from "../components/AccessOverviewPanel.vue";
 
 const props = defineProps<{ id: string }>();
 const auth = useAuthStore();
@@ -144,6 +145,11 @@ watch(() => props.id, load);
 
     <PersonalKeysManager v-if="isSelf" />
     <GiteaTokenCard v-if="isSelf" />
+
+    <section v-if="isSelf" class="card">
+      <h2>내 접근 제한</h2>
+      <AccessOverviewPanel endpoint="/auth/me/access-overview" />
+    </section>
 
     <section class="card">
       <h2>최근 활동</h2>

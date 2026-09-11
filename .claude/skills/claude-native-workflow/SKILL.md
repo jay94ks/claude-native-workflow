@@ -198,7 +198,7 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 
 ## CLI/MCP에 의도적으로 없는 기능 (완전성 원칙의 예외)
 
-아래 다섯 가지는 "누락"이 아니라 설계상 CLI/MCP 표면에 전혀 없다:
+아래 항목들은 "누락"이 아니라 설계상 CLI/MCP 표면에 전혀 없다:
 
 - **`auth register/login/logout`, `auth use-key`** - 비밀번호나 발급된
   API 키를 대화 컨텍스트에 남기지 않기 위해 CLI 전용(`auth_whoami`만
@@ -222,10 +222,14 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 - **`git my-token`** - 내 Gitea 개인 접근 토큰을 재발급하고 1회
   노출하는 명령. `key create`와 같은 급의 "1회 노출 비밀 발급" 동작이라
   CLI 전용이고 MCP엔 없다.
-- **`user list`/`user reset-password`(admin 전용)** - 전체 사용자
-  목록 조회와 다른 설계자의 비밀번호 강제 재설정. 신원을 직접 다루는
-  관리자 동작이라 CLI 전용이고 MCP엔 없다 - AI 세션이 다른 사람의
-  계정 비밀번호를 재설정할 일은 없어야 한다.
+- **`user list`/`user reset-password`/`user access-overview`(admin
+  전용)** - 전체 사용자 목록 조회, 다른 설계자의 비밀번호 강제
+  재설정, 다른 설계자를 지목한 접근 제한 전체 조회. 신원을 직접
+  다루는 관리자 동작이라 CLI 전용이고 MCP엔 없다 - AI 세션이 다른
+  사람의 계정 비밀번호를 재설정하거나 남을 지목해 조회할 일은 없어야
+  한다(본인 조회용 `access-overview`/`access_overview`는 CLI/MCP
+  둘 다에 그대로 있음 - 자기 자신에 대한 제한 사유를 스스로 아는 건
+  이 예외에 해당하지 않는다).
 - **칸반 카드 코멘트** - 칸반 보드 자체(분류/카드 생성·조회·이동)는
   아래 표의 `kanban-*` 명령으로 AI에게 완전히 열려 있지만, 카드에
   달리는 코멘트만은 위 코멘트(comment)와 같은 채널(`targetType:

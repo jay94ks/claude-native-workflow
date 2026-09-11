@@ -199,9 +199,17 @@
 - [x] 이 3단계 오버라이드 체인에 폴더 스코프는 없다 - 재검토 결과
   의도된 설계로 확정(폴더는 개인 소유 기능, 공유/제한 없음 - 6절
   참고).
-
-### 추가 개발 계획
-`#access-overview-cross-project` - 상세는 [PLANS.md](PLANS.md) 참고.
+- [x] 설계자별 접근 제한 프로젝트 횡단 조회 - 일반 설계자가 자기
+  자신의 `GET /auth/me/access-overview`(CLI `access-overview`/MCP
+  `access_overview`/웹 프로필의 "내 접근 제한")로 여러 프로젝트에
+  걸린 오버라이드를 한 번에 확인(평소 그 프로젝트를 볼 수 있는지와
+  무관하게 프로젝트 이름까지 노출) - 실측.
+- [x] 관리자가 임의의 다른 설계자를 지목해 같은 정보를 조회(`GET
+  /admin/users/:userId/access-overview`, CLI `user access-overview
+  <userId>`, 웹 사용자 관리 화면의 "접근 제한 보기") - 비관리자는
+  403 - 실측. `user_access_overview`는 `user_list`/
+  `user_reset_password`와 같은 급의 신원 관리 동작이라 MCP엔 의도적으로
+  없음(본인 조회용 `access_overview`는 MCP에 그대로 있음).
 
 ---
 

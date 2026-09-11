@@ -37,7 +37,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 4 | ✅ | `#password-reset` | admin 대행 비밀번호 재설정(사용자 관리 화면 + `docs user reset-password`) |
 | 5 | ✅ | `#team-group-reparent` | 프로젝트 그룹 재소속(다른 팀으로 이동/팀 없음으로 뗌, 목적지 팀장 동의 필요) |
 | 6 | ✅ | `#folder-access-ui` | 의도된 설계로 확인 - 폴더는 개인화 기능, 공유 기능 추가 안 함 |
-| 7 | ⬜ | `#access-overview-cross-project` | 설계자별 접근 제한 프로젝트 횡단 일괄 조회 없음 |
+| 7 | ✅ | `#access-overview-cross-project` | 설계자별 접근 제한 프로젝트 횡단 일괄 조회(본인 CLI/MCP/웹, 관리자 CLI/웹) |
 | 8 | ⬜ | `#doctype-edit-delete` | DocType 이름(코드/라벨) 변경·삭제 불가 |
 | 9 | ⬜ | `#doctype-transition-delete` | DocStatusTransition 삭제 불가 |
 | 10 | ⬜ | `#document-bulk-actions` | 문서 일괄 상태 전이/폴더 이동 없음 |
@@ -62,13 +62,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
 
 ---
-
-## 1. 멤버십 & 세부 접근 권한
-
-### `#access-overview-cross-project`
-**오버라이드 일괄 조회가 프로젝트 단위뿐** - "이 설계자가 전체
-설치에서 어떤 제한을 받고 있는지" 한 번에 보는 화면/명령이 없다
-(프로젝트마다 `access-list`를 따로 조회해야 함).
 
 ## 2. 문서 타입/상태 체계
 

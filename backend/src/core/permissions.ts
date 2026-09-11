@@ -153,3 +153,59 @@ export async function listAccessOverrides(projectId: string): Promise<AccessOver
     canDelete: r.canDelete,
   }));
 }
+
+export interface CrossProjectAccessOverrideRow {
+  projectId: string;
+  projectName: string;
+  docTypeId: string | null;
+  docTypeLabel: string | null;
+  documentId: string | null;
+  documentTrackingCode: string | null;
+  documentTitle: string | null;
+  canRead: boolean | null;
+  canWrite: boolean | null;
+  canDelete: boolean | null;
+}
+
+/** "이 설계자가 전체 설치에서 어떤 제한을 받고 있는지" 한 번에 - 프로젝트
+ * 단위(listAccessOverrides)와 달리 userId 하나로 모든 프로젝트를
+ * 가로지른다(`@@index([userId])`). 자기 자신 조회든 admin이 남을
+ * 조회하든 항상 이 함수 하나 - 프로젝트 가시성(canSeeProject)과 무관하게
+ * 전부 반환한다(나를 제한하는 이유를 나에게 숨길 이유가 없고, admin은
+ * 어차피 모든 프로젝트를 우회해서 봄). */
+export async function listAccessOverridesForUser(userId: string): Promise<CrossProjectAccessOverrideRow[]> {
+  const db = getDb();
+  const rows = await db.docAccessOverride.findMany({
+    where: { userId },
+    include: {
+      project: { select: { name: true } },
+      docType: { select: { code: true, label: true } },
+      document: { select: { title: true, trackingCode: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  return rows.map(
+    (r: {
+      projectId: string;
+      project: { name: string };
+      docTypeId: string | null;
+      docType: { code: string; label: string } | null;
+      documentId: string | null;
+      document: { title: string; trackingCode: string } | null;
+      canRead: boolean | null;
+      canWrite: boolean | null;
+      canDelete: boolean | null;
+    }) => ({
+      projectId: r.projectId,
+      projectName: r.project.name,
+      docTypeId: r.docTypeId,
+      docTypeLabel: r.docType ? `${r.docType.code} · ${r.docType.label}` : null,
+      documentId: r.documentId,
+      documentTrackingCode: r.document?.trackingCode ?? null,
+      documentTitle: r.document?.title ?? null,
+      canRead: r.canRead,
+      canWrite: r.canWrite,
+      canDelete: r.canDelete,
+    }),
+  );
+}
