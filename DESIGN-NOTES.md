@@ -2929,6 +2929,68 @@ CLI 태그와 그대로 맞아떨어져 `KNOWN_RENAMES` 불필요). 웹 UI
 `npm run audit:cli-mcp`, `npx tsc --noEmit`(backend), `vue-tsc
 -b`(frontend) 전부 클린.
 
+## 문서 일괄 상태 전이/폴더 이동(`#document-bulk-actions`) - 완료 (2026-09-12)
+
+PLANS.md 10번(`## 3. 문서 CRUD` 유일 항목). 문서 여러 개를 한 번에
+상태 전이하거나 폴더로 옮길 방법이 없어 하나씩 해야 했다 -
+마이그레이션 직후처럼 문서가 몰려 있을 때 특히 아쉬운 부분.
+
+단건 상태 전이(`transitionDocumentStatus`)와 단건 폴더 이동
+(`moveDocumentToFolder`)이 이미 있어 **새 core 함수 없이 그대로
+반복 호출**했다 - 이 저장소는 권한 판정을 core가 아니라 라우트
+계층에서 하는 일관된 패턴이라, 새 "bulk" core 래퍼를 만들면 오히려
+그 패턴을 깨게 된다. 선택한 문서 집합은 서로 다른 프로젝트/타입/
+`DocAccessOverride`를 가질 수 있어 **전부-성공/전부-실패가 아니라
+항목별 결과(`{trackingCode, ok, error?}`)를 반환**한다 - 하나가
+막혀도(권한 없음, 그 타입에 정의 안 된 전이 등) 나머지는 계속
+진행된다.
+
+`POST /api/documents/bulk-transition`, `PUT /api/documents/bulk-folder`
+둘 다 `Promise.all`로 병렬 처리. **라우트 등록 순서 버그를 실측 중
+바로 발견** - `PUT /api/documents/bulk-folder`를 기존 단건 폴더
+라우트 뒤(파일 끝쪽)에 추가했더니, Express가 더 먼저 등록된 `PUT
+/api/documents/:trackingCode`(문서 본문 저장)의 `:trackingCode`
+와일드카드가 "bulk-folder"를 그대로 삼켜버려 항상 404가 났다 -
+Express는 라우트를 등록 순서대로 매칭하므로, `bulk-folder`처럼
+고정 경로인 새 라우트는 그걸 삼킬 수 있는 와일드카드 라우트보다
+**먼저** 등록해야 한다는 걸 다시 확인(POST 쪽은 같은 패턴의 충돌이
+없어 문제없었음 - `POST /api/documents/:trackingCode` 자체가 없음).
+
+**일괄 상태 전이는 CLI(`transition-bulk <toStatusCode>
+<trackingCodes...>`)/MCP(`document_transition_bulk`)에도 노출** -
+단건 전이가 이미 완전성 원칙을 따르고, 마이그레이션 정리처럼 AI가
+직접 쓸 시나리오가 이 백로그의 핵심 사유이기도 했다.
+`audit-cli-mcp.ts`의 `KNOWN_RENAMES`에 기존 `transition:
+"document_transition"` 옆에 `transition_bulk:
+"document_transition_bulk"`를 추가. **일괄 폴더 이동은 CLI/MCP에
+없음** - 폴더는 AI가 그 개념 자체를 모르도록 의도적으로 설계된
+기능이라(단건도 CLI/MCP 없음) 웹 전용 라우트로만 추가했다(CLI/MCP
+둘 다 없는 라우트는 감사 스크립트가 아예 보지 않아 설정 변경도
+불필요).
+
+웹 UI(`DocumentsView.vue`) - 문서 목록에 체크박스 + "전체 선택" +
+선택 시에만 뜨는 일괄 작업 바(상태 드롭다운+적용, 폴더 드롭다운+적용)
+를 추가했다. 응답의 항목별 결과로 "N개 성공, M개 실패" 요약과 실패
+항목만 `{trackingCode}: {error}`로 표시 - 성공한 항목은 선택 해제,
+실패한 항목은 선택 유지(재시도하거나 다른 작업으로 바꿀 수 있게).
+
+**실측 검증**: docker 재빌드·재기동 후 admin 계정으로 HTTP 왕복 -
+서로 다른 타입 문서 3개를 만들어 `review`로 일괄 전이(전부 성공)
+→ 그중 2개를 다시 `draft`로(정의 안 된 전이) 시도 → 그 2개만
+실패, 나머지 무관 확인 → viewer 역할 계정으로 같은 문서들 일괄
+전이 시도 → 둘 다 "쓰기 권한이 없습니다"로 실패 확인 → 필수 필드
+누락 시 400 확인. 폴더 하나를 만들어 문서 3개를 일괄로 넣고
+`GET /folders/:id/documents`로 확인 → `folderId: null`로 일괄
+빼기 → 빈 목록 확인(이 과정에서 위의 라우트 순서 버그를 처음
+발견해 수정한 뒤 재검증). CLI `transition-bulk`, MCP
+`document_transition_bulk` 실제 서버/클라이언트로 왕복.
+`npm run audit:cli-mcp` 클린. 브라우저 - 문서 목록에서 전체 선택
+→ 일괄 상태 전이 적용 → "3개 성공, 0개 실패" 요약과 배지 갱신
+확인 → 다시 전체 선택 → 일괄 폴더 이동 적용 → 같은 요약 확인 →
+폴더 트리에서 그 폴더를 열어 문서 3개가 전부 들어갔는지(각각
+"폴더에서 빼기" 버튼과 함께) 스크린샷 확인. `npx tsc
+--noEmit`(backend), `vue-tsc -b`(frontend) 전부 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

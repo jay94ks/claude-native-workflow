@@ -1252,6 +1252,38 @@ app.get(
   }),
 );
 
+// "bulk-folder"가 아래 "/api/documents/:trackingCode"의 :trackingCode
+// 파라미터로 잘못 매칭되지 않도록, 그 와일드카드 라우트보다 먼저
+// 등록해야 한다(Express는 등록 순서대로 매칭) - 폴더는 AI(CLI/MCP)가
+// 그 개념 자체를 모르는 웹 전용 기능이라 이 일괄 버전도 CLI/MCP엔
+// 노출하지 않는다(단건 .../folder와 동일).
+app.put(
+  "/api/documents/bulk-folder",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { trackingCodes, folderId } = req.body as { trackingCodes?: string[]; folderId?: string | null };
+    if (!trackingCodes?.length) {
+      res.status(400).json({ error: "trackingCodes가 필요합니다" });
+      return;
+    }
+    const results = await Promise.all(
+      trackingCodes.map(async (trackingCode) => {
+        try {
+          const doc = await getDocument(trackingCode);
+          if (!doc) return { trackingCode, ok: false, error: "문서를 찾을 수 없습니다" };
+          const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+          if (!perm.read) return { trackingCode, ok: false, error: "이 문서에 대한 읽기 권한이 없습니다" };
+          await moveDocumentToFolder(trackingCode, folderId ?? null, req.userId!);
+          return { trackingCode, ok: true };
+        } catch (err) {
+          return { trackingCode, ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }),
+    );
+    res.json(results);
+  }),
+);
+
 app.put(
   "/api/documents/:trackingCode",
   authenticate,
@@ -1277,6 +1309,37 @@ app.post(
     const { toStatusCode } = req.body as { toStatusCode?: string };
     if (!toStatusCode) { res.status(400).json({ error: "toStatusCode가 필요합니다" }); return; }
     res.json(withNotices(await transitionDocumentStatus(req.params.trackingCode, toStatusCode), perm.notice));
+  }),
+);
+
+// 선택한 문서 집합이 서로 다른 프로젝트/타입/권한을 가질 수 있어
+// 전부-성공/전부-실패가 아니라 항목별 결과를 반환한다 - 하나가
+// 막혀도(권한 없음, 그 타입에 정의 안 된 전이 등) 나머지는 계속
+// 진행된다. 새 core 함수 없이 기존 단건 함수를 그대로 반복 호출한다.
+app.post(
+  "/api/documents/bulk-transition",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { trackingCodes, toStatusCode } = req.body as { trackingCodes?: string[]; toStatusCode?: string };
+    if (!trackingCodes?.length || !toStatusCode) {
+      res.status(400).json({ error: "trackingCodes/toStatusCode가 필요합니다" });
+      return;
+    }
+    const results = await Promise.all(
+      trackingCodes.map(async (trackingCode) => {
+        try {
+          const doc = await getDocument(trackingCode);
+          if (!doc) return { trackingCode, ok: false, error: "문서를 찾을 수 없습니다" };
+          const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+          if (!perm.write) return { trackingCode, ok: false, error: "이 문서에 대한 쓰기 권한이 없습니다" };
+          const updated = await transitionDocumentStatus(trackingCode, toStatusCode);
+          return { trackingCode, ok: true, statusCode: updated.statusCode };
+        } catch (err) {
+          return { trackingCode, ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }),
+    );
+    res.json(results);
   }),
 );
 

@@ -38,6 +38,14 @@ interface DocumentPage {
   total: number;
   totalPages: number;
 }
+interface BulkResultItem {
+  trackingCode: string;
+  ok: boolean;
+  error?: string;
+  statusCode?: string;
+}
+
+const STANDARD_STATUS_CODES = ["draft", "review", "pending", "approved", "deprecated", "archived"];
 
 const PAGE_SIZE = 20;
 const documents = ref<DocumentSummary[]>([]);
@@ -49,6 +57,78 @@ const selectedFolderId = ref<string | null>(null);
 const moveError = ref("");
 const page = ref(1);
 const totalPages = ref(1);
+
+// ---------------------------------------------------------------- 일괄 작업(상태 전이/폴더 이동)
+
+const selectedCodes = ref<Set<string>>(new Set());
+const bulkTargetStatus = ref("");
+const bulkTargetFolder = ref("");
+const bulkBusy = ref(false);
+const bulkResult = ref<BulkResultItem[] | null>(null);
+
+const allSelected = computed(() => documents.value.length > 0 && documents.value.every((d) => selectedCodes.value.has(d.trackingCode)));
+
+function toggleSelectAll() {
+  if (allSelected.value) {
+    selectedCodes.value = new Set();
+  } else {
+    selectedCodes.value = new Set(documents.value.map((d) => d.trackingCode));
+  }
+}
+
+function toggleSelect(trackingCode: string) {
+  const next = new Set(selectedCodes.value);
+  if (next.has(trackingCode)) next.delete(trackingCode);
+  else next.add(trackingCode);
+  selectedCodes.value = next;
+}
+
+function bulkSummary(results: BulkResultItem[]): string {
+  const failed = results.filter((r) => !r.ok);
+  return `${results.length - failed.length}개 성공, ${failed.length}개 실패`;
+}
+
+async function applyBulkTransition() {
+  if (selectedCodes.value.size === 0 || !bulkTargetStatus.value) return;
+  bulkBusy.value = true;
+  bulkResult.value = null;
+  try {
+    const results = await apiCall<BulkResultItem[]>("/documents/bulk-transition", {
+      method: "POST",
+      body: JSON.stringify({ trackingCodes: [...selectedCodes.value], toStatusCode: bulkTargetStatus.value }),
+    });
+    bulkResult.value = results;
+    // 성공한 항목만 선택 해제 - 실패한 항목은 다시 시도하거나 다른
+    // 작업으로 바꿀 수 있도록 선택 상태를 유지한다.
+    const succeeded = new Set(results.filter((r) => r.ok).map((r) => r.trackingCode));
+    selectedCodes.value = new Set([...selectedCodes.value].filter((c) => !succeeded.has(c)));
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "일괄 전이에 실패했습니다";
+  } finally {
+    bulkBusy.value = false;
+  }
+}
+
+async function applyBulkFolderMove() {
+  if (selectedCodes.value.size === 0) return;
+  bulkBusy.value = true;
+  bulkResult.value = null;
+  try {
+    const results = await apiCall<BulkResultItem[]>("/documents/bulk-folder", {
+      method: "PUT",
+      body: JSON.stringify({ trackingCodes: [...selectedCodes.value], folderId: bulkTargetFolder.value || null }),
+    });
+    bulkResult.value = results;
+    const succeeded = new Set(results.filter((r) => r.ok).map((r) => r.trackingCode));
+    selectedCodes.value = new Set([...selectedCodes.value].filter((c) => !succeeded.has(c)));
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "일괄 폴더 이동에 실패했습니다";
+  } finally {
+    bulkBusy.value = false;
+  }
+}
 
 function docTypeLabel(id: string): string {
   const t = docTypes.value.find((dt) => dt.id === id);
@@ -182,9 +262,40 @@ watch(page, load);
 
       <p v-if="error" class="error">{{ error }}</p>
       <p v-if="moveError" class="error">{{ moveError }}</p>
+
+      <div v-if="!loading && documents.length > 0" class="select-all-row">
+        <label class="checkbox-label"><input type="checkbox" :checked="allSelected" @change="toggleSelectAll" /> 전체 선택</label>
+        <span v-if="selectedCodes.size > 0" class="muted">{{ selectedCodes.size }}개 선택됨</span>
+      </div>
+      <div v-if="selectedCodes.size > 0" class="bulk-bar">
+        <div class="bulk-action">
+          <select v-model="bulkTargetStatus">
+            <option value="">상태 선택</option>
+            <option v-for="c in STANDARD_STATUS_CODES" :key="c" :value="c">{{ c }}</option>
+          </select>
+          <button type="button" :disabled="!bulkTargetStatus || bulkBusy" @click="applyBulkTransition">일괄 전이</button>
+        </div>
+        <div class="bulk-action">
+          <select v-model="bulkTargetFolder">
+            <option value="">폴더에서 빼기</option>
+            <option v-for="f in folderOptions" :key="f.id" :value="f.id">{{ f.name }}</option>
+          </select>
+          <button type="button" :disabled="bulkBusy" @click="applyBulkFolderMove">일괄 폴더 이동</button>
+        </div>
+      </div>
+      <div v-if="bulkResult" class="bulk-result">
+        <p class="bulk-summary">{{ bulkSummary(bulkResult) }}</p>
+        <ul v-if="bulkResult.some((r) => !r.ok)" class="bulk-errors">
+          <li v-for="r in bulkResult.filter((r) => !r.ok)" :key="r.trackingCode">
+            <code>{{ r.trackingCode }}</code>: {{ r.error }}
+          </li>
+        </ul>
+      </div>
+
       <p v-if="loading">불러오는 중...</p>
       <ul v-else class="list">
         <li v-for="doc in documents" :key="doc.trackingCode">
+          <label class="row-checkbox"><input type="checkbox" :checked="selectedCodes.has(doc.trackingCode)" @change="toggleSelect(doc.trackingCode)" /></label>
           <router-link :to="`/projects/${id}/documents/${doc.trackingCode}`">
             <code>{{ doc.trackingCode }}</code> {{ doc.title }}
           </router-link>
@@ -236,6 +347,81 @@ watch(page, load);
 .recent-heading {
   font-size: 15px;
   margin: 0 0 12px;
+}
+.select-all-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.row-checkbox {
+  display: flex;
+  align-items: center;
+  margin-right: 10px;
+  cursor: pointer;
+}
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: #f0f3ff;
+  border: 1px solid #c7d2f5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.bulk-action {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.bulk-action select {
+  padding: 5px 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.bulk-action button {
+  background: #3454d1;
+  color: #fff;
+  border: none;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.bulk-action button:disabled {
+  background: #a9b4e0;
+}
+.bulk-result {
+  margin-bottom: 10px;
+}
+.bulk-summary {
+  font-size: 13px;
+  color: #333;
+  margin: 0 0 4px;
+}
+.bulk-errors {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+  color: #d1344b;
+}
+.bulk-errors li {
+  padding: 2px 0;
+}
+.bulk-errors code {
+  background: #f0f1f5;
+  padding: 1px 5px;
+  border-radius: 4px;
 }
 .filter-row {
   margin-bottom: 12px;

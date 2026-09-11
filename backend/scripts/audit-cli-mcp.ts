@@ -166,6 +166,7 @@ const KNOWN_RENAMES: Record<string, string> = {
   search: "document_search",
   save: "document_save",
   transition: "document_transition",
+  transition_bulk: "document_transition_bulk",
   priority_set: "document_priority_set",
   link: "document_link",
   backlinks: "document_backlinks",

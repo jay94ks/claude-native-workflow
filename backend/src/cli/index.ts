@@ -663,6 +663,20 @@ program
   );
 
 program
+  .command("transition-bulk <toStatusCode> <trackingCodes...>")
+  .description("여러 문서를 한 번에 같은 상태로 전이한다 - 항목별 결과를 반환(일부만 실패해도 나머지는 계속 진행)")
+  .action((toStatusCode, trackingCodes) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/documents/bulk-transition`, {
+          method: "POST",
+          body: JSON.stringify({ trackingCodes, toStatusCode }),
+        }),
+      ),
+    ),
+  );
+
+program
   .command("priority-set <trackingCode> <n>")
   .description("문서 우선순위(정수)를 설정/갱신한다 - 문서 상태가 review 또는 pending일 때만 가능")
   .action((trackingCode, n) =>

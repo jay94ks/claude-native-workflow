@@ -268,6 +268,7 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 검색 | `docs search <projectId> <query>` | `document_search` |
 | 본문 갱신 | `docs save <trackingCode> <file>` | `document_save` |
 | 상태 전이 | `docs transition <trackingCode> <toStatusCode>` | `document_transition` |
+| 상태 일괄 전이 | `docs transition-bulk <toStatusCode> <trackingCode...>` | `document_transition_bulk` |
 | 우선순위 설정(review/pending 전용) | `docs priority-set <trackingCode> <n>` | `document_priority_set` |
 | 다음 가능 상태 조회 | `docs next-statuses <trackingCode>` | `document_next_statuses` |
 | 문서 삭제 | `docs delete <trackingCode>` | `document_delete` |

@@ -369,6 +369,13 @@ async function main() {
     async (a) => call(`/api/documents/${a.trackingCode}/transition`, { method: "POST", body: JSON.stringify({ toStatusCode: a.toStatusCode }) }),
   );
   tool(
+    "document_transition_bulk",
+    "문서 상태 일괄 전이",
+    "여러 문서를 한 번에 같은 상태로 전이한다 - 항목별 결과({trackingCode, ok, error?})를 반환하며 일부만 실패해도 나머지는 계속 진행된다.",
+    { trackingCodes: z.array(z.string()), toStatusCode: z.string() },
+    async (a) => call(`/api/documents/bulk-transition`, { method: "POST", body: JSON.stringify({ trackingCodes: a.trackingCodes, toStatusCode: a.toStatusCode }) }),
+  );
+  tool(
     "document_priority_set",
     "문서 우선순위 설정",
     "문서 우선순위(정수)를 설정/갱신한다 - 문서 상태가 review 또는 pending일 때만 가능(Q&A의 별개 pending 개념과는 무관).",

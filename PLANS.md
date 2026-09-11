@@ -40,7 +40,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 7 | ✅ | `#access-overview-cross-project` | 설계자별 접근 제한 프로젝트 횡단 일괄 조회(본인 CLI/MCP/웹, 관리자 CLI/웹) |
 | 8 | ✅ | `#doctype-edit-delete` | DocType 이름 수정(기본 타입 제외)/삭제(문서 없을 때만) |
 | 9 | ✅ | `#doctype-transition-delete` | DocStatusTransition 삭제(참조 무결성 가드 없음) |
-| 10 | ⬜ | `#document-bulk-actions` | 문서 일괄 상태 전이/폴더 이동 없음 |
+| 10 | ✅ | `#document-bulk-actions` | 문서 일괄 상태 전이(웹/CLI/MCP)/폴더 이동(웹 전용), 항목별 결과 |
 | 11 | ⬜ | `#folder-delete-recursive` | 폴더 재귀 삭제/상위로 끌어올리기 없음 |
 | 12 | ⬜ | `#question-bulk-ack` | 질문 일괄 ack 없음 |
 | 13 | ⬜ | `#question-withdraw` | 질문 취소/철회 기능 없음 |
@@ -62,13 +62,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
 
 ---
-
-## 3. 문서 CRUD
-
-### `#document-bulk-actions`
-**일괄 작업이 없다** - 문서 여러 개를 한 번에 상태 전이하거나 폴더로
-옮기는 기능이 없다(하나씩 해야 함). 마이그레이션 직후처럼 문서가
-몰려 있을 때 특히 아쉬움.
 
 ## 4. 문서 정리 폴더
 
