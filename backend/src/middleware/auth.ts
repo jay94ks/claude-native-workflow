@@ -27,7 +27,7 @@ export async function authenticate(req: AuthedRequest, res: Response, next: Next
     try {
       const result = await verifyApiKeySecret(token);
       if (!result) {
-        res.status(401).json({ error: "유효하지 않거나 배제된 API 키입니다" });
+        res.status(401).json({ error: "유효하지 않거나 배제·만료된 API 키입니다" });
         return;
       }
       req.userId = result.userId;
@@ -38,7 +38,7 @@ export async function authenticate(req: AuthedRequest, res: Response, next: Next
       const scope: KeyScope = (await isSuperAdmin(result.userId)) ? { type: "unrestricted" } : result.scope;
       runWithKeyScope(scope, next);
     } catch {
-      res.status(401).json({ error: "유효하지 않거나 배제된 API 키입니다" });
+      res.status(401).json({ error: "유효하지 않거나 배제·만료된 API 키입니다" });
     }
     return;
   }

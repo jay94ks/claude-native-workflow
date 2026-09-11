@@ -33,11 +33,16 @@ export interface ApiKeyDetail {
   teamId: string | null;
   label: string | null;
   keyPrefix: string;
-  status: string; // active | revoked
+  status: string; // active | revoked | expired(저장값이 아니라 expiresAt으로 읽는 시점에 파생)
   createdAt: Date;
   lastUsedAt: Date | null;
+  expiresAt: Date | null;
   revokedAt: Date | null;
   revokedBy: string | null;
+}
+
+function isExpired(row: { status: string; expiresAt: Date | null }, now = new Date()): boolean {
+  return row.status === "active" && row.expiresAt !== null && row.expiresAt <= now;
 }
 
 // keyHash는 의도적으로 이 타입/매핑 함수 밖에 절대 안 둔다 - 이 함수
@@ -53,6 +58,7 @@ function toDetail(row: {
   status: string;
   createdAt: Date;
   lastUsedAt: Date | null;
+  expiresAt: Date | null;
   revokedAt: Date | null;
   revokedBy: string | null;
 }): ApiKeyDetail {
@@ -64,9 +70,10 @@ function toDetail(row: {
     teamId: row.teamId,
     label: row.label,
     keyPrefix: row.keyPrefix,
-    status: row.status,
+    status: isExpired(row) ? "expired" : row.status,
     createdAt: row.createdAt,
     lastUsedAt: row.lastUsedAt,
+    expiresAt: row.expiresAt,
     revokedAt: row.revokedAt,
     revokedBy: row.revokedBy,
   };
@@ -77,6 +84,7 @@ export interface CreateApiKeyInput {
   projectId?: string;
   teamId?: string;
   label?: string;
+  expiresAt?: Date;
 }
 
 /** ownerId는 항상 actingUserId(다른 사람을 대신해 키를 만드는 기능은
@@ -109,6 +117,7 @@ export async function createApiKey(
       projectId: input.scope === "project" ? input.projectId : null,
       teamId: input.scope === "team" ? input.teamId : null,
       label: input.label?.trim() || null,
+      expiresAt: input.expiresAt ?? null,
       keyPrefix: prefix,
       keyHash: hash,
     },
@@ -173,7 +182,7 @@ export async function verifyApiKeySecret(secret: string): Promise<{ userId: stri
   const db = getDb();
   const hash = hashSecret(secret);
   const row = await db.apiKey.findUnique({ where: { keyHash: hash } });
-  if (!row || row.status !== "active") return null;
+  if (!row || row.status !== "active" || isExpired(row)) return null;
   await db.apiKey.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } });
   const scope: KeyScope =
     row.scope === "project"

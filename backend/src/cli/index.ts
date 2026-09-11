@@ -180,15 +180,22 @@ keyCmd
   .option("--project <id>", "scope=project일 때 필요")
   .option("--team <id>", "scope=team일 때 필요")
   .option("--label <text>", "식별용 라벨(선택)")
+  .option("--expires-in <days>", "만료까지 일수(선택, 양의 정수 - 지정하지 않으면 배제 전까지 무기한)")
   .action((opts) =>
     run(async () => {
+      let expiresAt: string | undefined;
+      if (opts.expiresIn !== undefined) {
+        const days = Number(opts.expiresIn);
+        if (!Number.isInteger(days) || days <= 0) throw new Error("--expires-in은 양의 정수(일수)여야 합니다");
+        expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+      }
       const result = await apiCall<{ key: unknown; secret: string }>(
         opts.scope === "project"
           ? `/api/projects/${opts.project}/api-keys`
           : opts.scope === "team"
             ? `/api/teams/${opts.team}/api-keys`
             : "/api/api-keys/personal",
-        { method: "POST", body: JSON.stringify({ label: opts.label }) },
+        { method: "POST", body: JSON.stringify({ label: opts.label, expiresAt }) },
       );
       printJson(result.key);
       console.log(`\n⚠ 이 값은 지금 한 번만 표시됩니다 - 안전한 곳에 저장하세요:\n${result.secret}\n`);

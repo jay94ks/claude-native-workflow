@@ -16,6 +16,7 @@ interface ApiKeyDetail {
   status: string;
   createdAt: string;
   lastUsedAt: string | null;
+  expiresAt: string | null;
   revokedAt: string | null;
   revokedBy: string | null;
 }
@@ -24,6 +25,7 @@ const keys = ref<ApiKeyDetail[]>([]);
 const loading = ref(true);
 const error = ref("");
 const label = ref("");
+const expiresInDays = ref(""); // "" = 만료 없음
 const creating = ref(false);
 const revealedSecret = ref("");
 const copied = ref(false);
@@ -47,10 +49,11 @@ async function create() {
   try {
     const result = await apiCall<{ key: ApiKeyDetail; secret: string }>(`/teams/${props.teamId}/api-keys`, {
       method: "POST",
-      body: JSON.stringify({ label: label.value.trim() || undefined }),
+      body: JSON.stringify({ label: label.value.trim() || undefined, expiresAt: expiresAtFromSelection() }),
     });
     revealedSecret.value = result.secret;
     label.value = "";
+    expiresInDays.value = "";
     await load();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "키 생성에 실패했습니다(팀장만 가능)";
@@ -83,6 +86,15 @@ async function revoke(id: string) {
   }
 }
 
+function expiresAtFromSelection(): string | undefined {
+  const days = Number(expiresInDays.value);
+  return days > 0 ? new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString() : undefined;
+}
+
+function statusLabel(k: ApiKeyDetail): string {
+  return k.status === "active" ? "활성" : k.status === "expired" ? "만료됨" : "배제됨";
+}
+
 onMounted(load);
 </script>
 
@@ -102,17 +114,27 @@ onMounted(load);
 
     <form class="create-row" @submit.prevent="create">
       <input v-model="label" type="text" placeholder="라벨(선택)" />
+      <select v-model="expiresInDays" title="만료">
+        <option value="">만료 없음</option>
+        <option value="7">7일 후 만료</option>
+        <option value="30">30일 후 만료</option>
+        <option value="90">90일 후 만료</option>
+        <option value="365">1년 후 만료</option>
+      </select>
       <button type="submit" :disabled="creating">팀 관리 키 만들기</button>
     </form>
 
     <p v-if="loading" class="muted">불러오는 중...</p>
     <ul v-else class="list">
-      <li v-for="k in keys" :key="k.id" :class="{ revoked: k.status === 'revoked' }">
+      <li v-for="k in keys" :key="k.id" :class="{ inactive: k.status !== 'active' }">
         <UserRef :user-id="k.ownerId" />
         <code class="prefix">{{ k.keyPrefix }}••••••••</code>
         <span class="label">{{ k.label || "(라벨 없음)" }}</span>
-        <span class="status" :class="k.status">{{ k.status === "active" ? "활성" : "배제됨" }}</span>
-        <span class="at">{{ new Date(k.createdAt).toLocaleString() }}</span>
+        <span class="status" :class="k.status">{{ statusLabel(k) }}</span>
+        <span class="at">
+          {{ new Date(k.createdAt).toLocaleString() }}
+          <template v-if="k.expiresAt"> · 만료 {{ new Date(k.expiresAt).toLocaleString() }}</template>
+        </span>
         <button v-if="k.status === 'active'" class="revoke-btn" @click="revoke(k.id)">배제</button>
       </li>
       <li v-if="keys.length === 0 && !loading" class="muted">아직 팀 관리 키가 없습니다.</li>
@@ -180,6 +202,13 @@ onMounted(load);
   border-radius: 6px;
   font-size: 13px;
 }
+.create-row select {
+  padding: 7px 10px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+}
 .create-row button {
   background: #3454d1;
   color: #fff;
@@ -205,7 +234,7 @@ onMounted(load);
 .list li:last-child {
   border-bottom: none;
 }
-.list li.revoked {
+.list li.inactive {
   opacity: 0.55;
 }
 .prefix {
@@ -226,7 +255,8 @@ onMounted(load);
   background: #e3f6ec;
   color: #1f9254;
 }
-.status.revoked {
+.status.revoked,
+.status.expired {
   background: #f3f0f0;
   color: #888;
 }

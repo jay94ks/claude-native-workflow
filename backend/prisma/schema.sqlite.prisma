@@ -649,6 +649,7 @@ model ApiKey {
   status     String    @default("active") // active | revoked
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
+  expiresAt  DateTime? // null이면 배제 전까지 무기한
   revokedAt  DateTime?
   revokedBy  String?
 

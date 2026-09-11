@@ -505,14 +505,31 @@ app.get(
 // 확인하고, requireUnrestrictedScope로 스코프가 있는 키로는 키 관리
 // 자체를 못 하게 막는다(권한 상승 방지).
 
+// 만료 시각은 선택 - 미지정이면 배제 전까지 무기한. 입력 검증 실패는
+// 권한 오류(ApiKeyError → 403)와 섞이지 않도록 createApiKey 호출 전에
+// 라우트에서 400으로 끊는다. 반환 null = 검증 실패(응답은 이미 보냄).
+function parseExpiresAt(res: Response, raw: unknown): { value: Date | undefined } | null {
+  if (raw === undefined || raw === null || raw === "") return { value: undefined };
+  const date = typeof raw === "string" ? new Date(raw) : new Date(NaN);
+  if (Number.isNaN(date.getTime()) || date <= new Date()) {
+    res.status(400).json({ error: "expiresAt은 미래의 ISO 8601 시각이어야 합니다" });
+    return null;
+  }
+  return { value: date };
+}
+
 app.post(
   "/api/projects/:projectId/api-keys",
   authenticate,
   requireUnrestrictedScope,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const { label } = req.body as { label?: string };
-    res.json(await createApiKey(req.userId!, { scope: "project", projectId: req.params.projectId, label }));
+    const { label, expiresAt } = req.body as { label?: string; expiresAt?: unknown };
+    const parsed = parseExpiresAt(res, expiresAt);
+    if (!parsed) return;
+    res.json(
+      await createApiKey(req.userId!, { scope: "project", projectId: req.params.projectId, label, expiresAt: parsed.value }),
+    );
   }),
 );
 
@@ -530,9 +547,11 @@ app.post(
   authenticate,
   requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
-    const { label } = req.body as { label?: string };
+    const { label, expiresAt } = req.body as { label?: string; expiresAt?: unknown };
+    const parsed = parseExpiresAt(res, expiresAt);
+    if (!parsed) return;
     try {
-      res.json(await createApiKey(req.userId!, { scope: "team", teamId: req.params.teamId, label }));
+      res.json(await createApiKey(req.userId!, { scope: "team", teamId: req.params.teamId, label, expiresAt: parsed.value }));
     } catch (err) {
       if (err instanceof ApiKeyError) { res.status(403).json({ error: err.message }); return; }
       throw err;
@@ -558,8 +577,10 @@ app.post(
   authenticate,
   requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
-    const { label } = req.body as { label?: string };
-    res.json(await createApiKey(req.userId!, { scope: "personal", label }));
+    const { label, expiresAt } = req.body as { label?: string; expiresAt?: unknown };
+    const parsed = parseExpiresAt(res, expiresAt);
+    if (!parsed) return;
+    res.json(await createApiKey(req.userId!, { scope: "personal", label, expiresAt: parsed.value }));
   }),
 );
 

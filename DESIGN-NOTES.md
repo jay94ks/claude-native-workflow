@@ -2446,7 +2446,61 @@ IP 카운터로 잠김). 검증 후 상수를 원래 값(15분/15분/15분)으�
 재빌드, 이미지 해시가 최초 빌드와 동일함을 확인해 복원이 정확함을
 재확인. `npx tsc --noEmit`(backend) 클린 확인.
 
+## API 키 선택적 만료(TTL) - 완료 (2026-09-11)
+
+PLANS.md `#api-key-ttl` 착수(설계자가 인증 보안 3종 중
+`#login-rate-limit` 다음 우선순위로 직접 선택). 지금까지 API 키는
+배제(revoke)만 가능하고 자동 만료가 없어, 장기 방치된 키가 영원히
+유효했다.
+
+`ApiKey` 모델(3드라이버 스키마 전부)에 `expiresAt DateTime?` 추가
+- `RefreshToken.expiresAt`과 같은 스타일이되, TTL이 선택이라
+nullable로 둔 점만 다르다. DB엔 여전히 `status: active | revoked` 2값만
+저장하고, "만료됨"은 새 상태를 저장하지 않고 `core/apiKeys.ts`의
+`toDetail()`에서 `status === "active" && expiresAt <= now`일 때
+`"expired"`로 **읽는 시점에 파생**한다(스윕/크론 불필요 - 시계만
+보면 됨, 배제 상태가 항상 우선). `verifyApiKeySecret()`(인증
+리졸버)에 만료 검사 한 줄 추가 - `lastUsedAt` 갱신보다 먼저 검사해
+만료된 키 사용 시도가 마지막 사용 시각을 갱신하지 않게 함. 최고
+관리자(admin)의 스코프 우회는 이 검사 *이후* 미들웨어에서 적용되므로
+admin이 만료된 키를 써도 여전히 거부됨(의도).
+
+생성 라우트 3개(`server.ts`의 personal/project/team `POST .../api-keys`)
+에 `expiresAt` 파싱을 공용 헬퍼 `parseExpiresAt()`으로 추가 - 미지정/
+빈 문자열은 무기한(기존 동작 그대로), 과거 시각/파싱 불가는 400. 팀
+라우트는 기존에 `ApiKeyError`를 403(권한 오류)으로 매핑하고 있어서,
+입력 검증 실패가 그 매핑에 섞이지 않도록 `createApiKey` 호출 전에
+별도로 끊어 항상 400이 되게 함. CLI `key create`에 `--expires-in
+<일수>`(양의 정수) 옵션 추가, `core/auth.ts`의 리프레시 토큰 발급과
+같은 ms 산술로 ISO 시각을 계산해 보냄. MCP는 원래도 키 관리 도구가
+없어 변경 없음.
+
+웹 UI 세 벌(`PersonalKeysManager.vue`/`ProjectKeysManager.vue`/
+`TeamKeysManager.vue`, 서로 거의 동일한 구조라 세 곳 다 병행 수정)
+- 생성 폼에 만료 선택 `<select>`(만료 없음/7일/30일/90일/1년, 이
+저장소 웹 UI 최초의 만료 관련 입력 - 날짜 피커 대신 CLI와 같은
+"일수" 의미론으로 통일해 시간대 모호성을 피함) 추가. 상태 배지를
+`active`/`revoked` 2항 삼항에서 `statusLabel()` 함수(활성/배제됨/
+만료됨)로 바꾸고, `li` dim 조건도 `status === 'revoked'`에서 `status
+!== 'active'`로 넓혀 만료된 키도 같이 흐리게 표시. 목록 행에 `expiresAt`
+이 있으면 생성일 옆에 만료 일시를 같이 표시.
+
+**실측 검증**: docker 스택의 `backend`를 재빌드·재기동
+(`docker-entrypoint.sh`의 `prisma db push`로 신규 컬럼 반영 확인) 후
+실제 HTTP 호출로 왕복. 과거 시각/잘못된 형식의 `expiresAt`은 둘 다
+400, 미지정은 200 + `expiresAt: null` 확인. 약 8초 뒤 만료하는 개인
+키를 생성해 만료 전엔 그 키로 `GET /api/auth/me` 200 + 목록에서
+`status: active` 확인 → 만료 후엔 같은 호출이 401("배제·만료" 메시지)
++ 목록에서 `status: expired`로 바뀌는 것 확인 → 이미 만료된 키를
+배제해도 정상적으로 `revoked`로 전환되는 것까지 확인. CLI `key create
+--expires-in 1`의 응답 `expiresAt`이 생성 시각의 정확히 24시간 뒤인지,
+`--expires-in 0`/`abc`는 둘 다 에러로 거부되는지 확인. 브라우저로
+admin 로그인 후 내 정보 화면에서 "7일 후 만료" 선택해 키 생성 →
+목록에 만료 일시가 표시되고, 앞서 배제한 키는 회색 "배제됨" 배지로
+흐리게 표시되는 것을 스크린샷으로 확인. `npx tsc --noEmit`(backend),
+`vue-tsc -b`(frontend) 클린 확인.
+
 ## 다음 단계
 
-PLANS.md에 정리된 백로그(25개 항목, 태그로 QA-SCENARIOS.md와 연결)
+PLANS.md에 정리된 백로그(24개 항목, 태그로 QA-SCENARIOS.md와 연결)
 중 다음 우선순위를 설계자와 함께 정한다.
