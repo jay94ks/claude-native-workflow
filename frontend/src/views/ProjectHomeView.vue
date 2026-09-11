@@ -2,13 +2,16 @@
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import UserRef from "../components/UserRef.vue";
+import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
 
 const props = defineProps<{ id: string }>();
+const kanbanDialog = useKanbanCardDialogStore();
 
 interface PendingQuestion {
   trackingCode: string;
-  documentTrackingCode: string;
-  documentTitle: string;
+  targetType: string;
+  targetKey: string;
+  targetLabel: string;
   text: string;
   status: string;
 }
@@ -18,8 +21,9 @@ interface RecentDocument {
 }
 interface RecentComment {
   id: string;
-  trackingCode: string;
-  documentTitle: string;
+  targetType: string;
+  targetKey: string;
+  targetLabel: string;
   body: string;
   authorId: string;
 }
@@ -60,6 +64,14 @@ async function load() {
   }
 }
 
+function openQuestionTarget(q: PendingQuestion) {
+  if (q.targetType === "kanbanCard") kanbanDialog.show(q.targetKey);
+}
+
+function openCommentTarget(c: RecentComment) {
+  if (c.targetType === "kanbanCard") kanbanDialog.show(c.targetKey);
+}
+
 onMounted(load);
 </script>
 
@@ -70,9 +82,15 @@ onMounted(load);
     <h2>답변 대기 질문</h2>
     <ul class="list">
       <li v-for="q in pending" :key="q.trackingCode">
-        <router-link :to="`/projects/${id}/documents/${q.documentTrackingCode}`">
-          <code>{{ q.trackingCode }}</code> {{ q.documentTitle }} - {{ q.text }}
+        <router-link v-if="q.targetType === 'document'" :to="`/projects/${id}/documents/${q.targetKey}`">
+          <code>{{ q.trackingCode }}</code> {{ q.targetLabel }} - {{ q.text }}
         </router-link>
+        <router-link v-else-if="q.targetType === 'source'" :to="`/projects/${id}/source?path=${encodeURIComponent(q.targetKey)}`">
+          <code>{{ q.trackingCode }}</code> {{ q.targetLabel }} - {{ q.text }}
+        </router-link>
+        <button v-else type="button" class="target-link" @click="openQuestionTarget(q)">
+          <code>{{ q.trackingCode }}</code> {{ q.targetLabel }} - {{ q.text }}
+        </button>
       </li>
     </ul>
   </section>
@@ -100,9 +118,13 @@ onMounted(load);
     </div>
     <ul v-if="recentComments.length > 0" class="list">
       <li v-for="c in recentComments" :key="c.id">
-        <router-link :to="`/projects/${id}/documents/${c.trackingCode}`">
-          <code>{{ c.trackingCode }}</code> {{ c.documentTitle }} - {{ c.body }}
+        <router-link v-if="c.targetType === 'document'" :to="`/projects/${id}/documents/${c.targetKey}`">
+          {{ c.targetLabel }} - {{ c.body }}
         </router-link>
+        <router-link v-else-if="c.targetType === 'source'" :to="`/projects/${id}/source?path=${encodeURIComponent(c.targetKey)}`">
+          {{ c.targetLabel }} - {{ c.body }}
+        </router-link>
+        <button v-else type="button" class="target-link" @click="openCommentTarget(c)">{{ c.targetLabel }} - {{ c.body }}</button>
         <span class="right"><UserRef :user-id="c.authorId" /></span>
       </li>
     </ul>
@@ -179,6 +201,18 @@ section {
   border-radius: 4px;
 }
 .list li a:hover {
+  text-decoration: underline;
+}
+.target-link {
+  background: none;
+  border: none;
+  color: #1a1a2e;
+  font-size: 13px;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+.target-link:hover {
   text-decoration: underline;
 }
 .msg-body {

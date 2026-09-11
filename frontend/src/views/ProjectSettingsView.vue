@@ -5,6 +5,9 @@ import DocTypeManager from "../components/DocTypeManager.vue";
 import GitRepoPanel from "../components/GitRepoPanel.vue";
 import AccessControlManager from "../components/AccessControlManager.vue";
 import UserRef from "../components/UserRef.vue";
+import { useEntityPickerStore } from "../stores/entityPicker";
+
+const entityPicker = useEntityPickerStore();
 
 const props = defineProps<{ id: string }>();
 
@@ -43,6 +46,11 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+async function pickNewMember() {
+  const result = await entityPicker.pick({ kind: "user", projectId: props.id, multi: false, allowManualEntry: false });
+  if (result && result[0]) newMemberUserId.value = result[0];
 }
 
 async function addMember() {
@@ -90,7 +98,7 @@ onMounted(load);
     <section>
       <h2>멤버</h2>
       <form class="create-row" @submit.prevent="addMember">
-        <input v-model="newMemberUserId" type="text" placeholder="사용자 id" />
+        <button type="button" class="pick-btn" @click="pickNewMember">{{ newMemberUserId || "사용자 선택..." }}</button>
         <select v-model="newMemberRole">
           <option value="owner">owner</option>
           <option value="editor">editor</option>
@@ -99,10 +107,6 @@ onMounted(load);
         <button type="submit">추가</button>
       </form>
       <p v-if="memberError" class="error">{{ memberError }}</p>
-      <p class="hint">
-        사용자 id는 현재 CLI(<code>docs auth whoami</code> 등)나 가입 응답에서 확인할 수 있다 - 사용자 검색 화면은
-        아직 없다.
-      </p>
       <ul class="list">
         <li v-for="m in members" :key="m.id">
           <UserRef :user-id="m.userId" />
@@ -154,6 +158,13 @@ section {
   padding: 8px 10px;
   border: 1px solid #d8dae0;
   border-radius: 6px;
+}
+.pick-btn {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
 }
 .create-row select {
   padding: 8px 10px;

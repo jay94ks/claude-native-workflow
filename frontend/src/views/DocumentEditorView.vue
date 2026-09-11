@@ -7,9 +7,11 @@ import MarkdownBody from "../components/MarkdownBody.vue";
 import UserRef from "../components/UserRef.vue";
 import QAPanel from "../components/QAPanel.vue";
 import CommentsPanel from "../components/CommentsPanel.vue";
+import { useEntityPickerStore } from "../stores/entityPicker";
 
 const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
+const entityPicker = useEntityPickerStore();
 
 interface DocumentDetail {
   trackingCode: string;
@@ -103,6 +105,19 @@ async function addSourceLink() {
     await loadSourceLinks();
   } catch (err) {
     sourceLinksError.value = err instanceof ApiError ? err.message : "연결에 실패했습니다";
+  }
+}
+
+async function pickSourceLink() {
+  const result = await entityPicker.pick({
+    kind: "sourceFile",
+    projectId: props.id,
+    multi: false,
+    allowManualEntry: true,
+  });
+  if (result && result[0]) {
+    newSourcePath.value = result[0];
+    await addSourceLink();
   }
 }
 
@@ -299,14 +314,11 @@ onMounted(load);
         </li>
       </ul>
       <p v-else class="muted">연결된 소스코드가 없습니다.</p>
-      <form class="source-form" @submit.prevent="addSourceLink">
-        <input v-model="newSourcePath" type="text" placeholder="소스 파일 경로(예: backend/src/core/auth.ts)" />
-        <button type="submit">연결</button>
-      </form>
+      <button type="button" class="secondary" @click="pickSourceLink">+ 소스 파일 연결</button>
     </section>
 
-    <QAPanel :project-id="id" :tracking-code="trackingCode" class="qa" @status-transitioned="refreshStatus" />
-    <CommentsPanel :project-id="id" :tracking-code="trackingCode" />
+    <QAPanel :project-id="id" target-type="document" :target-key="trackingCode" class="qa" @status-transitioned="refreshStatus" />
+    <CommentsPanel :project-id="id" target-type="document" :target-key="trackingCode" />
   </template>
 </template>
 
@@ -478,21 +490,6 @@ button:disabled {
 }
 .remove-btn:hover {
   color: #d1344b;
-}
-.source-form {
-  display: flex;
-  gap: 8px;
-}
-.source-form input {
-  flex: 1;
-  padding: 6px 8px;
-  border: 1px solid #d8dae0;
-  border-radius: 6px;
-  font-size: 13px;
-}
-.source-form button {
-  padding: 6px 14px;
-  font-size: 13px;
 }
 .muted {
   color: #888;

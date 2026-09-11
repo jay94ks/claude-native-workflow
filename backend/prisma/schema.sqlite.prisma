@@ -86,7 +86,6 @@ model User {
   apiKeysRevoked    ApiKey[]           @relation("ApiKeyRevoker")
   kanbanColumnPrefs KanbanColumnPref[]
   kanbanCardsCreated KanbanCard[]        @relation("KanbanCardCreatedBy")
-  kanbanCardComments KanbanCardComment[]
 }
 
 model RefreshToken {
@@ -177,6 +176,7 @@ model Project {
   docTypes        DocType[]
   documents       Document[]
   comments        Comment[]
+  questions       Question[]
   pushHookPrompts PushHookPrompt[]
   messages        Message[]
   templateFiles   TemplateFile[]
@@ -297,9 +297,7 @@ model Document {
   revisions          DocumentRevision[]
   linksOut           DocumentLink[]       @relation("DocumentLinkSource")
   linksIn            DocumentLink[]       @relation("DocumentLinkTarget")
-  questions          Question[]
   questionReferences QuestionReference[]
-  comments           Comment[]            @relation("DocumentComments")
   accessOverrides    DocAccessOverride[]
   folderEntries      DocumentFolderEntry[]
   sourceLinks        DocumentSourceLink[]
@@ -339,23 +337,31 @@ model DocumentLink {
 }
 
 // ---------------------------------------------------------------- 질의/답변 (Question/Answer)
-
+// targetType/targetKey로 다형화 - document/kanbanCard면 그 자신의
+// 트래킹 코드, source면 git 저장소 루트 기준 파일 경로. 폴리모픽이라
+// 단일 FK로 못 묶는다(Prisma 근본 제약) - 대상이 지워질 때의 정리는
+// 호출부(core/documents.ts의 deleteDocument())가 명시적으로 한다.
+// kind로 "승인 요청"/"답변 요청"을 구분한다.
 model Question {
   id           String   @id @default(cuid())
-  documentId   String
+  projectId    String
+  targetType   String   // "document" | "source" | "kanbanCard"
+  targetKey    String
   trackingCode String   @unique // "QU-XXXXXXXX"
   ordinal      Int
+  kind         String   // "approval" | "answer"
   text         String
   askedBy      String
   status       String   @default("open") // open | pending | resolved
   createdAt    DateTime @default(now())
 
-  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  asker    User     @relation("QuestionAskedBy", fields: [askedBy], references: [id])
-  answer   Answer?
-  refs     QuestionReference[]
+  project Project @relation(fields: [projectId], references: [id])
+  asker   User    @relation("QuestionAskedBy", fields: [askedBy], references: [id])
+  answer  Answer?
+  refs    QuestionReference[]
 
-  @@index([documentId])
+  @@index([projectId])
+  @@index([targetType, targetKey])
 }
 
 model QuestionReference {
@@ -371,34 +377,42 @@ model QuestionReference {
   @@index([trackingCode])
 }
 
+// body는 kind="answer"일 때 필수(자유 텍스트 답변), kind="approval"일
+// 때는 선택(승인/거부 버튼에 곁들이는 메모) - decision은 그 반대로
+// approval일 때만 채워진다.
 model Answer {
   id         String   @id @default(cuid())
   questionId String   @unique
-  body       String
+  decision   String? // "approved" | "rejected" - kind="approval"일 때만
+  body       String?
   answeredBy String
   answeredAt DateTime @default(now())
 
-  question Question @relation(fields: [questionId], references: [id])
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
   author   User     @relation("AnswerAnsweredBy", fields: [answeredBy], references: [id])
 }
 
 // ---------------------------------------------------------------- 코멘트
-
+// Question과 같은 targetType/targetKey 다형화. 지난 라운드에서 편집/
+// 삭제를 지원하려고 따로 만들었던 KanbanCardComment는 이제 이 모델이
+// 편집/삭제를 직접 지원하면서 필요 없어져 흡수됐다(targetType:
+// "kanbanCard").
 model Comment {
-  id           String    @id @default(cuid())
-  projectId    String
-  trackingCode String
-  body         String
-  authorId     String
-  createdAt    DateTime  @default(now())
-  resolvedAt   DateTime?
+  id         String    @id @default(cuid())
+  projectId  String
+  targetType String    // "document" | "source" | "kanbanCard"
+  targetKey  String
+  body       String
+  authorId   String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  resolvedAt DateTime?
 
-  project  Project  @relation(fields: [projectId], references: [id])
-  document Document @relation("DocumentComments", fields: [trackingCode], references: [trackingCode], onDelete: Cascade)
-  author   User     @relation("CommentAuthor", fields: [authorId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+  author  User    @relation("CommentAuthor", fields: [authorId], references: [id])
 
   @@index([projectId])
-  @@index([trackingCode])
+  @@index([targetType, targetKey])
 }
 
 // ---------------------------------------------------------------- git push 훅 프롬프트 자동화
@@ -642,7 +656,6 @@ model KanbanCard {
   column   KanbanColumn            @relation(fields: [columnId], references: [id])
   creator  User                    @relation("KanbanCardCreatedBy", fields: [createdBy], references: [id])
   docRefs  KanbanCardDocumentRef[]
-  comments KanbanCardComment[]
 
   @@index([projectId])
   @@index([columnId])
@@ -662,19 +675,5 @@ model KanbanCardDocumentRef {
   @@index([trackingCode])
 }
 
-// 카드별 코멘트 - 설계자간 의견 공유 채널(문서 Comment와 같은 "AI
-// 격리" 원칙, CLI/MCP 없음). 문서 Comment와 달리 편집/삭제를 지원해야
-// 해서(요청 명시) 별도 모델로 둔다.
-model KanbanCardComment {
-  id        String   @id @default(cuid())
-  cardId    String
-  body      String
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  card   KanbanCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
-  author User       @relation(fields: [authorId], references: [id])
-
-  @@index([cardId])
-}
+// 카드별 코멘트는 더 이상 별도 모델이 아니다 - 공용 Comment
+// (targetType:"kanbanCard", targetKey=카드의 트래킹 코드)로 흡수됨.

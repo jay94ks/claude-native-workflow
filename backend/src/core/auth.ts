@@ -323,3 +323,35 @@ export async function getPublicProfile(viewerId: string, targetUserId: string): 
     displayLabel: formatDisplayLabel(user.nickname, user.nicknameNumber),
   };
 }
+
+export interface UserListItem {
+  id: string;
+  username: string;
+  displayLabel: string;
+}
+
+/** 사용자 선택기(엔티티 선택기의 kind="user")용 - username/닉네임
+ * 부분 일치 검색. 이 시스템엔 조직 간 격리가 없어(단일 설치) 로그인한
+ * 누구나 설계자 목록을 볼 수 있다 - 프로젝트 멤버/팀장 추가처럼 "이미
+ * 존재하는 계정을 골라야 하는" 자리에서 재사용한다. */
+export async function listUsers(search?: string, limit = 50): Promise<UserListItem[]> {
+  const db = getDb();
+  const trimmed = search?.trim();
+  const rows = await db.user.findMany({
+    where: trimmed
+      ? {
+          OR: [
+            { username: { contains: trimmed } },
+            { nickname: { contains: trimmed } },
+          ],
+        }
+      : undefined,
+    orderBy: { username: "asc" },
+    take: limit,
+  });
+  return rows.map((u: { id: string; username: string; nickname: string | null; nicknameNumber: number }) => ({
+    id: u.id,
+    username: u.username,
+    displayLabel: formatDisplayLabel(u.nickname, u.nicknameNumber),
+  }));
+}

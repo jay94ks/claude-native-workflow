@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
+import Pagination from "../components/Pagination.vue";
+import CommentsPanel from "../components/CommentsPanel.vue";
+import QAPanel from "../components/QAPanel.vue";
 import { languageForPath } from "../utils/language";
 
 const props = defineProps<{ id: string }>();
 const route = useRoute();
+const ENTRIES_PAGE_SIZE = 30;
+const entriesPage = ref(1);
 
 interface TreeEntry {
   name: string;
@@ -48,12 +53,18 @@ async function loadTree(dirPath: string) {
   try {
     entries.value = await apiCall<TreeEntry[]>(`/projects/${props.id}/git/tree?path=${encodeURIComponent(dirPath)}`);
     currentDir.value = dirPath;
+    entriesPage.value = 1;
   } catch (err) {
     treeError.value = err instanceof ApiError ? err.message : "디렉터리를 불러오지 못했습니다";
   } finally {
     treeLoading.value = false;
   }
 }
+
+const entriesTotalPages = computed(() => Math.max(1, Math.ceil(entries.value.length / ENTRIES_PAGE_SIZE)));
+const pagedEntries = computed(() =>
+  entries.value.slice((entriesPage.value - 1) * ENTRIES_PAGE_SIZE, entriesPage.value * ENTRIES_PAGE_SIZE),
+);
 
 function parentDir(dirPath: string): string {
   const parts = dirPath.split("/").filter(Boolean);
@@ -139,10 +150,11 @@ onMounted(async () => {
       <p v-if="treeError" class="error">{{ treeError }}</p>
       <p v-if="treeLoading">불러오는 중...</p>
       <ul v-else class="entries">
-        <li v-for="e in entries" :key="e.path" :class="{ dir: e.type === 'dir', active: e.path === selectedPath }" @click="openEntry(e)">
+        <li v-for="e in pagedEntries" :key="e.path" :class="{ dir: e.type === 'dir', active: e.path === selectedPath }" @click="openEntry(e)">
           {{ e.type === "dir" ? "📁" : "📄" }} {{ e.name }}
         </li>
       </ul>
+      <Pagination v-if="!treeLoading" :page="entriesPage" :total-pages="entriesTotalPages" @update:page="entriesPage = $event" />
       <form class="new-file" @submit.prevent="openNewFile">
         <input v-model="newFilePath" type="text" placeholder="새 파일 경로(예: docs/note.md)" />
         <button type="submit">열기</button>
@@ -158,6 +170,10 @@ onMounted(async () => {
         <p v-if="saveMessage" class="saved">{{ saveMessage }}</p>
         <p v-if="fileLoading">불러오는 중...</p>
         <MonacoEditor v-else v-model="fileContent" :language="languageForPath(selectedPath)" class="editor" />
+        <div class="source-side-panels">
+          <QAPanel :project-id="id" target-type="source" :target-key="selectedPath" />
+          <CommentsPanel :project-id="id" target-type="source" :target-key="selectedPath" />
+        </div>
       </template>
       <p v-else class="muted">왼쪽에서 파일을 선택하세요.</p>
     </section>
@@ -243,6 +259,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  overflow-y: auto;
 }
 .editor-header {
   display: flex;
@@ -269,7 +286,12 @@ onMounted(async () => {
   opacity: 0.6;
 }
 .editor {
-  flex: 1;
+  height: 500px;
+  flex-shrink: 0;
+}
+.source-side-panels {
+  margin-top: 20px;
+  flex-shrink: 0;
 }
 .muted {
   color: #888;

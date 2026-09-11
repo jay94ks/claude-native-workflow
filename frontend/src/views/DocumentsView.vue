@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import FolderTree from "../components/FolderTree.vue";
+import Pagination from "../components/Pagination.vue";
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -26,7 +27,15 @@ interface FolderDocument {
   title: string;
   docTypeId: string;
 }
+interface DocumentPage {
+  items: DocumentSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
 
+const PAGE_SIZE = 20;
 const documents = ref<DocumentSummary[]>([]);
 const docTypes = ref<DocType[]>([]);
 const filterTypeId = ref("");
@@ -34,6 +43,8 @@ const loading = ref(true);
 const error = ref("");
 const selectedFolderId = ref<string | null>(null);
 const moveError = ref("");
+const page = ref(1);
+const totalPages = ref(1);
 
 function docTypeLabel(id: string): string {
   const t = docTypes.value.find((dt) => dt.id === id);
@@ -48,14 +59,20 @@ async function load() {
     if (isRecentMode.value) {
       // 홈 대시보드 "더보기" - 폴더/타입 필터 무시하고 변경 순 전체를 보여준다.
       documents.value = await apiCall<DocumentSummary[]>(`/projects/${props.id}/documents/recent?limit=100`);
+      totalPages.value = 1;
     } else if (selectedFolderId.value) {
       // 폴더 전용 목록은 상태 코드를 안 담고 있어 표시용으로 "-"를 채운다
-      // (폴더는 DB 전용 정리 기능이라 검색 인덱스를 안 거치는 별도 경로).
+      // (폴더는 DB 전용 정리 기능이라 검색 인덱스를 안 거치는 별도 경로,
+      // 페이지네이션 대상도 아님 - 개인 정리 목적이라 목록이 짧음).
       const folderDocs = await apiCall<FolderDocument[]>(`/folders/${selectedFolderId.value}/documents`);
       documents.value = folderDocs.map((d) => ({ ...d, statusCode: "-" }));
+      totalPages.value = 1;
     } else {
-      const qs = filterTypeId.value ? `?docTypeId=${filterTypeId.value}` : "";
-      documents.value = await apiCall<DocumentSummary[]>(`/projects/${props.id}/documents${qs}`);
+      const qs = new URLSearchParams({ page: String(page.value), pageSize: String(PAGE_SIZE) });
+      if (filterTypeId.value) qs.set("docTypeId", filterTypeId.value);
+      const result = await apiCall<DocumentPage>(`/projects/${props.id}/documents/page?${qs}`);
+      documents.value = result.items;
+      totalPages.value = result.totalPages;
     }
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "문서 목록을 불러오지 못했습니다";
@@ -66,6 +83,7 @@ async function load() {
 
 function onFolderSelect(folderId: string | null) {
   selectedFolderId.value = folderId;
+  page.value = 1;
   load();
 }
 
@@ -126,7 +144,11 @@ onMounted(async () => {
   await load();
   await loadFolderOptions();
 });
-watch(filterTypeId, load);
+watch(filterTypeId, () => {
+  page.value = 1;
+  load();
+});
+watch(page, load);
 </script>
 
 <template>
@@ -173,6 +195,7 @@ watch(filterTypeId, load);
         </li>
         <li v-if="documents.length === 0" class="muted">문서가 없습니다.</li>
       </ul>
+      <Pagination v-if="!isRecentMode && !selectedFolderId" :page="page" :total-pages="totalPages" @update:page="page = $event" />
     </div>
   </div>
 </template>

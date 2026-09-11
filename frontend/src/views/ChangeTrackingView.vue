@@ -19,8 +19,16 @@ interface Commit {
   commit: { message: string; author: { date: string; name: string } };
 }
 
+interface CommitPage {
+  items: Commit[];
+  hasMore: boolean;
+}
+
+const COMMITS_PAGE_SIZE = 20;
 const hasRepo = ref<boolean | null>(null);
 const commits = ref<Commit[]>([]);
+const commitsPage = ref(1);
+const commitsHasMore = ref(false);
 const commitsError = ref("");
 const commitsLoading = ref(false);
 const selectedSha = ref("");
@@ -41,12 +49,21 @@ async function loadCommits() {
   commitsLoading.value = true;
   commitsError.value = "";
   try {
-    commits.value = await apiCall<Commit[]>(`/projects/${props.id}/git/log`);
+    const qs = new URLSearchParams({ page: String(commitsPage.value), pageSize: String(COMMITS_PAGE_SIZE) });
+    const result = await apiCall<CommitPage>(`/projects/${props.id}/git/log/page?${qs}`);
+    commits.value = result.items;
+    commitsHasMore.value = result.hasMore;
   } catch (err) {
     commitsError.value = err instanceof ApiError ? err.message : "커밋 로그를 불러오지 못했습니다";
   } finally {
     commitsLoading.value = false;
   }
+}
+
+function goCommitsPage(page: number) {
+  if (page < 1) return;
+  commitsPage.value = page;
+  loadCommits();
 }
 
 async function openCommit(sha: string) {
@@ -161,7 +178,10 @@ onMounted(async () => {
 
   disconnect = await connectProjectRealtime(props.id, {
     onChange: (event: ChangeEvent) => {
-      if (event.entity === "project" && hasRepo.value) loadCommits();
+      if (event.entity === "project" && hasRepo.value) {
+        commitsPage.value = 1;
+        loadCommits();
+      }
       if (event.entity === "document" && event.trackingCode === selectedDoc.value) {
         // "현재" 항목은 DB가 아니라 검색 색인을 거쳐 조회된다(GET
         // /documents/:trackingCode → Meilisearch) - 리비전 목록(DB 직접
@@ -203,6 +223,11 @@ onUnmounted(() => disconnect?.());
           </li>
           <li v-if="commits.length === 0" class="muted">커밋이 없습니다.</li>
         </ul>
+        <div v-if="!commitsLoading" class="commit-pagination">
+          <button type="button" :disabled="commitsPage <= 1" @click="goCommitsPage(commitsPage - 1)">이전</button>
+          <span class="status">{{ commitsPage }}</span>
+          <button type="button" :disabled="!commitsHasMore" @click="goCommitsPage(commitsPage + 1)">다음</button>
+        </div>
       </aside>
       <div class="diff-pane">
         <p v-if="diffError" class="error">{{ diffError }}</p>
@@ -287,6 +312,27 @@ section {
 }
 .entries code {
   color: #888;
+}
+.commit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+.commit-pagination button {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.commit-pagination button:disabled {
+  opacity: 0.5;
+}
+.commit-pagination .status {
+  font-size: 12px;
+  color: #555;
 }
 .diff-pane {
   flex: 1;

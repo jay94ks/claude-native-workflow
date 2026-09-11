@@ -176,6 +176,37 @@ export async function listCommits(slug: string, opts?: { ref?: string; limit?: n
   return res.json() as Promise<unknown[]>;
 }
 
+export interface CommitPage {
+  items: unknown[];
+  hasMore: boolean;
+}
+
+/** 웹 변경 추적 화면 전용(요청 4번 페이지네이션) - Gitea 커밋 목록
+ * API가 정확한 총 개수를 안정적으로 안 줘서(버전마다 다를 수 있음),
+ * "다음 페이지에 실제로 항목이 있는가"만 별도로 가벼운 요청(limit=1)
+ * 으로 확인하는 방식을 쓴다 - 헤더 유무에 기대지 않아 항상 정확하다. */
+export async function listCommitsPaged(
+  slug: string,
+  opts: { ref?: string; page: number; pageSize: number },
+): Promise<CommitPage> {
+  const { owner } = config();
+  const qs = new URLSearchParams();
+  if (opts.ref) qs.set("sha", opts.ref);
+  qs.set("limit", String(opts.pageSize));
+  qs.set("page", String(opts.page));
+  const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/commits?${qs}`);
+  const items = (await res.json()) as unknown[];
+
+  const nextQs = new URLSearchParams();
+  if (opts.ref) nextQs.set("sha", opts.ref);
+  nextQs.set("limit", "1");
+  nextQs.set("page", String(opts.page + 1));
+  const nextRes = await giteaFetch(`/api/v1/repos/${owner}/${slug}/commits?${nextQs}`);
+  const nextItems = (await nextRes.json()) as unknown[];
+
+  return { items, hasMore: nextItems.length > 0 };
+}
+
 export async function getCommit(slug: string, sha: string): Promise<unknown> {
   const { owner } = config();
   const res = await giteaFetch(`/api/v1/repos/${owner}/${slug}/git/commits/${sha}`);

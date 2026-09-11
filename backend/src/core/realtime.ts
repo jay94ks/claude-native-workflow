@@ -31,10 +31,15 @@ export function projectMessagesTopic(projectId: string): string {
 }
 
 export interface ChangeEvent {
-  entity: "document" | "comment" | "question" | "answer" | "project" | "kanbanColumn" | "kanbanCard" | "kanbanCardComment";
+  entity: "document" | "comment" | "question" | "answer" | "project" | "kanbanColumn" | "kanbanCard";
   action: "create" | "update" | "delete";
   id: string;
   trackingCode?: string;
+  /** comment/question/answer 이벤트에서 다형 대상을 가리킴(document/
+   * source/kanbanCard) - 패널이 자신이 보여주는 대상과 일치하는
+   * 이벤트만 걸러 재조회할 때 쓴다. */
+  targetType?: string;
+  targetKey?: string;
   at: string; // ISO timestamp
 }
 

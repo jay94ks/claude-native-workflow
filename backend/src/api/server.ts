@@ -15,6 +15,7 @@ import {
   getMe,
   updateMe,
   getPublicProfile,
+  listUsers,
 } from "../core/auth.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
@@ -44,6 +45,7 @@ import {
   createDocument,
   getDocument,
   listDocuments,
+  listDocumentsPaged,
   listRecentDocuments,
   searchProjectDocuments,
   saveDocumentBody,
@@ -57,6 +59,8 @@ import { addSourceLink, removeSourceLink, listSourceLinks } from "../core/docume
 import { createReport } from "../core/report.js";
 import {
   addQuestion,
+  addQuestionByTrackingCode,
+  resolveTargetByTrackingCode,
   listPendingQuestions,
   answerQuestion,
   listQuestions,
@@ -64,7 +68,15 @@ import {
   acknowledgeQuestion,
   countPendingQuestions,
 } from "../core/questions.js";
-import { addComment, listComments, listRecentComments, resolveComment } from "../core/comments.js";
+import {
+  addComment,
+  listComments,
+  editComment,
+  deleteComment,
+  getCommentProjectId,
+  listRecentComments,
+  resolveComment,
+} from "../core/comments.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
 import { ensureSearchIndexes } from "../core/search.js";
 import { resolveEffectivePermission, setAccessOverride, listAccessOverrides } from "../core/permissions.js";
@@ -80,10 +92,6 @@ import {
   getKanbanCardByTrackingCode,
   moveKanbanCard,
   setKanbanCardHidden,
-  addKanbanCardComment,
-  listKanbanCardComments,
-  editKanbanCardComment,
-  deleteKanbanCardComment,
 } from "../core/kanban.js";
 import {
   createApiKey,
@@ -116,7 +124,7 @@ import {
   acknowledgeQueueEntry,
   completeQueueEntry,
 } from "../core/pushHookPrompts.js";
-import { sendMessage, listMessages, waitForMessage, listRecentMessages } from "../core/messages.js";
+import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages } from "../core/messages.js";
 import { checkConnect, checkAcl, ensureEmqxAuthConfigured } from "../core/emqxAuth.js";
 
 const app = express();
@@ -277,6 +285,18 @@ app.put(
       nickname?: string;
     };
     res.json(await updateMe(req.userId!, { email, phone, emailVisible, phoneVisible, nickname }));
+  }),
+);
+
+// 사용자 선택기(엔티티 선택기 kind="user")용 - 이 시스템엔 조직 간
+// 격리가 없어(단일 설치) 로그인한 누구나 설계자 목록을 검색할 수 있다.
+app.get(
+  "/api/users",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const search = req.query.search as string | undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    res.json(await listUsers(search, limit));
   }),
 );
 
@@ -968,6 +988,19 @@ app.get(
   }),
 );
 
+// 웹 문서 목록 화면 전용 페이지네이션(요청 4번) - CLI/MCP가 쓰는 위
+// 배열 응답 라우트는 그대로 둔다.
+app.get(
+  "/api/projects/:projectId/documents/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    res.json(await listDocumentsPaged(req.params.projectId, req.query.docTypeId as string | undefined, page, pageSize));
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/search",
   authenticate,
@@ -1405,50 +1438,8 @@ app.put(
   }),
 );
 
-app.post(
-  "/api/kanban/cards/:trackingCode/comments",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    const card = await getKanbanCardByTrackingCode(req.params.trackingCode);
-    if (!card) { res.status(404).json({ error: "not found" }); return; }
-    const role = await getMemberRole(card.projectId, req.userId!);
-    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
-    const { body } = req.body as { body?: string };
-    if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
-    res.json(await addKanbanCardComment(req.params.trackingCode, body, req.userId!));
-  }),
-);
-
-app.get(
-  "/api/kanban/cards/:trackingCode/comments",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    const card = await getKanbanCardByTrackingCode(req.params.trackingCode);
-    if (!card) { res.status(404).json({ error: "not found" }); return; }
-    const role = await getMemberRole(card.projectId, req.userId!);
-    if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
-    res.json(await listKanbanCardComments(req.params.trackingCode));
-  }),
-);
-
-app.put(
-  "/api/kanban/card-comments/:id",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    const { body } = req.body as { body?: string };
-    if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
-    res.json(await editKanbanCardComment(req.params.id, body, req.userId!));
-  }),
-);
-
-app.delete(
-  "/api/kanban/card-comments/:id",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    await deleteKanbanCardComment(req.params.id, req.userId!);
-    res.json({ ok: true });
-  }),
-);
+// 칸반 카드 코멘트 전용 라우트는 없다 - 공용 코멘트 라우트(아래 "코멘트"
+// 절, targetType="kanbanCard")로 흡수됐다.
 
 // ---------------------------------------------------------------- 보고서
 
@@ -1466,6 +1457,12 @@ app.post(
 );
 
 // ---------------------------------------------------------------- 질의/답변 (질의는 AI, 답변은 설계자 - open→pending→resolved)
+// targetType/targetKey로 다형화(document/source/kanbanCard) - document/
+// kanbanCard 대상은 그 자신의 트래킹 코드만으로 프로젝트/대상 종류를
+// 역산할 수 있어(resolveTargetByTrackingCode) CLI의 기존 2-인자
+// 시그니처(`docs question <trackingCode> <text>`)를 그대로 유지한다.
+// source 대상은 트래킹 코드가 없어 프로젝트 스코프 진입점이 별도로
+// 필요하다.
 
 async function pendingQuestionNotice(projectId: string): Promise<string | null> {
   const n = await countPendingQuestions(projectId);
@@ -1473,29 +1470,65 @@ async function pendingQuestionNotice(projectId: string): Promise<string | null> 
   return `이 프로젝트에 설계자가 답변했지만 아직 확인하지 않은 질의가 ${n}건 있습니다 - docs question ack <trackingCode>로 처리하세요`;
 }
 
+async function requireEditorForTarget(projectId: string, userId: string): Promise<boolean> {
+  const role = await getMemberRole(projectId, userId);
+  return roleSatisfies(role, "editor");
+}
+
 app.post(
-  "/api/documents/:trackingCode/questions",
+  "/api/questions",
   authenticate,
   asyncRoute(async (req, res) => {
-    const document = await getDocument(req.params.trackingCode);
-    if (!document) { res.status(404).json({ error: "문서를 찾을 수 없습니다" }); return; }
-    const role = await getMemberRole(document.projectId, req.userId!);
-    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
-    const { text, refs } = req.body as { text?: string; refs?: string[] };
-    if (!text) { res.status(400).json({ error: "text가 필요합니다" }); return; }
-    res.json(await addQuestion(req.params.trackingCode, text, req.userId!, refs));
+    const { trackingCode, kind, text, refs } = req.body as {
+      trackingCode?: string;
+      kind?: string;
+      text?: string;
+      refs?: string[];
+    };
+    if (!trackingCode || !kind || !text) { res.status(400).json({ error: "trackingCode/kind/text가 필요합니다" }); return; }
+    const target = await resolveTargetByTrackingCode(trackingCode);
+    if (!target) { res.status(404).json({ error: "대상을 찾을 수 없습니다" }); return; }
+    if (!(await requireEditorForTarget(target.projectId, req.userId!))) {
+      res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" });
+      return;
+    }
+    res.json(await addQuestionByTrackingCode(trackingCode, kind, text, req.userId!, refs));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/questions/source",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { path, kind, text, refs } = req.body as { path?: string; kind?: string; text?: string; refs?: string[] };
+    if (!path || !kind || !text) { res.status(400).json({ error: "path/kind/text가 필요합니다" }); return; }
+    res.json(await addQuestion(req.params.projectId, "source", path, kind, text, req.userId!, refs));
   }),
 );
 
 app.get(
-  "/api/documents/:trackingCode/questions",
+  "/api/questions",
   authenticate,
   asyncRoute(async (req, res) => {
-    const document = await getDocument(req.params.trackingCode);
-    if (!document) { res.status(404).json({ error: "문서를 찾을 수 없습니다" }); return; }
-    const role = await getMemberRole(document.projectId, req.userId!);
-    if (!roleSatisfies(role, "viewer")) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
-    res.json(await listQuestions(req.params.trackingCode));
+    const trackingCode = req.query.trackingCode as string | undefined;
+    if (!trackingCode) { res.status(400).json({ error: "trackingCode 쿼리가 필요합니다" }); return; }
+    const target = await resolveTargetByTrackingCode(trackingCode);
+    if (!target) { res.status(404).json({ error: "대상을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(target.projectId, req.userId!);
+    if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
+    res.json(await listQuestions(target.targetType, trackingCode));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/questions/source",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const path = req.query.path as string | undefined;
+    if (!path) { res.status(400).json({ error: "path 쿼리가 필요합니다" }); return; }
+    res.json(await listQuestions("source", path));
   }),
 );
 
@@ -1515,11 +1548,12 @@ app.post(
   asyncRoute(async (req, res) => {
     const projectId = await getQuestionProjectId(req.params.trackingCode);
     if (!projectId) { res.status(404).json({ error: "질문을 찾을 수 없습니다" }); return; }
-    const role = await getMemberRole(projectId, req.userId!);
-    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
-    const { body } = req.body as { body?: string };
-    if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
-    res.json(await answerQuestion(req.params.trackingCode, body, req.userId!));
+    if (!(await requireEditorForTarget(projectId, req.userId!))) {
+      res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" });
+      return;
+    }
+    const { body, decision } = req.body as { body?: string; decision?: string };
+    res.json(await answerQuestion(req.params.trackingCode, { body, decision }, req.userId!));
   }),
 );
 
@@ -1529,40 +1563,102 @@ app.post(
   asyncRoute(async (req, res) => {
     const projectId = await getQuestionProjectId(req.params.trackingCode);
     if (!projectId) { res.status(404).json({ error: "질문을 찾을 수 없습니다" }); return; }
-    const role = await getMemberRole(projectId, req.userId!);
-    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    if (!(await requireEditorForTarget(projectId, req.userId!))) {
+      res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" });
+      return;
+    }
     res.json(await acknowledgeQuestion(req.params.trackingCode));
   }),
 );
 
 // ---------------------------------------------------------------- 코멘트
+// 설계자들끼리만 공유되는 채널이라 CLI/MCP엔 없다(완전성 원칙의
+// 의도적 예외 - 소스 코드/칸반 카드 코멘트도 동일하게 적용). 질의와
+// 같은 방식으로 document/kanbanCard는 트래킹 코드로, source는 별도
+// 프로젝트 스코프 진입점으로 주소 지정한다.
 
 app.post(
-  "/api/projects/:projectId/documents/:trackingCode/comments",
+  "/api/comments",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { trackingCode, body } = req.body as { trackingCode?: string; body?: string };
+    if (!trackingCode || !body) { res.status(400).json({ error: "trackingCode/body가 필요합니다" }); return; }
+    const target = await resolveTargetByTrackingCode(trackingCode);
+    if (!target) { res.status(404).json({ error: "대상을 찾을 수 없습니다" }); return; }
+    if (!(await requireEditorForTarget(target.projectId, req.userId!))) {
+      res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" });
+      return;
+    }
+    res.json(await addComment(target.projectId, target.targetType, trackingCode, body, req.userId!));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/comments/source",
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const { body } = req.body as { body?: string };
-    if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
-    res.json(await addComment(req.params.projectId, req.params.trackingCode, body, req.userId!));
+    const { path, body } = req.body as { path?: string; body?: string };
+    if (!path || !body) { res.status(400).json({ error: "path/body가 필요합니다" }); return; }
+    res.json(await addComment(req.params.projectId, "source", path, body, req.userId!));
   }),
 );
 
 app.get(
-  "/api/projects/:projectId/documents/:trackingCode/comments",
+  "/api/comments",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const trackingCode = req.query.trackingCode as string | undefined;
+    if (!trackingCode) { res.status(400).json({ error: "trackingCode 쿼리가 필요합니다" }); return; }
+    const target = await resolveTargetByTrackingCode(trackingCode);
+    if (!target) { res.status(404).json({ error: "대상을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(target.projectId, req.userId!);
+    if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
+    res.json(await listComments(target.targetType, trackingCode));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/comments/source",
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    res.json(await listComments(req.params.trackingCode));
+    const path = req.query.path as string | undefined;
+    if (!path) { res.status(400).json({ error: "path 쿼리가 필요합니다" }); return; }
+    res.json(await listComments("source", path));
+  }),
+);
+
+app.put(
+  "/api/comments/:id",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { body } = req.body as { body?: string };
+    if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
+    res.json(await editComment(req.params.id, body, req.userId!));
+  }),
+);
+
+app.delete(
+  "/api/comments/:id",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    await deleteComment(req.params.id, req.userId!);
+    res.json({ ok: true });
   }),
 );
 
 app.post(
-  "/api/projects/:projectId/comments/:id/resolve",
+  "/api/comments/:id/resolve",
   authenticate,
-  requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    await resolveComment(req.params.id, req.params.projectId);
+    const projectId = await getCommentProjectId(req.params.id);
+    if (!projectId) { res.status(404).json({ error: "코멘트를 찾을 수 없습니다" }); return; }
+    if (!(await requireEditorForTarget(projectId, req.userId!))) {
+      res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" });
+      return;
+    }
+    await resolveComment(req.params.id, projectId);
     res.json({ ok: true });
   }),
 );
@@ -1682,6 +1778,21 @@ app.get(
   }),
 );
 
+// 웹 메시지 화면 전용 페이지네이션(요청 4번) - markDelivered는 지원
+// 안 함(웹은 원래도 이 플래그를 안 보냄). CLI/MCP가 쓰는 위 배열 응답
+// 라우트는 그대로 둔다.
+app.get(
+  "/api/projects/:projectId/messages/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const status = req.query.status as "pending" | "delivered" | "all" | undefined;
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    res.json(await listMessagesPaged(req.params.projectId, { status, page, pageSize }));
+  }),
+);
+
 // ---------------------------------------------------------------- EMQX 클라이언트 인증/인가 (Phase 4 - 인증 미들웨어 없음, EMQX가 직접 호출)
 
 app.post(
@@ -1796,6 +1907,21 @@ app.get(
   }),
 );
 
+// 웹 변경 추적 화면 전용 페이지네이션(요청 4번) - CLI/MCP가 쓰는 위
+// 배열 응답 라우트는 그대로 둔다.
+app.get(
+  "/api/projects/:projectId/git/log/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const ref = req.query.ref as string | undefined;
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    res.json(await gitea.listCommitsPaged(slug, { ref, page, pageSize }));
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/git/diff/:sha",
   authenticate,
@@ -1851,6 +1977,19 @@ app.get(
     const filePath = req.query.path as string | undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     res.json(await gitea.getFileContent(slug, filePath, req.query.ref as string | undefined));
+  }),
+);
+
+// 소스 파일 선택기(엔티티 선택기 kind="sourceFile")용 - 재귀 전체 파일
+// 목록(기존 getFullTree()는 지금까지 git 동기화 제안 기능이 내부적으로만
+// 썼다, 새 라우트만 추가).
+app.get(
+  "/api/projects/:projectId/git/tree/all",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    res.json(await gitea.getFullTree(slug));
   }),
 );
 

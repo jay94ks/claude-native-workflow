@@ -2,8 +2,10 @@
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import UserRef from "./UserRef.vue";
+import { useEntityPickerStore } from "../stores/entityPicker";
 
 const props = defineProps<{ teamId: string }>();
+const entityPicker = useEntityPickerStore();
 
 interface TeamAdmin {
   id: string;
@@ -26,6 +28,11 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+async function pickNewUser() {
+  const result = await entityPicker.pick({ kind: "user", multi: false, allowManualEntry: false });
+  if (result && result[0]) newUserId.value = result[0];
 }
 
 async function add() {
@@ -67,7 +74,7 @@ onMounted(load);
       <li v-if="admins.length === 0" class="muted">등록된 팀장이 없습니다.</li>
     </ul>
     <form class="add-row" @submit.prevent="add">
-      <input v-model="newUserId" type="text" placeholder="userId" />
+      <button type="button" class="pick-btn" @click="pickNewUser">{{ newUserId || "사용자 선택..." }}</button>
       <button type="submit">팀장 추가</button>
     </form>
     <p v-if="addError" class="error">{{ addError }}</p>
@@ -114,6 +121,15 @@ onMounted(load);
   border: 1px solid #d8dae0;
   border-radius: 6px;
   font-size: 13px;
+}
+.pick-btn {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: left;
 }
 .add-row button {
   background: #3454d1;

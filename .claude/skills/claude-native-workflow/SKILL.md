@@ -109,28 +109,48 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 
 ## 질의/답변(Question/Answer) 루프 — AI가 묻고 설계자가 답한다
 
-**질의는 클로드(AI)가 등록하는 것이고, 설계자는 답변만 한다.** 판단에
-참고한 문서가 있으면 `--refs`로 구조적으로 태깅한다: `docs question
-<trackingCode> <질문 내용> [--refs <code1,code2,...>]` - `QU-XXXXXXXX`
-추적 코드가 발급된다.
+**질의는 클로드(AI)가 등록하는 것이고, 설계자는 답변만 한다.** 대상은
+문서/칸반 카드/소스 코드 파일 셋 중 하나다(다른 종류의 코멘트/질의
+대상이 늘어도 명령 시그니처는 안 바뀐다 - 서버가 targetType/targetKey로
+다형화해 처리). 판단에 참고한 문서가 있으면 `--refs`로 구조적으로
+태깅한다.
+
+- 문서/칸반 카드 대상: `docs question <trackingCode> <질문 내용>
+  [--kind <approval|answer>] [--refs <code1,code2,...>]` - 대상 자신의
+  추적 코드(`XX-XXXXXXXX`/`KB-XXXXXXXX`)만으로 서버가 대상 종류를
+  자동 판별한다.
+- 소스 코드 파일 대상(추적 코드가 없는 대상): `docs question-source
+  <projectId> <path> <질문 내용> [--kind <approval|answer>]
+  [--refs <codes>]`.
+- 둘 다 `QU-XXXXXXXX` 추적 코드가 발급된다.
+
+**`kind`은 두 종류다**(기본값 `answer`) - **`answer`**(자유 텍스트
+답변이 필요한 "답변 요청")와 **`approval`**(승인/거부만 필요한 "승인
+요청" - 텍스트가 아니라 `--decision`으로 답한다).
 
 상태는 3단계다: **`open`**(질의 등록, 설계자 답변 대기) → **설계자가
 답변하면 `pending`**(종결이 아니라 "AI 확인 대기" - 이 상태에서 문서
 전체가 끝난 게 아님) → **`resolved`**(AI가 확인 완료 표시, 종결).
 
-- `docs pending <projectId>` - `open`+`pending` 둘 다(미해결 전체)를
-  보여준다. 각 행의 `status`로 구분한다.
-- `docs reply <questionTrackingCode> <답변>` - 설계자 답변, 상태를
-  `pending`으로 바꾼다.
+- `docs pending <projectId>` - `open`+`pending` 둘 다(미해결 전체,
+  모든 대상 종류가 섞여서)를 보여준다. 각 행의 `status`/`targetType`로
+  구분한다.
+- `docs reply <questionTrackingCode> [답변] [--decision
+  <approved|rejected>] [--note <text>]` - 설계자 답변, 상태를
+  `pending`으로 바꾼다. `kind=answer`면 답변 텍스트를, `kind=approval`
+  이면 `--decision`(+ 선택적 `--note` 메모)을 쓴다.
 - **`docs question ack <trackingCode>`** - `pending`을 `resolved`로
   전이(AI가 "확인했다"고 표시). **세션 시작 시 체크리스트의 2번 항목이
   바로 이것 - `pending` 상태를 방치하지 않는다.**
-- `docs questions <trackingCode>` - 문서 하나의 전체 질의/답변
-  스레드(모든 상태) 조회.
+- `docs questions <trackingCode>` - 문서/칸반 카드 하나의 전체
+  질의/답변 스레드(모든 상태) 조회.
+- `docs questions-source <projectId> <path>` - 소스 코드 파일 하나의
+  전체 질의/답변 스레드 조회.
 
-문서의 모든 질의가 `open`을 벗어나면, 그 문서 타입에 유일하게 허용된
-다음 상태가 있을 경우 문서 상태가 자동으로 전이된다(모호하면 자동
-전이하지 않고 `docs transition`으로 직접 지정).
+대상이 문서이고 그 문서의 모든 질의가 `open`을 벗어나면, 그 문서
+타입에 유일하게 허용된 다음 상태가 있을 경우 문서 상태가 자동으로
+전이된다(모호하면 자동 전이하지 않고 `docs transition`으로 직접
+지정 - 칸반 카드/소스 코드 대상은 이 자동 전이 개념 자체가 없다).
 
 ## 메시지 — 대기/기록 분리 + 문서별 지시 + 장애 복구
 
@@ -164,7 +184,8 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
   않기 위해 CLI 전용(`auth_whoami`만 MCP에 진단용으로 예외 노출).
 - **코멘트(comment)** - 설계자들끼리만 공유하는 채널로, AI의 참고
   지표가 될 수 없다는 설계자 지시에 따라 CLI/MCP 어디에도 없다(웹
-  UI에는 있음). "왜 코멘트 명령이 없지?"는 버그가 아니라 의도.
+  UI에는 있음, 문서/소스 코드 파일/칸반 카드 세 대상 전부 동일). "왜
+  코멘트 명령이 없지?"는 버그가 아니라 의도.
 - **폴더(folder)** - 문서 정리용으로 DB에만 존재하는, 사람이 보기
   편하자고 만든 순수 공간적 분류 보조 수단이다(실제 git 파일 트리와
   무관). AI는 추적 코드/문서 타입으로 문서를 다루므로 이 개념 자체가
@@ -177,8 +198,8 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
   남의 키를 배제할 수 있으면 안 된다는 설계 취지.
 - **칸반 카드 코멘트** - 칸반 보드 자체(분류/카드 생성·조회·이동)는
   아래 표의 `kanban-*` 명령으로 AI에게 완전히 열려 있지만, 카드에
-  달리는 코멘트만은 코멘트(comment)와 똑같은 이유(설계자들끼리만
-  공유하는 채널)로 CLI/MCP에 없다 - 웹 UI에서만 작성/수정/삭제한다.
+  달리는 코멘트만은 위 코멘트(comment)와 같은 채널(`targetType:
+  "kanbanCard"`)이라 CLI/MCP에 없다 - 웹 UI에서만 작성/수정/삭제한다.
 
 ## 칸반 보드
 
@@ -214,10 +235,12 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 연관 소스코드 해제 | `docs unlink-source <trackingCode> <linkId>` | `document_unlink_source` |
 | 연관 소스코드 목록 | `docs source-links <trackingCode>` | `document_source_links` |
 | 보고서 생성 | `docs report-new <projectId> --title <t> --body <file>` | `report_new` |
-| 질의 등록(+참고 문서) | `docs question <trackingCode> <text> [--refs <codes>]` | `question_add` |
-| 문서의 전체 질의/답변 | `docs questions <trackingCode>` | `question_list` |
-| 답변 대기 목록(open+pending) | `docs pending <projectId>` | `pending_list` |
-| 답변 | `docs reply <questionTrackingCode> <answer>` | `question_reply` |
+| 질의 등록(문서/칸반 카드, +참고 문서) | `docs question <trackingCode> <text> [--kind <approval\|answer>] [--refs <codes>]` | `question_add` |
+| 질의 등록(소스 코드 파일) | `docs question-source <projectId> <path> <text> [--kind ...] [--refs ...]` | `question_add_source` |
+| 대상의 전체 질의/답변(문서/칸반 카드) | `docs questions <trackingCode>` | `question_list` |
+| 대상의 전체 질의/답변(소스 코드 파일) | `docs questions-source <projectId> <path>` | `question_list_source` |
+| 답변 대기 목록(open+pending, 전체 대상) | `docs pending <projectId>` | `pending_list` |
+| 답변 | `docs reply <questionTrackingCode> [answer] [--decision <approved\|rejected>] [--note <text>]` | `question_reply` |
 | 질의 확인 완료 처리 | `docs question ack <trackingCode>` | `question_ack` |
 | 본인 프로필 조회/whoami | `docs auth whoami` | `auth_whoami` |
 | 본인 프로필 수정 | `docs profile set [옵션...]` | `profile_set` |

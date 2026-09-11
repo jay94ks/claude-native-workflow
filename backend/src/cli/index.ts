@@ -769,16 +769,44 @@ program
   );
 
 // ---------------------------------------------------------------- 질의/답변 (pending/reply)
+// targetType/targetKey로 다형화됨(document/source/kanbanCard) - document/
+// kanbanCard 대상은 그 자신의 트래킹 코드만으로 서버가 대상 종류를
+// 자동 판별하므로(resolveTargetByTrackingCode) 기존 2-인자 시그니처를
+// 그대로 쓴다. source 대상은 트래킹 코드가 없어 별도 명령이 필요하다.
 
 program
   .command("question <trackingCode> <text...>")
+  .option("--kind <approval|answer>", "승인 요청 또는 답변 요청(기본: answer)")
   .option("--refs <codes>", "판단에 참고한 문서 trackingCode 목록(쉼표로 구분)")
   .action((trackingCode, textParts, opts) =>
     run(async () =>
       printJson(
-        await apiCall(`/api/documents/${trackingCode}/questions`, {
+        await apiCall(`/api/questions`, {
           method: "POST",
           body: JSON.stringify({
+            trackingCode,
+            kind: opts.kind ?? "answer",
+            text: textParts.join(" "),
+            refs: opts.refs ? String(opts.refs).split(",").map((s: string) => s.trim()) : undefined,
+          }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("question-source <projectId> <path> <text...>")
+  .description("소스 코드 파일에 AI 질문을 남긴다(문서/칸반 카드가 아닌 대상)")
+  .option("--kind <approval|answer>", "승인 요청 또는 답변 요청(기본: answer)")
+  .option("--refs <codes>", "판단에 참고한 문서 trackingCode 목록(쉼표로 구분)")
+  .action((projectId, path, textParts, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/questions/source`, {
+          method: "POST",
+          body: JSON.stringify({
+            path,
+            kind: opts.kind ?? "answer",
             text: textParts.join(" "),
             refs: opts.refs ? String(opts.refs).split(",").map((s: string) => s.trim()) : undefined,
           }),
@@ -789,7 +817,15 @@ program
 
 program
   .command("questions <trackingCode>")
-  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/questions`))));
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/questions?trackingCode=${trackingCode}`))));
+
+program
+  .command("questions-source <projectId> <path>")
+  .action((projectId, path) =>
+    run(async () =>
+      printJson(await apiCall(`/api/projects/${projectId}/questions/source?path=${encodeURIComponent(path)}`)),
+    ),
+  );
 
 program
   .command("question-ack <trackingCode>")
@@ -803,13 +839,18 @@ program
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/pending`))));
 
 program
-  .command("reply <questionTrackingCode> <answer...>")
-  .action((questionTrackingCode, answerParts) =>
+  .command("reply <questionTrackingCode> [answer...]")
+  .description("답변 요청(kind=answer)은 answer 텍스트로, 승인 요청(kind=approval)은 --decision으로 답한다")
+  .option("--decision <approved|rejected>", "승인 요청에 대한 결정")
+  .action((questionTrackingCode, answerParts, opts) =>
     run(async () =>
       printJson(
         await apiCall(`/api/questions/${questionTrackingCode}/answer`, {
           method: "POST",
-          body: JSON.stringify({ body: answerParts.join(" ") }),
+          body: JSON.stringify({
+            body: answerParts && answerParts.length > 0 ? answerParts.join(" ") : undefined,
+            decision: opts.decision,
+          }),
         }),
       ),
     ),
@@ -817,7 +858,8 @@ program
 
 // 코멘트는 설계자들끼리만 쓰는 채널이다(웹 UI 전용) - AI의 참고 지표가
 // 될 수 없어 CLI/MCP엔 의도적으로 명령/도구를 두지 않는다("CLI/MCP
-// 명령어 완전성" 원칙의 세 번째 의도적 예외 - REST API/웹 UI는 그대로).
+// 명령어 완전성" 원칙의 의도적 예외 - REST API/웹 UI는 그대로, 소스
+// 코드/칸반 카드 코멘트도 동일하게 없음).
 
 // ---------------------------------------------------------------- 템플릿 (CLAUDE.md, SKILL.md 등)
 

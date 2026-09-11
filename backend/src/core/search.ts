@@ -79,24 +79,41 @@ export interface SearchOptions {
   docTypeId?: string;
   statusCode?: string;
   limit?: number;
+  /** offset 기반 페이지네이션 - Meilisearch의 estimatedTotalHits와
+   * 함께 쓴다(listDocumentsFromIndexPaged 참고). */
+  offset?: number;
   /** 예: ["updatedAt:desc"] - ensureSearchIndexes()가 등록한 sortable
    * 속성(createdAt/updatedAt)만 쓸 수 있다. */
   sort?: string[];
 }
 
-export async function searchDocuments(query: string, opts: SearchOptions = {}): Promise<SearchableDocument[]> {
+export interface SearchPage {
+  hits: SearchableDocument[];
+  total: number;
+}
+
+function buildFilter(opts: SearchOptions): string | undefined {
   const filters: string[] = [];
   if (opts.projectId) filters.push(`projectId = "${opts.projectId}"`);
   if (opts.docTypeId) filters.push(`docTypeId = "${opts.docTypeId}"`);
   if (opts.statusCode) filters.push(`statusCode = "${opts.statusCode}"`);
+  return filters.length ? filters.join(" AND ") : undefined;
+}
+
+async function rawSearch(query: string, opts: SearchOptions = {}): Promise<SearchPage> {
   const res = await meili()
     .index(DOCUMENTS_INDEX)
     .search(query, {
-      filter: filters.length ? filters.join(" AND ") : undefined,
+      filter: buildFilter(opts),
       limit: opts.limit ?? 50,
+      offset: opts.offset ?? 0,
       sort: opts.sort,
     });
-  return res.hits as SearchableDocument[];
+  return { hits: res.hits as SearchableDocument[], total: res.estimatedTotalHits ?? res.hits.length };
+}
+
+export async function searchDocuments(query: string, opts: SearchOptions = {}): Promise<SearchableDocument[]> {
+  return (await rawSearch(query, opts)).hits;
 }
 
 /** query 없이 필터/정렬만으로 목록을 가져올 때 쓴다(get/list/tree류) -
@@ -104,4 +121,10 @@ export async function searchDocuments(query: string, opts: SearchOptions = {}): 
  * 동작한다. */
 export async function listDocumentsFromIndex(opts: SearchOptions = {}): Promise<SearchableDocument[]> {
   return searchDocuments("", opts);
+}
+
+/** 웹 전용 페이지네이션 목록 - hits와 함께 총 개수를 반환한다(CLI/MCP는
+ * 여전히 배열만 주는 listDocumentsFromIndex를 그대로 쓴다). */
+export async function listDocumentsFromIndexPaged(opts: SearchOptions = {}): Promise<SearchPage> {
+  return rawSearch("", opts);
 }

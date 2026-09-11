@@ -2,13 +2,16 @@
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import UserRef from "../components/UserRef.vue";
+import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
 
 const props = defineProps<{ id: string }>();
+const kanbanDialog = useKanbanCardDialogStore();
 
 interface RecentComment {
   id: string;
-  trackingCode: string;
-  documentTitle: string;
+  targetType: string;
+  targetKey: string;
+  targetLabel: string;
   body: string;
   authorId: string;
   createdAt: string;
@@ -30,6 +33,10 @@ async function load() {
   }
 }
 
+function open(c: RecentComment) {
+  if (c.targetType === "kanbanCard") kanbanDialog.show(c.targetKey);
+}
+
 onMounted(load);
 </script>
 
@@ -39,9 +46,13 @@ onMounted(load);
   <p v-if="loading">불러오는 중...</p>
   <ul v-else class="list">
     <li v-for="c in comments" :key="c.id">
-      <router-link :to="`/projects/${id}/documents/${c.trackingCode}`">
-        <code>{{ c.trackingCode }}</code> {{ c.documentTitle }}
+      <router-link v-if="c.targetType === 'document'" :to="`/projects/${id}/documents/${c.targetKey}`">
+        <code>{{ c.targetKey }}</code> {{ c.targetLabel }}
       </router-link>
+      <router-link v-else-if="c.targetType === 'source'" :to="`/projects/${id}/source?path=${encodeURIComponent(c.targetKey)}`">
+        📄 {{ c.targetLabel }}
+      </router-link>
+      <button v-else type="button" class="target-link" @click="open(c)">🗂 {{ c.targetLabel }}</button>
       <p class="body">{{ c.body }}</p>
       <div class="meta">
         <UserRef :user-id="c.authorId" />
@@ -77,6 +88,14 @@ onMounted(load);
   background: #f0f1f5;
   padding: 2px 6px;
   border-radius: 4px;
+}
+.target-link {
+  background: none;
+  border: none;
+  color: #3454d1;
+  font-size: 13px;
+  padding: 0;
+  cursor: pointer;
 }
 .body {
   margin: 6px 0;

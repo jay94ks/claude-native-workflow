@@ -4,7 +4,8 @@ import { apiCall, ApiError } from "../api/client";
 import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
 import { useDocumentDialogStore } from "../stores/documentDialog";
 import UserRef from "./UserRef.vue";
-import KanbanCardComments from "./KanbanCardComments.vue";
+import CommentsPanel from "./CommentsPanel.vue";
+import QAPanel from "./QAPanel.vue";
 
 interface KanbanCardDetail {
   trackingCode: string;
@@ -73,7 +74,8 @@ watch(
           <p v-else class="muted">연결된 근거 문서가 없습니다.</p>
         </section>
 
-        <KanbanCardComments :project-id="card.projectId" :tracking-code="card.trackingCode" />
+        <QAPanel :project-id="card.projectId" target-type="kanbanCard" :target-key="card.trackingCode" />
+        <CommentsPanel :project-id="card.projectId" target-type="kanbanCard" :target-key="card.trackingCode" />
       </template>
     </div>
   </div>

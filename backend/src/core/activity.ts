@@ -27,13 +27,12 @@ export async function listUserActivity(viewerId: string, targetUserId: string, l
     }),
     db.question.findMany({
       where: { askedBy: targetUserId },
-      include: { document: true },
       orderBy: { createdAt: "desc" },
       take: limit,
     }),
     db.answer.findMany({
       where: { answeredBy: targetUserId },
-      include: { question: { include: { document: true } } },
+      include: { question: true },
       orderBy: { answeredAt: "desc" },
       take: limit,
     }),
@@ -61,32 +60,32 @@ export async function listUserActivity(viewerId: string, targetUserId: string, l
       }),
     ),
     ...questions.map(
-      (q: { document: { projectId: string; trackingCode: string }; trackingCode: string; createdAt: Date }): ActivityItem => ({
+      (q: { projectId: string; targetKey: string; trackingCode: string; createdAt: Date }): ActivityItem => ({
         type: "question_ask",
-        projectId: q.document.projectId,
+        projectId: q.projectId,
         trackingCode: q.trackingCode,
-        summary: `${q.document.trackingCode}에 질의를 등록했습니다`,
+        summary: `${q.targetKey}에 질의를 등록했습니다`,
         at: q.createdAt.toISOString(),
       }),
     ),
     ...answers.map(
       (a: {
-        question: { document: { projectId: string; trackingCode: string }; trackingCode: string };
+        question: { projectId: string; targetKey: string; trackingCode: string };
         answeredAt: Date;
       }): ActivityItem => ({
         type: "answer",
-        projectId: a.question.document.projectId,
+        projectId: a.question.projectId,
         trackingCode: a.question.trackingCode,
-        summary: `${a.question.document.trackingCode}의 질의에 답변했습니다`,
+        summary: `${a.question.targetKey}의 질의에 답변했습니다`,
         at: a.answeredAt.toISOString(),
       }),
     ),
     ...comments.map(
-      (c: { projectId: string; trackingCode: string; createdAt: Date }): ActivityItem => ({
+      (c: { projectId: string; targetKey: string; createdAt: Date }): ActivityItem => ({
         type: "comment",
         projectId: c.projectId,
-        trackingCode: c.trackingCode,
-        summary: `${c.trackingCode}에 코멘트를 남겼습니다`,
+        trackingCode: null,
+        summary: `${c.targetKey}에 코멘트를 남겼습니다`,
         at: c.createdAt.toISOString(),
       }),
     ),

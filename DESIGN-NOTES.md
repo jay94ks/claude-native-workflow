@@ -1540,6 +1540,86 @@ index 같은 복잡한 스킴을 피했다.
 되는지. `npm run db:generate`(3드라이버) → `npx tsc --noEmit`
 (backend) → `vue-tsc -b && npm run build`(frontend) 클린 확인.
 
+## 코멘트/질의응답 통폐합 + 페이지네이션 + 엔티티 선택기 - 완료 (2026-09-11)
+
+설계자 요청 5개 - (1) 모든 코멘트에 편집/삭제, (2) 코멘트 대상을
+문서/소스 코드/칸반 카드 + "설계자 개입이 예상되는 모든 곳"으로,
+(3) AI 질의를 승인 요청(approval)/답변 요청(answer)으로 구분하고
+같은 범위로 확장, (4) 문서/소스 코드/메시지/변경 추적에 페이지네이션,
+(5) 칸반 카드 근거를 체크박스 리스트 문서 선택기로. Plan Mode에서
+설계자가 5번을 피드백해 범위를 크게 넓혔다 - "이미 존재하는 무언가를
+설계자가 입력해야 하는 자리는 어디든 같은 체크박스 선택기 다이얼로그를
+쓰고, 수동 입력은 유효한 경우에만 같이 보여준다"는 **웹 앱 전체의
+입력 UX 원칙**으로.
+
+**핵심 설계 - `Comment`/`Question`을 targetType/targetKey로 다형화**:
+지금까지 대상 종류가 하나 늘 때마다(직전 라운드의 `KanbanCardComment`
+처럼) 테이블·API·CLI를 통째로 새로 만들어야 했던 반복을 끝냈다.
+`targetType: "document" | "source" | "kanbanCard"` + `targetKey`
+(document/kanbanCard는 그 트래킹 코드, source는 git 상대 경로) 하나의
+모델로 세 대상을 전부 커버 - `KanbanCardComment`는 완전히 삭제되고
+`Comment`(`targetType:"kanbanCard"`)로 흡수됐다. Prisma가 폴리모픽
+FK를 못 표현해서 `Comment`/`Question`이 `Document`로의 직접 FK를
+잃었고, 그래서 `deleteDocument()`가 `db.comment.deleteMany`/
+`db.question.deleteMany`를 트랜잭션으로 명시 호출하도록 바뀌었다
+(예전엔 스키마 cascade가 대신 해주던 일).
+
+**질의는 `kind: "approval" | "answer"`로 확장** - `answer`는 기존
+그대로 자유 텍스트 답변, `approval`은 `Answer.decision:"approved"|
+"rejected"`(+ 선택적 메모)로 답한다. `resolveTargetByTrackingCode()`가
+document→kanbanCard 순으로 조회해 대상 종류를 자동 판별하므로,
+`docs question <trackingCode> <text>`의 기존 2-인자 시그니처가 그대로
+유지된다 - source 파일만 트래킹 코드가 없어 `docs question-source
+<projectId> <path> <text>` 신규 명령이 필요했다.
+
+**엔티티 선택기 - 하나의 범용 다이얼로그로 6곳 통일**: Promise 기반
+`stores/entityPicker.ts`(`pick({kind, projectId?, multi?,
+allowManualEntry?, initialSelected?}): Promise<string[]|null>`) +
+`EntityPickerDialog.vue`(체크박스 목록 + 검색 필터 + 선택 시
+allowManualEntry면 자유 입력 칸). `kind: "document"|"user"|
+"sourceFile"` 세 가지로 6개 자리(칸반 카드 근거, 질문 근거,
+`AccessControlManager`의 개별 문서 스코프, 멤버/팀장 추가의 대상
+사용자, 문서의 연관 소스 코드)를 전부 대체 - 텍스트로 직접 타이핑하던
+자리가 전부 없어졌다. `user` kind는 프로젝트 컨텍스트가 없는 화면
+(팀장 관리)에서도 써야 해서 `projectId`를 선택 필드로 뒀다.
+
+**페이지네이션**: 기존 CLI/MCP 라우트(`/documents`, `/messages`,
+`/git/log`)는 배열 그대로 안 건드리고, 웹 전용 자매 라우트
+(`/documents/page`, `/messages/page`, `/git/log/page`)를
+`/documents/recent` 선례와 같은 방식으로 추가 - `{items, page,
+pageSize, total, totalPages}` 통일 응답(git log만 Gitea의 정확한
+총 개수를 신뢰 못 해 `{items, hasMore}`로 다름, `limit+1` 조회
+트릭으로 다음 페이지 존재만 판단). `Pagination.vue` 공용 컴포넌트
+하나로 문서/메시지 목록에 적용, 소스 코드 디렉터리 목록은 Gitea
+Contents API 특성상 클라이언트 사이드 슬라이스로 처리.
+
+**실사용 인스턴스(`backend/docker/`, 이 세션 내내 재사용해온 postgres+
+meilisearch+emqx+gitea 스택)로 실측 검증** - 스키마가 `Comment`/
+`Question`에 NOT NULL 컬럼을 여러 개 추가해 기존 스크래치 데이터
+1건씩과 충돌, `--force-reset`으로 스크래치 DB를 초기화(사용자 확인
+후 진행 - 실사용 데이터 아님)하고 재검증했다. CLI(`docs question`/
+`question-source`/`questions`/`questions-source`/`reply --decision`/
+`question-ack`/`pending`)와 REST 양쪽으로 문서/칸반 카드/소스 코드
+세 대상 전부, kind=answer/approval 둘 다 왕복 확인 - 특히 **문서
+코멘트 편집**(이번에 처음 가능해진 기능)을 add→edit→resolve→delete
+전체 왕복으로 실측. 웹 브라우저로 문서 선택기(체크박스 선택→확인→
+질문에 근거 칩으로 반영)까지 실제 클릭 왕복 확인. MCP는 stdio로
+`tools/list`를 직접 조회해 `question_add_source`/`question_list_source`
+등 신규 도구가 등록되고 `comment_*`/`kanban_card_comment_*` 류가
+여전히 전혀 없는지 확인.
+
+**검증 중 실제 버그 발견·수정**: `deleteDocument()`가 그 문서의
+질문을 지우려 하면 `Foreign key constraint violated: Answer_questionId_fkey`
+로 실패했다 - `Answer.question` 관계에 `onDelete: Cascade`가 빠져
+있어서(같은 파일의 `QuestionReference.question`엔 있었는데 이것만
+누락) 답변이 달린 질문은 삭제가 막혔다. 3드라이버 스키마 전부에
+`onDelete: Cascade` 추가 후 재검증 - 질문+답변이 달린 문서 삭제 →
+DB 직접 조회로 `Comment`/`Question`/`Answer` 행이 전부 정리됐는지
+(0건) 확인 완료.
+
+`npm run db:generate`(3드라이버) → `npx tsc --noEmit`(backend) →
+`vue-tsc -b && npm run build`(frontend) 클린 확인.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

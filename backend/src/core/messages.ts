@@ -66,6 +66,41 @@ export async function listMessages(projectId: string, opts: ListMessagesOptions 
   return rows;
 }
 
+export interface MessagePage {
+  items: MessageDetail[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+/** 웹 메시지 화면 전용(요청 4번 페이지네이션) - 목록 조회만 하고
+ * markDelivered는 지원하지 않는다(웹은 원래도 이 플래그를 안 보냄).
+ * CLI/MCP가 쓰는 listMessages()는 그대로 둔다. */
+export async function listMessagesPaged(
+  projectId: string,
+  opts: { status?: "pending" | "delivered" | "all"; page: number; pageSize: number },
+): Promise<MessagePage> {
+  const db = getDb();
+  const where =
+    opts.status === "pending"
+      ? { projectId, deliveredAt: null }
+      : opts.status === "delivered"
+        ? { projectId, deliveredAt: { not: null } }
+        : { projectId };
+  const safePage = Math.max(1, opts.page);
+  const [items, total] = await Promise.all([
+    db.message.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (safePage - 1) * opts.pageSize,
+      take: opts.pageSize,
+    }),
+    db.message.count({ where }),
+  ]);
+  return { items, page: safePage, pageSize: opts.pageSize, total, totalPages: Math.max(1, Math.ceil(total / opts.pageSize)) };
+}
+
 /** 상태를 전혀 바꾸지 않는 순수 조회 - 시스템 다운 등으로 세션이
  * 비정상 종료됐다가 복구됐을 때 "마지막 기록"을 확인하는 용도라 반복
  * 호출해도 부작용이 없어야 한다. */

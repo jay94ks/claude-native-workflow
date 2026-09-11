@@ -3,9 +3,11 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
+import { useEntityPickerStore } from "../stores/entityPicker";
 
 const props = defineProps<{ id: string }>();
 const kanbanDialog = useKanbanCardDialogStore();
+const entityPicker = useEntityPickerStore();
 
 interface KanbanColumnView {
   id: string;
@@ -125,15 +127,26 @@ function toggleMenu(columnId: string) {
 const newCardColumnId = ref<string | null>(null);
 const newCardTitle = ref("");
 const newCardBody = ref("");
-const newCardRefs = ref("");
+const newCardRefs = ref<string[]>([]);
 const cardError = ref("");
 
 function openCardForm(columnId: string) {
   newCardColumnId.value = columnId;
   newCardTitle.value = "";
   newCardBody.value = "";
-  newCardRefs.value = "";
+  newCardRefs.value = [];
   cardError.value = "";
+}
+
+async function pickCardRefs() {
+  const result = await entityPicker.pick({
+    kind: "document",
+    projectId: props.id,
+    multi: true,
+    allowManualEntry: false,
+    initialSelected: newCardRefs.value,
+  });
+  if (result) newCardRefs.value = result;
 }
 
 async function createCard() {
@@ -146,10 +159,7 @@ async function createCard() {
         columnId: newCardColumnId.value,
         title: newCardTitle.value.trim(),
         body: newCardBody.value.trim() || undefined,
-        refs: newCardRefs.value
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
+        refs: newCardRefs.value,
         origin: "designer",
       }),
     });
@@ -276,7 +286,7 @@ onUnmounted(() => disconnect?.());
       <form v-if="newCardColumnId === col.id" class="new-card-form" @submit.prevent="createCard">
         <input v-model="newCardTitle" type="text" placeholder="카드 제목" />
         <textarea v-model="newCardBody" rows="2" placeholder="설명(선택)"></textarea>
-        <input v-model="newCardRefs" type="text" placeholder="근거 문서 trackingCode(쉼표 구분, 선택)" />
+        <button type="button" class="pick-refs-btn" @click="pickCardRefs">근거 문서 ({{ newCardRefs.length }})</button>
         <div class="new-card-actions">
           <button type="submit">추가</button>
           <button type="button" class="secondary" @click="newCardColumnId = null">취소</button>
@@ -467,6 +477,14 @@ onUnmounted(() => disconnect?.());
   font-size: 12px;
   font-family: inherit;
   resize: vertical;
+}
+.pick-refs-btn {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  border-radius: 4px;
+  padding: 5px 7px;
+  font-size: 12px;
+  text-align: left;
 }
 .new-card-actions {
   display: flex;

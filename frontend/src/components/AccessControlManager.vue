@@ -3,8 +3,10 @@ import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import UserRef from "./UserRef.vue";
 import { useNicknamesStore } from "../stores/nicknames";
+import { useEntityPickerStore } from "../stores/entityPicker";
 
 const nicknames = useNicknamesStore();
+const entityPicker = useEntityPickerStore();
 
 const props = defineProps<{ projectId: string }>();
 
@@ -100,6 +102,17 @@ async function save() {
   }
 }
 
+async function pickTargetDocument() {
+  const result = await entityPicker.pick({
+    kind: "document",
+    projectId: props.projectId,
+    multi: false,
+    allowManualEntry: false,
+    initialSelected: targetTrackingCode.value ? [targetTrackingCode.value] : [],
+  });
+  if (result && result[0]) targetTrackingCode.value = result[0];
+}
+
 function docTypeLabel(id: string): string {
   return docTypes.value.find((t) => t.id === id)?.code ?? id;
 }
@@ -131,7 +144,9 @@ onMounted(load);
           <option value="">문서 타입 선택</option>
           <option v-for="t in docTypes" :key="t.id" :value="t.id">{{ t.code }} · {{ t.label }}</option>
         </select>
-        <input v-if="scope === 'document'" v-model="targetTrackingCode" type="text" placeholder="문서 추적 코드(예: SP-A1B2C3D4)" />
+        <button v-if="scope === 'document'" type="button" class="pick-btn" @click="pickTargetDocument">
+          {{ targetTrackingCode || "문서 선택..." }}
+        </button>
         <div class="flags">
           <label>읽기 <select v-model="readChoice"><option value="keep">변경 안 함</option><option value="allow">허용</option><option value="deny">차단</option></select></label>
           <label>쓰기 <select v-model="writeChoice"><option value="keep">변경 안 함</option><option value="allow">허용</option><option value="deny">차단</option></select></label>
@@ -197,6 +212,13 @@ onMounted(load);
   background: #3454d1;
   color: #fff;
   border-color: #3454d1;
+}
+.pick-btn {
+  background: #fff;
+  border: 1px solid #d8dae0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
 }
 .flags {
   display: flex;

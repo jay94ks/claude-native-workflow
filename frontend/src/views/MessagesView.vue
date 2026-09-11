@@ -4,6 +4,7 @@ import { apiCall, ApiError } from "../api/client";
 import { connectProjectRealtime, type MessageEvent as RealtimeMessageEvent } from "../realtime";
 import UserRef from "../components/UserRef.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
+import Pagination from "../components/Pagination.vue";
 
 const props = defineProps<{ id: string }>();
 
@@ -14,13 +15,23 @@ interface MessageItem {
   deliveredAt: string | null;
   createdAt: string;
 }
+interface MessagePage {
+  items: MessageItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
 
+const PAGE_SIZE = 20;
 const tab = ref<"pending" | "delivered">("pending");
 const messages = ref<MessageItem[]>([]);
 const loading = ref(true);
 const error = ref("");
 const draft = ref("");
 const sending = ref(false);
+const page = ref(1);
+const totalPages = ref(1);
 
 let disconnect: (() => void) | null = null;
 
@@ -29,7 +40,10 @@ async function load() {
   error.value = "";
   try {
     // markDelivered는 안 보낸다 - 웹에서 보는 건 "AI가 읽음"으로 안 침.
-    messages.value = await apiCall<MessageItem[]>(`/projects/${props.id}/messages?status=${tab.value}`);
+    const qs = new URLSearchParams({ status: tab.value, page: String(page.value), pageSize: String(PAGE_SIZE) });
+    const result = await apiCall<MessagePage>(`/projects/${props.id}/messages/page?${qs}`);
+    messages.value = result.items;
+    totalPages.value = result.totalPages;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "메시지를 불러오지 못했습니다";
   } finally {
@@ -64,7 +78,11 @@ onMounted(async () => {
   disconnect = await connectProjectRealtime(props.id, { onMessage: onRealtimeMessage });
 });
 onUnmounted(() => disconnect?.());
-watch(tab, load);
+watch(tab, () => {
+  page.value = 1;
+  load();
+});
+watch(page, load);
 </script>
 
 <template>
@@ -84,6 +102,7 @@ watch(tab, load);
     </li>
     <li v-if="messages.length === 0" class="muted">{{ tab === "pending" ? "대기 중인 메시지가 없습니다." : "기록된 메시지가 없습니다." }}</li>
   </ul>
+  <Pagination :page="page" :total-pages="totalPages" @update:page="page = $event" />
   <form class="send-row" @submit.prevent="send">
     <input v-model="draft" type="text" placeholder="메시지 입력..." />
     <button type="submit" :disabled="sending">전송</button>

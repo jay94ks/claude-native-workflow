@@ -500,16 +500,42 @@ async function main() {
   );
 
   // ---------------------------------------------------------------- 질의/답변
+  // targetType/targetKey로 다형화됨(document/source/kanbanCard) - document/
+  // kanbanCard 대상은 그 자신의 트래킹 코드만으로 서버가 대상 종류를
+  // 자동 판별한다(resolveTargetByTrackingCode). source 대상은 트래킹
+  // 코드가 없어 별도 도구가 필요하다.
 
   tool(
     "question_add",
     "질의 등록",
-    "문서에 대한 질의를 등록하고 추적 코드를 발급받는다(질의는 AI가 등록, 설계자가 답변) - refs로 판단에 참고한 문서를 태깅할 수 있다.",
-    { trackingCode: z.string(), text: z.string(), refs: z.array(z.string()).optional() },
-    async (a) => call(`/api/documents/${a.trackingCode}/questions`, { method: "POST", body: JSON.stringify({ text: a.text, refs: a.refs }) }),
+    "문서/칸반 카드에 대한 질의를 등록하고 추적 코드를 발급받는다(질의는 AI가 등록, 설계자가 답변) - kind로 승인 요청(approval)/답변 요청(answer, 기본값)을 구분하고, refs로 판단에 참고한 문서를 태깅할 수 있다.",
+    { trackingCode: z.string(), text: z.string(), kind: z.enum(["approval", "answer"]).optional(), refs: z.array(z.string()).optional() },
+    async (a) =>
+      call(`/api/questions`, {
+        method: "POST",
+        body: JSON.stringify({ trackingCode: a.trackingCode, kind: a.kind ?? "answer", text: a.text, refs: a.refs }),
+      }),
   );
-  tool("question_list", "문서의 전체 질의/답변 조회", "한 문서의 질의 전체(open+pending+resolved)를 답변과 함께 순서대로 조회한다.", { trackingCode: z.string() }, async (a) =>
-    call(`/api/documents/${a.trackingCode}/questions`),
+  tool(
+    "question_add_source",
+    "소스 코드 파일에 질의 등록",
+    "문서/칸반 카드가 아닌 소스 코드 파일에 AI 질의를 등록한다 - kind/refs는 question_add와 동일.",
+    { projectId: z.string(), path: z.string(), text: z.string(), kind: z.enum(["approval", "answer"]).optional(), refs: z.array(z.string()).optional() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/questions/source`, {
+        method: "POST",
+        body: JSON.stringify({ path: a.path, kind: a.kind ?? "answer", text: a.text, refs: a.refs }),
+      }),
+  );
+  tool("question_list", "문서/칸반 카드의 전체 질의/답변 조회", "한 대상의 질의 전체(open+pending+resolved)를 답변과 함께 순서대로 조회한다.", { trackingCode: z.string() }, async (a) =>
+    call(`/api/questions?trackingCode=${a.trackingCode}`),
+  );
+  tool(
+    "question_list_source",
+    "소스 코드 파일의 전체 질의/답변 조회",
+    "소스 코드 파일에 달린 질의 전체를 조회한다.",
+    { projectId: z.string(), path: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/questions/source?path=${encodeURIComponent(String(a.path))}`),
   );
   tool("pending_list", "미해결 질의 목록", "프로젝트의 미해결(open+pending) 질의 목록 - pending은 설계자가 답변했지만 AI가 아직 확인 안 한 것.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/pending`),
@@ -517,9 +543,9 @@ async function main() {
   tool(
     "question_reply",
     "질의에 답변",
-    "질의에 답변하면 상태가 pending으로 바뀌고(종결 아님 - AI 확인 대기), 문서의 모든 질의가 open을 벗어나면 문서 상태도 자동 전이될 수 있다.",
-    { questionTrackingCode: z.string(), body: z.string() },
-    async (a) => call(`/api/questions/${a.questionTrackingCode}/answer`, { method: "POST", body: JSON.stringify({ body: a.body }) }),
+    "질의에 답변하면 상태가 pending으로 바뀌고(종결 아님 - AI 확인 대기), 문서 대상의 모든 질의가 open을 벗어나면 문서 상태도 자동 전이될 수 있다. kind=answer면 body, kind=approval이면 decision(+선택 body 메모)을 쓴다.",
+    { questionTrackingCode: z.string(), body: z.string().optional(), decision: z.enum(["approved", "rejected"]).optional() },
+    async (a) => call(`/api/questions/${a.questionTrackingCode}/answer`, { method: "POST", body: JSON.stringify({ body: a.body, decision: a.decision }) }),
   );
   tool(
     "question_ack",
@@ -531,7 +557,7 @@ async function main() {
 
   // 코멘트는 설계자들끼리만 쓰는 채널이다(웹 UI 전용) - AI의 참고
   // 지표가 될 수 없어 의도적으로 도구를 두지 않는다("CLI/MCP 명령어
-  // 완전성" 원칙의 세 번째 의도적 예외).
+  // 완전성" 원칙의 의도적 예외 - 소스 코드/칸반 카드 코멘트도 동일).
 
   // ---------------------------------------------------------------- 템플릿 (CLAUDE.md, SKILL.md 등)
 

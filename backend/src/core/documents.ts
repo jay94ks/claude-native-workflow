@@ -1,7 +1,7 @@
 import { getDb } from "./db.js";
 import { withTrackingCode } from "./tracking.js";
 import { findDocTypeByCode, findDocStatusByCode, initialStatusFor, allowedNextStatuses } from "./docTypes.js";
-import { indexSyncUpsert, indexSyncDelete, getDocumentFromIndex, listDocumentsFromIndex, searchDocuments } from "./search.js";
+import { indexSyncUpsert, indexSyncDelete, getDocumentFromIndex, listDocumentsFromIndex, listDocumentsFromIndexPaged, searchDocuments } from "./search.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 import type { SearchableDocument } from "./search.js";
 
@@ -129,6 +129,35 @@ export async function searchProjectDocuments(
   query: string,
 ): Promise<SearchableDocument[]> {
   return searchDocuments(query, { projectId });
+}
+
+export interface DocumentPage {
+  items: SearchableDocument[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+/** 웹 문서 목록 화면 전용(요청 4번 페이지네이션) - createdAt:desc로
+ * 안정적인 순서를 보장한다(정렬 없이 페이지를 넘기면 Meilisearch가
+ * 페이지마다 다른 순서를 줄 수 있음). CLI/MCP가 쓰는 listDocuments()는
+ * 그대로 둔다. */
+export async function listDocumentsPaged(
+  projectId: string,
+  docTypeId: string | undefined,
+  page: number,
+  pageSize: number,
+): Promise<DocumentPage> {
+  const safePage = Math.max(1, page);
+  const { hits, total } = await listDocumentsFromIndexPaged({
+    projectId,
+    docTypeId,
+    limit: pageSize,
+    offset: (safePage - 1) * pageSize,
+    sort: ["createdAt:desc"],
+  });
+  return { items: hits, page: safePage, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
 }
 
 export interface DocumentRevisionSummary {
@@ -263,14 +292,23 @@ export async function listBacklinks(trackingCode: string): Promise<{ trackingCod
   }));
 }
 
-/** 문서 삭제 - 리비전/링크(양쪽)/코멘트/질문+답변/질의 참고 태깅까지
- * 스키마의 onDelete: Cascade로 한 번에 정리된다. 검색 인덱스에서도
- * 제거하고 실시간 "delete" 이벤트를 발행한다. */
+/** 문서 삭제 - 리비전/링크(양쪽)/질의 참고 태깅까지는 스키마의
+ * onDelete: Cascade로 정리되지만, 코멘트/질문은 Comment/Question이
+ * targetType/targetKey로 다형화되면서 Document로의 직접 FK가 없어져
+ * (Prisma가 폴리모픽 관계를 못 지원함) 더 이상 자동으로 안 지워진다 -
+ * 문서 삭제와 한 트랜잭션으로 명시적으로 같이 지운다(Question을
+ * 지우면 그 자식인 Answer/QuestionReference는 각각의 FK로 계속
+ * cascade됨). 검색 인덱스에서도 제거하고 실시간 "delete" 이벤트를
+ * 발행한다. */
 export async function deleteDocument(trackingCode: string): Promise<void> {
   const db = getDb();
   const existing = await db.document.findUnique({ where: { trackingCode } });
   if (!existing) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
-  await db.document.delete({ where: { trackingCode } });
+  await db.$transaction([
+    db.comment.deleteMany({ where: { targetType: "document", targetKey: trackingCode } }),
+    db.question.deleteMany({ where: { targetType: "document", targetKey: trackingCode } }),
+    db.document.delete({ where: { trackingCode } }),
+  ]);
   await indexSyncDelete(trackingCode);
   await realtimePublish(projectChangesTopic(existing.projectId), {
     entity: "document",
