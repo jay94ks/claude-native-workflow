@@ -67,9 +67,35 @@ export async function listProjectGroups(teamId: string | undefined, viewerId: st
   return out;
 }
 
-export async function updateProjectGroup(groupId: string, input: { name: string }): Promise<ProjectGroup> {
+export async function getProjectGroupById(groupId: string): Promise<ProjectGroup | null> {
   const db = getDb();
-  const row = await db.projectGroup.update({ where: { id: groupId }, data: { name: input.name } });
+  const row = await db.projectGroup.findUnique({ where: { id: groupId } });
+  return row ? { id: row.id, teamId: row.teamId, name: row.name } : null;
+}
+
+/** name/teamId 둘 다 선택 - 준 필드만 갱신한다. teamId 재소속 시
+ * 팀 존재/teamsEnabled 검증은 createProjectGroup()과 동일(중복 로직
+ * 최소화보다 두 함수가 서로 다른 시점에 독립적으로 실패해야 한다는
+ * 점이 더 중요해 그대로 반복). 목적지 팀 관리자 동의 여부 같은 권한
+ * 판단은 이 함수가 아니라 라우트가 한다(이 저장소의 기존 관례). */
+export async function updateProjectGroup(
+  groupId: string,
+  input: { name?: string; teamId?: string | null },
+): Promise<ProjectGroup> {
+  const db = getDb();
+  if (input.teamId) {
+    const { teamsEnabled } = await getInstallConfig();
+    if (!teamsEnabled) throw new Error("팀 단위 사용이 꺼져 있어 teamId를 지정할 수 없습니다");
+    const team = await db.team.findUnique({ where: { id: input.teamId } });
+    if (!team) throw new Error(`팀을 찾을 수 없습니다: ${input.teamId}`);
+  }
+  const row = await db.projectGroup.update({
+    where: { id: groupId },
+    data: {
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
+    },
+  });
   return { id: row.id, teamId: row.teamId, name: row.name };
 }
 

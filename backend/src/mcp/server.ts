@@ -148,9 +148,13 @@ async function main() {
   tool(
     "group_update",
     "프로젝트 그룹 수정",
-    "그룹 이름을 수정한다 - 그 그룹의 관리자만 가능.",
-    { groupId: z.string(), name: z.string() },
-    async (a) => call(`/api/project-groups/${a.groupId}`, { method: "PUT", body: JSON.stringify({ name: a.name }) }),
+    "그룹 이름을 수정하거나 다른 팀으로 재소속한다(name/teamId 중 하나 이상) - 이름 수정은 그 그룹의 관리자만, 팀 재소속은 목적지 팀의 팀장도 함께 필요(빈 문자열이면 팀 없음으로 뗌).",
+    { groupId: z.string(), name: z.string().optional(), teamId: z.string().optional() },
+    async (a) =>
+      call(`/api/project-groups/${a.groupId}`, {
+        method: "PUT",
+        body: JSON.stringify({ name: a.name, teamId: a.teamId }),
+      }),
   );
   tool(
     "group_delete",

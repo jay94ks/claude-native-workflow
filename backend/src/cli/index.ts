@@ -332,13 +332,20 @@ program.command("groups").action(() => run(async () => printJson(await apiCall("
 
 program
   .command("group-update <groupId>")
-  .requiredOption("--name <n>")
+  .option("--name <n>")
+  .option("--team <id>", "다른 팀으로 재소속(목적지 팀의 팀장만 가능). 팀에서 떼어내려면 --team \"\"")
   .action((groupId, opts) =>
-    run(async () =>
+    run(async () => {
+      if (opts.name === undefined && opts.team === undefined) {
+        throw new Error("--name 또는 --team 중 하나는 있어야 합니다");
+      }
       printJson(
-        await apiCall(`/api/project-groups/${groupId}`, { method: "PUT", body: JSON.stringify({ name: opts.name }) }),
-      ),
-    ),
+        await apiCall(`/api/project-groups/${groupId}`, {
+          method: "PUT",
+          body: JSON.stringify({ name: opts.name, teamId: opts.team }),
+        }),
+      );
+    }),
   );
 
 program

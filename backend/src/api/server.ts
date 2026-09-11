@@ -38,6 +38,7 @@ import {
   updateProjectGroup,
   deleteProjectGroup,
   listMembersForGroup,
+  getProjectGroupById,
 } from "../core/projectGroups.js";
 import {
   addProjectGroupAdmin,
@@ -687,9 +688,21 @@ app.put(
       res.status(403).json({ error: "이 그룹의 관리자만 수정할 수 있습니다" });
       return;
     }
-    const { name } = req.body as { name?: string };
-    if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
-    res.json(await updateProjectGroup(req.params.groupId, { name }));
+    const { name, teamId: rawTeamId } = req.body as { name?: string; teamId?: string | null };
+    if (name === undefined && rawTeamId === undefined) {
+      res.status(400).json({ error: "name 또는 teamId 중 하나는 있어야 합니다" });
+      return;
+    }
+    // 빈 문자열도 "팀 없음"으로 정규화(그룹 생성 라우트와 같은 관례).
+    const teamId = rawTeamId === undefined ? undefined : rawTeamId || null;
+    if (teamId !== undefined && teamId !== null) {
+      const current = await getProjectGroupById(req.params.groupId);
+      if (teamId !== current?.teamId && !(await isTeamAdmin(teamId, req.userId!))) {
+        res.status(403).json({ error: "대상 팀의 팀장만 그 팀으로 그룹을 옮길 수 있습니다" });
+        return;
+      }
+    }
+    res.json(await updateProjectGroup(req.params.groupId, { name, teamId }));
   }),
 );
 

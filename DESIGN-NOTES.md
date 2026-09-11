@@ -2560,7 +2560,65 @@ users` 직접 접근 시 안내 문구만 뜨는 것까지 확인. `npm run
 audit:cli-mcp` 클린 재확인(CLI 108개, 허용 예외 10개). `npx tsc
 --noEmit`(backend), `vue-tsc -b`(frontend) 클린.
 
+## 프로젝트 그룹 재소속 - 완료 (2026-09-12)
+
+PLANS.md `#team-group-reparent` 착수(색인 표 5번). 지금까지 그룹은
+생성 시점에만 `teamId`를 정할 수 있고 이후엔 이름만 고칠 수 있어,
+잘못된 팀 아래 만든 그룹을 바로잡으려면 비우고 지운 뒤 다시 만드는
+수작업뿐이었다.
+
+조사 결과 `ProjectGroup.teamId`는 이미 nullable이고 `onDelete`도
+기본 SetNull이라 스키마상 막혀있던 게 전혀 아니었다 - 순수하게
+`updateProjectGroup()`/라우트/CLI/UI 어디에도 `teamId` 수정 경로가
+없었을 뿐(마이그레이션 불필요). `Project.projectGroupId`가 그룹을
+직접 참조하므로(팀을 직접 참조하지 않음) 그룹 하나만 옮기면 산하
+프로젝트 전부가 자동으로 새 팀 소속이 된다.
+
+권한 설계가 이번 라운드의 핵심 - `isProjectGroupAdmin()`이 그
+그룹이 "지금" 속한 팀의 관리자 여부를 매번 계산해서 판정하기
+때문에(저장된 값이 아니라 상속), 그룹을 옮기는 순간 "누가 이
+그룹을 관리하는가"가 조용히 바뀐다. 목적지 팀의 동의 없이 아무나
+그룹을 던져 넣을 수 있게 두면 안 돼서, **다른 비어있지 않은 팀으로
+옮길 때만** 기존 `isProjectGroupAdmin`(현재 권한) 외에
+`isTeamAdmin(destinationTeamId)`(목적지 동의)를 추가로 요구한다 -
+팀 없음으로 떼어내는 경로는 목적지가 없으니 기존 권한만으로 충분.
+admin은 둘 다 기존처럼 우회. 이 코드베이스에 "다른 부모로 옮기기"
+류 동작의 전례가 전혀 없어(프로젝트→그룹 이관 함수조차 없음, 이번
+범위 밖) 새로 정한 규칙.
+
+`core/projectGroups.ts`의 `updateProjectGroup(groupId, {name?,
+teamId?})` - 둘 다 선택으로 바꾸고 준 필드만 갱신, `teamId` 지정 시
+`createProjectGroup()`과 동일한 팀 존재/`teamsEnabled` 검증 반복(두
+함수가 독립적으로 실패해야 한다는 판단, 공용 헬퍼로 억지로 묶지
+않음). `getProjectGroupById()` 신규 - 라우트가 목적지 검사 여부를
+판단하려면 현재 `teamId`를 알아야 해서. `PUT
+/api/project-groups/:groupId`는 기존 두 체크(스코프/그룹 관리자)에
+목적지 팀 검사를 조건부로 추가, 빈 문자열도 `null`(팀 없음)로
+정규화(그룹 생성 라우트와 같은 관례). CLI `group-update`의 `--name`
+을 필수에서 선택으로, `--team <id>` 추가. MCP `group_update`도
+`teamId` 선택 인자 추가(그룹 CRUD는 이미 MCP에 노출돼 있어 키
+관리류의 의도적 예외 대상이 아님). 웹 UI `ProjectGroupsView.vue` -
+그룹 관리자에게만 읽기 전용 팀 이름 자리를 `<select
+class="move-select" @change="moveTeam(...)">`로 교체(문서 탭의
+폴더 이동 select와 같은 패턴), 실패 시 행별 인라인 에러.
+
+**실측 검증**: 팀 A/B와 각각의 팀장 계정, 팀 A 아래 그룹 하나를
+실제로 만들어 왕복. 팀 A 관리자 단독으로 팀 B 이동 시도 → 403 확인.
+두 팀 다 관리하는 계정으로 같은 이동 → 200, `GET
+/api/project-groups?teamId=B`에 실제로 나타나는지 확인. 팀 없음으로
+떼어낸 직후, 팀 상속으로만 관리자였던 그 계정이 이름 수정마저
+403으로 거부되는 것까지 확인(관리자 상속이 즉시 바뀐다는 설계
+근거를 실제 재현으로 검증) - 원래 그룹 생성자(명시적
+`ProjectGroupAdmin` 행 보유)는 계속 수정 가능한 것과 대조 확인.
+name/teamId 둘 다 없는 요청은 400. CLI `group-update --team
+<id>`/`--team=`(빈 값 detach) 왕복, MCP `group_update`(teamId 포함)
+실제 MCP 클라이언트로 왕복 확인. 브라우저로 두 팀 관리 계정 로그인 →
+드롭다운으로 그룹 이동 성공(네트워크 탭에서 `PUT .../project-groups/
+:id → 200` 확인) → 권한 없는 팀으로 다시 시도 → 인라인 에러 문구
+스크린샷 확인. `npm run audit:cli-mcp` 클린 재확인. `npx tsc
+--noEmit`(backend), `vue-tsc -b`(frontend) 클린.
+
 ## 다음 단계
 
-PLANS.md 색인 표(맨 위 완료✅/⬜ 표시 - 이번 라운드부터 도입,
-CLAUDE.md에도 이 규칙을 명시)를 기준으로 다음 우선순위를 고른다.
+PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
+고른다.

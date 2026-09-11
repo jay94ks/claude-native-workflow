@@ -36,6 +36,7 @@ const editingId = ref<string | null>(null);
 const editName = ref("");
 const editError = ref("");
 const deleteError = ref<Record<string, string>>({});
+const moveError = ref<Record<string, string>>({});
 
 async function load() {
   loading.value = true;
@@ -88,6 +89,19 @@ async function saveEdit(group: ProjectGroup) {
     await load();
   } catch (err) {
     editError.value = err instanceof ApiError ? err.message : "수정에 실패했습니다";
+  }
+}
+
+async function moveTeam(group: ProjectGroup, teamId: string) {
+  moveError.value = { ...moveError.value, [group.id]: "" };
+  try {
+    await apiCall(`/project-groups/${group.id}`, { method: "PUT", body: JSON.stringify({ teamId: teamId || null }) });
+    await load();
+  } catch (err) {
+    moveError.value = {
+      ...moveError.value,
+      [group.id]: err instanceof ApiError ? err.message : "재소속에 실패했습니다",
+    };
   }
 }
 
@@ -147,7 +161,16 @@ onMounted(load);
         </template>
         <template v-else>
           <span>{{ group.name }}</span>
-          <span class="muted">{{ teamName(group.teamId) }}</span>
+          <select
+            v-if="group.isAdmin && teams.length > 0"
+            class="move-select"
+            :value="group.teamId ?? ''"
+            @change="moveTeam(group, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">팀 없음</option>
+            <option v-for="team in teams" :key="team.id" :value="team.id">{{ team.name }}</option>
+          </select>
+          <span v-else class="muted">{{ teamName(group.teamId) }}</span>
           <button v-if="group.isAdmin" class="manage-btn" @click="startEdit(group)">이름 수정</button>
         </template>
         <template v-if="group.isAdmin">
@@ -162,6 +185,7 @@ onMounted(load);
       </div>
       <p v-if="editError && editingId === group.id" class="error inline">{{ editError }}</p>
       <p v-if="deleteError[group.id]" class="error inline">{{ deleteError[group.id] }}</p>
+      <p v-if="moveError[group.id]" class="error inline">{{ moveError[group.id] }}</p>
 
       <div v-if="expandedMembersId === group.id" class="manage-panel">
         <p class="hint">이 그룹 산하 모든 프로젝트의 멤버 - 그룹 관리자만 볼 수 있다.</p>
@@ -238,6 +262,13 @@ h1 {
   border: 1px solid #d8dae0;
   border-radius: 6px;
   font-size: 13px;
+}
+.move-select {
+  padding: 5px 8px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #555;
 }
 .manage-btn {
   background: #fff;
