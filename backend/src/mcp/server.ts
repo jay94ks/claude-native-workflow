@@ -102,8 +102,12 @@ async function main() {
 
   // ---------------------------------------------------------------- 팀/그룹/프로젝트
 
-  tool("team_create", "팀 생성", "새 팀을 만든다.", { name: z.string() }, async (a) =>
-    call("/api/teams", { method: "POST", body: JSON.stringify(a) }),
+  tool(
+    "team_create",
+    "팀 생성",
+    "새 팀을 만든다(기본 비공개 - 소속되지 않은 설계자에겐 목록에 안 보임).",
+    { name: z.string(), isPublic: z.boolean().optional() },
+    async (a) => call("/api/teams", { method: "POST", body: JSON.stringify(a) }),
   );
   tool("team_list", "팀 목록", "전체 팀 목록.", {}, async () => call("/api/teams"));
   tool("team_admin_add", "팀장 등록", "그 팀의 팀장으로 사용자를 등록한다(숨겨진 프로젝트를 보고 해제할 수 있게 됨).", { teamId: z.string(), userId: z.string() }, async (a) =>
@@ -116,9 +120,13 @@ async function main() {
   tool(
     "team_update",
     "팀 수정",
-    "팀 이름/활성 여부를 수정한다 - 그 팀의 관리자만 가능.",
-    { teamId: z.string(), name: z.string().optional(), enabled: z.boolean().optional() },
-    async (a) => call(`/api/teams/${a.teamId}`, { method: "PUT", body: JSON.stringify({ name: a.name, enabled: a.enabled }) }),
+    "팀 이름/활성 여부/공개 여부를 수정한다 - 그 팀의 관리자만 가능.",
+    { teamId: z.string(), name: z.string().optional(), enabled: z.boolean().optional(), isPublic: z.boolean().optional() },
+    async (a) =>
+      call(`/api/teams/${a.teamId}`, {
+        method: "PUT",
+        body: JSON.stringify({ name: a.name, enabled: a.enabled, isPublic: a.isPublic }),
+      }),
   );
   tool(
     "team_delete",
@@ -137,8 +145,8 @@ async function main() {
   tool(
     "group_create",
     "프로젝트 그룹 생성",
-    "새 프로젝트 그룹을 만든다.",
-    { name: z.string(), teamId: z.string().optional() },
+    "새 프로젝트 그룹을 만든다(기본 비공개 - 소속되지 않은 설계자에겐 목록에 안 보임).",
+    { name: z.string(), teamId: z.string().optional(), isPublic: z.boolean().optional() },
     async (a) => call("/api/project-groups", { method: "POST", body: JSON.stringify(a) }),
   );
   tool("group_list", "프로젝트 그룹 목록", "프로젝트 그룹 목록(teamId로 필터 가능).", { teamId: z.string().optional() }, async (a) => {
@@ -148,12 +156,12 @@ async function main() {
   tool(
     "group_update",
     "프로젝트 그룹 수정",
-    "그룹 이름을 수정하거나 다른 팀으로 재소속한다(name/teamId 중 하나 이상) - 이름 수정은 그 그룹의 관리자만, 팀 재소속은 목적지 팀의 팀장도 함께 필요(빈 문자열이면 팀 없음으로 뗌).",
-    { groupId: z.string(), name: z.string().optional(), teamId: z.string().optional() },
+    "그룹 이름/공개 여부를 수정하거나 다른 팀으로 재소속한다(name/teamId/isPublic 중 하나 이상) - 이름·공개 여부 수정은 그 그룹의 관리자만, 팀 재소속은 목적지 팀의 팀장도 함께 필요(빈 문자열이면 팀 없음으로 뗌).",
+    { groupId: z.string(), name: z.string().optional(), teamId: z.string().optional(), isPublic: z.boolean().optional() },
     async (a) =>
       call(`/api/project-groups/${a.groupId}`, {
         method: "PUT",
-        body: JSON.stringify({ name: a.name, teamId: a.teamId }),
+        body: JSON.stringify({ name: a.name, teamId: a.teamId, isPublic: a.isPublic }),
       }),
   );
   tool(
@@ -190,8 +198,8 @@ async function main() {
   tool(
     "project_create",
     "프로젝트 생성",
-    "새 프로젝트를 만든다(그룹 생략 시 기본 그룹 사용).",
-    { name: z.string(), projectGroupId: z.string().optional() },
+    "새 프로젝트를 만든다(그룹 생략 시 기본 그룹 사용, 기본 비공개 - isPublic이어도 그 그룹에 실제 멤버십이 있는 설계자에게만 보임).",
+    { name: z.string(), projectGroupId: z.string().optional(), isPublic: z.boolean().optional() },
     async (a) => call("/api/projects", { method: "POST", body: JSON.stringify(a) }),
   );
   tool("project_list", "프로젝트 목록", "프로젝트 목록(projectGroupId로 필터 가능).", { projectGroupId: z.string().optional() }, async (a) => {
@@ -204,9 +212,16 @@ async function main() {
   tool(
     "project_hide",
     "프로젝트 숨김 설정",
-    "프로젝트를 숨기거나(hidden=true) 해제한다(hidden=false) - 프로젝트 owner 또는 그 프로젝트가 속한 팀의 팀장만 가능.",
+    "프로젝트를 숨기거나(hidden=true) 해제한다(hidden=false) - 프로젝트 owner, 소속 팀의 팀장, 소속 그룹의 관리자만 가능.",
     { projectId: z.string(), hidden: z.boolean() },
     async (a) => call(`/api/projects/${a.projectId}/hidden`, { method: "PUT", body: JSON.stringify({ hidden: a.hidden }) }),
+  );
+  tool(
+    "project_public",
+    "프로젝트 공개 설정",
+    "프로젝트를 공개(isPublic=true) 또는 비공개(isPublic=false)로 바꾼다 - 프로젝트 owner, 소속 팀의 팀장, 소속 그룹의 관리자만 가능. 공개여도 그 그룹에 실제 멤버십이 있는 설계자에게만 보인다.",
+    { projectId: z.string(), isPublic: z.boolean() },
+    async (a) => call(`/api/projects/${a.projectId}/public`, { method: "PUT", body: JSON.stringify({ isPublic: a.isPublic }) }),
   );
   tool(
     "project_delete",

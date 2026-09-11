@@ -36,7 +36,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 3 | ✅ | `#api-key-ttl` | API 키 선택적 만료(TTL) - 생성 시 지정, 지나면 배제와 동일하게 거부 |
 | 4 | ✅ | `#password-reset` | admin 대행 비밀번호 재설정(사용자 관리 화면 + `docs user reset-password`) |
 | 5 | ✅ | `#team-group-reparent` | 프로젝트 그룹 재소속(다른 팀으로 이동/팀 없음으로 뗌, 목적지 팀장 동의 필요) |
-| 6 | ⬜ | `#folder-access-ui` | 폴더 접근 권한 설정이 API만 있고 웹 UI 없음 |
+| 6 | ⬜ | `#folder-access-ui` | 폴더 공유+ACL 재설계(원래 전제였던 라우트는 이미 폐기됨) - 보류 중 |
 | 7 | ⬜ | `#access-overview-cross-project` | 설계자별 접근 제한 프로젝트 횡단 일괄 조회 없음 |
 | 8 | ⬜ | `#doctype-edit-delete` | DocType 이름(코드/라벨) 변경·삭제 불가 |
 | 9 | ⬜ | `#doctype-transition-delete` | DocStatusTransition 삭제 불가 |
@@ -58,17 +58,26 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 25 | ⬜ | `#migrate-status-mapping-preset` | 마이그레이션 상태 매핑 프리셋 없음 |
 | 26 | ⬜ | `#responsive-dark-mode` | 반응형/다크 모드 미지원 |
 | 27 | ⬜ | `#large-list-pagination` | 대량 목록 페이지네이션 미확인 |
+| 28 | ✅ | `#private-visibility-default` | 팀/그룹/프로젝트 기본 비공개 가시성(소속 없으면 안 보임, 공개 설정 시 예외) |
+| 29 | ⬜ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
 
 ---
 
 ## 1. 멤버십 & 세부 접근 권한
 
 ### `#folder-access-ui`
-**`AccessControlManager.vue`에 "폴더" 스코프 탭이 없다** - 폴더 쓰기
-오버라이드를 설정하는 REST 라우트(`PUT /api/folders/:id/access`)는
-있지만, 그 라우트를 웹 폼으로 노출하지 않았다(API 키 QA 패스 때 라우트
-존재만 추가했음). 지금은 API를 직접 호출해야만 폴더 권한을 제한할 수
-있다 - 웹 UI에도 탭 하나 추가가 필요(6절의 폴더 기능과도 관련).
+**폴더 공유+ACL을 새로 설계해야 한다** - 원래 이 항목은 "웹 UI 탭만
+빠졌다"는 전제였지만, 착수 조사로 그 전제가 낡았다는 게 드러났다:
+`PUT /api/folders/:id/access` 라우트는 `DocAccessOverride.folderId`
+축이 통째로 폐기된 리팩터 라운드에서 이미 삭제됐다(폴더가 "설계자
+개인 정리용, 완전 비공개"로 재설계되면서 - 다른 사람 폴더는 존재
+자체가 안 보임, `core/folders.ts:9` 주석에 명시). 즉 지금은 "타인의
+폴더를 제한한다"는 개념 자체가 성립하지 않는다. 설계자 확인 결과
+"폴더 공유+ACL을 새로 설계"하는 방향으로 확정 - 스키마 마이그레이션
+(3드라이버), 권한 리졸버, 라우트(기존엔 GET조차 없었음), 타인 폴더
+조회용 API까지 필요한 원래보다 큰 작업. 착수 전 잠시 보류 중(설계자가
+비공개 가시성/문서 우선순위 요청을 먼저 처리해달라고 해서 순서만
+밀림 - 포기 아님).
 
 ### `#access-overview-cross-project`
 **오버라이드 일괄 조회가 프로젝트 단위뿐** - "이 설계자가 전체
@@ -91,6 +100,14 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 **일괄 작업이 없다** - 문서 여러 개를 한 번에 상태 전이하거나 폴더로
 옮기는 기능이 없다(하나씩 해야 함). 마이그레이션 직후처럼 문서가
 몰려 있을 때 특히 아쉬움.
+
+### `#document-priority`
+**문서별 우선순위 지정 기능이 필요하다**(설계자 직접 요청) - 단순
+정수로 지정하고, 값이 바뀔 때마다 "갱신"할 수 있다. 유효 범위는
+문서 상태가 `review` 또는 `pending`(표준 상태 코드, Q&A의 별개
+`pending` 개념과 다름 - 혼동 주의)일 때만 - 그 외 상태에서는 설정을
+거부한다. CLI/MCP/SKILL.md에도 명시적으로 반영해야 한다(AI가 문서
+우선순위를 조회·설정할 수 있어야 함).
 
 ## 4. 문서 정리 폴더
 

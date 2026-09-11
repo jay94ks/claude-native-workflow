@@ -2618,7 +2618,82 @@ name/teamId 둘 다 없는 요청은 400. CLI `group-update --team
 스크린샷 확인. `npm run audit:cli-mcp` 클린 재확인. `npx tsc
 --noEmit`(backend), `vue-tsc -b`(frontend) 클린.
 
+## 팀/그룹/프로젝트 기본 비공개 가시성 - 완료 (2026-09-12)
+
+설계자의 신규 요청 착수(PLANS.md 색인에 없던 직접 요청 - 진행 중이던
+`#folder-access-ui`(폴더 공유+ACL 재설계)는 보류하고 이걸 먼저 처리).
+지금까지 팀/프로젝트 그룹/프로젝트는 로그인만 하면 멤버십과 무관하게
+전체가 보였다(`listTeams`/`listProjectGroups`/`listProjects` 전부
+필터 없음, `viewerId`는 `isAdmin` 계산에만 사용 - 조사로 확인).
+요구사항: 권한 없는/소속 안 된 팀·그룹·프로젝트는 아예 안 보여야
+하고, "공개" 프로젝트만 예외적으로 보이되 그 프로젝트 그룹에 "읽기
+권한"도 있어야 함. AskUserQuestion 3문항으로 확정: 그룹 "읽기 권한"은
+새 모델 없이 기존 `Member` 멤버십으로 판단(그 그룹 산하 프로젝트 중
+하나라도 멤버면 그 그룹에 읽기 권한 있음), 테스트 환경이라 기존
+데이터 마이그레이션 불필요(새로 만드는 것부터 기본값 "비공개"),
+팀/그룹도 프로젝트처럼 각자 독립된 "공개" 설정 보유.
+
+3드라이버 스키마 전부에 `Team`/`ProjectGroup`/`Project.isPublic
+Boolean @default(false)` 추가. 새 헬퍼
+`hasProjectMembershipInTeam()`(`core/teams.ts`)/
+`hasProjectMembershipInGroup()`(`core/projectGroups.ts`) - 새 모델 없이
+`Member` 테이블 조회 하나로 "읽기 권한" 판단. 가시성 판정 함수 3개
+신설 - `canSeeTeam()`(`core/teams.ts`), `canSeeGroup()`
+(`core/projectGroups.ts`), 그리고 기존 `canSeeHiddenProject()`를
+`canSeeProject()`로 완전히 대체(`core/projects.ts`) - 멤버/팀장/그룹
+관리자는 `hidden` 여부 무관 항상 통과, 그 외엔 `hidden`이면 무조건
+차단(공개보다 우선), 아니면 `isPublic && 그 그룹 멤버십`일 때만 통과.
+이 김에 **기존 비일관성도 보정** - `canSeeHiddenProject`가 그룹
+관리자를 안 넣고 팀장만 넣었던 것을 `isProjectGroupAdmin` 우회도
+추가해 통일(숨김/공개 토글 권한도 owner/팀장/그룹 관리자로 통일 -
+`canManageProjectVisibility()` 신설, `server.ts`).
+
+`listTeams`/`listProjectGroups`/`listProjects` 루프에 각 판정 함수를
+필터로 삽입(구조는 그대로, 조건만 추가). `GET /api/projects/:projectId`
+(단건 조회)도 `canSeeHiddenProject` 대신 `canSeeProject`를 써서 목록
+가시성과 일치시킴(예전엔 목록엔 보여도 클릭하면 403인 비대칭이 있었음
+- 이번에 해소). `core/activity.ts`의 활동 타임라인도 같은 이유로
+`canSeeProject`로 교체(그 프로젝트를 못 보는 사람에게 활동이 새는 걸
+막음). 생성 함수 3개에 `isPublic?: boolean`(기본 false) 매개변수 추가,
+수정 경로엔 `updateTeam`/`updateProjectGroup`에 `isPublic?` 필드,
+`core/projects.ts`에 `setProjectPublic()` 신규(기존 `setProjectHidden`
+과 별개 축으로 독립 토글). CLI `team-create/-update --public`,
+`group-create/-update --public`, `project-create --public`, 신규
+`project-public <id> --public <bool>`. MCP `team_create/_update`,
+`group_create/_update`, `project_create`에 `isPublic` 선택 인자 추가,
+신규 `project_public` 도구. 웹 UI 세 화면
+(`TeamsView`/`ProjectGroupsView`/`ProjectsView.vue`) - 생성 폼에 "공개"
+체크박스, 목록 행에 공개/비공개 배지 + (관리자만) 토글 버튼.
+
+**범위를 명확히 그음**: 이번 라운드는 목록/존재 가시성 + 프로젝트
+개요 열람까지만 다룬다. 문서/코멘트/칸반 등 콘텐츠 라우트는 그대로
+`requireProjectRole("viewer")`(실제 Member)를 요구 - "공개" 프로젝트가
+그 그룹의 다른 멤버에게 자동으로 문서까지 읽게 해주진 않는다(설계자가
+"볼 수도 없어야 한다"로 문제를 정의해 가시성 문제로 해석, 콘텐츠 권한
+모델 확장은 별개 판단이 필요해 이번엔 안 건드림).
+
+**실측 검증**: 신규 계정으로 비공개 팀/그룹/프로젝트를 만들어, 소속
+없는 제3자 계정에게 셋 다 목록에 안 보이는지, owner 계정엔 보이는지
+확인. 팀/그룹을 `isPublic=true`로 바꾸자 제3자에게도 나타나는지 확인.
+프로젝트를 `isPublic=true`로 바꾼 뒤 (a) 같은 그룹의 다른 프로젝트
+멤버 계정 → 보임, (b) 그 그룹에 멤버십이 전혀 없는 계정 → 여전히
+안 보임(공개+그룹 읽기 권한 둘 다 필요 확인) - 둘 다 실측. 그 공개
+프로젝트를 다시 `hidden=true`로 바꾸자 (a) 계정도 더는 못 보는 것
+확인(hidden이 공개보다 우선 적용 확인). `GET /api/projects/:projectId`
+단건 조회가 목록 가시성과 일치(숨긴 뒤 403, 팀장 계정은 여전히 200)
+확인. 그룹 관리자 계정(그 프로젝트의 실제 멤버가 아님)이 그룹 산하
+프로젝트를 보는지(새로 추가한 관리자 우회) 확인. CLI `--public` 옵션
+전 명령 왕복, MCP `team_create/group_create/project_create/
+project_public` 실제 MCP 클라이언트로 왕복 확인. 브라우저로 세 화면
+전부 생성 폼 체크박스·배지·토글 버튼 동작을 스크린샷으로 확인(토글
+클릭 시 `PUT .../teams/:id → 200`처럼 실제 네트워크 요청도 확인).
+`npm run audit:cli-mcp` 클린 재확인. `npx tsc --noEmit`(backend),
+`vue-tsc -b`(frontend) 클린.
+
 ## 다음 단계
 
-PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
-고른다.
+설계자가 이어서 요청한 "문서 우선순위"(review/pending 상태에서만
+유효한 정수 우선순위, CLI/MCP/SKILL 반영)를 다음 라운드로 진행한다.
+그 다음엔 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 우선순위를
+고른다 - 보류 중인 `#folder-access-ui`(폴더 공유+ACL)도 그 표에
+남아있다.

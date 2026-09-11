@@ -142,6 +142,7 @@ model Team {
   id        String   @id @default(cuid())
   name      String
   enabled   Boolean  @default(true)
+  isPublic  Boolean  @default(false)
   createdAt DateTime @default(now())
 
   projectGroups ProjectGroup[]
@@ -172,6 +173,7 @@ model ProjectGroup {
   id        String   @id @default(cuid())
   teamId    String?
   name      String
+  isPublic  Boolean  @default(false)
   createdAt DateTime @default(now())
 
   team          Team?               @relation(fields: [teamId], references: [id])
@@ -205,6 +207,7 @@ model Project {
   name           String
   hidden         Boolean  @default(false)
   hiddenBy       String?
+  isPublic       Boolean  @default(false)
   createdAt      DateTime @default(now())
 
   projectGroup    ProjectGroup     @relation(fields: [projectGroupId], references: [id])

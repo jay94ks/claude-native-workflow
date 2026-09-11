@@ -269,7 +269,12 @@ credCmd
 
 program
   .command("team-create <name>")
-  .action((name) => run(async () => printJson(await apiCall("/api/teams", { method: "POST", body: JSON.stringify({ name }) }))));
+  .option("--public", "공개 설정(기본 비공개) - 소속되지 않은 설계자에게도 목록에 노출됨")
+  .action((name, opts) =>
+    run(async () =>
+      printJson(await apiCall("/api/teams", { method: "POST", body: JSON.stringify({ name, isPublic: opts.public }) })),
+    ),
+  );
 
 program.command("teams").action(() => run(async () => printJson(await apiCall("/api/teams"))));
 
@@ -277,12 +282,17 @@ program
   .command("team-update <teamId>")
   .option("--name <n>")
   .option("--enabled <bool>", "true|false")
+  .option("--public <bool>", "true|false")
   .action((teamId, opts) =>
     run(async () =>
       printJson(
         await apiCall(`/api/teams/${teamId}`, {
           method: "PUT",
-          body: JSON.stringify({ name: opts.name, enabled: opts.enabled === undefined ? undefined : opts.enabled === "true" }),
+          body: JSON.stringify({
+            name: opts.name,
+            enabled: opts.enabled === undefined ? undefined : opts.enabled === "true",
+            isPublic: opts.public === undefined ? undefined : opts.public === "true",
+          }),
         }),
       ),
     ),
@@ -317,12 +327,13 @@ program
 program
   .command("group-create <name>")
   .option("--team <id>")
+  .option("--public", "공개 설정(기본 비공개) - 소속되지 않은 설계자에게도 목록에 노출됨")
   .action((name, opts) =>
     run(async () =>
       printJson(
         await apiCall("/api/project-groups", {
           method: "POST",
-          body: JSON.stringify({ name, teamId: opts.team }),
+          body: JSON.stringify({ name, teamId: opts.team, isPublic: opts.public }),
         }),
       ),
     ),
@@ -334,15 +345,20 @@ program
   .command("group-update <groupId>")
   .option("--name <n>")
   .option("--team <id>", "다른 팀으로 재소속(목적지 팀의 팀장만 가능). 팀에서 떼어내려면 --team \"\"")
+  .option("--public <bool>", "true|false")
   .action((groupId, opts) =>
     run(async () => {
-      if (opts.name === undefined && opts.team === undefined) {
-        throw new Error("--name 또는 --team 중 하나는 있어야 합니다");
+      if (opts.name === undefined && opts.team === undefined && opts.public === undefined) {
+        throw new Error("--name, --team, --public 중 하나는 있어야 합니다");
       }
       printJson(
         await apiCall(`/api/project-groups/${groupId}`, {
           method: "PUT",
-          body: JSON.stringify({ name: opts.name, teamId: opts.team }),
+          body: JSON.stringify({
+            name: opts.name,
+            teamId: opts.team,
+            isPublic: opts.public === undefined ? undefined : opts.public === "true",
+          }),
         }),
       );
     }),
@@ -379,10 +395,14 @@ program
 program
   .command("project-create <name>")
   .option("--group <id>")
+  .option("--public", "공개 설정(기본 비공개) - isPublic이어도 그 그룹에 실제 멤버십이 있는 설계자에게만 보임")
   .action((name, opts) =>
     run(async () =>
       printJson(
-        await apiCall("/api/projects", { method: "POST", body: JSON.stringify({ name, projectGroupId: opts.group }) }),
+        await apiCall("/api/projects", {
+          method: "POST",
+          body: JSON.stringify({ name, projectGroupId: opts.group, isPublic: opts.public }),
+        }),
       ),
     ),
   );
@@ -402,6 +422,20 @@ program
         await apiCall(`/api/projects/${projectId}/hidden`, {
           method: "PUT",
           body: JSON.stringify({ hidden: opts.hidden === "true" }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("project-public <projectId>")
+  .requiredOption("--public <bool>", "true|false")
+  .action((projectId, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/public`, {
+          method: "PUT",
+          body: JSON.stringify({ isPublic: opts.public === "true" }),
         }),
       ),
     ),

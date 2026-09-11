@@ -4,9 +4,9 @@ import { isSuperAdmin } from "./auth.js";
 
 // core/teamAdmins.ts와 동일한 패턴 - 다만 팀은 그룹의 상위 개념이라
 // 권한도 위에서 아래로 흐른다: 팀 관리자는 자기 팀 산하 모든 그룹에
-// 대해서도 자동으로 그룹 관리자 권한을 갖는다(canSeeHiddenProject가
-// "팀장은 자기 팀 산하 숨김 프로젝트도 본다"로 이미 쓰는 것과 같은
-// 상속 원칙 - isProjectGroupAdmin()이 이 상속을 구현).
+// 대해서도 자동으로 그룹 관리자 권한을 갖는다(canSeeProject가
+// "팀장은 자기 팀 산하 숨김/비공개 프로젝트도 본다"로 이미 쓰는 것과
+// 같은 상속 원칙 - isProjectGroupAdmin()이 이 상속을 구현).
 
 export interface ProjectGroupAdmin {
   id: string;

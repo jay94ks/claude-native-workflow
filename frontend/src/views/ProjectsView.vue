@@ -7,6 +7,7 @@ interface Project {
   projectGroupId: string;
   name: string;
   hidden: boolean;
+  isPublic: boolean;
   canToggleHidden: boolean;
 }
 interface ProjectGroup {
@@ -18,6 +19,7 @@ const projects = ref<Project[]>([]);
 const groups = ref<ProjectGroup[]>([]);
 const newName = ref("");
 const newGroupId = ref("");
+const newIsPublic = ref(false);
 const error = ref("");
 const loading = ref(true);
 const hideError = ref("");
@@ -48,10 +50,11 @@ async function create() {
   try {
     await apiCall("/projects", {
       method: "POST",
-      body: JSON.stringify({ name: newName.value.trim(), projectGroupId: newGroupId.value || undefined }),
+      body: JSON.stringify({ name: newName.value.trim(), projectGroupId: newGroupId.value || undefined, isPublic: newIsPublic.value }),
     });
     newName.value = "";
     newGroupId.value = "";
+    newIsPublic.value = false;
     await load();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "생성에 실패했습니다";
@@ -67,7 +70,20 @@ async function toggleHidden(project: Project) {
     });
     await load();
   } catch (err) {
-    hideError.value = err instanceof ApiError ? err.message : "숨김 상태를 바꾸지 못했습니다(owner 또는 팀장만 가능)";
+    hideError.value = err instanceof ApiError ? err.message : "숨김 상태를 바꾸지 못했습니다(owner, 팀장, 그룹 관리자만 가능)";
+  }
+}
+
+async function togglePublic(project: Project) {
+  hideError.value = "";
+  try {
+    await apiCall(`/projects/${project.id}/public`, {
+      method: "PUT",
+      body: JSON.stringify({ isPublic: !project.isPublic }),
+    });
+    await load();
+  } catch (err) {
+    hideError.value = err instanceof ApiError ? err.message : "공개 상태를 바꾸지 못했습니다(owner, 팀장, 그룹 관리자만 가능)";
   }
 }
 
@@ -82,6 +98,7 @@ onMounted(load);
       <option value="">기본 그룹</option>
       <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
     </select>
+    <label class="public-check"><input v-model="newIsPublic" type="checkbox" /> 공개</label>
     <button type="submit">추가</button>
   </form>
   <p v-if="error" class="error">{{ error }}</p>
@@ -92,9 +109,13 @@ onMounted(load);
       <span class="left">
         <router-link :to="`/projects/${project.id}`">{{ project.name }}</router-link>
         <span v-if="project.hidden" class="hidden-badge">🔒 숨김</span>
+        <span class="public-badge" :class="{ on: project.isPublic }">{{ project.isPublic ? "공개" : "비공개" }}</span>
         <span class="muted">{{ groupName(project.projectGroupId) }}</span>
       </span>
-      <button v-if="project.canToggleHidden" class="hide-btn" @click="toggleHidden(project)">{{ project.hidden ? "숨김 해제" : "숨김" }}</button>
+      <span v-if="project.canToggleHidden" class="actions">
+        <button class="hide-btn" @click="toggleHidden(project)">{{ project.hidden ? "숨김 해제" : "숨김" }}</button>
+        <button class="hide-btn" @click="togglePublic(project)">{{ project.isPublic ? "비공개로 전환" : "공개로 전환" }}</button>
+      </span>
     </li>
     <li v-if="projects.length === 0" class="muted">아직 프로젝트가 없습니다.</li>
   </ul>
@@ -129,6 +150,31 @@ h1 {
   border-radius: 6px;
   font-weight: 600;
 }
+.public-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #555;
+  white-space: nowrap;
+}
+.public-check input {
+  flex: none;
+  width: auto;
+  padding: 0;
+  border: none;
+}
+.public-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f0f1f5;
+  color: #888;
+}
+.public-badge.on {
+  background: #e3f6ec;
+  color: #1f9254;
+}
 .list {
   list-style: none;
   padding: 0;
@@ -150,6 +196,10 @@ h1 {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.actions {
+  display: flex;
+  gap: 6px;
 }
 .hidden-badge {
   font-size: 11px;

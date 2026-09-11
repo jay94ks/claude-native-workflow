@@ -3,6 +3,8 @@ import { seedDefaultDocTypes } from "./docTypes.js";
 import { seedDefaultKanbanColumns } from "./kanban.js";
 import { getMemberRole, isProjectAllowedByActiveScope } from "./members.js";
 import { isTeamAdmin } from "./teamAdmins.js";
+import { isProjectGroupAdmin } from "./projectGroupAdmins.js";
+import { hasProjectMembershipInGroup } from "./projectGroups.js";
 
 const DEFAULT_GROUP_NAME = "기본";
 
@@ -27,15 +29,17 @@ export interface Project {
   name: string;
   hidden: boolean;
   hiddenBy: string | null;
+  isPublic: boolean;
 }
 
 export interface ProjectWithMyPerms extends Project {
-  /** owner 또는 소속 팀 팀장만 true(숨김 토글 라우트가 요구하는 것과
-   * 정확히 같은 조건) - 프런트가 숨김/숨김해제 버튼을 v-if할 때 쓴다. */
+  /** owner 또는 소속 팀 팀장·그룹 관리자만 true(숨김/공개 토글
+   * 라우트가 요구하는 것과 정확히 같은 조건) - 프런트가 토글 버튼을
+   * v-if할 때 쓴다. */
   canToggleHidden: boolean;
 }
 
-export async function createProject(name: string, projectGroupId?: string): Promise<Project> {
+export async function createProject(name: string, projectGroupId?: string, isPublic = false): Promise<Project> {
   const db = getDb();
   // createProjectGroup()과 같은 이유로 빈 문자열을 "안 넘김"으로
   // 정규화한다 - 안 그러면 검증을 다 건너뛰고 Prisma FK 에러가 그대로
@@ -46,17 +50,31 @@ export async function createProject(name: string, projectGroupId?: string): Prom
     const group = await db.projectGroup.findUnique({ where: { id: projectGroupId } });
     if (!group) throw new Error(`projectGroup을 찾을 수 없습니다: ${projectGroupId}`);
   }
-  const row = await db.project.create({ data: { name, projectGroupId: groupId } });
+  const row = await db.project.create({ data: { name, projectGroupId: groupId, isPublic } });
   await seedDefaultDocTypes(row.id);
   await seedDefaultKanbanColumns(row.id);
-  return { id: row.id, projectGroupId: row.projectGroupId, name: row.name, hidden: row.hidden, hiddenBy: row.hiddenBy };
+  return {
+    id: row.id,
+    projectGroupId: row.projectGroupId,
+    name: row.name,
+    hidden: row.hidden,
+    hiddenBy: row.hiddenBy,
+    isPublic: row.isPublic,
+  };
 }
 
 export async function getProject(id: string): Promise<Project | null> {
   const db = getDb();
   const row = await db.project.findUnique({ where: { id } });
   if (!row) return null;
-  return { id: row.id, projectGroupId: row.projectGroupId, name: row.name, hidden: row.hidden, hiddenBy: row.hiddenBy };
+  return {
+    id: row.id,
+    projectGroupId: row.projectGroupId,
+    name: row.name,
+    hidden: row.hidden,
+    hiddenBy: row.hiddenBy,
+    isPublic: row.isPublic,
+  };
 }
 
 /** Project→ProjectGroup을 거쳐 그 그룹이 속한 팀 id를 구한다(팀 없으면
@@ -69,13 +87,23 @@ export async function getOwningTeamId(projectId: string): Promise<string | null>
   return group?.teamId ?? null;
 }
 
-/** 숨김 처리된 프로젝트를 이 사용자가 볼 수 있는가 - 그 프로젝트의
- * Member거나, 그 프로젝트가 속한 팀의 팀장이면 true. */
-export async function canSeeHiddenProject(projectId: string, userId: string): Promise<boolean> {
-  const role = await getMemberRole(projectId, userId);
+/** 이 프로젝트를 목록/조회에서 볼 수 있는가 - Member(admin 포함,
+ * getMemberRole이 이미 최고 관리자를 owner로 처리)거나, 소속 팀의
+ * 팀장이거나, 소속 그룹의 관리자면 hidden 여부와 무관하게 항상 true
+ * (관리자/멤버는 항상 봄). 그 외엔 hidden이면 무조건 false(공개
+ * 여부와 무관하게 차단 - hidden이 isPublic보다 우선), hidden이
+ * 아니면 isPublic && 그 그룹에 실제 멤버십이 있을 때만 true(설계자
+ * 확정 - "공개"만으로는 부족하고 그 그룹에 대한 읽기 권한도 있어야
+ * 함). 예전 canSeeHiddenProject()를 대체 - 그룹 관리자 우회가
+ * 빠져있던 비일관성도 이번에 같이 보정. */
+export async function canSeeProject(project: Project, userId: string): Promise<boolean> {
+  const role = await getMemberRole(project.id, userId);
   if (role) return true;
-  const teamId = await getOwningTeamId(projectId);
-  return isTeamAdmin(teamId, userId);
+  const teamId = await getOwningTeamId(project.id);
+  if (await isTeamAdmin(teamId, userId)) return true;
+  if (await isProjectGroupAdmin(project.projectGroupId, userId)) return true;
+  if (project.hidden) return false;
+  return project.isPublic && (await hasProjectMembershipInGroup(project.projectGroupId, userId));
 }
 
 /** hidden=true면 hiddenBy=actingUserId 기록, false면 hiddenBy를 비운다
@@ -86,7 +114,27 @@ export async function setProjectHidden(projectId: string, hidden: boolean, actin
     where: { id: projectId },
     data: { hidden, hiddenBy: hidden ? actingUserId : null },
   });
-  return { id: row.id, projectGroupId: row.projectGroupId, name: row.name, hidden: row.hidden, hiddenBy: row.hiddenBy };
+  return {
+    id: row.id,
+    projectGroupId: row.projectGroupId,
+    name: row.name,
+    hidden: row.hidden,
+    hiddenBy: row.hiddenBy,
+    isPublic: row.isPublic,
+  };
+}
+
+export async function setProjectPublic(projectId: string, isPublic: boolean): Promise<Project> {
+  const db = getDb();
+  const row = await db.project.update({ where: { id: projectId }, data: { isPublic } });
+  return {
+    id: row.id,
+    projectGroupId: row.projectGroupId,
+    name: row.name,
+    hidden: row.hidden,
+    hiddenBy: row.hiddenBy,
+    isPublic: row.isPublic,
+  };
 }
 
 /** 프로젝트를 완전히 삭제한다 - 문서/코멘트/칸반/Q&A 등 DB 데이터는
@@ -106,8 +154,9 @@ export async function deleteProject(projectId: string): Promise<void> {
   await db.project.delete({ where: { id: projectId } });
 }
 
-/** 숨김 프로젝트는 canSeeHiddenProject를 만족하는 viewer에게만 보인다 -
- * 숨김 아닌 프로젝트는 지금처럼(멤버십 무관) 전체 공개 목록. */
+/** 권한이 없거나 소속되지 않은 프로젝트는 canSeeProject()로 걸러
+ * 목록 자체에서 뺀다(설계자 확정 - 기본 비공개, isPublic + 그룹
+ * 읽기 권한이 있어야 예외적으로 보임). */
 export async function listProjects(projectGroupId: string | undefined, viewerId: string): Promise<ProjectWithMyPerms[]> {
   const db = getDb();
   const rows = await db.project.findMany({
@@ -115,13 +164,22 @@ export async function listProjects(projectGroupId: string | undefined, viewerId:
     orderBy: { createdAt: "desc" },
   });
   const visible: ProjectWithMyPerms[] = [];
-  for (const r of rows as { id: string; projectGroupId: string; name: string; hidden: boolean; hiddenBy: string | null }[]) {
+  for (const r of rows as Project[]) {
     if (!(await isProjectAllowedByActiveScope(r.id))) continue; // 스코프 밖 프로젝트는 존재 자체를 목록에서 숨김
-    if (r.hidden && !(await canSeeHiddenProject(r.id, viewerId))) continue;
+    if (!(await canSeeProject(r, viewerId))) continue;
     const role = await getMemberRole(r.id, viewerId);
     const teamId = await getOwningTeamId(r.id);
-    const canToggleHidden = role === "owner" || (await isTeamAdmin(teamId, viewerId));
-    visible.push({ id: r.id, projectGroupId: r.projectGroupId, name: r.name, hidden: r.hidden, hiddenBy: r.hiddenBy, canToggleHidden });
+    const canToggleHidden =
+      role === "owner" || (await isTeamAdmin(teamId, viewerId)) || (await isProjectGroupAdmin(r.projectGroupId, viewerId));
+    visible.push({
+      id: r.id,
+      projectGroupId: r.projectGroupId,
+      name: r.name,
+      hidden: r.hidden,
+      hiddenBy: r.hiddenBy,
+      isPublic: r.isPublic,
+      canToggleHidden,
+    });
   }
   return visible;
 }

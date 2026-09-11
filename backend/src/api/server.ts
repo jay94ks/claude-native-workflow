@@ -50,8 +50,9 @@ import {
   createProject,
   getProject,
   listProjects,
-  canSeeHiddenProject,
+  canSeeProject,
   setProjectHidden,
+  setProjectPublic,
   deleteProject,
   getOwningTeamId,
   listAccessibleProjectIdsInScope,
@@ -413,9 +414,9 @@ app.post(
   authenticate,
   requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
-    const { name } = req.body as { name?: string };
+    const { name, isPublic } = req.body as { name?: string; isPublic?: boolean };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
-    res.json(await createTeam(name, req.userId!));
+    res.json(await createTeam(name, req.userId!, isPublic));
   }),
 );
 
@@ -439,8 +440,8 @@ app.put(
       res.status(403).json({ error: "이 팀의 관리자만 수정할 수 있습니다" });
       return;
     }
-    const { name, enabled } = req.body as { name?: string; enabled?: boolean };
-    res.json(await updateTeam(req.params.teamId, { name, enabled }));
+    const { name, enabled, isPublic } = req.body as { name?: string; enabled?: boolean; isPublic?: boolean };
+    res.json(await updateTeam(req.params.teamId, { name, enabled, isPublic }));
   }),
 );
 
@@ -662,9 +663,9 @@ app.post(
   authenticate,
   requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
-    const { name, teamId } = req.body as { name?: string; teamId?: string };
+    const { name, teamId, isPublic } = req.body as { name?: string; teamId?: string; isPublic?: boolean };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
-    res.json(await createProjectGroup(name, teamId, req.userId!));
+    res.json(await createProjectGroup(name, teamId, req.userId!, isPublic));
   }),
 );
 
@@ -688,9 +689,9 @@ app.put(
       res.status(403).json({ error: "이 그룹의 관리자만 수정할 수 있습니다" });
       return;
     }
-    const { name, teamId: rawTeamId } = req.body as { name?: string; teamId?: string | null };
-    if (name === undefined && rawTeamId === undefined) {
-      res.status(400).json({ error: "name 또는 teamId 중 하나는 있어야 합니다" });
+    const { name, teamId: rawTeamId, isPublic } = req.body as { name?: string; teamId?: string | null; isPublic?: boolean };
+    if (name === undefined && rawTeamId === undefined && isPublic === undefined) {
+      res.status(400).json({ error: "name, teamId, isPublic 중 하나는 있어야 합니다" });
       return;
     }
     // 빈 문자열도 "팀 없음"으로 정규화(그룹 생성 라우트와 같은 관례).
@@ -702,7 +703,7 @@ app.put(
         return;
       }
     }
-    res.json(await updateProjectGroup(req.params.groupId, { name, teamId }));
+    res.json(await updateProjectGroup(req.params.groupId, { name, teamId, isPublic }));
   }),
 );
 
@@ -796,9 +797,9 @@ app.post(
   authenticate,
   requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
-    const { name, projectGroupId } = req.body as { name?: string; projectGroupId?: string };
+    const { name, projectGroupId, isPublic } = req.body as { name?: string; projectGroupId?: string; isPublic?: boolean };
     if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
-    const project = await createProject(name, projectGroupId);
+    const project = await createProject(name, projectGroupId, isPublic);
     await addMember(project.id, req.userId!, "owner");
     res.json(project);
   }),
@@ -812,23 +813,23 @@ app.get(
   }),
 );
 
-// 멤버가 아니어도 팀장이면 숨겨진 프로젝트를 열어볼 수 있어야 한다(6번 -
-// 숨김 해제 판단용) - requireProjectRole 단독이 아니라, 그 체크가
-// 실패해도 canSeeHiddenProject로 한 번 더 확인하는 인라인 체크로 교체.
-// 팀장이 자동으로 프로젝트 내용까지 볼 권한을 얻는 건 아니다 - 이
-// 라우트(존재 확인)만 이렇게 넓고, 문서/멤버 등 다른 라우트는 그대로
-// requireProjectRole 유지.
+// 멤버가 아니어도 팀장/그룹 관리자거나 공개+그룹 읽기 권한이 있으면
+// 존재를 열어볼 수 있어야 한다 - requireProjectRole 단독이 아니라,
+// 그 체크가 실패해도 canSeeProject로 한 번 더 확인하는 인라인 체크로
+// 교체. 이렇게 봐도 자동으로 프로젝트 내용까지 볼 권한을 얻는 건
+// 아니다 - 이 라우트(존재 확인)만 이렇게 넓고, 문서/멤버 등 다른
+// 라우트는 그대로 requireProjectRole 유지.
 app.get(
   "/api/projects/:projectId",
   authenticate,
   asyncRoute(async (req, res) => {
+    const project = await getProject(req.params.projectId);
+    if (!project) { res.status(404).json({ error: "not found" }); return; }
     const role = await getMemberRole(req.params.projectId, req.userId!);
-    if (!role && !(await canSeeHiddenProject(req.params.projectId, req.userId!))) {
+    if (!role && !(await canSeeProject(project, req.userId!))) {
       res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" });
       return;
     }
-    const project = await getProject(req.params.projectId);
-    if (!project) { res.status(404).json({ error: "not found" }); return; }
     const notice = role ? await pendingQuestionNotice(req.params.projectId) : null;
     res.json(withNotices({ ...project, myRole: role }, notice));
   }),
@@ -848,22 +849,46 @@ app.delete(
   }),
 );
 
-// 프로젝트 owner 또는 그 프로젝트가 속한 팀의 팀장만 숨김을 켜고 끌 수
-// 있다(canSeeHiddenProject보다 엄격 - 일반 멤버는 안 됨).
+// 프로젝트 owner, 소속 팀의 팀장, 소속 그룹의 관리자만 숨김/공개
+// 상태를 바꿀 수 있다(canSeeProject의 admin 우회 집합과 통일 - 예전엔
+// 그룹 관리자가 빠져있던 비일관성이 있었음).
+async function canManageProjectVisibility(projectId: string, userId: string, projectGroupId: string): Promise<boolean> {
+  const role = await getMemberRole(projectId, userId);
+  if (role === "owner") return true;
+  const teamId = await getOwningTeamId(projectId);
+  if (await isTeamAdmin(teamId, userId)) return true;
+  return isProjectGroupAdmin(projectGroupId, userId);
+}
+
 app.put(
   "/api/projects/:projectId/hidden",
   authenticate,
   asyncRoute(async (req, res) => {
-    const role = await getMemberRole(req.params.projectId, req.userId!);
-    const teamId = await getOwningTeamId(req.params.projectId);
-    const isAdmin = await isTeamAdmin(teamId, req.userId!);
-    if (role !== "owner" && !isAdmin) {
-      res.status(403).json({ error: "프로젝트 owner 또는 팀장만 숨김 상태를 바꿀 수 있습니다" });
+    const project = await getProject(req.params.projectId);
+    if (!project) { res.status(404).json({ error: "not found" }); return; }
+    if (!(await canManageProjectVisibility(req.params.projectId, req.userId!, project.projectGroupId))) {
+      res.status(403).json({ error: "프로젝트 owner, 팀장, 그룹 관리자만 숨김 상태를 바꿀 수 있습니다" });
       return;
     }
     const { hidden } = req.body as { hidden?: boolean };
     if (hidden === undefined) { res.status(400).json({ error: "hidden이 필요합니다" }); return; }
     res.json(await setProjectHidden(req.params.projectId, hidden, req.userId!));
+  }),
+);
+
+app.put(
+  "/api/projects/:projectId/public",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const project = await getProject(req.params.projectId);
+    if (!project) { res.status(404).json({ error: "not found" }); return; }
+    if (!(await canManageProjectVisibility(req.params.projectId, req.userId!, project.projectGroupId))) {
+      res.status(403).json({ error: "프로젝트 owner, 팀장, 그룹 관리자만 공개 상태를 바꿀 수 있습니다" });
+      return;
+    }
+    const { isPublic } = req.body as { isPublic?: boolean };
+    if (isPublic === undefined) { res.status(400).json({ error: "isPublic이 필요합니다" }); return; }
+    res.json(await setProjectPublic(req.params.projectId, isPublic));
   }),
 );
 

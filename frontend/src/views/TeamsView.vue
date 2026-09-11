@@ -9,6 +9,7 @@ interface Team {
   id: string;
   name: string;
   enabled: boolean;
+  isPublic: boolean;
   isAdmin: boolean;
 }
 interface TeamMemberRow {
@@ -22,6 +23,7 @@ interface TeamMemberRow {
 
 const teams = ref<Team[]>([]);
 const newName = ref("");
+const newIsPublic = ref(false);
 const error = ref("");
 const loading = ref(true);
 const expandedAdminsId = ref<string | null>(null);
@@ -50,11 +52,24 @@ async function create() {
   if (!newName.value.trim()) return;
   error.value = "";
   try {
-    await apiCall("/teams", { method: "POST", body: JSON.stringify({ name: newName.value.trim() }) });
+    await apiCall("/teams", {
+      method: "POST",
+      body: JSON.stringify({ name: newName.value.trim(), isPublic: newIsPublic.value }),
+    });
     newName.value = "";
+    newIsPublic.value = false;
     await load();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "생성에 실패했습니다";
+  }
+}
+
+async function togglePublic(team: Team) {
+  try {
+    await apiCall(`/teams/${team.id}`, { method: "PUT", body: JSON.stringify({ isPublic: !team.isPublic }) });
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "수정에 실패했습니다";
   }
 }
 
@@ -126,6 +141,7 @@ onMounted(load);
   <h1>팀</h1>
   <form class="create-row" @submit.prevent="create">
     <input v-model="newName" type="text" placeholder="새 팀 이름" />
+    <label class="public-check"><input v-model="newIsPublic" type="checkbox" /> 공개</label>
     <button type="submit">추가</button>
   </form>
   <p v-if="error" class="error">{{ error }}</p>
@@ -141,9 +157,11 @@ onMounted(load);
         <template v-else>
           <span>{{ team.name }}</span>
           <span class="muted">{{ team.enabled ? "" : "(비활성)" }}</span>
+          <span class="public-badge" :class="{ on: team.isPublic }">{{ team.isPublic ? "공개" : "비공개" }}</span>
           <template v-if="team.isAdmin">
             <button class="manage-btn" @click="startEdit(team)">이름 수정</button>
             <button class="manage-btn" @click="toggleEnabled(team)">{{ team.enabled ? "비활성화" : "활성화" }}</button>
+            <button class="manage-btn" @click="togglePublic(team)">{{ team.isPublic ? "비공개로 전환" : "공개로 전환" }}</button>
           </template>
         </template>
         <template v-if="team.isAdmin">
@@ -208,6 +226,31 @@ h1 {
   padding: 8px 16px;
   border-radius: 6px;
   font-weight: 600;
+}
+.public-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #555;
+  white-space: nowrap;
+}
+.public-check input {
+  flex: none;
+  width: auto;
+  padding: 0;
+  border: none;
+}
+.public-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f0f1f5;
+  color: #888;
+}
+.public-badge.on {
+  background: #e3f6ec;
+  color: #1f9254;
 }
 .list {
   list-style: none;

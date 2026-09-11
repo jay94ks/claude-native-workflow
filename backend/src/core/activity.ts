@@ -1,5 +1,5 @@
 import { getDb } from "./db.js";
-import { canSeeHiddenProject } from "./projects.js";
+import { canSeeProject } from "./projects.js";
 
 export interface ActivityItem {
   type: "document_create" | "document_edit" | "question_ask" | "answer" | "comment" | "message";
@@ -12,8 +12,9 @@ export interface ActivityItem {
 /** 이미 있는 작성자 FK들(Document.createdBy/DocumentRevision.editedBy/
  * Question.askedBy/Answer.answeredBy/Comment.authorId/Message.authorId)을
  * 재사용해 하나의 타임라인으로 합친다 - 별도 감사 로그 테이블 신설 안 함
- * (이 프로젝트의 정규화 원칙과 일치). 숨겨진 프로젝트의 활동은
- * viewerId가 그 프로젝트의 Member이거나 소속 팀의 팀장일 때만 포함. */
+ * (이 프로젝트의 정규화 원칙과 일치). 각 프로젝트의 활동은
+ * canSeeProject()가 통과하는 프로젝트만 포함(멤버/팀장/그룹 관리자,
+ * 또는 공개+그룹 읽기 권한). */
 export async function listUserActivity(viewerId: string, targetUserId: string, limit = 30): Promise<ActivityItem[]> {
   const db = getDb();
 
@@ -106,7 +107,7 @@ export async function listUserActivity(viewerId: string, targetUserId: string, l
     let visible = visibleByProject.get(item.projectId);
     if (visible === undefined) {
       const project = await db.project.findUnique({ where: { id: item.projectId } });
-      visible = !project?.hidden || (await canSeeHiddenProject(item.projectId, viewerId));
+      visible = project ? await canSeeProject(project, viewerId) : false;
       visibleByProject.set(item.projectId, visible);
     }
     if (visible) filtered.push(item);

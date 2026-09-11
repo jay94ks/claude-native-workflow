@@ -7,6 +7,7 @@ export interface ProjectGroup {
   id: string;
   teamId: string | null;
   name: string;
+  isPublic: boolean;
 }
 
 export interface ProjectGroupWithMyAdmin extends ProjectGroup {
@@ -17,7 +18,12 @@ export interface ProjectGroupWithMyAdmin extends ProjectGroup {
  * (createTeam()이 팀 생성자를 TeamAdmin으로 넣는 것과 같은 원칙 -
  * 팀에 속한 그룹이어도 별도로 등록한다, 그 팀의 팀장이 아닐 수도
  * 있으므로). */
-export async function createProjectGroup(name: string, teamId: string | undefined, actingUserId: string): Promise<ProjectGroup> {
+export async function createProjectGroup(
+  name: string,
+  teamId: string | undefined,
+  actingUserId: string,
+  isPublic = false,
+): Promise<ProjectGroup> {
   const db = getDb();
   // 빈 문자열은 "안 넘김"과 같은 뜻으로 취급한다 - 그렇지 않으면 아래
   // truthy 체크(`if (teamId)`)를 다 통과해버려서 검증 없이
@@ -34,9 +40,27 @@ export async function createProjectGroup(name: string, teamId: string | undefine
     const team = await db.team.findUnique({ where: { id: teamId } });
     if (!team) throw new Error(`팀을 찾을 수 없습니다: ${teamId}`);
   }
-  const row = await db.projectGroup.create({ data: { name, teamId: teamId ?? null } });
+  const row = await db.projectGroup.create({ data: { name, teamId: teamId ?? null, isPublic } });
   await addProjectGroupAdmin(row.id, actingUserId);
-  return { id: row.id, teamId: row.teamId, name: row.name };
+  return { id: row.id, teamId: row.teamId, name: row.name, isPublic: row.isPublic };
+}
+
+/** 이 그룹 산하 프로젝트 중 하나라도 실제 Member로 소속돼 있는가 - 새
+ * 모델 없이 기존 Member 테이블만으로 "이 그룹에 대한 읽기 권한"을
+ * 판단한다(설계자 확정). */
+export async function hasProjectMembershipInGroup(projectGroupId: string, userId: string): Promise<boolean> {
+  const db = getDb();
+  const row = await db.member.findFirst({ where: { userId, project: { projectGroupId } } });
+  return row !== null;
+}
+
+/** 이 그룹을 목록/조회에서 볼 수 있는가 - 공개 설정, 그룹 관리자
+ * (isProjectGroupAdmin이 이미 소속 팀장 상속 + 최고 관리자 우회를
+ * 포함), 산하 프로젝트 멤버십 중 하나라도 만족하면 true. */
+export async function canSeeGroup(group: { id: string; isPublic: boolean }, userId: string): Promise<boolean> {
+  if (group.isPublic) return true;
+  if (await isProjectGroupAdmin(group.id, userId)) return true;
+  return hasProjectMembershipInGroup(group.id, userId);
 }
 
 /** 그룹 자체를 대상으로 하는 라우트(그룹 CRUD, 그룹 관리자 등록/해제,
@@ -53,7 +77,8 @@ export async function isGroupAllowedByActiveScope(groupId: string): Promise<bool
 
 /** 각 그룹에 대한 호출자의 그룹 관리자 여부(isAdmin)를 함께 계산해서
  * 얹는다(listTeams()와 같은 원칙 - isProjectGroupAdmin()이 이미
- * admin-aware라 최고 관리자는 자동으로 전부 true). */
+ * admin-aware라 최고 관리자는 자동으로 전부 true). 권한이 없거나
+ * 소속되지 않은 그룹은 canSeeGroup()으로 걸러 목록 자체에서 뺀다. */
 export async function listProjectGroups(teamId: string | undefined, viewerId: string): Promise<ProjectGroupWithMyAdmin[]> {
   const db = getDb();
   const rows = await db.projectGroup.findMany({
@@ -61,8 +86,9 @@ export async function listProjectGroups(teamId: string | undefined, viewerId: st
     orderBy: { createdAt: "desc" },
   });
   const out: ProjectGroupWithMyAdmin[] = [];
-  for (const r of rows as { id: string; teamId: string | null; name: string }[]) {
-    out.push({ id: r.id, teamId: r.teamId, name: r.name, isAdmin: await isProjectGroupAdmin(r.id, viewerId) });
+  for (const r of rows as { id: string; teamId: string | null; name: string; isPublic: boolean }[]) {
+    if (!(await canSeeGroup(r, viewerId))) continue;
+    out.push({ id: r.id, teamId: r.teamId, name: r.name, isPublic: r.isPublic, isAdmin: await isProjectGroupAdmin(r.id, viewerId) });
   }
   return out;
 }
@@ -70,17 +96,17 @@ export async function listProjectGroups(teamId: string | undefined, viewerId: st
 export async function getProjectGroupById(groupId: string): Promise<ProjectGroup | null> {
   const db = getDb();
   const row = await db.projectGroup.findUnique({ where: { id: groupId } });
-  return row ? { id: row.id, teamId: row.teamId, name: row.name } : null;
+  return row ? { id: row.id, teamId: row.teamId, name: row.name, isPublic: row.isPublic } : null;
 }
 
-/** name/teamId 둘 다 선택 - 준 필드만 갱신한다. teamId 재소속 시
+/** name/teamId/isPublic 전부 선택 - 준 필드만 갱신한다. teamId 재소속 시
  * 팀 존재/teamsEnabled 검증은 createProjectGroup()과 동일(중복 로직
  * 최소화보다 두 함수가 서로 다른 시점에 독립적으로 실패해야 한다는
  * 점이 더 중요해 그대로 반복). 목적지 팀 관리자 동의 여부 같은 권한
  * 판단은 이 함수가 아니라 라우트가 한다(이 저장소의 기존 관례). */
 export async function updateProjectGroup(
   groupId: string,
-  input: { name?: string; teamId?: string | null },
+  input: { name?: string; teamId?: string | null; isPublic?: boolean },
 ): Promise<ProjectGroup> {
   const db = getDb();
   if (input.teamId) {
@@ -94,9 +120,10 @@ export async function updateProjectGroup(
     data: {
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
+      ...(input.isPublic !== undefined ? { isPublic: input.isPublic } : {}),
     },
   });
-  return { id: row.id, teamId: row.teamId, name: row.name };
+  return { id: row.id, teamId: row.teamId, name: row.name, isPublic: row.isPublic };
 }
 
 /** 소속 Project가 하나라도 있으면 거부 - 고아 프로젝트를 만들지
