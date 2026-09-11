@@ -1923,6 +1923,85 @@ resolvedAt`→`status`) → `npx tsc --noEmit`(backend) →
 `vue-tsc -b`(frontend) 클린 확인(백엔드 변경 없음 - 순수 프런트엔드
 수정).
 
+## Gitea push 웹훅 시스템 웹훅 통합 + Gitea 사용자 계정 마스터링 - 완료 (2026-09-11)
+
+설계자와의 아키텍처 논의(Gitea git 프로토콜을 백엔드에 내장할 필요가
+있는지 질문 → Gitea "시스템 웹훅"이 이미 그 기능을 제공함을 확인 →
+지금 프로젝트별로 웹훅을 등록하는 이유가 설계적 판단이 아니라 단순히
+Gitea REST API의 기존 선례를 따른 것이었음을 인정 → "이 시스템이 자신이
+관리하는 Gitea 인스턴스의 유일한 관리자이고, 계정 자체도 이 시스템이
+master이니 시스템 전체 이벤트를 받아 내부에서 걸러 처리하는 게 낫다"는
+방향 확정)에서 시작한 두 가지 변경.
+
+1. **Gitea push 웹훅을 프로젝트별 등록 → 시스템 웹훅 1개로 통합**:
+   `linkSelfHostedRepo()`가 저장소를 연결할 때마다 개별 웹훅+시크릿을
+   만들던 것을 제거하고, 서버 부팅 시 인스턴스 전체를 커버하는 시스템
+   웹훅 하나(`POST /api/webhooks/gitea/system`)를 한 번만 등록한다
+   (`core/gitea.ts`의 `ensureGiteaSystemWebhookConfigured()`, 시크릿은
+   `InstallConfig.giteaSystemWebhookSecretEncrypted`에 자동 발급·보관).
+   **실제 Gitea 1.27.3 인스턴스로 검증해 확정한 함정** - `POST
+   /admin/hooks`에 `is_system_webhook`을 안 넣거나 최상위 필드로 넣으면
+   에러 없이 조용히 "기본 웹훅"(신규 생성 저장소에만 복사, 기존
+   저장소엔 전혀 안 걸림)이 된다 - `config` 객체 안에 문자열
+   `"true"`로 넣어야 실제로 인스턴스 전체(기존 저장소 포함)를 커버하는
+   시스템 웹훅이 된다(go-gitea/gitea#23139에 기록된 것과 같은 API
+   혼동을 이 인스턴스에서 직접 재현해 확인). payload의
+   `repository.name`(slug)에서 DB 조회 없이 순수 문자열 파싱만으로
+   projectId+종류(self_hosted/work/mirror)를 역산하는
+   `resolveProjectFromSlug()`(`core/gitRepos.ts`)를 신설, 미러 저장소
+   push는 무시, 관리 안 하는 slug도 조용히 무시. 기존 프로젝트별
+   `/api/webhooks/gitea/:projectId`는 410으로 명시 거부(github/gitlab은
+   그대로 유지 - 그 쪽은 시스템 웹훅 개념이 없는 플랫폼이라 범위 밖).
+   **구현 중 발견한 라우팅 버그**: 새 라우트
+   `/api/webhooks/gitea/system`을 기존 `/api/webhooks/:provider/
+   :projectId` 뒤에 등록했더니 Express가 `provider="gitea",
+   projectId="system"`으로 먼저 매칭해버려 항상 410이 났다 - 특정
+   경로가 파라미터 경로보다 먼저 등록돼야 한다는 걸 실제 curl 테스트로
+   재현해 발견, 등록 순서만 바꿔 해결.
+2. **Gitea 사용자 계정 마스터링(신규)**: 설계자 피드백 - "이 시스템이
+   생성한 계정은 Gitea에도 항상 유효해야 하고, Gitea 쪽 비밀번호는 이
+   시스템이 토큰처럼 발급·보관해야 모든 저장소·모든 사용자가 커버된다"
+   반영. `User`에 `giteaUsername`/`giteaPasswordEncrypted`/
+   `giteaUserId`/`giteaProvisionedAt` 추가, 신규 `core/
+   giteaAccounts.ts`의 `ensureGiteaAccountForUser()`가 가입 시점
+   (`core/auth.ts`의 `register()`)에 그 설계자의 Gitea 계정을 대신
+   만든다(비밀번호는 `crypto.randomBytes(24)`로 생성해 `encryptSecret()`
+   으로 암호화 저장 - 사람이 로그인할 목적이 아니라 백엔드 내부 전용
+   토큰). 이름 충돌은 숫자 접미사로 회피(`admin`이 Gitea 자신의
+   기존 관리자 계정과 충돌해 `admin-2`로 자동 회피되는 걸 실사용
+   인스턴스에서 실제로 확인). 신규
+   `ensureAllUsersGiteaAccountsConfigured()`를 부팅 시퀀스에 추가해
+   - `giteaUsername IS NULL`인 기존 계정(이 기능 이전 가입 계정, 또는
+   가입 시점에 Gitea 연결 실패로 못 만들어진 계정)을 재기동마다
+   보완한다(`ensureSearchIndexes()`류와 동일한 멱등 보완 패턴). Gitea
+   미설정/연결 실패 시 조용히 스킵하고 가입 자체는 절대 막지 않는다
+   (fail-soft - `ensureEmqxAuthConfigured()`와 동일 원칙).
+
+**실사용 인스턴스(`backend/docker/`, 여러 라운드에 걸쳐 재사용 중인
+스택)로 실측**: 재기동 로그+Gitea 어드민 API 대조로 시스템 웹훅
+등록·**두 번 재기동해도 중복 안 되는 멱등성** 확인 → 기존
+QA 프로젝트의 저장소별 웹훅을 수동 삭제 후 Gitea Contents API로 실제
+커밋 → `PushHookQueueEntry`가 새 시스템 웹훅 경로로 여전히 쌓이는지
+확인 → 새 프로젝트를 `docs git link`(CLI)로 새로 연결(응답에
+`webhookRegistered` 필드가 사라졌음도 확인) → 그 저장소엔 저장소별
+웹훅이 아예 안 생기는지 확인 → 실제 push로 시스템 웹훅 경로가 여전히
+정상 처리하는지 확인 → `external_linked` 프로젝트의 미러 저장소 push는
+`ignored`, 작업 저장소 push는 `processed`로 정확히 갈리는지 합성
+payload로 확인 → 관리 안 하는 slug는 에러 없이 `ignored`인지 확인 →
+옛 프로젝트별 `/api/webhooks/gitea/:projectId`는 410, `github`는 여전히
+200으로 정상 처리되는지 회귀 확인 → 서명이 틀리면 401인지 확인.
+Gitea 계정 마스터링은 신규 가입 → Gitea 어드민 API로 실제 계정 생성 및
+DB의 `giteaUserId`와 일치 확인, 암호화된 비밀번호 컬럼이 평문이 아닌
+정확한 AES-256-GCM 포맷 길이(iv+authTag+ciphertext)인지 바이트 길이로
+확인 → 기존 계정의 `giteaUsername`을 DB에서 강제로 지운 뒤 재기동 →
+보완 스윕이 실제로 다시 채우는지(이미 Gitea에 같은 이름이 있어 접미사가
+붙는 충돌 회피까지 같이) 확인 → Gitea 컨테이너를 잠시 내린 상태로 새
+계정 가입 → 가입은 정상 성공하고 에러만 로그로 남는지(fail-soft) 확인
+→ Gitea를 다시 올리고 재기동 → 그 계정도 보완 스윕으로 채워지는지 확인.
+
+`npm run db:generate`(3드라이버) → `npx tsc --noEmit`(backend) 클린
+확인.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

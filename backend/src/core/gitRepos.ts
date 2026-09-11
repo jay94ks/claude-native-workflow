@@ -52,6 +52,33 @@ function workSlugForProject(projectId: string): string {
   return `${slugForProject(projectId)}-work`;
 }
 
+export type GiteaRepoKind = "self_hosted" | "work" | "mirror";
+
+/** slugForProject()/mirrorSlugForProject()/workSlugForProject()의 역함수 -
+ * 시스템 웹훅 payload의 `repository.name`(Gitea repo slug)에서
+ * projectId와 저장소 종류를 되짚는다. DB 조회 없는 순수 문자열
+ * 파싱만으로 충분한 이유 - cuid엔 하이픈이 없어 접미사 파싱이
+ * 모호하지 않다. 이 앱이 만들지 않은 slug(수동으로 만든 저장소 등)면
+ * null - 호출부(core/pushHooks.ts)가 그 push를 조용히 무시하는 데
+ * 쓴다. */
+export function resolveProjectFromSlug(slug: string): { projectId: string; kind: GiteaRepoKind } | null {
+  const PREFIX = "project-";
+  if (!slug.startsWith(PREFIX)) return null;
+  const rest = slug.slice(PREFIX.length);
+
+  let kind: GiteaRepoKind = "self_hosted";
+  let projectId = rest;
+  if (rest.endsWith("-mirror")) {
+    kind = "mirror";
+    projectId = rest.slice(0, -"-mirror".length);
+  } else if (rest.endsWith("-work")) {
+    kind = "work";
+    projectId = rest.slice(0, -"-work".length);
+  }
+  if (!projectId) return null;
+  return { projectId, kind };
+}
+
 // PUBLIC_BACKEND_URL이 없으면(로컬 개발 등, 외부에서 닿을 수 있는 주소가
 // 아직 없을 때) null을 반환 - 호출부가 웹훅 등록을 건너뛰고 나머지
 // (저장소 생성/연결)는 정상 진행한다(realtimePublish와 같은 fail-soft
@@ -94,11 +121,18 @@ export interface ImportFrom {
  * importFrom 없으면 빈 저장소, 있으면 그 URL의 히스토리를 통째로
  * 가져온 독립 저장소로 시작한다. 결과는 둘 다 provider:"self_hosted" -
  * 연결 시점 한 번의 선택일 뿐 그 이후로는 완전히 같은 방식으로
- * 동작하므로 구분해서 저장하지 않는다. */
+ * 동작하므로 구분해서 저장하지 않는다.
+ *
+ * 저장소별 Gitea 웹훅은 더 이상 여기서 등록하지 않는다 - 인스턴스
+ * 전체를 커버하는 시스템 웹훅(core/gitea.ts의
+ * ensureGiteaSystemWebhookConfigured(), 서버 부팅 시 1회 등록) 하나가
+ * self_hosted든 external_linked든 상관없이 모든 저장소의 push를
+ * 이미 받으므로, 저장소마다 시크릿을 새로 발급해 웹훅을 거는 절차
+ * 자체가 필요 없어졌다. */
 export async function linkSelfHostedRepo(
   projectId: string,
   importFrom?: ImportFrom,
-): Promise<ProjectGitRepoInfo & { webhookRegistered: boolean }> {
+): Promise<ProjectGitRepoInfo> {
   await assertProjectExists(projectId);
   const db = getDb();
   const existing = await db.projectGitRepo.findUnique({ where: { projectId } });
@@ -111,14 +145,6 @@ export async function linkSelfHostedRepo(
         authToken: await resolveCredentialToken(importFrom.gitCredentialId),
       })
     : await gitea.createRepo(slug);
-  const secret = crypto.randomBytes(24).toString("hex");
-
-  const targetUrl = webhookTargetUrl("gitea", projectId);
-  let webhookRegistered = false;
-  if (targetUrl) {
-    await gitea.createWebhook(slug, targetUrl, secret);
-    webhookRegistered = true;
-  }
 
   const row = await db.projectGitRepo.create({
     data: {
@@ -127,10 +153,9 @@ export async function linkSelfHostedRepo(
       repoUrl: cloneUrl,
       externalRepoId,
       gitCredentialId: importFrom?.gitCredentialId ?? null,
-      webhookSecretEncrypted: encryptSecret(secret),
     },
   });
-  return { ...toInfo(row), webhookRegistered };
+  return toInfo(row);
 }
 
 export interface LinkExternalResult extends ProjectGitRepoInfo {

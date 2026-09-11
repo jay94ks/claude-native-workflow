@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import argon2 from "argon2";
 import jwt from "jsonwebtoken";
 import { getDb } from "./db.js";
+import { ensureGiteaAccountForUser } from "./giteaAccounts.js";
 
 // ID/PW 계정, argon2id 비밀번호 해시, Access(JWT, 단명) + Refresh(장기,
 // DB에 해시로 저장 - 원문은 저장하지 않는다) 토큰 - concept 브랜치
@@ -143,6 +144,13 @@ export async function register(
   const user = await db.user.create({
     data: { username: input.username, email: input.email ?? null, passwordHash, nicknameNumber },
   });
+  // Gitea 사용자 계정 마스터링 - ensureGiteaAccountForUser()는 내부에서
+  // 모든 실패를 잡아 로그만 남기고 절대 throw하지 않으므로, 가입
+  // 자체가 이 때문에 막힐 일은 없다(Gitea 네트워크 실패 등으로 여기서
+  // 못 만들어도 부팅 시 보완 스윕이 다음 재기동에서 재시도 -
+  // core/giteaAccounts.ts 참고). await로 가입 응답 시점에 이미 계정이
+  // 만들어져 있게 한다.
+  await ensureGiteaAccountForUser(user.id);
   return { id: user.id, username: user.username, email: user.email };
 }
 

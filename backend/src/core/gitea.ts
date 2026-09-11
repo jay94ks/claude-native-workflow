@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getOrCreateGiteaSystemWebhookSecret } from "./installConfig.js";
 
 interface GiteaConfig {
   apiUrl: string;
@@ -173,6 +174,65 @@ export async function createWebhook(slug: string, targetUrl: string, secret: str
       active: true,
     }),
   });
+}
+
+export interface SystemWebhook {
+  id: number;
+  config: { url: string };
+}
+
+/** 인스턴스 전체 시스템 웹훅 목록 - 실제 Gitea 1.27.3 인스턴스로 검증해
+ * 확정: `GET /admin/hooks`는 쿼리 파라미터 없이도 시스템 웹훅만
+ * 돌려준다(스웨거 문서상 `type` 쿼리의 기본값이 "system"). */
+export async function listSystemWebhooks(): Promise<SystemWebhook[]> {
+  const res = await giteaFetch("/api/v1/admin/hooks");
+  return (await res.json()) as SystemWebhook[];
+}
+
+/** 시스템 웹훅 등록(인스턴스의 모든 저장소 - 기존 저장소 포함 - 의 push
+ * 이벤트를 받음). 실제 인스턴스로 검증해 확정한 함정: `is_system_webhook`
+ * 은 요청 바디 최상위가 아니라 `config` 객체 안에 문자열 `"true"`로
+ * 넣어야 한다 - 최상위에 두거나 아예 생략하면 서버가 조용히 "기본
+ * 웹훅"(신규 생성되는 저장소에만 복사되고 기존 저장소에는 전혀 안
+ * 걸리는 템플릿)으로 만들어버린다(에러 없이 성공 응답이 오므로 알아채기
+ * 어려움 - go-gitea/gitea#23139에 기록된 것과 같은 종류의 API 혼동을
+ * 이 인스턴스에서 직접 재현해 확인했다). */
+export async function createSystemWebhook(targetUrl: string, secret: string): Promise<void> {
+  await giteaFetch("/api/v1/admin/hooks", {
+    method: "POST",
+    body: JSON.stringify({
+      type: "gitea",
+      config: { url: targetUrl, content_type: "json", secret, is_system_webhook: "true" },
+      events: ["push"],
+      active: true,
+    }),
+  });
+}
+
+/** 서버 기동 시 호출(Gitea 미설정이면 조용히 스킵 -
+ * ensureEmqxAuthConfigured()와 동일한 fail-soft 원칙) - 우리 URL을
+ * 가리키는 시스템 웹훅이 아직 없으면 등록한다(멱등 - 재기동해도 중복
+ * 등록 안 됨, `listSystemWebhooks()`로 기존 목록의 url을 먼저 확인). */
+export async function ensureGiteaSystemWebhookConfigured(): Promise<void> {
+  try {
+    config();
+  } catch {
+    return;
+  }
+  const publicUrl = process.env.PUBLIC_BACKEND_URL;
+  if (!publicUrl) return; // 웹훅 콜백 주소가 없으면 등록해도 무의미
+
+  const targetUrl = `${publicUrl.replace(/\/$/, "")}/api/webhooks/gitea/system`;
+
+  try {
+    const secret = await getOrCreateGiteaSystemWebhookSecret();
+    const existing = await listSystemWebhooks();
+    if (!existing.some((h) => h.config.url === targetUrl)) {
+      await createSystemWebhook(targetUrl, secret);
+    }
+  } catch (err) {
+    console.error("ensureGiteaSystemWebhookConfigured 실패:", err);
+  }
 }
 
 export async function listCommits(slug: string, opts?: { ref?: string; limit?: number }): Promise<unknown[]> {
@@ -358,4 +418,48 @@ export async function putFileContent(slug: string, filepath: string, content: st
     method: existingSha ? "PUT" : "POST",
     body: JSON.stringify({ content: contentB64, message, sha: existingSha }),
   });
+}
+
+/** Gitea 사용자 계정 존재 여부 - 사용자 계정 마스터링(core/
+ * giteaAccounts.ts)의 username 충돌 회피용. 실제 인스턴스로 검증해
+ * 확정: `GET /users/:username`이 있으면 200, 없으면 404. */
+export async function giteaUserExists(username: string): Promise<boolean> {
+  const { apiUrl, token } = config();
+  const res = await fetch(`${apiUrl}/api/v1/users/${encodeURIComponent(username)}`, {
+    headers: { Authorization: `token ${token}` },
+  });
+  if (res.status === 404) return false;
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
+  return true;
+}
+
+export interface CreatedGiteaUser {
+  id: number;
+  username: string;
+}
+
+/** Gitea 관리자 API로 새 사용자 계정을 만든다 - 이 시스템의 User 계정
+ * 마스터링(core/giteaAccounts.ts) 전용. 이 계정의 비밀번호는 사람이
+ * 로그인할 목적이 아니라 이 백엔드가 내부적으로만 쓰는 토큰이라
+ * `must_change_password: false`로 만든다. */
+export async function createGiteaUser(input: {
+  username: string;
+  email: string;
+  password: string;
+}): Promise<CreatedGiteaUser> {
+  const res = await giteaFetch("/api/v1/admin/users", {
+    method: "POST",
+    body: JSON.stringify({
+      username: input.username,
+      email: input.email,
+      password: input.password,
+      must_change_password: false,
+      send_notify: false,
+    }),
+  });
+  const json = (await res.json()) as { id: number; username: string };
+  return { id: json.id, username: json.username };
 }

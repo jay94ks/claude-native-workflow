@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { getDb } from "./db.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 import { syncSourceFilesForPush } from "./sourceIndex.js";
+import { resolveProjectFromSlug } from "./gitRepos.js";
 
 // 웹훅 수신 인프라(Phase 2 범위) - PushHookPrompt를 만들고 매칭 규칙을
 // 관리하는 CRUD/CLI는 아직 없다(Phase 3 몫). 지금은 이미 존재하는
@@ -12,6 +13,11 @@ export interface ParsedPush {
   branch: string;
   headSha: string;
   commits: { sha: string; message: string; added: string[]; modified: string[]; removed: string[] }[];
+  /** payload의 `repository.name`(Gitea repo slug) - 시스템 웹훅 경로
+   * (handleGiteaSystemPush())가 이 값으로 어느 프로젝트의 push인지
+   * 판별한다. 프로젝트별 웹훅 경로(기존 /api/webhooks/:provider/
+   * :projectId)는 URL이 이미 projectId를 주므로 이 필드를 안 쓴다. */
+  repoSlug: string;
 }
 
 function headerValue(v: string | string[] | undefined): string | undefined {
@@ -50,7 +56,8 @@ function normalizePush(json: Record<string, unknown>): ParsedPush {
     modified: stringArray(c.modified),
     removed: stringArray(c.removed),
   }));
-  return { branch, headSha, commits };
+  const repoSlug = String((json.repository as Record<string, unknown> | undefined)?.name ?? "");
+  return { branch, headSha, commits, repoSlug };
 }
 
 export function verifyAndParseWebhook(
@@ -107,4 +114,24 @@ export async function recordPushEvent(projectId: string, parsed: ParsedPush): Pr
   void syncSourceFilesForPush(projectId, parsed);
 
   return prompts.length;
+}
+
+export type GiteaSystemPushResult =
+  | { status: "processed"; projectId: string; queued: number }
+  | { status: "ignored"; reason: string };
+
+/** 시스템 웹훅(인스턴스 전체를 커버하는 단일 웹훅) 전용 경로 - payload의
+ * repoSlug만으로 어느 프로젝트의 어떤 종류(self_hosted/work/mirror)
+ * 저장소인지 DB 조회 없이 판별한다(core/gitRepos.ts의
+ * resolveProjectFromSlug()). 미러 저장소의 push는 Gitea 자신의 주기적
+ * pull 결과일 뿐 설계자가 뭔가를 바꿨다는 신호가 아니므로 무시한다.
+ * 이 앱이 관리하지 않는 slug(수동으로 만든 저장소 등)도 조용히
+ * 무시한다 - 시스템 웹훅은 인스턴스의 모든 저장소 이벤트를 받으므로
+ * 이건 에러가 아니라 정상적으로 걸러야 할 이벤트일 뿐이다. */
+export async function handleGiteaSystemPush(parsed: ParsedPush): Promise<GiteaSystemPushResult> {
+  const resolved = resolveProjectFromSlug(parsed.repoSlug);
+  if (!resolved) return { status: "ignored", reason: "관리 대상 저장소가 아님" };
+  if (resolved.kind === "mirror") return { status: "ignored", reason: "미러 저장소 push는 무시함" };
+  const queued = await recordPushEvent(resolved.projectId, parsed);
+  return { status: "processed", projectId: resolved.projectId, queued };
 }

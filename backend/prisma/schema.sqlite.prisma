@@ -16,8 +16,9 @@ datasource db {
 // ---------------------------------------------------------------- 설치 전역
 
 model InstallConfig {
-  id           String  @id @default("singleton")
-  teamsEnabled Boolean @default(true)
+  id                                String  @id @default("singleton")
+  teamsEnabled                      Boolean @default(true)
+  giteaSystemWebhookSecretEncrypted Bytes?
 }
 
 // 추적 코드 중앙 레지스트리 - 원자적 insert로 발급을 예약한다(엔티티
@@ -66,6 +67,14 @@ model User {
   nicknameChangedAt DateTime?
   passwordHash      String
   createdAt         DateTime  @default(now())
+  // Gitea 사용자 계정 마스터링 - 가입 시 이 시스템이 대신 만드는 Gitea
+  // 계정 정보. 비밀번호는 사람이 정하지 않고 시스템이 토큰처럼 발급·
+  // 보관한다(core/giteaAccounts.ts 참고). 항상 존재해야 하는 1:1 관계라
+  // 별도 테이블 대신 User에 직접 둔다.
+  giteaUsername      String?   @unique
+  giteaPasswordEncrypted Bytes?
+  giteaUserId        Int?
+  giteaProvisionedAt DateTime?
 
   gitCredentials    GitCredential[]
   refreshTokens     RefreshToken[]
