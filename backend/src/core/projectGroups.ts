@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { getInstallConfig } from "./teams.js";
+import { isTeamAllowedByActiveScope } from "./teamAdmins.js";
 
 export interface ProjectGroup {
   id: string;
@@ -26,6 +27,17 @@ export async function createProjectGroup(name: string, teamId?: string): Promise
   }
   const row = await db.projectGroup.create({ data: { name, teamId: teamId ?? null } });
   return { id: row.id, teamId: row.teamId, name: row.name };
+}
+
+/** 그룹 자체를 대상으로 하는 라우트(그룹 스코프 DocType 관리 등)에
+ * 건다 - 그 그룹이 속한 팀을 기준으로 isTeamAllowedByActiveScope()에
+ * 위임한다(팀 없는 그룹은 unrestricted 스코프만 허용 - team 스코프
+ * 키가 일치할 teamId 자체가 없으므로 자동으로 거부됨). */
+export async function isGroupAllowedByActiveScope(groupId: string): Promise<boolean> {
+  const db = getDb();
+  const group = await db.projectGroup.findUnique({ where: { id: groupId } });
+  if (!group) return false;
+  return isTeamAllowedByActiveScope(group.teamId ?? "");
 }
 
 export async function listProjectGroups(teamId?: string): Promise<ProjectGroup[]> {

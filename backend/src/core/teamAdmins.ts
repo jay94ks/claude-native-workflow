@@ -49,3 +49,16 @@ export async function listAdministeredTeamIds(userId: string): Promise<string[]>
   const rows = await db.teamAdmin.findMany({ where: { userId } });
   return rows.map((r: { teamId: string }) => r.teamId);
 }
+
+/** 팀 자체를 대상으로 하는 라우트(팀장 등록, 팀/그룹 스코프 DocType
+ * 관리 등 - 이 모듈의 isTeamAdmin()과 달리 "실제 팀장인가"가 아니라
+ * "이 활성 키가 이 팀을 대상으로 할 수 있는가"만 본다)에 건다 -
+ * unrestricted(로그인/개인 키)는 항상 허용, team 스코프 키는 정확히
+ * 일치하는 팀만, project 스코프 키는 팀 단위 관리를 절대 대행하지
+ * 않는다(그 키의 범위가 프로젝트 하나로 좁혀져 있으므로). */
+export function isTeamAllowedByActiveScope(teamId: string): boolean {
+  const scope = getActiveKeyScope();
+  if (scope.type === "unrestricted") return true;
+  if (scope.type === "team") return scope.teamId === teamId;
+  return false;
+}

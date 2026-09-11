@@ -1234,6 +1234,50 @@ CLI로 왕복 실측 - 프로젝트 키가 정확히 그 프로젝트만 접근(
 기존 JWT 로그인 기반 흐름(문서/메시지 등) 회귀 없음 확인. `npx tsc
 --noEmit`(backend)/`npm run build`(frontend) 클린.
 
+## QA 패스 3회차: API 키 스코프 게이트 누락 지점 발견·수정 - 완료 (2026-09-11)
+
+직전 라운드(API 키 3종)를 "코드 정리/QA 패스"로 재검토했다. 먼저 CLI/
+MCP 대칭성을 전수 대조(`docs --help`/`docs <group> --help` 전체 명령
+목록 vs MCP `tools/list` 85개) - 완전 일치, 의도적 예외 4가지(auth
+register/login/logout, comment, folder, key 관리)만 빠짐을 확인해
+회귀 없음을 재확인했다.
+
+**발견한 진짜 버그**: `core/requestScope.ts`의 스코프 게이트를
+"`getMemberRole`/`isTeamAdmin`/`resolveEffectivePermission` 같은
+프로젝트 단위 권한 판정 함수 안에서만" 걸었는데, **팀/그룹 자체를
+대상으로 하는 라우트**(`POST /api/teams/:teamId/admins`, `POST
+/api/teams/:teamId/doc-types`(+상태/전이/지침/표준흐름 4종), `POST
+/api/project-groups/:groupId/doc-types`(+ 4종), `PUT /api/templates`)는
+애초에 `getMemberRole`을 거치지 않고 `authenticate`만 요구해온
+기존 라우트들(설치 단위 admin role이 없다는 이미 문서화된 한계)이라
+이 게이트가 전혀 안 걸려 있었다 - **프로젝트 하나로 좁힌 키로 아무
+팀에나 팀장을 등록하거나, 아무 팀/그룹에나 문서 타입을 만들거나,
+심지어 스코프 미지정 `PUT /api/templates` 호출로 설치 전역 기본
+CLAUDE.md/SKILL.md까지 덮어쓸 수 있는 심각한 구멍**이었다("프로젝트
+단위 개인 키는 오직 그 프로젝트 하나에만 접근 가능"이라는 원래 요구를
+정면으로 어김). 프로젝트 소유자 계정으로 실제로 이 경로들을 호출해
+재현한 뒤 발견했다.
+
+**수정**: `core/teamAdmins.ts`에 `isTeamAllowedByActiveScope(teamId)`
+(unrestricted면 항상 허용, team 스코프는 teamId 일치만, project
+스코프는 항상 거부 - DB 조회 불필요한 순수 스코프 비교), `core/
+projectGroups.ts`에 `isGroupAllowedByActiveScope(groupId)`(그 그룹의
+teamId로 위 함수에 위임, 팀 없는 그룹은 unrestricted만) 신규 추가 -
+기존 "누가"(role) 판정에는 전혀 손대지 않고 "어느 팀/그룹까지"(스코프)
+차원만 별도로 얹었다(JWT/개인 키는 항상 unrestricted라 기존 동작
+그대로 - 새 제약이 하나도 안 생김, 순수 API 키 스코프 확인 전용).
+위 9개 라우트 전부에 이 확인을 인라인으로 추가. `PUT /api/templates`는
+스코프 필드(teamId/projectGroupId/projectId) 중 실제로 채워진 것을
+보고 해당 스코프 확인 함수로, 셋 다 비었으면(전역 기본값) unrestricted
+만 허용하도록 분기했다.
+
+**검증**: 프로젝트 전용 키로 팀장 등록/팀 문서타입 생성/전역 템플릿
+수정 시도 → 전부 403(수정 전 재현 시엔 전부 성공했었음) → 팀 키로
+바꿔서 **자기 팀**의 같은 동작은 정상 동작하는지(양성 케이스) → 그
+팀 키로 **다른 팀**을 겨냥하면 여전히 403인지 → JWT 로그인으로 똑같은
+동작들이 이번 수정 전후로 동일하게 되는지(회귀 없음, 새 권한 요구가
+안 생겼는지) 전부 실측 대조.
+
 ## 다음 단계
 
 설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.

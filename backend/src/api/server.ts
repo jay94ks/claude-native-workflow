@@ -19,12 +19,13 @@ import {
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
 import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
 import { createTeam, listTeams } from "../core/teams.js";
-import { addTeamAdmin, removeTeamAdmin, listTeamAdmins } from "../core/teamAdmins.js";
+import { addTeamAdmin, removeTeamAdmin, listTeamAdmins, isTeamAllowedByActiveScope } from "../core/teamAdmins.js";
 import { getInstallConfig } from "../core/installConfig.js";
-import { createProjectGroup, listProjectGroups } from "../core/projectGroups.js";
+import { createProjectGroup, listProjectGroups, isGroupAllowedByActiveScope } from "../core/projectGroups.js";
 import { createProject, getProject, listProjects, canSeeHiddenProject, setProjectHidden, getOwningTeamId } from "../core/projects.js";
-import { addMember, listMembers, getMemberRole, roleSatisfies } from "../core/members.js";
+import { addMember, listMembers, getMemberRole, roleSatisfies, isProjectAllowedByActiveScope } from "../core/members.js";
 import { isTeamAdmin } from "../core/teamAdmins.js";
+import { getActiveKeyScope } from "../core/requestScope.js";
 import { listUserActivity } from "../core/activity.js";
 import {
   createDocType,
@@ -300,11 +301,19 @@ app.get(
 
 // 팀장 관리 - 팀 스코프 쓰기는 지금까지 전부 authenticate만 요구해왔다
 // (설치 단위 admin role이 아직 없다는 기존 한계의 연장 - PUT /api/templates,
-// POST /api/teams/:id/doc-types 등과 동일).
+// POST /api/teams/:id/doc-types 등과 동일). 이 "누가"(role) 검사가
+// 없는 것과 별개로, API 키의 "어느 팀까지"(스코프) 제한은 반드시
+// 걸어야 한다 - 안 그러면 프로젝트 하나로 좁혀진 키가 아무 팀에나
+// 팀장을 등록/해제할 수 있게 된다(스코프 확인 자체와 무관한 별개
+// 차원의 문제).
 app.post(
   "/api/teams/:teamId/admins",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     const { userId } = req.body as { userId?: string };
     if (!userId) { res.status(400).json({ error: "userId가 필요합니다" }); return; }
     res.json(await addTeamAdmin(req.params.teamId, userId));
@@ -315,6 +324,10 @@ app.delete(
   "/api/teams/:teamId/admins/:userId",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     await removeTeamAdmin(req.params.teamId, req.params.userId);
     res.json({ ok: true });
   }),
@@ -324,6 +337,10 @@ app.get(
   "/api/teams/:teamId/admins",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     res.json(await listTeamAdmins(req.params.teamId));
   }),
 );
@@ -574,11 +591,17 @@ app.get(
 // 팀/그룹 스코프 DocType - Member는 projectId에만 연결되고 팀/그룹
 // 단위 "관리자" 역할 개념이 아직 없다(설치 단위 admin role은 범위 밖 -
 // PUT /api/templates가 팀/그룹 스코프에 authenticate만 요구하는 것과
-// 같은, 이미 문서화된 한계를 그대로 따른다).
+// 같은, 이미 문서화된 한계를 그대로 따른다). "누가"와 별개로 "어느
+// 팀/그룹까지"는 API 키 스코프로 반드시 제한한다(위 팀장 관리 라우트와
+// 같은 이유).
 app.post(
   "/api/teams/:teamId/doc-types",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     const { code, label, guideline } = req.body as { code?: string; label?: string; guideline?: string };
     if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
     res.json(await createDocType({ teamId: req.params.teamId }, code, label, guideline));
@@ -589,6 +612,10 @@ app.get(
   "/api/teams/:teamId/doc-types",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     res.json(await listDocTypes({ teamId: req.params.teamId }));
   }),
 );
@@ -597,6 +624,10 @@ app.post(
   "/api/project-groups/:groupId/doc-types",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     const { code, label, guideline } = req.body as { code?: string; label?: string; guideline?: string };
     if (!code || !label) { res.status(400).json({ error: "code/label이 필요합니다" }); return; }
     res.json(await createDocType({ projectGroupId: req.params.groupId }, code, label, guideline));
@@ -607,6 +638,10 @@ app.get(
   "/api/project-groups/:groupId/doc-types",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     res.json(await listDocTypes({ projectGroupId: req.params.groupId }));
   }),
 );
@@ -709,6 +744,10 @@ app.post(
   "/api/teams/:teamId/doc-types/:docTypeId/statuses",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
       return;
@@ -723,6 +762,10 @@ app.post(
   "/api/teams/:teamId/doc-types/:docTypeId/transitions",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
       return;
@@ -744,6 +787,10 @@ app.put(
   "/api/teams/:teamId/doc-types/:docTypeId/guideline",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
       return;
@@ -758,6 +805,10 @@ app.post(
   "/api/teams/:teamId/doc-types/:docTypeId/standard-flow",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     if (!(await requireOwnedDocTypeByTeam(req.params.teamId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 팀에 해당 문서 타입이 없습니다" });
       return;
@@ -771,6 +822,10 @@ app.post(
   "/api/project-groups/:groupId/doc-types/:docTypeId/statuses",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
       return;
@@ -785,6 +840,10 @@ app.post(
   "/api/project-groups/:groupId/doc-types/:docTypeId/transitions",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
       return;
@@ -806,6 +865,10 @@ app.put(
   "/api/project-groups/:groupId/doc-types/:docTypeId/guideline",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
       return;
@@ -820,6 +883,10 @@ app.post(
   "/api/project-groups/:groupId/doc-types/:docTypeId/standard-flow",
   authenticate,
   asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
     if (!(await requireOwnedDocTypeByGroup(req.params.groupId, req.params.docTypeId))) {
       res.status(404).json({ error: "이 프로젝트 그룹에 해당 문서 타입이 없습니다" });
       return;
@@ -1290,6 +1357,18 @@ app.put(
       projectId?: string;
     };
     if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
+    // 스코프 미지정(셋 다 없음)은 "설치 전역 기본값" 수정이라 unrestricted
+    // (로그인/개인 키)만 허용 - 안 그러면 프로젝트 하나로 좁혀진 키가
+    // 전체 설치의 기본 CLAUDE.md/SKILL.md를 바꿔버릴 수 있다.
+    let allowed: boolean;
+    if (projectId) allowed = await isProjectAllowedByActiveScope(projectId);
+    else if (teamId) allowed = isTeamAllowedByActiveScope(teamId);
+    else if (projectGroupId) allowed = await isGroupAllowedByActiveScope(projectGroupId);
+    else allowed = getActiveKeyScope().type === "unrestricted";
+    if (!allowed) {
+      res.status(403).json({ error: "이 API 키로는 이 스코프의 템플릿을 수정할 수 없습니다" });
+      return;
+    }
     res.json(await setTemplateOverride(filename, { teamId, projectGroupId, projectId }, content));
   }),
 );
