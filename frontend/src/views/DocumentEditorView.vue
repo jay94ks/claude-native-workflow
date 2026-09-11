@@ -209,6 +209,11 @@ async function transition() {
 }
 
 async function remove() {
+  if (!doc.value) return;
+  const confirmed = window.confirm(
+    `"${doc.value.title}"(${props.trackingCode}) 문서를 삭제하시겠습니까?\n리비전 이력, 링크, 코멘트, 질의/답변이 모두 함께 삭제되며 되돌릴 수 없습니다.`,
+  );
+  if (!confirmed) return;
   deleting.value = true;
   deleteError.value = "";
   try {
