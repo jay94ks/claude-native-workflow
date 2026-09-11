@@ -578,10 +578,11 @@
   이번 세션에서 실측.
 - [x] SKILL.md(+ seed-templates 동기화 사본)에 이 네 가지 예외의
   이유가 명시돼 있는지 - 실측.
-
-### 추가 개발 계획
-`#cli-mcp-audit-script` - 상세는 [PLANS.md](PLANS.md) 참고(현재
-우선순위 제안 1순위).
+- [x] `npm run audit:cli-mcp`(backend) - CLI 106개/MCP 98개 자동
+  대조, 의도적 예외 8개(`auth register/login/logout`,`auth use-key`,
+  `key create/list/revoke`, `git my-token`) 적용 후 불일치 0 확인.
+  CLI/MCP 각각에 임시 항목을 추가해 스크립트가 정확히 잡아내고
+  `exitCode=1`이 되는지 양방향 실측 - 이번 세션에서 실측.
 
 ---
 

@@ -2356,6 +2356,49 @@ admin 전용임을 검증). 웹 UI에서 비관리자 계정으로 팀 목록을
 `vue-tsc -b`(frontend) 클린 확인. README.md 최신 라운드 + "지금 상태"
 여러 항목, QA-SCENARIOS.md, SKILL.md(양쪽 사본) 갱신.
 
+## CLI/MCP 대칭성 자동 감사 스크립트 - 완료 (2026-09-11)
+
+PLANS.md `#cli-mcp-audit-script`(우선순위 1순위 제안) 착수. 신규
+`backend/scripts/audit-cli-mcp.ts`(이 저장소 첫 `scripts/` 디렉터리,
+`tsx`로 직접 실행 - 기존 `dev`/`cli`/`mcp` 관례와 동일, 빌드 불필요) +
+`package.json`에 `"audit:cli-mcp": "tsx scripts/audit-cli-mcp.ts"` 추가.
+
+CLI(`src/cli/index.ts`)는 `program`이 export되지 않고 파일 끝에서
+`program.parse()`가 무조건 실행돼 모듈 import로는 명령 목록을 못
+구하므로, 소스를 정규식으로 정적 파싱해 리프 명령 106개를 추출한다
+(플랫 `program.command(...)` + 그룹 `xxxCmd.command(...)` 두 패턴만
+존재 - 동적 생성 없어 정규식만으로 충분). MCP(`src/mcp/server.ts`)는
+반대로 실제 서버 프로세스를 `tsx`로 띄우고(`StdioClientTransport` +
+`Client`, 20초 타임아웃 가드) 표준 `tools/list`를 호출해 도구 98개를
+구한다 - 도구 등록 자체는 DB/네트워크 호출이 없는 순수 선언(직접 코드
+확인)이라 백엔드/DB 없이도 정확하고, `git_diff`처럼 `tool()` 헬퍼를
+안 거치는 예외도 자동으로 잡힌다.
+
+첫 실행에서 CLI 전용 30개/MCP 전용 29개가 나왔으나 실제 버그가 아니라
+대부분(29쌍) **명명 규칙 차이**였다 - CLI는 이미 특정 리소스 맥락
+안에 있어 짧은 동사만 쓰지만(`new`/`get`/`list`), MCP는 도구 108개가
+평평한 한 목록으로 노출돼 리소스 접두어를 붙인다(`document_new`/
+`document_get`/`document_list`). 스크립트 내 `KNOWN_RENAMES` 맵으로
+CLI 태그 ↔ MCP 태그 29쌍을 명시적으로 대응시켜 해결. 나머지 1개
+(`git my-token` - Gitea PAT 재발급/1회 노출)는 진짜 CLI 전용 기능으로
+확인(MCP에 `my-token`/`git_token` 패턴 자체가 없음, `key create`와
+같은 급의 신원 관리 동작) - `KNOWN_CLI_ONLY` 허용목록에 8번째 항목으로
+추가. `.claude/skills/claude-native-workflow/SKILL.md`와
+`backend/prisma/seed-templates/SKILL.md`(양쪽 사본) "CLI/MCP에
+의도적으로 없는 기능" 절에 `auth use-key`/`git my-token` 문구 보강해
+스크립트 허용목록과 문서 근거를 동기화.
+
+**실측 검증**: `npm run audit:cli-mcp` 클린 실행(CLI 106/MCP 98,
+허용 예외 8개, 불일치 0) 확인. 역방향 둘 다 실측 - CLI에 임시 명령
+하나 추가 후 스크립트가 정확히 그 이름을 `cliOnly`로 잡고
+`exitCode=1`이 되는지 확인 → 원복 → MCP에 임시 도구 하나 추가해
+`mcpOnly`로 잡히는지 확인 → 원복 → 재실행해 다시 클린 통과 확인.
+`npx tsc --noEmit`(backend) 클린 확인 - 신규 스크립트는
+`tsconfig.json`의 `rootDir: "src"` 범위 밖이라 별도 타입체크 대상이
+아님(의도적 - 배포되는 `dist/`와 개발용 도구의 경계와 일치, 별도
+tsconfig 불필요로 판단).
+
 ## 다음 단계
 
-설계자가 요청한 백로그 항목은 현재 없음 - 다음 요청을 기다린다.
+PLANS.md에 정리된 백로그(26개 항목, 태그로 QA-SCENARIOS.md와 연결)
+중 다음 우선순위를 설계자와 함께 정한다.

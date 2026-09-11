@@ -344,12 +344,17 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   한다. 둘 다 REST API만 호출하는 순수 클라이언트(core 직접 호출
   안 함).
 - **의도적 예외**(완전성 원칙에서 제외되는 것 - 버그 아님):
-  - `auth register/login/logout` - 비밀번호가 대화 컨텍스트에 남지
-    않도록 CLI 전용(`auth_whoami`만 MCP 예외).
+  - `auth register/login/logout`, `auth use-key` - 비밀번호/API 키가
+    대화 컨텍스트에 남지 않도록 CLI 전용(`auth_whoami`만 MCP 예외).
   - 코멘트 - 설계자 전용 채널이라 CLI/MCP 어디에도 없음.
   - 폴더 - AI가 몰라도 되는 개인 정리 기능이라 개념 자체가 없음.
-  - API 키 관리(`key create/list/revoke`) - 신원 관리 동작이라 CLI
-    전용.
+  - API 키 관리(`key create/list/revoke`), `git my-token` - 신원/
+    자격증명 관리 동작이라 CLI 전용.
+- **`npm run audit:cli-mcp`**(backend) - 위 완전성 원칙을 사람이
+  매번 수작업으로 대조하지 않도록 자동화한 스크립트. CLI는 소스
+  정적 파싱, MCP는 서버를 실제로 띄워 `tools/list`를 호출해 실측
+  비교하고, 의도적 예외 목록을 벗어난 비대칭이 있으면 0이 아닌
+  종료 코드로 실패한다.
 - 로컬 스크래치 사본(편집용 임시 파일)은 정상 작업 방식이지만, 그
   사본을 프로젝트의 git 저장소에 커밋하지 않는다(문서 정본은 시스템
   DB).

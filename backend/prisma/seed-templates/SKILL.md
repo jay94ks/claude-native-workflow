@@ -191,10 +191,13 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 
 ## CLI/MCP에 의도적으로 없는 기능 (완전성 원칙의 예외)
 
-아래 네 가지는 "누락"이 아니라 설계상 CLI/MCP 표면에 전혀 없다:
+아래 다섯 가지는 "누락"이 아니라 설계상 CLI/MCP 표면에 전혀 없다:
 
-- **`auth register/login/logout`** - 비밀번호를 대화 컨텍스트에 남기지
-  않기 위해 CLI 전용(`auth_whoami`만 MCP에 진단용으로 예외 노출).
+- **`auth register/login/logout`, `auth use-key`** - 비밀번호나 발급된
+  API 키를 대화 컨텍스트에 남기지 않기 위해 CLI 전용(`auth_whoami`만
+  MCP에 진단용으로 예외 노출). `use-key`는 서버 호출 없이 로컬
+  자격증명 파일에 저장하는 동작이라 애초에 MCP로 노출할 대상 자체가
+  없다.
 - **코멘트(comment)** - 설계자들끼리만 공유하는 채널로, AI의 참고
   지표가 될 수 없다는 설계자 지시에 따라 CLI/MCP 어디에도 없다(웹
   UI에는 있음, 문서/소스 코드 파일/칸반 카드 세 대상 전부 동일). "왜
@@ -209,6 +212,9 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
   같은 급의 신원 관리 동작이라 CLI 전용이고 MCP엔 아예 없다(아래
   "인증" 절 참고) - AI 세션이 스스로 더 넓은/새로운 키를 만들거나
   남의 키를 배제할 수 있으면 안 된다는 설계 취지.
+- **`git my-token`** - 내 Gitea 개인 접근 토큰을 재발급하고 1회
+  노출하는 명령. `key create`와 같은 급의 "1회 노출 비밀 발급" 동작이라
+  CLI 전용이고 MCP엔 없다.
 - **칸반 카드 코멘트** - 칸반 보드 자체(분류/카드 생성·조회·이동)는
   아래 표의 `kanban-*` 명령으로 AI에게 완전히 열려 있지만, 카드에
   달리는 코멘트만은 위 코멘트(comment)와 같은 채널(`targetType:
