@@ -5815,6 +5815,49 @@ docker 스택을 재빌드해 HTTP로 직접 세 경우(틀린 현재 비밀번�
 로그인 → "내 정보" → "비밀번호 변경" 폼에서 불일치 확인 메시지 →
 재입력 후 저장 → 성공 메시지까지 왕복 확인.
 
+## nginx Host 헤더 버그(GitHub OAuth 실패) + 데이터 바인드 마운트 전환 - 완료
+
+**배경 1 - GitHub 로그인 실패**: `C:\CNW`를 실사용하며 설계자가 GitHub
+OAuth 로그인 버튼을 눌렀더니 포트 번호가 없는 주소로 리다이렉트되며
+실패한다고 보고. `server.ts`의 `githubOAuthRedirectUri()`가
+`req.protocol`+`req.get("host")`로 콜백 URL을 동적 계산하는데,
+`nginx/default.conf`가 `proxy_set_header Host $host;`를 쓰고 있었다 -
+nginx의 `$host`는 원본 Host 헤더에서 **포트를 제거한** 값이라(`$http_host`
+와 달리), 기본 포트(80/443)가 아닌 주소(`C:\CNW`는 `:8763`)로 접속하면
+backend가 포트 없는 콜백 URL을 만들어 GitHub에 등록된 값과 어긋난다.
+`$host` → `$http_host`로 교체해 수정 - `/api/git/oauth/github/start`를
+`:8090` 스택으로 직접 호출해 `redirect_uri`에 포트가 정확히 포함되는지
+확인.
+
+**배경 2 - Docker Desktop 엔진 리셋으로 볼륨 전멸**: 이 수정을 검증하려고
+스크래치 스택을 내리던 중 `overlay2` 파일시스템 I/O 에러로 Docker
+엔진 자체가 응답 불능 상태가 됐고, 복구 과정에서 설계자가 실수로
+Docker Desktop의 "Reset to factory defaults"를 눌러 이 컴퓨터의 모든
+컨테이너/이미지/**네임드 볼륨**이 통째로 사라졌다(`C:\CNW`뿐 아니라
+이 컴퓨터의 다른 무관한 프로젝트들도 전부 영향받음). `C:\CNW`의 git
+체크아웃과 `.env`(둘 다 평범한 디스크 파일)는 안 지워져서 소스/시크릿은
+살아남았지만, Postgres/Gitea/Meilisearch/EMQX 데이터는 전부 새로
+초기화해야 했다(Gitea는 `GITEA_API_TOKEN`도 재발급 필요 - 옛 토큰은
+새 DB에 없으므로 무효).
+
+**변경**: 네임드 볼륨(Docker가 내부 저장소, 즉 WSL2 VHDX 등에 관리하는
+공간이라 엔진 리셋에 같이 날아감)을 전부 `./data/<service>` 바인드
+마운트로 교체(`#bind-mount-data-dir`) - 호스트 디스크의 평범한 폴더라
+Docker 엔진을 통째로 초기화해도 그대로 남는다. `docker-compose.yml`의
+postgres/meilisearch/emqx/gitea 네 서비스 전부 적용, 맨 아래 이제 안
+쓰는 top-level `volumes:` 선언 삭제. `./data/`는 `.gitignore`에 추가
+(런타임 데이터를 저장소에 커밋하지 않음).
+
+**검증**: 바인드 마운트로 스택을 새로 띄워 postgres가 실제로
+healthy해지는지(bind mount에서 흔한 PGDATA 권한 문제 없이) 확인,
+로그인 API 호출 성공 확인, `./data/postgres`/`./data/gitea` 아래에
+실제 파일(`PG_VERSION`, `ssh` 등)이 생기는지 디스크에서 직접 확인.
+
+**결론**: `C:\CNW`도 이 커밋을 받아 재기동하면 이제 Docker 엔진을
+리셋해도 데이터가 살아남는다 - 단, 이번에 이미 볼륨이 다 날아간
+뒤라 Gitea 관리자 계정/PAT는 어차피 다시 발급해야 한다(README.md
+"Gitea 설정" 절 그대로).
+
 ## 다음 단계
 
 3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
@@ -5822,7 +5865,8 @@ docker 스택을 재빌드해 HTTP로 직접 세 경우(틀린 현재 비밀번�
 확장/브랜치 스코프 코드 관계도/문서-브랜치 연관(`#pr-workflow-branch-scope`)
 + Gitea 프로젝트별 네임스페이스/nginx 보안 강화/관계도 초기화·추적코드
 선택기/도입·마이그레이션 가이드/실제 신규 설치 버그 수정/frontend
-서비스 분리/본인 비밀번호 변경까지 전부 완료됐다. PLANS.md 색인 표에
-남은 ⬜ 항목이 없다 - 유일하게 열려있는 항목은 GitHub/GitLab 실제
-발행 왕복 테스트(외부 자격증명 필요, 설계자 승인/제공 대기)뿐이며,
-다음 라운드는 새 QA 패스나 설계자의 새 요청을 기다린다.
+서비스 분리/본인 비밀번호 변경/nginx Host 헤더 버그/데이터 바인드
+마운트 전환까지 전부 완료됐다. PLANS.md 색인 표에 남은 ⬜ 항목이
+없다 - 유일하게 열려있는 항목은 GitHub/GitLab 실제 발행 왕복
+테스트(외부 자격증명 필요, 설계자 승인/제공 대기)뿐이며, 다음 라운드는
+새 QA 패스나 설계자의 새 요청을 기다린다.

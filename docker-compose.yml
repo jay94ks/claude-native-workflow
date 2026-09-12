@@ -1,6 +1,16 @@
 # backend + frontend + postgres(기본 DB) + meilisearch + emqx + gitea.
 # 시크릿은 이 저장소 루트의 .env(.env.example 참고, 커밋 안 함)에서
 # 읽는다.
+#
+# 데이터는 전부 Docker 네임드 볼륨이 아니라 ./data/ 아래 바인드 마운트로
+# 저장한다(#bind-mount-data-dir) - Docker Desktop의 "Reset to factory
+# defaults"(엔진 자체가 맛이 갔을 때 나오는 복구 버튼)를 실제로 눌러
+# 네임드 볼륨이 전부 통째로 날아가는 걸 겪은 뒤 바꿈 - 네임드 볼륨은
+# Docker가 내부적으로 관리하는 저장소(WSL2 VHDX 등) 안에 있어서 Docker
+# 엔진 자체를 초기화하면 같이 사라지지만, 바인드 마운트는 그냥 호스트
+# 디스크의 평범한 폴더라 Docker를 통째로 밀어버려도 그대로 남는다.
+# ./data/는 .gitignore에 있음 - 실제 런타임 데이터를 저장소에 커밋하지
+# 않는다.
 services:
   postgres:
     image: postgres:16-alpine
@@ -8,7 +18,7 @@ services:
       POSTGRES_DB: claude_native_workflow
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -22,7 +32,7 @@ services:
       MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY}
       MEILI_NO_ANALYTICS: "true"
     volumes:
-      - meili-data:/meili_data
+      - ./data/meili:/meili_data
     restart: unless-stopped
 
   # EMQX REST API 키는 이미지가 기본으로 만들어주지 않지만, 대시보드에
@@ -50,7 +60,7 @@ services:
       - source: emqx_api_key_bootstrap
         target: /opt/emqx/etc/api_key_bootstrap
     volumes:
-      - emqx-data:/opt/emqx/data
+      - ./data/emqx:/opt/emqx/data
     ports:
       - "18083:18083" # 대시보드/REST API - 평소엔 안 열어도 되지만, 부트스트랩이 아닌 수동 키 발급/운영 확인용으로 남겨둠
       # MQTT-over-WebSocket(8083) - 이미지 기본 리스너, 별도 설정 없이 이미
@@ -97,7 +107,7 @@ services:
       # 추가함 - 처음엔 이 설정이 없어서 조용히 실패하고 있었다.
       GITEA__security__ALLOWED_HOST_LIST: backend
     volumes:
-      - gitea-data:/data
+      - ./data/gitea:/data
     # ⚠ 임시 디버깅용 - Gitea 웹 UI를 직접 열어야 할 때만 주석 해제하고
     # 작업이 끝나면 반드시 다시 주석 처리할 것(협업자 권한이 있는
     # 누구나 이 포트를 통해 파일트리/커밋을 직접 볼 수 있게 됨).
@@ -168,12 +178,6 @@ services:
       - frontend
       - gitea
     restart: unless-stopped
-
-volumes:
-  postgres-data:
-  meili-data:
-  emqx-data:
-  gitea-data:
 
 configs:
   # emqx 서비스의 EMQX_API_KEY__BOOTSTRAP_FILE이 가리키는 파일 내용 -

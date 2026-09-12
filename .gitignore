@@ -14,3 +14,8 @@
 # 소스 코드 뷰어의 로컬 raw 콘텐츠 캐시(blob sha로 이름 붙은 디코드된
 # 파일들 - Gitea에서 언제든 다시 받아올 수 있는 파생 데이터)
 backend/.cache/
+
+# docker-compose.yml이 바인드 마운트하는 실제 런타임 데이터
+# (postgres/gitea/meilisearch/emqx, #bind-mount-data-dir) - 저장소에
+# 커밋할 대상이 아니다.
+/data/

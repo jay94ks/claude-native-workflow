@@ -695,6 +695,11 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
 - **frontend는 자기 자신의 nginx로 빌드 결과물을 정적 서빙하는 별도
   compose 서비스**다(#frontend-own-service - backend와 독립적으로
   빌드/재기동됨, backend 이미지엔 frontend 코드가 안 들어간다).
+- **데이터는 Docker 네임드 볼륨이 아니라 `./data/` 바인드 마운트에
+  저장**(#bind-mount-data-dir - postgres/gitea/meilisearch/emqx 전부)
+  - Docker 엔진 자체를 리셋(Docker Desktop의 "Reset to factory
+  defaults" 등)해도 호스트 디스크의 평범한 폴더라 그대로 남는다.
+  `.gitignore`로 저장소엔 커밋 안 됨.
 - 호스트 직접 설치 경로도 지원(Docker 없이 Node.js + 외부 Meilisearch/
   EMQX) - 이 경로에선 frontend를 쓰려면 별도 정적 서버+리버스 프록시가
   필요하다(README.md 참고).
