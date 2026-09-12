@@ -24,6 +24,27 @@ async function assertIsProjectMember(projectId: string, userId: string): Promise
   if (!role) throw new Error("이 프로젝트의 멤버만 폴더를 관리할 수 있습니다");
 }
 
+// moveFolder()의 순환 방지 검사(isDescendantOf)는 트리를 "읽고" 그
+// 결과를 근거로 나중에 "쓰는" 두 단계라, 같은 설계자가 폴더 A를 B
+// 밑으로, B를 A 밑으로 옮기는 요청을 거의 동시에 보내면(빠른 연속
+// 드래그, 여러 탭/스크립트) 두 요청 모두 상대의 쓰기가 반영되기 전의
+// 트리를 보고 통과해버려 실제로 순환(A->B->A)이 만들어질 수 있다
+// (동시성 QA로 실제 재현). 이 앱은 단일 설치형 - 백엔드가 항상 프로세스
+// 하나로 뜬다(README 명시) - 이므로 여러 DB 프로바이더(SQLite/Postgres/
+// MySQL)에 걸쳐 SERIALIZABLE 트랜잭션이나 행 잠금을 이식성 있게 구현하는
+// 대신, 같은 설계자의 폴더 이동 요청을 프로세스 안에서 순서대로만
+// 처리되게 줄 세우는 게 훨씬 간단하고 완전하다 - 폴더는 개인 소유라
+// 잠금 범위를 설계자 단위로 잡아도 다른 설계자의 이동을 조금도 막지
+// 않는다.
+const userFolderLocks = new Map<string, Promise<unknown>>();
+
+function withUserFolderLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const prior = userFolderLocks.get(userId) ?? Promise.resolve();
+  const run = prior.then(fn, fn);
+  userFolderLocks.set(userId, run.catch(() => {}));
+  return run;
+}
+
 async function assertOwnsFolder(folderId: string, userId: string): Promise<{ id: string; projectId: string; parentFolderId: string | null; name: string; order: number; createdBy: string }> {
   const db = getDb();
   const folder = await db.folder.findUnique({ where: { id: folderId } });
@@ -177,6 +198,15 @@ async function isDescendantOf(candidateId: string, ancestorId: string): Promise<
  * 섞여 있으면 조용히 걸러내고(다른 설계자의 폴더 order를 함부로
  * 바꾸지 못하게), 걸러진 id들만 순서대로 재배정한다. */
 export async function moveFolder(
+  folderId: string,
+  userId: string,
+  parentFolderId: string | null,
+  siblingOrder: string[],
+): Promise<FolderDetail> {
+  return withUserFolderLock(userId, () => moveFolderLocked(folderId, userId, parentFolderId, siblingOrder));
+}
+
+async function moveFolderLocked(
   folderId: string,
   userId: string,
   parentFolderId: string | null,
