@@ -71,6 +71,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 38 | ✅ | `#full-feature-regression-qa` | FEATURES.md 21개 절 전체 회귀 QA 순회(실제 Docker 스택 + 실제 Gitea 웹훅 왕복) - 닉네임이 CLI/MCP `profile set`에서 빠져있던 것 발견·수정 |
 | 39 | ✅ | `#document-nav-stale-content` | 사이드바에서 다른 문서를 눌러도 URL만 바뀌고 화면 내용이 안 바뀌던 버그 수정(Vue Router 컴포넌트 재사용 + trackingCode watch 누락) |
 | 40 | ✅ | `#cli-token-refresh` | CLI/MCP가 refresh_token을 저장만 하고 실제로 안 써서 15분마다 재로그인이 필요했던 문제 발견·수정(웹 프론트는 이미 구현돼 있었음) |
+| 41 | ✅ | `#document-list-silent-cap` | CLI/MCP `docs list`(문서 전체 목록)가 Meilisearch 기본 limit(50)에 걸려 51건째부터 경고 없이 안 보이던 문제 발견·수정(대량 문서 프로젝트 실측 중 발견) |
 
 ---
 

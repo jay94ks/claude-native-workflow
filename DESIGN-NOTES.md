@@ -4541,6 +4541,57 @@ audit:cli-mcp` 클린 - CLI/MCP 표면 자체는 안 바뀌었으므로 회귀 �
   그대로 남고 `refs` 배열에서만 A의 트래킹 코드가 빠지는 것을 실측
   확인(스키마상 예상된 cascade 방향과 일치) - 문제 없음, 테스트
   데이터는 검증 후 삭제.
+- 로그인한 본인이 스스로 비밀번호를 바꾸는 기능이 여전히 없는지
+  재확인(QA-SCENARIOS.md) - 백엔드/프론트 전체 grep, 관련 코드
+  0건(admin 대행 재설정 경로만 존재) - 여전히 범위 밖.
+- 대량 문서 프로젝트에서 목록/검색 응답 속도(QA-SCENARIOS.md, 아래
+  별도 라운드로 분리해 기록).
+
+## CLI/MCP 문서 전체 목록이 51건째부터 조용히 빠지던 문제 발견·수정(`#document-list-silent-cap`) - 완료 (2026-09-12)
+
+**배경**: 위 QA 라운드에서 "대량 문서가 있는 프로젝트에서 목록/검색
+응답 속도"(QA-SCENARIOS.md, 지금까지 10건 이하 스크래치 데이터로만
+검증됐던 항목)를 실측하려고 문서 200건짜리 테스트 프로젝트를 직접
+만들어 `GET /projects/:id/documents`(CLI `docs list`/MCP
+`document_list`가 쓰는, 페이지네이션 없는 "전체 목록" 라우트)를
+호출했더니 응답은 빨랐지만(28ms) **200건 중 50건만 돌아왔다** - 총
+개수 필드도 없고 에러도 안 나서, 호출한 쪽은 그 프로젝트에 문서가
+50개뿐인 줄 알 수밖에 없었다.
+
+**원인**: `core/documents.ts`의 `listDocuments()` → `listDocumentsFromIndex()`
+→ `core/search.ts`의 `searchDocuments()`/`rawSearch()`로 이어지는
+호출 체인에서, `rawSearch()`가 `limit: opts.limit ?? 50`으로 기본값을
+깔아둔다(Meilisearch 검색 결과 페이지 크기 기본값 - 원래는 실제
+검색/미리보기용 함수를 위한 안전한 기본값이었다). `listDocuments()`는
+이 `limit`을 전달하지 않고 그대로 호출했으므로, 검색이 아니라
+"필터만 적용된 전체 목록"이어야 할 이 함수도 조용히 50건으로
+잘렸다. 지난 `#large-list-pagination` 라운드에서 "CLI/MCP가 쓰는
+`listDocuments()`는 그대로 둔다"고 명시적으로 결정한 게 바로 이
+함수인데, 그 결정 당시엔 이 함수가 이미 암묵적으로 50건 상한에
+걸려있다는 걸 아무도 몰랐다(그때 쓰인 테스트 데이터가 전부 10건
+이하였기 때문 - 이번에야 처음으로 50건을 넘는 실측 데이터로
+검증했다).
+
+**수정**: `listDocuments()`가 `listDocumentsFromIndex({ projectId,
+docTypeId, limit: 1000 })`처럼 명시적으로 큰 limit을 넘기도록
+변경(1000 = Meilisearch 기본 `maxTotalHits`와 같은 값 - 별도 인덱스
+설정 변경 없이 안전하게 쓸 수 있는 상한). 이 함수의 유일한
+호출부(`GET /api/projects/:projectId/documents`)만 영향을 받고,
+`searchProjectDocuments`(전문검색, 결과가 많을수록 관련도 낮은
+결과라 50건 제한이 오히려 합리적)나 `listRecentDocuments`(홈
+대시보드, 이미 자기 limit을 명시)는 그대로 - 이 라운드는 "전체
+목록" 시맨틱을 가진 지점 하나만 고쳤다. 1000건을 넘는 프로젝트는
+여전히 잘릴 수 있지만, 실사용 규모를 훨씬 웃도는 값이라 이번
+범위에선 잔여 한계로만 기록한다(진짜 offset 기반 전체 스캔까지
+필요해지면 그때 별도 라운드).
+
+**실측 검증**: 문서 200건(그중 1건은 검색용 고유 키워드 포함)짜리
+테스트 프로젝트를 실제로 만들어 수정 전엔 `GET /documents`가 50건만
+반환하는 것으로 버그를 먼저 재현 → `npx tsc --noEmit`(backend)
+클린 → `docker compose build backend` → `up -d --force-recreate` →
+같은 테스트를 다시 돌려 200건 전부 반환되는 것 확인,
+`/documents/page`/`/search`는 원래도 문제없었던 것 재확인(총
+소요/응답 시간 전부 기록). 테스트 프로젝트는 검증 후 삭제.
 
 ## 다음 단계
 

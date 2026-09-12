@@ -162,8 +162,15 @@ export async function getDocumentAccessInfo(trackingCode: string): Promise<Docum
   });
 }
 
+// CLI/MCP가 "이 프로젝트의 전체 문서 목록"으로 쓰는 함수라 limit을
+// 명시적으로 크게 잡아야 한다 - 안 그러면 rawSearch()의 기본값(50)이
+// 조용히 적용돼, 문서가 50건을 넘는 프로젝트에서 뒤쪽 문서가 아무
+// 경고 없이 목록에서 통째로 빠진다(대량 문서 QA 라운드 중 실제
+// 200건 프로젝트로 재현해 발견). 1000은 Meilisearch 기본
+// maxTotalHits와 같은 값 - 이 한도까지도 넘는 프로젝트는 이번
+// 수정 범위 밖(QA-SCENARIOS.md에 잔여 한계로 기록).
 export async function listDocuments(projectId: string, docTypeId?: string): Promise<SearchableDocument[]> {
-  return listDocumentsFromIndex({ projectId, docTypeId });
+  return listDocumentsFromIndex({ projectId, docTypeId, limit: 1000 });
 }
 
 /** 홈 대시보드 "최근 변경 문서" + 그 "더보기" 전체 목록 둘 다 이걸
