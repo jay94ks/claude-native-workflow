@@ -1,5 +1,5 @@
 import { getDb } from "./db.js";
-import { encryptSecret } from "./crypto.js";
+import { encryptSecret, decryptSecret } from "./crypto.js";
 import { isSuperAdmin } from "./auth.js";
 import { paginate, type Page } from "./pagination.js";
 
@@ -77,6 +77,18 @@ export async function listGitCredentialsPaged(userId: string, page: number, page
       createdAt: r.createdAt,
     })),
   };
+}
+
+// GitHub 저장소 목록 조회(credentials/:id/github/repos)처럼 "본인
+// 소유 자격증명의 평문 토큰이 당장 필요한" 소수 호출부 전용 - 목록/조회
+// API는 여전히 payload를 절대 안 돌려준다는 원칙 그대로 유지.
+export async function getCredentialTokenIfOwner(userId: string, credentialId: string): Promise<string> {
+  const db = getDb();
+  const cred = await db.gitCredential.findUnique({ where: { id: credentialId } });
+  if (!cred || (cred.userId !== userId && !(await isSuperAdmin(userId)))) {
+    throw new Error("자격증명을 찾을 수 없거나 소유자가 아닙니다");
+  }
+  return decryptSecret(cred.encryptedPayload);
 }
 
 export async function removeGitCredential(userId: string, id: string): Promise<void> {

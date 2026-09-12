@@ -5008,9 +5008,115 @@ owner/관리자가 없어지는 상태 자체"를 막는다). `ProjectGroupAdmin
 `npm run audit:cli-mcp` 클린(이 기능도 기존 사용자 관리 범위와
 동일하게 웹 전용 - CLI/MCP엔 안 넣음).
 
+## GitHub OAuth 연동 + 자동 강등 + self_hosted↔external 승격(`#github-oauth-repo-link`) - 완료 (2026-09-13)
+
+**배경**: 3단계 확장 설계의 Phase B. "깃허브 연동하기"를 URL 직접
+입력 방식에서 "GitHub 로그인 → 저장소 목록에서 선택"으로 바꾸고,
+`self_hosted`↔`external_linked`를 양방향으로 전환할 수 있게 하고,
+자격증명이 나중에 무효화되면(토큰 폐기 등) 자동으로 안전한 상태
+(`self_hosted`)로 강등되게 한다.
+
+**OAuth 설계의 핵심 - redirect_uri를 요청마다 동적으로 계산**:
+`PUBLIC_BACKEND_URL`(사설 배포에선 docker 내부 호스트명이라 브라우저가
+못 닿을 수 있음, 웹훅 자동등록 라운드에서 이미 겪은 문제)을 쓰지
+않는다 - OAuth 콜백은 서버-서버 웹훅과 달리 **브라우저가 직접
+리다이렉트되는 흐름**이라 애초에 "공개 주소가 있어야 한다"는 제약
+자체가 없다. `req.protocol`+`req.get("host")`로 그 요청을 시작한
+브라우저가 실제로 접근한 주소를 그대로 되돌려주면 항상 정확히
+맞는다(새 env 불필요) - 로컬 서버 설치에서도 아무 문제 없이 동작하는
+게 이전 웹훅 조사와 대비되는 지점.
+
+**신원 유지 - state 토큰(인메모리 Map, 1회용)**: GitHub 리다이렉트는
+top-level navigation이라 Authorization 헤더를 실을 수 없다. JWT를
+URL 쿼리에 실어 팝업에 넘기는 방법도 검토했지만 github.com으로의
+Referer 유출 위험이 있어 기각 - 대신 `POST /api/git/oauth/github/start`
+가 무작위 `state`를 `Map<state, {userId, expiresAt}>`(TTL 10분)에
+저장해두고, 인증 미들웨어가 없는 `GET .../callback`이 그 `state`로
+신원을 되찾은 뒤 즉시 삭제한다(재생 공격 방지). `folders.ts`의
+`withUserFolderLock`과 같은 전제(단일 설치형, 수평 확장 없음)로
+프로세스 내 상태만으로 충분하다고 판단(새 파일 `core/githubOAuth.ts`).
+콜백은 작은 HTML을 응답해 `window.opener.postMessage(...);
+window.close();`로 팝업을 연 메인 창에 결과를 전달한다(GitHub의
+top-level navigation이 메인 페이지의 폼 상태를 날리지 않도록 팝업
+필수).
+
+**저장소 목록**: `GET /api/credentials/:id/github/repos?page=`가
+GitHub `/user/repos`를 그대로 프록시(소유자 본인만 - 새
+`getCredentialTokenIfOwner()`, `gitCredentials.ts`의 payload 비공개
+원칙을 깨지 않는 소수 예외로 명시). GitHub도 총 개수를 안 줘서
+`{items,hasMore}` 모양(git log류와 동일 패턴). 검색은 백엔드에 새로
+안 만들고 프론트가 누적 페이지에 클라이언트 쪽 부분일치 필터만
+건다(GitHub API 자체가 이 범위 검색을 못 줘서 과설계 방지). 새
+컴포넌트 `GithubRepoPickerDialog.vue`(로컬 다이얼로그, Phase A의
+전역 Pinia 다이얼로그와 달리 GitRepoPanel이 직접 열고 닫는 단순
+props/emit 방식 - 다른 화면에서 열 필요가 없어 store가 필요 없음) -
+선택하면 `linkUrl`/`promoteUrl`을 채우기만 하고 실제 연동/전환은
+기존 `startLink()`/`promote()`를 그대로 호출(새 로직 없음).
+
+**`promoteToExternal()`(`core/gitRepos.ts`, `unlinkExternalRepo`와
+대칭)**: self_hosted의 work 저장소는 새로 안 만들고 그대로
+재사용(이름만 `{slug}-work`로 변경) - 지금까지의 커밋 히스토리
+보존이 핵심 가치. 미러만 새로 만들고, DB를 `external_linked`로
+갱신한 직후 **기존 `publishToExternalRepo`를 즉시 한 번 호출**해
+work 저장소의 현재 상태를 방금 연결한 외부 저장소에 반영한다(빈
+저장소가 아니면 기존 push mirror + AI 대기열 로직이 그대로 충돌을
+처리 - 새 로직 없음). `POST /api/projects/:projectId/git/
+promote-to-external`(owner 전용).
+
+**자격증명 오류 시 자동 강등**: `externalGit.ts`에 `detectProvider()`
+(repoUrl의 host가 github.com인지로 판별 - DB엔 provider가
+"external_linked"로만 저장되고 github/gitlab 구분이 연동 시점
+파라미터로만 존재해 남지 않기 때문)와 `validateCredential()`(GitHub/
+GitLab의 `GET /user`가 401/403이면 무효 - git의 "충돌" 에러 문자열을
+파싱하는 것보다 신뢰도 높은 판별법) 추가. `gitRepos.ts`의
+`validateExternalCredential()`이 이 둘을 엮는다.
+`publishToExternalRepo()`는 이제 실제 push를 시도하기 전에 먼저
+이 검증을 하고, 실패하면 `unlinkExternalRepo()`(work 저장소 보존)로
+자동 강등 + `sendMessage()`로 프로젝트에 안내 + 호출자에게도 "그냥
+실패"가 아니라 "자격증명 무효화로 자동 전환됐다"로 구분되는 에러를
+던진다. `requestGitSyncStatus()`(pull 미러 상태 확인 경로)는 같은
+사전 검증만 추가하고 자동 강등까지는 하지 않는다(설계자 지시 범위 -
+pull 미러는 Gitea가 내부적으로 자체 자격증명을 들고 있어 이 앱이
+실시간 health를 못 보는 잔여 한계가 있다는 게 문서화된 전제).
+
+**새 env** `GITHUB_OAUTH_CLIENT_ID`/`GITHUB_OAUTH_CLIENT_SECRET`
+(`.env.example`/`docker-compose.yml`에 등록 방법과 함께 추가) - 미설정
+시 `GET /api/git/oauth/github/configured`가 `false`를 반환해 "GitHub로
+로그인" 버튼 자체가 웹 UI에서 안 보인다(기존 `PUBLIC_BACKEND_URL`
+미설정 시 fail-soft 원칙과 동일 - URL 직접 입력으로 연동하는 기존
+방식은 계속 동작).
+
+**실측 검증**: `npx tsc --noEmit`(backend)/`npx vue-tsc -b`(frontend)
+클린 → `npm run audit:cli-mcp` 클린(이 기능도 기존 git 저장소 범위와
+동일하게 웹 전용) → Docker 백엔드 재빌드+재기동(env 미설정 상태) →
+`GET /api/git/oauth/github/configured`가 실제로 `{configured:false}`를
+반환하고 웹 UI에서 "GitHub로 로그인" 버튼이 안 보이는 것 확인(fail-soft) →
+테스트 프로젝트에서 self_hosted 저장소 생성 후 "외부 저장소로 전환"
+섹션이 실제로 뜨는 것 확인, 입력이 비어있으면 버튼이 비활성인 것 확인 →
+`promote-to-external` 라우트의 입력 검증(provider 오류/repoUrl 누락/
+gitCredentialId 누락/존재하지 않는 credentialId) 4가지 전부 400 +
+명확한 에러 메시지로 실측 → **핵심 통합 테스트**: 실제로 무효한
+GitHub PAT(`ghp_fake_...`)를 저장한 뒤 공개 저장소(`octocat/Hello-World`)
+로 `promote-to-external` 호출 → 미러 생성+work 저장소 승격까지는
+성공하고 곧바로 이어지는 `publishToExternalRepo`의 사전 검증이 실제
+GitHub API(`GET /user` → 401 Bad credentials)로 무효를 확인해
+**그 자리에서 자동으로 `self_hosted`로 되돌리고**(`GET .../git/repo`로
+재조회해 `provider:"self_hosted"`, `gitCredentialId:null` 확인),
+프로젝트 메시지함에 안내 메시지가 실제로 남는 것까지 확인 - 자격증명
+오류 자동 강등 기능 전체가 진짜 GitHub API를 상대로 end-to-end 동작함을
+확인했다. 저장소 목록 조회 라우트(`GET /api/credentials/:id/github/
+repos`)도 같은 무효 토큰으로 호출해 실제 GitHub의 401 응답이 그대로
+명확한 400 에러로 전달되는 것 확인, 소유자가 아닌/존재하지 않는
+credentialId 요청이 거부되는 것도 확인. OAuth `start`/`callback`
+라우트는 미설정 상태에서 각각 명확한 400 에러/`ok:false` postMessage로
+안전하게 종료되는 것까지 확인. **실제 GitHub OAuth App(클라이언트
+ID/시크릿)을 이용한 팝업 로그인 왕복 자체는 이번 세션에 그런 앱이
+없어 검증하지 못했다** - 설계자가 실제 OAuth App을 등록하면 그
+흐름(로그인 팝업 → 승인 → 저장소 선택 다이얼로그 → 연동)만 별도로
+한 번 더 확인이 필요하다. 테스트 프로젝트/자격증명은 검증 후 삭제.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
-고른다. `#user-membership-management` 완료 후 다음은
-`#github-oauth-repo-link`(GitHub OAuth 연동) → `#repo-management-tab`
-(PR/브랜치 관리) 순서(이번에 설계자가 요청한 3단계 확장의 Phase B→C).
+고른다. `#github-oauth-repo-link` 완료 후 다음은 `#repo-management-tab`
+(PR/브랜치 관리, 이번에 설계자가 요청한 3단계 확장의 Phase C).

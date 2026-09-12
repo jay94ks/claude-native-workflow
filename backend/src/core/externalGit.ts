@@ -58,3 +58,34 @@ async function registerGitlabWebhook(repoUrl: string, token: string, targetUrl: 
     throw new Error(`GitLab 웹훅 등록 실패: HTTP ${res.status} ${body}`);
   }
 }
+
+// repoUrl의 host만으로 github.com인지 판별한다(registerGithubWebhook이
+// repoUrl의 host와 무관하게 항상 api.github.com을 호출하는 것과 같은
+// 전제 - GitHub Enterprise는 이번 범위 밖). 이 판별 하나로 자격증명
+// 검증(validateCredential)·발행 큐 안내 문구 등 provider별 분기가
+// 필요한 모든 곳을 커버한다 - DB엔 provider가 "external_linked"로만
+// 저장되고 github/gitlab 구분은 안 남기 때문(연동 시점의 일회성
+// 파라미터일 뿐).
+export function detectProvider(repoUrl: string): "github" | "gitlab" {
+  try {
+    return new URL(repoUrl).host === "github.com" ? "github" : "gitlab";
+  } catch {
+    return "gitlab";
+  }
+}
+
+/** push를 실제로 시도하기 전에 토큰 자체가 아직 살아있는지 가볍게
+ * 확인한다(저장소 접근 권한까지는 확인 안 함, 401/403이면 무효) - git의
+ * "충돌"(non-fast-forward) 에러 문자열을 파싱하는 것보다 신뢰도 높은
+ * 판별법(설계자 지시 - 자격증명 오류 시 자동 강등 기능의 전제). */
+export async function validateCredential(provider: "github" | "gitlab", repoUrl: string, token: string): Promise<boolean> {
+  if (provider === "github") {
+    const res = await fetch("https://api.github.com/user", {
+      headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json" },
+    });
+    return res.ok;
+  }
+  const { host } = ownerAndRepo(repoUrl);
+  const res = await fetch(`https://${host}/api/v4/user`, { headers: { "PRIVATE-TOKEN": token } });
+  return res.ok;
+}

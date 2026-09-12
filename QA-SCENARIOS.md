@@ -665,6 +665,26 @@
   안 됐음), (4) 올바른 서명으로 실제 웹훅 호출을 한 번 흉내내면
   `200 {"ok":true}` 응답과 함께 그 다음 새로고침부터 카드가 완전히
   사라지는지 확인. 콘솔에 새 에러 없음.
+- [x] **GitHub OAuth 연동 + self_hosted↔external 승격 + 자격증명
+  오류 자동 강등(`#github-oauth-repo-link`)** - OAuth 미설정 상태에서
+  `GET .../git/oauth/github/configured`가 `false`를 반환하고 "GitHub로
+  로그인" 버튼이 웹 UI에 안 보이는지 확인(fail-soft). `promote-to-external`
+  라우트의 입력 검증(잘못된 provider/repoUrl 누락/gitCredentialId
+  누락/존재하지 않는 자격증명) 4가지 전부 400 확인. **핵심 통합
+  테스트**: 무효한 GitHub PAT로 공개 저장소(`octocat/Hello-World`)에
+  `promote-to-external` 호출 → 미러 생성+work 저장소 승격까지 성공한
+  뒤 곧바로 실행되는 발행 사전 검증이 실제 GitHub API(`GET /user` →
+  401)로 무효를 확인해 자동으로 `self_hosted`로 되돌리고(재조회로
+  `provider`/`gitCredentialId` 확인) 프로젝트 메시지함에 안내가 남는
+  것까지 실측 - 자격증명 오류 자동 강등이 실제 GitHub API를 상대로
+  end-to-end 동작함을 확인. 저장소 목록 조회(`GET /api/credentials/
+  :id/github/repos`)도 무효 토큰의 401이 명확한 400으로 전달되는지,
+  소유자 아닌/존재하지 않는 credentialId가 거부되는지 확인. OAuth
+  `start`/`callback`은 미설정 상태에서 각각 명확한 에러로 안전하게
+  종료되는지 확인. **실제 GitHub OAuth App으로 하는 팝업 로그인
+  왕복(승인 → 저장소 선택 다이얼로그 → 연동) 자체는 이번 세션에 그런
+  앱이 없어 미검증** - 설계자가 실제 OAuth App을 등록하면 별도로
+  한 번 더 확인 필요(재개 후보로 남김).
 
 ---
 

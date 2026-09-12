@@ -78,48 +78,10 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 45 | ✅ | `#external-webhook-manual-instructions` | 로컬/사설 서버 배포 시 GitHub/GitLab 연동 조사 - 외부 웹훅 자동 등록 실패 시 백엔드가 이미 보내던 수동 설정 안내를 웹 UI가 조용히 버리고 있던 것 발견·수정, README에 로컬 배포 가이드 추가 |
 | 46 | ✅ | `#webhook-instructions-persistent-card` | 웹훅 수동 설정 카드를 1회성 "확인함" 닫기 대신, 웹훅이 실제로 수신되기 전까지 접기/펼치기 가능한 형태로 계속 노출하도록 재설계(영속화) |
 | 47 | ✅ | `#user-membership-management` | 사용자 관리 화면에 검색/페이지네이션/클릭 시 프로필 이동 추가, "소속 조회" 다이얼로그(그룹/팀/프로젝트 소속 + 강제 방출, 유일한 owner/관리자는 방출 불가) |
-| 48 | ⬜ | `#github-oauth-repo-link` | GitHub OAuth 로그인 + 저장소 선택 다이얼로그로 외부 연동, self_hosted↔external 상호 전환, 자격증명 오류 시 알림+자동 강등 |
+| 48 | ✅ | `#github-oauth-repo-link` | GitHub OAuth 로그인 + 저장소 선택 다이얼로그로 외부 연동, self_hosted↔external 상호 전환, 자격증명 오류 시 알림+자동 강등 |
 | 49 | ⬜ | `#repo-management-tab` | 저장소 관리 탭 신설 - PR 생성/머지(머지는 owner만), 브랜치 목록+브랜치별 소스 열람 |
 
 ---
-
-## `#github-oauth-repo-link` - GitHub OAuth 연동 + 자동 강등 + self_hosted↔external 승격
-
-"깃허브 연동하기"를 지금의 URL 직접 입력 방식 대신 "GitHub 로그인 →
-저장소 목록에서 선택" 흐름으로 바꾼다. 세부 설계(승인됨, 3단계 확장
-설계의 Phase B):
-
-- `POST /api/git/oauth/github/start`(인증 필요) - 무작위 `state`를
-  인메모리 Map(`state→{userId,expiresAt}`, TTL 10분 - `withUserFolderLock`
-  과 같은 "단일 설치형이라 프로세스 내 상태로 충분" 전제)에 저장하고
-  `authorizeUrl` 반환. redirect_uri는 `PUBLIC_BACKEND_URL`(사설 배포에선
-  docker 내부 호스트명이라 못 씀) 대신 **요청을 시작한 브라우저가 실제로
-  접근한 주소**(`req.protocol`+`req.get("host")`)로 매번 동적 계산 -
-  OAuth는 브라우저 리다이렉트라 웹훅과 달리 공개 주소 문제가 없다.
-- 팝업+postMessage 흐름(top-level navigation이 현재 페이지 폼 상태를
-  날리는 것 방지) - `GET /api/git/oauth/github/callback?code&state`(인증
-  미들웨어 없음, `state`로 신원 복구 후 1회용 삭제) → GitHub 토큰
-  교환(서버-서버) → `GitCredential`(hostPattern:"github.com") 생성 →
-  `window.opener.postMessage(...); window.close();`.
-- `GET /api/credentials/:id/github/repos?page=` - GitHub `/user/repos`
-  프록시, `{items,hasMore}` 모양(GitHub도 총 개수를 안 줌). 검색은
-  프론트에서 누적 페이지에 부분일치 필터.
-- `promoteToExternal(projectId, provider, repoUrl, gitCredentialId)`
-  (`core/gitRepos.ts`, `unlinkExternalRepo`와 대칭) - self_hosted의
-  work 저장소는 그대로 재사용(히스토리 보존)하고 미러만 새로 만든 뒤
-  기존 `publishToExternalRepo`를 즉시 한 번 호출해 현재 상태를 밀어넣음.
-  `POST /api/projects/:projectId/git/promote-to-external`(owner 전용).
-- `validateExternalCredential(projectId, gitCredentialId)` - push 전에
-  토큰 자체 유효성(`GET /user` 401/403)을 가볍게 선검증(git 에러
-  문자열 파싱보다 신뢰도 높음). 실패 시 `unlinkExternalRepo` 자동
-  호출(work 저장소 보존) + 프로젝트에 안내 메시지 + 호출자에게 명확한
-  에러.
-- 프론트: `GitRepoPanel.vue`에 "GitHub로 로그인" 버튼 +
-  `GithubRepoPickerDialog.vue`(신규, `MembershipsDialog.vue`와 같은
-  성격) - 선택 시 기존 `startLink()`/`startImport()`를 그대로 재사용.
-  self_hosted일 때 "외부 저장소로 전환" 섹션 추가.
-- 새 env `GITHUB_OAUTH_CLIENT_ID`/`GITHUB_OAUTH_CLIENT_SECRET`(미설정
-  시 버튼 자체가 안 보임 - 기존 fail-soft 원칙과 동일).
 
 ## `#repo-management-tab` - 저장소 관리 탭(PR + 브랜치/"워크트리")
 

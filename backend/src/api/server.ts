@@ -23,7 +23,7 @@ import {
 } from "../core/auth.js";
 import { LoginRateLimitError } from "../core/loginRateLimit.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
-import { addGitCredential, listGitCredentials, listGitCredentialsPaged, removeGitCredential } from "../core/gitCredentials.js";
+import { addGitCredential, listGitCredentials, listGitCredentialsPaged, removeGitCredential, getCredentialTokenIfOwner } from "../core/gitCredentials.js";
 import { createTeam, listTeams, listTeamsPaged, updateTeam, deleteTeam, listMembersForTeam, listMembersForTeamPaged } from "../core/teams.js";
 import {
   ensureAllUsersGiteaAccountsConfigured,
@@ -182,6 +182,7 @@ import {
 import {
   linkSelfHostedRepo,
   linkExternalAsPrimary,
+  promoteToExternal,
   unlinkExternalRepo,
   getProjectGitRepo,
   getWebhookSetupInstructions,
@@ -196,6 +197,7 @@ import {
   completePublishQueueEntry,
   GitAuthRequiredError,
 } from "../core/gitRepos.js";
+import { isGithubOAuthConfigured, startGithubOAuth, completeGithubOAuth, listGithubRepos } from "../core/githubOAuth.js";
 import * as gitea from "../core/gitea.js";
 import { verifyAndParseWebhook, recordPushEvent, handleGiteaSystemPush } from "../core/pushHooks.js";
 import {
@@ -330,6 +332,69 @@ app.delete(
   asyncRoute(async (req, res) => {
     await removeGitCredential(req.userId!, req.params.id);
     res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- GitHub OAuth 로그인 + 저장소 선택
+// "깃허브 로그인 + 저장소 선택하기" 흐름(설계자 지시). redirect_uri는
+// PUBLIC_BACKEND_URL(사설 배포에선 docker 내부 호스트명이라 브라우저가
+// 못 닿는 경우가 있음) 대신 **이 요청을 시작한 브라우저가 실제로 접근한
+// 주소**로 매번 동적 계산한다 - OAuth는 브라우저 리다이렉트라 웹훅과
+// 달리 "공개 주소가 있어야 한다"는 제약 자체가 없다(로컬 서버 설치에도
+// 새 env 없이 항상 정확히 맞는다).
+function githubOAuthRedirectUri(req: Request): string {
+  return `${req.protocol}://${req.get("host")}/api/git/oauth/github/callback`;
+}
+
+app.get(
+  "/api/git/oauth/github/configured",
+  asyncRoute(async (_req, res) => {
+    res.json({ configured: isGithubOAuthConfigured() });
+  }),
+);
+
+app.post(
+  "/api/git/oauth/github/start",
+  authenticate,
+  requireUnrestrictedScope,
+  asyncRoute(async (req, res) => {
+    res.json(startGithubOAuth(req.userId!, githubOAuthRedirectUri(req)));
+  }),
+);
+
+// 인증 미들웨어 없음 - GitHub의 리다이렉트는 top-level navigation이라
+// Authorization 헤더를 실을 수 없다. 대신 state 토큰으로 신원을
+// 되찾는다(1회용, TTL 10분). 팝업 창을 postMessage로 닫는 작은 HTML을
+// 응답해 메인 창(팝업을 연 창)이 결과를 받게 한다.
+app.get(
+  "/api/git/oauth/github/callback",
+  asyncRoute(async (req, res) => {
+    const { code, state } = req.query as { code?: string; state?: string };
+    let payload: { ok: true; credentialId: string } | { ok: false; error: string };
+    if (!code || !state) {
+      payload = { ok: false, error: "code/state가 없습니다" };
+    } else {
+      try {
+        const result = await completeGithubOAuth(code, state, githubOAuthRedirectUri(req));
+        payload = { ok: true, credentialId: result.credentialId };
+      } catch (err) {
+        payload = { ok: false, error: err instanceof Error ? err.message : "알 수 없는 오류" };
+      }
+    }
+    res.type("html").send(`<!doctype html><html><body><script>
+      window.opener && window.opener.postMessage(${JSON.stringify({ type: "github-oauth-done", ...payload })}, window.location.origin);
+      window.close();
+    </script></body></html>`);
+  }),
+);
+
+app.get(
+  "/api/credentials/:id/github/repos",
+  authenticate,
+  requireUnrestrictedScope,
+  asyncRoute(async (req, res) => {
+    const token = await getCredentialTokenIfOwner(req.userId!, req.params.id);
+    res.json(await listGithubRepos(token, Number(req.query.page ?? 1)));
   }),
 );
 
@@ -2664,6 +2729,36 @@ app.post(
     if (!repoUrl) { res.status(400).json({ error: "repoUrl이 필요합니다" }); return; }
     try {
       const result = await linkExternalAsPrimary(req.params.projectId, provider, repoUrl, gitCredentialId);
+      void backfillProjectSourceIndex(req.params.projectId);
+      res.json(result);
+    } catch (err) {
+      if (err instanceof GitAuthRequiredError) {
+        res.status(422).json({ error: "git_auth_required", hostPattern: hostOf(repoUrl) });
+        return;
+      }
+      throw err;
+    }
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/promote-to-external",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const { provider, repoUrl, gitCredentialId } = req.body as {
+      provider?: string;
+      repoUrl?: string;
+      gitCredentialId?: string;
+    };
+    if (provider !== "github" && provider !== "gitlab") {
+      res.status(400).json({ error: "provider는 github|gitlab이어야 합니다" });
+      return;
+    }
+    if (!repoUrl) { res.status(400).json({ error: "repoUrl이 필요합니다" }); return; }
+    if (!gitCredentialId) { res.status(400).json({ error: "gitCredentialId가 필요합니다" }); return; }
+    try {
+      const result = await promoteToExternal(req.params.projectId, provider, repoUrl, gitCredentialId);
       void backfillProjectSourceIndex(req.params.projectId);
       res.json(result);
     } catch (err) {

@@ -2,6 +2,15 @@
 import { computed, inject, onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { PROJECT_MY_ROLE_KEY } from "../utils/projectContext";
+import GithubRepoPickerDialog from "./GithubRepoPickerDialog.vue";
+
+interface GithubRepoSummary {
+  fullName: string;
+  htmlUrl: string;
+  cloneUrl: string;
+  private: boolean;
+  defaultBranch: string;
+}
 
 const props = defineProps<{ projectId: string }>();
 
@@ -243,6 +252,93 @@ async function saveCredentialAndRetry() {
   }
 }
 
+// ---------------------------------------------------------------- GitHub OAuth 로그인 + 저장소 선택
+// "GitHub 로그인" 버튼 - 외부 연동(link)과 self_hosted→external 전환
+// (promote) 양쪽에서 재사용한다. 팝업으로 GitHub 인증 페이지를 열고,
+// 콜백이 작은 HTML로 postMessage를 보내면 이 창이 받아서 credential을
+// 만든 뒤 저장소 선택 다이얼로그를 띄운다 - 선택하면 기존 linkUrl/
+// promoteUrl을 채우기만 할 뿐, 실제 연동/전환은 기존 startLink()/
+// promote()를 그대로 호출한다(새 로직 없음, 재사용 극대화).
+
+const githubOAuthConfigured = ref(false);
+const repoPickerOpen = ref(false);
+const repoPickerCredentialId = ref("");
+const repoPickerTarget = ref<"link" | "promote" | null>(null);
+
+async function loginWithGithub(target: "link" | "promote") {
+  const setErr = target === "link" ? (m: string) => (linkError.value = m) : (m: string) => (promoteError.value = m);
+  try {
+    const { authorizeUrl } = await apiCall<{ authorizeUrl: string }>("/git/oauth/github/start", { method: "POST" });
+    const popup = window.open(authorizeUrl, "github-oauth", "width=640,height=720");
+    if (!popup) {
+      setErr("팝업이 차단되었습니다 - 브라우저에서 팝업을 허용해주세요");
+      return;
+    }
+    const handler = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { type?: string; ok?: boolean; credentialId?: string; error?: string } | null;
+      if (data?.type !== "github-oauth-done") return;
+      window.removeEventListener("message", handler);
+      if (!data.ok) {
+        setErr(data.error || "GitHub 로그인에 실패했습니다");
+        return;
+      }
+      credentials.value = await apiCall<Credential[]>("/credentials").catch(() => credentials.value);
+      const credentialId = data.credentialId!;
+      if (target === "link") linkCredentialId.value = credentialId;
+      else promoteCredentialId.value = credentialId;
+      repoPickerCredentialId.value = credentialId;
+      repoPickerTarget.value = target;
+      repoPickerOpen.value = true;
+    };
+    window.addEventListener("message", handler);
+  } catch (err) {
+    setErr(err instanceof ApiError ? err.message : "GitHub 로그인 시작에 실패했습니다");
+  }
+}
+
+function onGithubRepoSelected(repo: GithubRepoSummary) {
+  if (repoPickerTarget.value === "link") linkUrl.value = repo.cloneUrl;
+  else if (repoPickerTarget.value === "promote") promoteUrl.value = repo.cloneUrl;
+  repoPickerOpen.value = false;
+}
+
+// ---------------------------------------------------------------- self_hosted → external 승격
+// self_hosted 프로젝트를 나중에 외부 저장소로 전환한다(반대 방향인
+// unlinkExternal()과 대칭) - work 저장소는 그대로 재사용되므로 지금까지의
+// 커밋 히스토리가 보존된다(핵심 가치). link-external 모드와 동일한
+// 입력을 쓰되 별도 상태/버튼으로 분리한다.
+
+const promoteProvider = ref<"github" | "gitlab">("github");
+const promoteUrl = ref("");
+const promoteCredentialId = ref("");
+const promoting = ref(false);
+const promoteError = ref("");
+
+async function promote() {
+  if (!promoteUrl.value.trim() || !promoteCredentialId.value) return;
+  promoting.value = true;
+  promoteError.value = "";
+  try {
+    const result = await apiCall<GitRepo & { manualWebhookInstructions?: WebhookInstructions }>(
+      `/projects/${props.projectId}/git/promote-to-external`,
+      {
+        method: "POST",
+        body: JSON.stringify({ provider: promoteProvider.value, repoUrl: promoteUrl.value.trim(), gitCredentialId: promoteCredentialId.value }),
+      },
+    );
+    gitRepo.value = result;
+    webhookInstructions.value = result.manualWebhookInstructions ?? null;
+    webhookCardExpanded.value = true;
+    await pollSyncStatusOnce();
+    await pollPublishQueueOnce();
+  } catch (err) {
+    promoteError.value = err instanceof ApiError ? err.message : "외부 저장소 전환에 실패했습니다";
+  } finally {
+    promoting.value = false;
+  }
+}
+
 // ---------------------------------------------------------------- 동기화 제안(외부 연동 전용)
 // Gitea의 미러 동기화 트리거는 비동기 큐잉이라(즉시 안 끝남) 요청과
 // 조회를 분리한다 - "동기화 상태 확인" 버튼은 먼저 트리거(POST)만 하고,
@@ -391,6 +487,9 @@ async function publish() {
 
 onMounted(async () => {
   if (!isOwner.value) return;
+  githubOAuthConfigured.value = await apiCall<{ configured: boolean }>("/git/oauth/github/configured")
+    .then((r) => r.configured)
+    .catch(() => false);
   await load();
   if (gitRepo.value?.provider === "external_linked") {
     await pollSyncStatusOnce();
@@ -438,6 +537,32 @@ onUnmounted(() => {
             <dd><code>push</code>만</dd>
           </dl>
         </template>
+      </div>
+
+      <div v-if="gitRepo.provider === 'self_hosted'" class="promote-panel">
+        <h3>외부 저장소로 전환</h3>
+        <p class="hint">
+          지금까지 이 프로젝트에 쌓인 커밋 히스토리는 그대로 유지한 채, 외부(GitHub/GitLab) 저장소를 권위 저장소로
+          연동한다.
+        </p>
+        <select v-model="promoteProvider">
+          <option value="github">github</option>
+          <option value="gitlab">gitlab</option>
+        </select>
+        <input v-model="promoteUrl" type="text" placeholder="저장소 URL" />
+        <select v-model="promoteCredentialId">
+          <option value="">자격증명 선택</option>
+          <option v-for="c in credentials" :key="c.id" :value="c.id">{{ c.hostPattern ?? c.credentialType }}</option>
+        </select>
+        <div class="button-row">
+          <button v-if="promoteProvider === 'github' && githubOAuthConfigured" type="button" class="github-btn" @click="loginWithGithub('promote')">
+            GitHub로 로그인
+          </button>
+          <button :disabled="promoting || !promoteUrl.trim() || !promoteCredentialId" @click="promote">
+            {{ promoting ? "전환 중..." : "외부 저장소로 전환" }}
+          </button>
+        </div>
+        <p v-if="promoteError" class="error">{{ promoteError }}</p>
       </div>
 
       <div v-if="gitRepo.provider === 'external_linked'" class="sync-panel">
@@ -556,7 +681,12 @@ onUnmounted(() => {
           <option v-for="c in credentials" :key="c.id" :value="c.id">{{ c.hostPattern ?? c.credentialType }}</option>
         </select>
         <label class="checkbox"><input v-model="linkMigrationHint" type="checkbox" /> 여기 기존 문서가 있어 마이그레이션이 필요합니다</label>
-        <button :disabled="linking" @click="startLink">연동</button>
+        <div class="button-row">
+          <button v-if="linkProvider === 'github' && githubOAuthConfigured" type="button" class="github-btn" @click="loginWithGithub('link')">
+            GitHub로 로그인
+          </button>
+          <button :disabled="linking" @click="startLink">연동</button>
+        </div>
         <p v-if="linkError" class="error">{{ linkError }}</p>
 
         <div v-if="authPromptFor === 'link'" class="auth-prompt">
@@ -572,6 +702,13 @@ onUnmounted(() => {
         </div>
       </div>
     </template>
+
+    <GithubRepoPickerDialog
+      :open="repoPickerOpen"
+      :credential-id="repoPickerCredentialId"
+      @close="repoPickerOpen = false"
+      @select="onGithubRepoSelected"
+    />
   </div>
 </template>
 
@@ -697,6 +834,55 @@ onUnmounted(() => {
 .webhook-instructions dd {
   margin: 0;
   word-break: break-all;
+}
+.button-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.github-btn {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.promote-panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 420px;
+}
+.promote-panel h3 {
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+.promote-panel input,
+.promote-panel select {
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.promote-panel button {
+  align-self: flex-start;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.promote-panel button:disabled {
+  opacity: 0.6;
 }
 .sync-panel {
   margin-top: 16px;

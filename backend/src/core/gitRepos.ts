@@ -4,7 +4,7 @@ import { encryptSecret, decryptSecret } from "./crypto.js";
 import { assertProjectExists } from "./projects.js";
 import * as gitea from "./gitea.js";
 import { GitAuthRequiredError } from "./gitea.js";
-import { registerWebhook } from "./externalGit.js";
+import { registerWebhook, detectProvider, validateCredential } from "./externalGit.js";
 import { resyncCollaboratorGrantsForProject } from "./members.js";
 import { sendMessage } from "./messages.js";
 
@@ -248,6 +248,77 @@ export async function linkExternalAsPrimary(
   };
 }
 
+/** self_hosted → external_linked 승격(unlinkExternalRepo의 반대 방향) -
+ * self_hosted의 work 저장소는 새로 만들지 않고 그대로 재사용한다(지금
+ *까지의 커밋 히스토리 보존이 이 기능의 핵심 가치) - 이름만
+ * `{slug}-work`로 바꿔 requireGiteaWorkingSlug()의 external_linked
+ * 분기와 맞춘다. 미러만 새로 만들고, 연결 직후 기존 publishToExternalRepo
+ * 를 그대로 한 번 호출해 work 저장소의 현재 상태를 외부 저장소에
+ * 즉시 반영한다(빈 저장소가 아니면 기존 push mirror + AI 대기열 로직이
+ * 그대로 충돌을 처리). */
+export async function promoteToExternal(
+  projectId: string,
+  provider: "github" | "gitlab",
+  repoUrl: string,
+  gitCredentialId: string,
+): Promise<LinkExternalResult> {
+  await assertProjectExists(projectId);
+  const repo = await getProjectGitRepo(projectId);
+  if (!repo || repo.provider !== "self_hosted") {
+    throw new Error("자체 호스팅(self_hosted) 프로젝트만 외부 저장소로 전환할 수 있습니다");
+  }
+  const authToken = await resolveCredentialToken(gitCredentialId);
+  if (!authToken) throw new Error(`자격증명을 찾을 수 없습니다: ${gitCredentialId}`);
+
+  const mirrorSlug = mirrorSlugForProject(projectId);
+  const plainSlug = slugForProject(projectId);
+  const workSlug = workSlugForProject(projectId);
+
+  await migrateRepoOrCleanUp(mirrorSlug, repoUrl, { mirror: true, authToken, description: "mirror (read-only)" });
+  try {
+    await gitea.renameRepo(plainSlug, workSlug);
+  } catch (err) {
+    // work 저장소 승격이 실패하면 방금 만든 미러도 같이 지운다 - 절반만
+    // 승격된 상태로 남기지 않기 위해(linkExternalAsPrimary와 같은 원칙).
+    await gitea.deleteRepo(mirrorSlug).catch(() => {});
+    throw err;
+  }
+
+  const secret = crypto.randomBytes(24).toString("hex");
+  const targetUrl = webhookTargetUrl(provider, projectId);
+
+  let autoRegistered = false;
+  if (targetUrl) {
+    try {
+      await registerWebhook(provider, repoUrl, authToken, targetUrl, secret);
+      autoRegistered = true;
+    } catch {
+      autoRegistered = false;
+    }
+  }
+
+  const db = getDb();
+  const row = await db.projectGitRepo.update({
+    where: { projectId },
+    data: {
+      provider: "external_linked",
+      repoUrl,
+      gitCredentialId,
+      webhookSecretEncrypted: encryptSecret(secret),
+      webhookAutoRegistered: autoRegistered,
+      webhookUrl: targetUrl,
+      webhookFirstReceivedAt: null,
+    },
+  });
+
+  await publishToExternalRepo(projectId, gitCredentialId);
+
+  return {
+    ...toInfo(row),
+    ...(!autoRegistered && targetUrl ? { manualWebhookInstructions: { url: targetUrl, secret } } : {}),
+  };
+}
+
 /** "웹훅 수동 설정 안내" 카드용 - 자동 등록에 실패했고 아직 그
  * 웹훅이 한 번도 실제로 호출된 적이 없을 때만 URL+secret을 돌려준다
  * (그 외엔 카드가 필요 없다는 뜻으로 null). secret은 저장은 돼
@@ -459,6 +530,15 @@ export type SyncRequestResult = { status: "scheduled" } | { status: "already-sch
  * 알린다. 실제 결과는 getCachedGitSyncStatus()로 폴링해서 받는다. */
 export async function requestGitSyncStatus(projectId: string): Promise<SyncRequestResult> {
   await assertExternalLinked(projectId);
+  // pull 미러는 Gitea가 내부적으로 자체 자격증명을 들고 있어 이 앱이
+  // 실시간 health를 못 보는 잔여 한계가 있다(문서화된 한계) - 대신
+  // 트리거 전에 같은 사전 검증만 걸어 최소한 "이미 무효인 토큰인데도
+  // 모르고 계속 기다리는" 상황은 막는다. publish 경로와 달리 여기서는
+  // 자동 강등까지는 하지 않는다(설계자 지시 범위).
+  const repo = await getProjectGitRepo(projectId);
+  if (repo?.gitCredentialId && !(await validateExternalCredential(projectId, repo.gitCredentialId))) {
+    throw new Error("자격증명이 더 이상 유효하지 않습니다 - 외부 저장소를 재연동하세요(발행을 시도하면 자동으로 자체 호스팅으로 전환됩니다)");
+  }
   if (syncStateByProject.get(projectId)?.status === "pending") {
     return { status: "already-scheduled" };
   }
@@ -512,6 +592,19 @@ export async function getGitSyncProposal(projectId: string): Promise<{ files: Gi
 
 export type PublishResult = { status: "synced" } | { status: "queued"; queueEntryId: string };
 
+/** push를 시도하기 전에 토큰 자체가 아직 살아있는지 가볍게 확인한다
+ * (externalGit.validateCredential - 401/403이면 무효, git의 "충돌"
+ * 에러 문자열 파싱보다 신뢰도 높음). 자격증명이 아예 없는 연동(공개
+ * 저장소를 자격증명 없이 미러만 건 경우)은 검증할 대상이 없으므로
+ * true로 통과시킨다. */
+export async function validateExternalCredential(projectId: string, gitCredentialId: string): Promise<boolean> {
+  const repo = await getProjectGitRepo(projectId);
+  if (!repo) return false;
+  const token = await resolveCredentialToken(gitCredentialId);
+  if (!token) return false;
+  return validateCredential(detectProvider(repo.repoUrl), repo.repoUrl, token);
+}
+
 async function waitForPushMirrorOutcome(slug: string, previousUpdate: string | null): Promise<gitea.PushMirrorStatus | null> {
   for (let i = 0; i < 20; i++) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -527,6 +620,21 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
   if (!repo || repo.provider !== "external_linked") {
     throw new Error("외부 저장소 연동(external_linked) 프로젝트에서만 발행할 수 있습니다");
   }
+
+  // 자격증명 오류 시 자동 강등(설계자 지시) - push를 실제로 시도하기
+  // 전에 토큰이 아직 유효한지 먼저 확인한다. 무효면 unlinkExternalRepo로
+  // self_hosted로 자동 전환(work 저장소는 그대로 보존)하고, 프로젝트에
+  // 안내 메시지를 남긴 뒤 호출자에게도 명확한 에러로 구분해 알린다.
+  if (!(await validateExternalCredential(projectId, gitCredentialId))) {
+    await unlinkExternalRepo(projectId);
+    await sendMessage(
+      projectId,
+      null,
+      "GitHub/GitLab 자격증명이 더 이상 유효하지 않아 외부 연동이 자동으로 해제되고 자체 호스팅으로 전환됐습니다 - 계속 외부 저장소를 쓰려면 새 자격증명으로 다시 연동하세요.",
+    );
+    throw new Error("자격증명이 더 이상 유효하지 않아 외부 연동이 자동으로 해제되고 자체 호스팅으로 전환되었습니다");
+  }
+
   const token = await resolveCredentialToken(gitCredentialId);
   if (!token) throw new Error(`자격증명을 찾을 수 없습니다: ${gitCredentialId}`);
 
