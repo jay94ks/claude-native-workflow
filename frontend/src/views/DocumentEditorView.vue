@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from "vue";
+import { computed, inject, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
@@ -316,6 +316,31 @@ async function sendInstructionMessage() {
 
 const selectedNextStatusGuideline = computed(() => nextStatuses.value.find((s) => s.code === toStatusCode.value)?.guideline ?? null);
 
+// 사이드바 문서 탐색기에서 다른 문서를 클릭하면 같은 라우트
+// (/projects/:id/documents/:trackingCode)라 Vue Router가 컴포넌트
+// 인스턴스를 재사용한다 - onMounted가 다시 안 불려서 trackingCode만
+// 바뀐 채 이전 문서 내용이 그대로 남아있던 버그(URL은 바뀌는데 화면은
+// 안 바뀜)를 여기서 잡는다. 편집/전이/우선순위/소스연결/지시 메시지
+// 관련 임시 상태도 이전 문서 것이 새 문서로 새어 들어가지 않도록
+// 같이 초기화한다.
+watch(
+  () => props.trackingCode,
+  () => {
+    activeTab.value = "view";
+    toStatusCode.value = "";
+    transitionError.value = "";
+    priorityError.value = "";
+    sourceLinksError.value = "";
+    newSourcePath.value = "";
+    deleteError.value = "";
+    saveMessage.value = "";
+    messageDraft.value = "";
+    messageOpen.value = false;
+    messageError.value = "";
+    messageSent.value = false;
+    load();
+  },
+);
 onMounted(load);
 </script>
 
