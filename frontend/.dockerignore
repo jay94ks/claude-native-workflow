@@ -1,0 +1,6 @@
+# Dockerfile이 `COPY . ./`로 전체를 복사하기 전에 `npm ci`로 이미
+# 컨테이너 안에 리눅스용 node_modules를 설치해뒀다 - 이게 없으면 호스트의
+# node_modules(Windows 등 다른 플랫폼 바이너리 포함 가능)가 그대로 덮어써
+# 빌드 컨텍스트만 커지는 게 아니라 런타임이 깨질 수 있다.
+node_modules
+dist

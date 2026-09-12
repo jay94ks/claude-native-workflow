@@ -5662,21 +5662,6 @@ DC-00001→DS-00001/SP-00001/PL-00001)는 정확히 연결되고 배치 밖
 병합했다(fast-forward) - 리허설에 쓴 로컬 스크래치 fixture와 Gitea
 테스트 프로젝트 2건은 정리·삭제, `test` 브랜치 자체도 삭제.
 
-## 다음 단계
-
-3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
-저장소 관리 탭) + 코드 관계도(`#code-relation-graph`) + PR 워크플로우
-확장/브랜치 스코프 코드 관계도/문서-브랜치 연관(`#pr-workflow-branch-scope`)
-+ Gitea 프로젝트별 네임스페이스/nginx 보안 강화/관계도 초기화·추적코드
-선택기/도입·마이그레이션 가이드(`#gitea-per-project-namespace`,
-`#gitea-nginx-lockdown`, `#relations-reset-and-picker`,
-`#adoption-migration-guide`)가 전부 완료됐고, 그 뒤 회귀 QA 후속
-라운드 + 도입/마이그레이션 가이드 전체 절차 리허설(`auto_init` 버그
-수정 포함)까지 실측 검증을 마쳤다. PLANS.md 색인 표에 남은 ⬜ 항목이
-없다 - 유일하게 열려있는 항목은 GitHub/GitLab 실제 발행 왕복
-테스트(외부 자격증명 필요, 설계자 승인/제공 대기)뿐이며, 다음 라운드는
-새 QA 패스나 설계자의 새 요청을 기다린다.
-
 ## 실제 신규 설치(C:\CNW) 구성 중 발견한 신규 설치 버그 2건 - 완료
 
 **배경**: 설계자가 실제로 이 컴퓨터에 이 시스템의 "진짜 설치"를 하나
@@ -5733,3 +5718,80 @@ volume**에서는 Gitea가 `INSTALL_LOCK=false` 상태로 부팅되기 때문에
 안내 공백 1건을 찾아 고쳤다. `C:\CNW`는 이제부터 이 시스템의 실제
 운영 설치로 쓰인다 - 이 저장소(`C:\GitHub\claude-native-workflow`)는
 계속 개발/QA 전용으로 남는다.
+
+## frontend를 별도 compose 서비스로 분리(`#frontend-own-service`) - 완료
+
+**배경**: 설계자가 "frontend도 docker-compose.yml에 묶어서 같이
+올려줘야 한다"고 지시 - 예전엔 frontend가 `backend/Dockerfile`의
+multi-stage 빌드 안에 함께 빌드돼 backend가 그 결과물(`dist/`)을 같은
+오리진에서 정적 서빙했다("단일 설치형" 원칙의 일환). 설계자 요구는
+frontend를 `docker-compose.yml`에 자기 자신의 서비스로 명시적으로
+묶고, backend API와 frontend를 nginx가 한 번에 라우팅하도록
+재구성하는 것 - 추가로 `docker-compose.yml` 자체도 `backend/docker`
+에서 저장소 루트로 옮기라는 지시도 함께 받았다.
+
+**변경**:
+- `docker-compose.yml`/`.env.example`/`nginx/default.conf`를
+  `backend/docker/`에서 저장소 루트로 이동(`git mv`로 이력 보존).
+  `backend/Dockerfile`의 build `context`를 `../..`(구 위치 기준
+  저장소 루트)에서 `.`(신 위치 자체가 이미 저장소 루트)로 조정.
+- `frontend/Dockerfile`(신규) - 2단계 빌드(node로 `npm run build` →
+  `nginx:alpine`이 `dist/`를 정적 서빙). `frontend/nginx.conf`(신규) -
+  Vue Router가 `createWebHistory`(SPA)라 `try_files $uri $uri/
+  /index.html`로 폴백 필요.
+- `docker-compose.yml`에 `frontend` 서비스 추가, `nginx`의
+  `depends_on`에 포함.
+- 루트 `nginx/default.conf` - 기존엔 `.git` 경로만 gitea로, 나머지
+  전부(`/api` 포함) backend로 보냈는데, 이제 `/api/`는 backend로,
+  나머지는 frontend로 분리(backend의 모든 HTTP 라우트가 예외 없이
+  `/api` 아래에 있음을 `server.ts` 재확인 후 안전하게 분리).
+- `backend/src/api/server.ts`의 "프런트엔드 정적 서빙" 블록(및
+  이제 안 쓰는 `fs`/`path`/`fileURLToPath` import) 전체 삭제 - frontend
+  가 자기 nginx로 분리된 뒤로는 도달 불가능한 죽은 코드였다.
+- `backend/Dockerfile`에서 frontend 빌드 스테이지와
+  `COPY --from=frontend-build` 제거.
+- README.md "실행 방법"(`cd backend/docker` 삭제, 루트에서 바로
+  실행) + "호스트에 직접 설치" 절(backend가 더 이상 frontend를
+  서빙하지 않으므로, 별도 정적 서버+리버스 프록시가 필요하다는 안내로
+  교체) + `COMPOSE_PROJECT_NAME` 경고 문단(디렉터리 이름이 이제
+  "backend/docker" 고정이 아니라 저장소 클론 폴더 이름 자체이므로
+  설명을 그에 맞게 갱신) 갱신. FEATURES.md §21(git 저장소/도입) 관련
+  서술도 새 아키텍처로 갱신.
+- `frontend/.dockerignore`(신규) - `frontend/Dockerfile`의
+  `COPY . ./`가 호스트의 `frontend/node_modules`(이 저장소 자신의
+  로컬 개발 환경에 이미 설치돼 있었음)까지 그대로 빌드 컨텍스트에
+  실어 보내, `npm ci`로 이미 리눅스용으로 설치해둔 컨테이너 안
+  `node_modules`를 다시 덮어써버리는 걸 직접 빌드해보며 발견 - 빌드
+  컨텍스트 전송 시간도 그만큼 늘어났었다. `node_modules`/`dist` 제외로
+  수정.
+
+**검증**: `tsc --noEmit`/`npm run audit:cli-mcp` 클린 확인 후,
+`docker compose build backend frontend`로 두 이미지 빌드 성공 확인 →
+스택 기동(postgres/meilisearch/gitea/backend/frontend/nginx, 포트는
+기존 dev 스택/`C:\CNW`와 안 겹치게 별도 값 사용) → 브라우저로 실제
+로그인 왕복(`/` → frontend 로그인 화면 렌더 → 로그인 제출 →
+`/api/auth/login`이 nginx를 거쳐 backend로 정확히 라우팅 → 로그인 성공
+후 프로젝트 목록 화면 정상 렌더) → SPA 딥링크 폴백(`/some/deep/route`
+→ 200, index.html로 폴백) 확인. 검증에 쓴 컨테이너/볼륨은 전부 정리.
+
+**결론**: frontend가 이제 backend와 완전히 독립적으로 빌드·재기동되는
+별도 compose 서비스가 됐다 - backend 이미지는 API 전용이 되고, 정적
+서빙/SPA 폴백은 frontend 자신의 nginx 책임이다. `docker-compose.yml`이
+저장소 루트로 옮겨지면서 Docker Compose의 기본 프로젝트 이름도 더는
+`backend/docker`(모든 클론에서 항상 동일)가 아니라 각 클론의 최상위
+폴더 이름을 따르게 됐다 - 폴더 이름을 다르게 clone하는 한 이전보다
+프로젝트 이름 충돌 위험도 자연히 줄었지만, `COMPOSE_PROJECT_NAME`
+안내는 그래도 남겨뒀다(같은 이름으로 두 번 clone하는 경우까지
+막으려면).
+
+## 다음 단계
+
+3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
+저장소 관리 탭) + 코드 관계도(`#code-relation-graph`) + PR 워크플로우
+확장/브랜치 스코프 코드 관계도/문서-브랜치 연관(`#pr-workflow-branch-scope`)
++ Gitea 프로젝트별 네임스페이스/nginx 보안 강화/관계도 초기화·추적코드
+선택기/도입·마이그레이션 가이드/실제 신규 설치 버그 수정/frontend
+서비스 분리까지 전부 완료됐다. PLANS.md 색인 표에 남은 ⬜ 항목이 없다 -
+유일하게 열려있는 항목은 GitHub/GitLab 실제 발행 왕복 테스트(외부
+자격증명 필요, 설계자 승인/제공 대기)뿐이며, 다음 라운드는 새 QA
+패스나 설계자의 새 요청을 기다린다.

@@ -1,6 +1,6 @@
 # 시크릿(JWT_SECRET/CREDENTIAL_ENCRYPTION_KEY/DB 비밀번호 등)이 담기는
-# 파일 - backend/docker/.env.example 자신의 주석("이 파일을 .env로
-# 복사한 뒤... .env 자체는 커밋 대상이 아님")이 전제하는 패턴인데,
+# 파일 - .env.example 자신의 주석("이 파일을 .env로 복사한 뒤... .env
+# 자체는 커밋 대상이 아님")이 전제하는 패턴인데,
 # 정작 이 패턴을 실제로 막는 .gitignore가 저장소 어디에도 없었다 -
 # 실사용 인스턴스를 준비하다가 발견해 바로 추가.
 .env

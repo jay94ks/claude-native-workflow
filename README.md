@@ -85,28 +85,31 @@ Knowledge Base)** 겸 문서/워크플로우 관리 시스템 - 단일 설치형
 ### Docker Compose (권장)
 
 ```bash
-cd backend/docker
 cp .env.example .env
 docker compose up -d --build
 ```
+
+(저장소 루트에서 그대로 실행 - `docker-compose.yml`이 backend/frontend
+둘 다 이미지를 빌드해 하나의 스택으로 띄운다.)
 
 `.env`를 채우지 않아도(전부 예시 값 그대로 둬도) 일단 기동은 된다 -
 아래 항목별로 "채우지 않으면 무슨 기능이 꺼지는지"를 명시했으니, 필요한
 만큼만 채우고 나머지는 나중에 채워도 된다(값을 채운 뒤엔
 `docker compose up -d --build`를 다시 실행하면 반영됨).
 
-**⚠ 이 컴퓨터에 이미 이 시스템의 다른 설치(예: 이 저장소를 개발하는
-작업트리)가 있다면** - Docker Compose는 기본적으로 프로젝트 이름을
-**현재 디렉터리 이름**(`docker`)만으로 정하고, 볼륨/네트워크 이름도 그
-프로젝트 이름 기준이다. 두 클론이 전부 `backend/docker`라는 같은
-폴더명을 쓰므로, 그냥 `docker compose up`을 실행하면 경로가 다른데도
-`docker_postgres-data` 등 같은 이름의 볼륨을 그대로 재사용해버려서(실제
-DB 서버 통째로 공유) 완전히 별개인 두 설치가 데이터를 뒤섞어 쓰게 된다
-(실제로 새 설치를 만들며 재현·발견 - 새 설치의 Postgres 컨테이너가
-기존 설치의 옛 비밀번호로 인증에 실패하는 형태로 드러났다). `.env`에
-`COMPOSE_PROJECT_NAME=<겹치지 않는 이름>`(예: `cnw`)을 추가해 완전히
-분리한다 - 볼륨/네트워크/컨테이너 이름이 전부 그 접두어로 바뀌어 다른
-설치와 절대 안 겹친다.
+**⚠ 이 컴퓨터에 이미 이 시스템의 다른 클론/설치가 있다면** - Docker
+Compose는 기본적으로 프로젝트 이름을 **`docker-compose.yml`이 있는
+디렉터리 이름**만으로 정하고, 볼륨/네트워크 이름도 그 프로젝트 이름
+기준이다. 이 저장소를 두 곳에 clone했는데 그 최상위 폴더 이름이
+우연히 같다면(예: 둘 다 기본 이름 `claude-native-workflow`를 그대로
+씀), 그냥 `docker compose up`을 실행하면 경로가 다른데도
+`claude-native-workflow_postgres-data` 등 같은 이름의 볼륨을 그대로
+재사용해버려서(실제 DB 서버 통째로 공유) 완전히 별개인 두 설치가
+데이터를 뒤섞어 쓰게 된다(실제로 새 설치를 만들며 재현·발견 - 새
+설치의 Postgres 컨테이너가 기존 설치의 옛 비밀번호로 인증에 실패하는
+형태로 드러났다). `.env`에 `COMPOSE_PROJECT_NAME=<겹치지 않는 이름>`
+(예: `cnw`)을 추가해 완전히 분리한다 - 볼륨/네트워크/컨테이너 이름이
+전부 그 접두어로 바뀌어 다른 설치와 절대 안 겹친다.
 
 웹 UI/API는 nginx를 거쳐 `:80`으로 열린다(포트 충돌 시 `.env`에
 `PUBLIC_HOST_PORT` 지정) - backend 자신의 `:8760`은 보안 강화
@@ -286,7 +289,6 @@ Funnel 같은 역터널 서비스를 쓰면 포트포워딩·공인 IP 없이도
 ### 호스트에 직접 설치
 
 ```bash
-cd frontend && npm install && npm run build && cd ..   # backend가 이 dist/를 정적 서빙
 cd backend
 npm install
 npm run build
@@ -300,8 +302,16 @@ node dist/api/server.js
 ```
 
 Meilisearch/EMQX는 별도로 떠 있어야 한다(각자 공식 바이너리/Docker
-이미지로 로컬 실행 가능). `frontend/dist`가 없으면 backend는 정상
-기동하되 웹 UI 없이 API만 서빙한다(CLI/MCP는 지장 없음).
+이미지로 로컬 실행 가능). backend는 이제 `/api` 아래의 API만 서빙한다
+(#frontend-own-service - 예전엔 `frontend/dist`가 있으면 backend가
+그걸 같은 오리진에서 정적 서빙했으나, frontend가 자기 nginx를 가진
+별도 서비스로 분리되면서 그 코드 자체가 없어졌다). CLI/MCP만 쓸
+거면 이대로 충분하고, 웹 UI까지 쓰려면 `frontend/dist`를 따로 빌드해
+별도 정적 서버로 띄우고(예: `cd frontend && npm install && npm run
+build && npx serve -s dist`), 그 앞에 `/api`만 backend로 돌려주는
+리버스 프록시를 하나 둬야 한다(Docker Compose 경로의
+`nginx/default.conf`가 하는 역할과 동일 - 그 파일을 그대로 참고해도
+된다).
 
 ### 프런트엔드 개발
 

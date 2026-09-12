@@ -1,5 +1,6 @@
-# backend + postgres(기본 DB) + meilisearch + emqx + gitea. 시크릿은 이
-# 폴더의 .env(.env.example 참고, 커밋 안 함)에서 읽는다.
+# backend + frontend + postgres(기본 DB) + meilisearch + emqx + gitea.
+# 시크릿은 이 저장소 루트의 .env(.env.example 참고, 커밋 안 함)에서
+# 읽는다.
 services:
   postgres:
     image: postgres:16-alpine
@@ -106,9 +107,7 @@ services:
 
   backend:
     build:
-      # 저장소 루트가 컨텍스트 - Dockerfile이 frontend/도 같은 이미지에
-      # 빌드해 넣는다(Phase 5부터, backend/Dockerfile 상단 주석 참고).
-      context: ../..
+      context: .
       dockerfile: backend/Dockerfile
     environment:
       PORT: 8760
@@ -145,10 +144,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # 빌드 결과물(dist/)을 이 서비스 자신의 nginx가 정적 서빙한다
+  # (#frontend-own-service - frontend/Dockerfile 참고). API 호출은
+  # 이 서비스가 아니라 앞단 공용 nginx가 직접 backend로 돌려준다.
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
   # 유일한 기본 호스트 노출 지점(#gitea-nginx-lockdown) - `.git`로
-  # 끝나는 git smart-HTTP 요청만 gitea로, 나머지는 전부 backend로
-  # 돌린다(nginx/default.conf 참고). Gitea 자신의 웹 UI는 이 origin을
-  # 통해서는 아예 도달할 수 없다.
+  # 끝나는 git smart-HTTP 요청은 gitea로, `/api`는 backend로, 나머지는
+  # frontend로 돌린다(nginx/default.conf 참고). Gitea 자신의 웹 UI는 이
+  # origin을 통해서는 아예 도달할 수 없다.
   nginx:
     image: nginx:alpine
     volumes:
@@ -157,6 +165,7 @@ services:
       - "${PUBLIC_HOST_PORT:-80}:80"
     depends_on:
       - backend
+      - frontend
       - gitea
     restart: unless-stopped
 

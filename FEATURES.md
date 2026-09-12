@@ -681,13 +681,16 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   설치 마법사 없이 `docker exec` 기반 CLI로 전부 자동화됨
   (#gitea-nginx-lockdown).
 - **nginx가 유일한 기본 호스트 노출 지점**(#gitea-nginx-lockdown) -
-  `.git`로 끝나는 git smart-HTTP 요청만 Gitea로, 나머지는 backend로
-  라우팅한다. backend/Gitea 자신의 포트는 기본적으로 호스트에 노출되지
-  않는다(로컬 개발 편의를 위한 주석 처리된 오버라이드만 존재).
-- backend가 frontend 빌드 결과물을 같은 오리진에서 정적 서빙(별도
-  컨테이너/포트 없음).
+  `.git`로 끝나는 git smart-HTTP 요청은 Gitea로, `/api`는 backend로,
+  나머지는 frontend로 라우팅한다. backend/Gitea/frontend 자신의 포트는
+  기본적으로 호스트에 노출되지 않는다(로컬 개발 편의를 위한 주석
+  처리된 오버라이드만 존재).
+- **frontend는 자기 자신의 nginx로 빌드 결과물을 정적 서빙하는 별도
+  compose 서비스**다(#frontend-own-service - backend와 독립적으로
+  빌드/재기동됨, backend 이미지엔 frontend 코드가 안 들어간다).
 - 호스트 직접 설치 경로도 지원(Docker 없이 Node.js + 외부 Meilisearch/
-  EMQX).
+  EMQX) - 이 경로에선 frontend를 쓰려면 별도 정적 서버+리버스 프록시가
+  필요하다(README.md 참고).
 
 ## 22. 코드 관계도 (Code Relation Graph)
 

@@ -1,19 +1,9 @@
-# 빌드 컨텍스트가 저장소 루트다(docker-compose.yml에서 context: ../..로
-# 바꿈 - Phase 5 전엔 backend/만 컨텍스트였지만, frontend/도 같은
-# 이미지에 넣어야 해서 확장했다). 모든 COPY 경로가 backend/ 또는
-# frontend/ 접두사를 갖는 이유.
-
-# --- frontend 빌드 스테이지 ---
-# 별도 컨테이너/포트로 안 띄운다 - backend가 이 결과물을 그대로 정적
-# 서빙한다("단일 설치형" 원칙).
-FROM node:22-slim AS frontend-build
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
-COPY frontend ./
-RUN npm run build
-
-# --- backend 빌드 + 최종 이미지 ---
+# 빌드 컨텍스트가 저장소 루트다(루트 docker-compose.yml에서
+# context: . - frontend는 이제 별도 서비스(frontend/Dockerfile)로
+# 빌드/서빙되고 backend 이미지엔 안 들어간다. 컨텍스트가 여전히
+# 저장소 루트인 이유는 그냥 backend/뿐이라도 이 위치가 기존 경로와
+# 맞아서 - 모든 COPY 경로가 backend/ 접두사를 갖는다).
+#
 # Prisma의 쿼리 엔진이 필요로 하는 libssl - node:22-slim엔 기본으로
 # 없어서 "failed to detect the libssl/openssl version" 경고를 내며
 # 추측값으로 대체한다(concept 브랜치에서 이미 겪은 문제).
@@ -51,12 +41,6 @@ COPY backend/docker-entrypoint.sh ./
 # 않음) 이미지 안에서 명시적으로 부여(concept 브랜치 tier3에서 이미
 # 겪은 문제).
 RUN chmod +x docker-entrypoint.sh
-
-# server.ts가 dist/api/server.js 기준 3단계 위(로컬 개발에서
-# backend/dist/api → repo 루트와 같은 상대 위치)의 frontend/dist를
-# 찾는다 - 컨테이너에서는 /app이 backend/ 역할이므로 /frontend/dist에
-# 둬야 그 상대 경로 계산과 맞아떨어진다.
-COPY --from=frontend-build /app/frontend/dist /frontend/dist
 
 EXPOSE 8760
 

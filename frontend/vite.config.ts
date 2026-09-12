@@ -3,9 +3,10 @@ import vue from "@vitejs/plugin-vue";
 import monacoEditorPlugin from "vite-plugin-monaco-editor-esm";
 
 // 개발 서버(:5173)가 /api를 backend(:8760)로 프록시한다 - 프로덕션에선
-// backend가 이 빌드 결과물(dist/)을 같은 오리진에서 정적 서빙하므로
-// 브라우저는 항상 상대 경로 /api/...만 호출하면 된다(런타임 API base
-// URL 설정이 따로 필요 없음).
+// 이 빌드 결과물(dist/)을 frontend 자신의 nginx가 정적 서빙하고, 앞단
+// 공용 nginx가 같은 오리진에서 /api만 backend로 돌려주므로(nginx/default.conf
+// 참고) 브라우저는 항상 상대 경로 /api/...만 호출하면 된다(런타임 API
+// base URL 설정이 따로 필요 없음).
 //
 // Monaco 워커는 처음엔 Vite 공식 문서의 수동 `?worker` import 패턴으로
 // 시도했으나, 이 Vite 6 + monaco-editor 조합에서 Rollup이 node_modules
