@@ -7,7 +7,7 @@ import mqtt, { type MqttClient } from "mqtt";
 import { apiCall, getAccessToken } from "./api/client";
 
 export interface ChangeEvent {
-  entity: "document" | "comment" | "question" | "answer" | "project" | "kanbanColumn" | "kanbanCard";
+  entity: "document" | "comment" | "question" | "answer" | "project" | "kanbanColumn" | "kanbanCard" | "message";
   action: "create" | "update" | "delete";
   id: string;
   trackingCode?: string;

@@ -186,7 +186,7 @@ import {
   acknowledgeQueueEntry,
   completeQueueEntry,
 } from "../core/pushHookPrompts.js";
-import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages } from "../core/messages.js";
+import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages, editMessage, deleteMessage } from "../core/messages.js";
 import { checkConnect, checkAcl, ensureEmqxAuthConfigured } from "../core/emqxAuth.js";
 
 const app = express();
@@ -2140,6 +2140,27 @@ app.post(
     const { body } = req.body as { body?: string };
     if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
     res.json(await sendMessage(req.params.projectId, req.userId!, body));
+  }),
+);
+
+// 소유권 확인(본인이 보낸 메시지만, superAdmin 우회)은 editMessage/
+// deleteMessage 내부에서 처리한다 - comments 라우트와 동일한 패턴.
+app.put(
+  "/api/messages/:id",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { body } = req.body as { body?: string };
+    if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
+    res.json(await editMessage(req.params.id, body, req.userId!));
+  }),
+);
+
+app.delete(
+  "/api/messages/:id",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    await deleteMessage(req.params.id, req.userId!);
+    res.json({ ok: true });
   }),
 );
 

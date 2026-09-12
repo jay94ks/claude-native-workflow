@@ -867,6 +867,20 @@ async function main() {
       return call(`/api/projects/${a.projectId}/messages/recent${qs}`);
     },
   );
+  tool(
+    "message_edit",
+    "메시지 수정",
+    "본인이 보낸 메시지만 수정할 수 있다.",
+    { id: z.string(), body: z.string() },
+    async (a) => call(`/api/messages/${a.id}`, { method: "PUT", body: JSON.stringify({ body: a.body }) }),
+  );
+  tool(
+    "message_delete",
+    "메시지 삭제",
+    "본인이 보낸 메시지만 삭제할 수 있다.",
+    { id: z.string() },
+    async (a) => call(`/api/messages/${a.id}`, { method: "DELETE" }),
+  );
 
   // ---------------------------------------------------------------- 가이디드 마이그레이션 (Phase 6)
 

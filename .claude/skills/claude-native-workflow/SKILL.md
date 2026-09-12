@@ -321,6 +321,8 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 메시지 전송 | `docs message send <projectId> <body...>` | `message_send` |
 | 새 메시지 대기(블로킹) | `docs message wait <projectId> [--timeout <초>]` | `message_wait` |
 | 최근 메시지(비파괴, 장애 복구용) | `docs message recent <projectId> [--limit <n>]` | `message_recent` |
+| 메시지 수정 | `docs message edit <id> <body...>` | `message_edit` |
+| 메시지 삭제 | `docs message delete <id>` | `message_delete` |
 | 마이그레이션 후보 스캔 | `docs migrate scan <sourceDir>` | `migrate_scan` |
 | 마이그레이션 반영 | `docs migrate apply <projectId> <manifestFile>` | `migrate_apply` |
 | 칸반 분류 목록 | `docs kanban-columns <projectId>` | `kanban_columns` |

@@ -421,10 +421,16 @@
   구현 시점엔 검증했으나, 이후 여러 라운드가 메시지 관련 스키마
   (deliveredAt 추가 등)를 건드린 뒤로 이 구체적 시나리오를 다시
   실측한 적은 없음.
+- [x] 메시지 수정/삭제(`message edit|delete`/`message_edit`/
+  `message_delete`) - 본인이 보낸 메시지만(또는 superAdmin 우회)
+  가능, 다른 사람 시도 시 거부 - CLI/MCP/브라우저 전부 실측.
+  **회귀 확인**: `message wait`를 걸어둔 채 무관한 메시지를 편집해도
+  그 대기 호출이 편집을 가짜 새 메시지로 받지 않고 정상 타임아웃
+  되는지 확인(편집/삭제 이벤트는 messages가 아니라 changes 토픽으로
+  나감).
 
 ### 추가 개발 계획
-`#message-edit-delete` `#message-wait-timeout-cap` - 상세는
-[PLANS.md](PLANS.md) 참고.
+`#message-wait-timeout-cap` - 상세는 [PLANS.md](PLANS.md) 참고.
 
 ---
 

@@ -274,6 +274,12 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   본문에 병기(editor 이상만 노출).
 - 시스템(비인간) 발신 메시지도 지원(`authorId: null`) - 예: 외부
   저장소 동기화 충돌 시 자동 안내(13절 참고).
+- **수정/삭제**(웹/CLI `message edit|delete`/MCP `message_edit`/
+  `message_delete`) - 본인이 보낸 메시지만(또는 superAdmin) 가능,
+  시스템 브로드캐스트는 일반 사용자가 못 건드림. 실시간 반영은
+  `project/{id}/changes` topic으로 나가고(`message wait`가 구독하는
+  `.../messages` topic과는 분리 - 그 토픽에 편집/삭제 이벤트를 올리면
+  대기 중인 `message wait` 호출자가 "새 메시지"로 오인하게 됨).
 - **JWT 기반 EMQX 클라이언트 인증 + Member 기준 topic ACL** - 설치
   전역 JWT를 그대로 MQTT 인증에 재사용, `project/{id}/(changes|
   messages)` topic은 그 프로젝트 멤버만 구독/발행 가능. 웹 UI가

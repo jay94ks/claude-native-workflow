@@ -1319,6 +1319,18 @@ messageCmd
     const qs = opts.limit ? `?limit=${encodeURIComponent(opts.limit)}` : "";
     return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages/recent${qs}`)));
   });
+messageCmd
+  .command("edit <id> <body...>")
+  .description("본인이 보낸 메시지만 수정할 수 있다")
+  .action((id, bodyParts) =>
+    run(async () =>
+      printJson(await apiCall(`/api/messages/${id}`, { method: "PUT", body: JSON.stringify({ body: bodyParts.join(" ") }) })),
+    ),
+  );
+messageCmd
+  .command("delete <id>")
+  .description("본인이 보낸 메시지만 삭제할 수 있다")
+  .action((id) => run(async () => printJson(await apiCall(`/api/messages/${id}`, { method: "DELETE" }))));
 
 // ---------------------------------------------------------------- 가이디드 마이그레이션 (Phase 6)
 

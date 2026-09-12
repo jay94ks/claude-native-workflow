@@ -45,7 +45,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 12 | ✅ | `#question-bulk-ack` | 질문 일괄 ack(CLI/MCP 전용, 항목별 결과) |
 | 13 | ✅ | `#question-withdraw` | 질문 철회(open 상태·본인만, CLI/MCP/웹) |
 | 14 | ✅ | `#comment-edit-delete` | 이미 구현돼 있었음 - 문서만 정리(코드 변경 없음) |
-| 15 | ⬜ | `#message-edit-delete` | 메시지 수정/삭제 없음 |
+| 15 | ✅ | `#message-edit-delete` | 메시지 수정/삭제(본인만, CLI/MCP/웹) |
 | 16 | ⬜ | `#message-wait-timeout-cap` | `message wait` 최대 타임아웃 상한 미정 |
 | 17 | ⬜ | `#meilisearch-spof` | Meilisearch 장애 시 에러 메시지 품질 미점검 |
 | 18 | ⬜ | `#git-unlink` | git 저장소 연결 해제(unlink) 기능 없음 |
@@ -64,10 +64,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 ---
 
 ## 7. 메시징
-
-### `#message-edit-delete`
-**메시지 수정/삭제가 없다**(코멘트와 같은 공백) - 잘못 보낸 메시지를
-철회할 수 없다.
 
 ### `#message-wait-timeout-cap`
 **`message wait`의 최대 타임아웃 상한이 코드/문서 어디에도 명시된

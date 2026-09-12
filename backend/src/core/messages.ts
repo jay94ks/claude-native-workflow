@@ -1,6 +1,7 @@
 import mqtt from "mqtt";
 import { getDb } from "./db.js";
-import { realtimePublish, projectMessagesTopic } from "./realtime.js";
+import { realtimePublish, projectMessagesTopic, projectChangesTopic, type ChangeEvent } from "./realtime.js";
+import { isSuperAdmin } from "./auth.js";
 
 export interface MessageDetail {
   id: string;
@@ -30,6 +31,50 @@ export async function sendMessage(projectId: string, authorId: string | null, bo
   };
   await realtimePublish(projectMessagesTopic(projectId), event);
   return row;
+}
+
+/** 본인이 보낸 메시지만(또는 superAdmin) 수정/삭제할 수 있다 -
+ * core/comments.ts의 editComment/deleteComment와 같은 소유권 패턴
+ * (authorId가 null인 시스템 브로드캐스트는 이 비교가 항상 실패해
+ * 자연히 일반 사용자는 못 건드리고 superAdmin만 정리 가능).
+ *
+ * 주의: 이벤트는 project/{id}/messages가 아니라 project/{id}/changes
+ * 토픽으로 발행한다 - waitForMessage()는 messages 토픽에 오는 어떤
+ * payload든 "새 메시지 도착"으로 간주해 파싱하므로, 여기서 수정/삭제
+ * 이벤트를 그 토픽에 올리면 대기 중인 message_wait 호출자가 이를
+ * 새 메시지로 오인하게 된다. */
+export async function editMessage(id: string, body: string, requesterId: string): Promise<MessageDetail> {
+  if (!body.trim()) throw new Error("body가 필요합니다");
+  const db = getDb();
+  const existing = await db.message.findUnique({ where: { id } });
+  if (!existing) throw new Error(`메시지를 찾을 수 없습니다: ${id}`);
+  if (existing.authorId !== requesterId && !(await isSuperAdmin(requesterId))) {
+    throw new Error("본인이 보낸 메시지만 수정할 수 있습니다");
+  }
+  const row = await db.message.update({ where: { id }, data: { body } });
+  await realtimePublish(projectChangesTopic(existing.projectId), {
+    entity: "message",
+    action: "update",
+    id,
+    at: new Date().toISOString(),
+  } satisfies ChangeEvent);
+  return row;
+}
+
+export async function deleteMessage(id: string, requesterId: string): Promise<void> {
+  const db = getDb();
+  const existing = await db.message.findUnique({ where: { id } });
+  if (!existing) throw new Error(`메시지를 찾을 수 없습니다: ${id}`);
+  if (existing.authorId !== requesterId && !(await isSuperAdmin(requesterId))) {
+    throw new Error("본인이 보낸 메시지만 삭제할 수 있습니다");
+  }
+  await db.message.delete({ where: { id } });
+  await realtimePublish(projectChangesTopic(existing.projectId), {
+    entity: "message",
+    action: "delete",
+    id,
+    at: new Date().toISOString(),
+  } satisfies ChangeEvent);
 }
 
 export interface ListMessagesOptions {

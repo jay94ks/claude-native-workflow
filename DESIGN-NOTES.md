@@ -3145,6 +3145,62 @@ open 질문을 admin(superAdmin)이 철회 → 우회 성공 확인(200). CLI
 "철회됨"으로 바로 바뀌는지 스크린샷 확인. `npm run audit:cli-mcp`,
 `npx tsc --noEmit`(backend), `vue-tsc -b`(frontend) 전부 클린.
 
+## 메시지 수정/삭제(`#message-edit-delete`) - 완료 (2026-09-12)
+
+PLANS.md 15번(`## 7. 메시징` 첫 항목). 잘못 보낸 메시지(오타, 잘못된
+지시 등)를 고치거나 철회할 방법이 없었다. 백로그 설명은 "코멘트와
+같은 공백"이라고 적혀 있었지만, 실제로는 정반대 성격 - 코멘트는
+AI가 보면 안 되는 채널이라 CLI/MCP에서 의도적으로 배제돼 있지만,
+메시지는 `message list/send/wait/recent`가 이미 CLI/MCP에 완전히
+대칭으로 노출된 AI ↔ 설계자 공용 채널이다. 그래서 이번 edit/delete도
+CLI/MCP까지 노출해야 완전성 원칙에 맞다고 판단했다(코멘트 edit/
+delete는 웹 전용으로 남겨둔 것과 다른 지점).
+
+`core/messages.ts` 신규 `editMessage`/`deleteMessage` - 소유권 확인은
+`core/comments.ts`의 `editComment`/`deleteComment`와 같은 패턴
+(`authorId !== requesterId && !isSuperAdmin`이면 거부) - `authorId`
+가 null인 시스템 브로드캐스트는 이 비교가 항상 실패해 일반 사용자는
+못 건드리고 superAdmin만 정리 가능. 코멘트와 달리 상태 제약(예:
+아직 안 읽은 것만)은 두지 않았다 - 코멘트도 상태와 무관하게 언제든
+수정/삭제 가능한 선례를 따름.
+
+**실시간 발행 토픽을 잘못 고르면 실제 버그가 날 뻔했다** -
+`waitForMessage()`는 `project/{id}/messages` 토픽에 오는 어떤
+payload든 무조건 "새 메시지 도착"으로 파싱한다. edit/delete
+이벤트를 그 토픽에 올리면 대기 중인 `message wait` 호출자가 이를
+새 메시지로 오인하게 된다 - 그래서 코멘트/질의와 동일하게
+`project/{id}/changes` 토픽에 `ChangeEvent`로 발행하도록
+설계했다(`entity` 유니온에 `"message"`를 추가 - 백엔드
+`core/realtime.ts`와 프론트 `frontend/src/realtime.ts`가 각자
+별도로 선언돼 있어 양쪽 다 갱신). 실측 중 이 설계가 실제로
+맞는지도 직접 검증했다(아래 참고) - `message wait`를 걸어둔 채로
+다른 메시지를 편집해도 그 wait 호출이 가짜 메시지로 깨어나지
+않고 정상적으로 타임아웃되는 것을 확인.
+
+라우트 `PUT`/`DELETE /api/messages/:id`(소유권 확인은 core 안에서 -
+comments 라우트와 동일 패턴), CLI `message edit`/`message delete`
+(`messageCmd` 그룹에 추가), MCP `message_edit`/`message_delete`
+(CLI 태그와 그대로 대칭). 웹 UI(`MessagesView.vue`) - 본인이 보낸
+메시지(또는 superAdmin)에만 수정/삭제 버튼 노출, 수정은 인라인
+텍스트 입력으로 전환. `connectProjectRealtime`에 `onChange` 핸들러를
+추가해(기존 `onMessage`와 별개) 다른 세션의 수정/삭제도 실시간
+반영되게 했다.
+
+**실측 검증**: docker 재빌드·재기동 후 admin + 계정 B로 HTTP 왕복 -
+B가 admin의 메시지 수정/삭제 시도 → 거부 확인 → admin 본인 수정 →
+반영 확인 → superAdmin(admin)이 B의 메시지 수정/삭제 → 우회 성공
+확인 → 삭제 후 `message recent`에서 사라짐 확인 → **회귀 검증**:
+`message wait`를 백그라운드 작업으로 걸어둔 채 무관한 메시지를
+편집 → wait 호출이 `timedOut:true, message:null`로 정상 타임아웃
+되고 편집을 가짜 새 메시지로 받지 않음을 확인. CLI `message
+edit`/`message delete`, MCP `message_edit`/`message_delete`(이미
+삭제된 메시지 재시도로 `isError:true` 케이스까지) 실제 서버/
+클라이언트로 왕복. 브라우저 - 본인 메시지에만 수정/삭제 버튼이
+보이고, 수정 시 인라인 입력으로 전환돼 즉시 반영되며, 삭제 시
+목록에서 바로 빠지는 것을 스크린샷으로 확인. `npm run
+audit:cli-mcp`, `npx tsc --noEmit`(backend), `vue-tsc -b`(frontend)
+전부 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
