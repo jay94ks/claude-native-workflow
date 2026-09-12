@@ -419,6 +419,17 @@
   뒤 A를 삭제 → 질의/답변 본문은 그대로, `refs` 배열에서만 A가
   빠지는 것을 실측(스키마상 예상된 cascade 방향과 일치) - 이번
   세션에서 실측.
+- [x] **동시성(경합) - answer/ack/withdraw** - 같은 open 질의에
+  withdraw와 answer를 동시에 보내면 실제로 버그가 났었다(`#question-ack-race-fix`) -
+  둘 다 200으로 성공 응답했지만 최종 상태는 withdraw가 조용히
+  사라진 `pending`이었음. answer를 두 번 동시에 보내면 두 번째가
+  Prisma 원본 예외를 그대로 노출. `db.question.updateMany({where:
+  {id, status: 기대값}, ...})` 조건부 원자적 전이로 수정 - 이제
+  동시 요청 중 정확히 하나만 성공하고 나머지는 깔끔한 도메인
+  에러를 받는 것, pending 질의에 동시 ack 10회/bulk-ack 중복
+  코드는 기존처럼 안전하게 동작하는 것, 서버가 크래시 없이
+  응답하는 것(컨테이너 `Up` 유지, 처리 안 된 예외 스택트레이스
+  없음) - 실측.
 
 ### 추가 개발 계획
 현재 없음.
@@ -502,6 +513,15 @@
   그대로 되는지** REST 직접 호출로 확인. 웹 UI에서 대기 탭엔 "처리
   시작"만(수정 버튼 자체가 안 보임), 처리중 탭엔 "완료"+수정+삭제,
   기록 탭엔 수정+삭제만 뜨는지 확인.
+- [x] **동시성(경합) - ack/complete가 서버를 충돌내지 않는지** -
+  같은 메시지에 ack 10개 동시 호출, complete 10개 동시 호출,
+  ack+complete 혼합 10개 동시 호출, `markDelivered=true` 목록
+  조회와 ack를 동시 반복, 존재하지 않는 id로 ack/complete - 전부
+  200 또는 깔끔한 도메인 에러로 응답하고 컨테이너가 크래시 없이
+  계속 `Up` 상태인 것을 실측(`ackMessage`/`completeMessage`는
+  "이미 처리됐으면 그대로 반환"하는 idempotent 설계라 애초에 경합
+  안전했음 - 질의 ack/answer/withdraw 쪽은 실제 버그가 있었다,
+  `#question-ack-race-fix` 참고).
 
 ### 추가 개발 계획
 현재 없음.

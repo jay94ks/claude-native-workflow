@@ -4593,6 +4593,78 @@ docTypeId, limit: 1000 })`처럼 명시적으로 큰 limit을 넘기도록
 `/documents/page`/`/search`는 원래도 문제없었던 것 재확인(총
 소요/응답 시간 전부 기록). 테스트 프로젝트는 검증 후 삭제.
 
+## 메시지 ack/complete + 질의 ack/answer/withdraw 동시성(경합) QA - 질의 쪽 상태 충돌 버그 발견·수정(`#question-ack-race-fix`) - 완료 (2026-09-12)
+
+**배경**: 설계자 직접 지시 - "CLI/MCP/SKILL에서 메시지를 확인할 때
+ack 하는 플로우가 서버를 충돌내는지, 응답을 잘 하는지 QA하라"는
+요청에 이어 "'설계자'의 답변을 가져가는 기능(질의 ack)도 마찬가지로
+상태 충돌 응답을 잘 처리하는지 QA하라"는 요청이 이어졌다. 실제
+Docker 백엔드에 동시 요청(Promise.all)을 쏘는 스크립트로 두 영역을
+각각 검증했다.
+
+**메시지 ack/complete(`ackMessage`/`completeMessage`)**: 같은
+메시지에 ack 10개 동시 호출, complete 10개 동시 호출, ack+complete
+혼합 10개 동시 호출, `markDelivered=true` 목록 조회와 ack를 동시
+반복, 존재하지 않는 id로 ack/complete - **전부 문제없이 200 또는
+깔끔한 도메인 에러로 응답, 서버 크래시 없음**(컨테이너 계속
+`Up`, 로그에 스택 트레이스 없음). 이 두 함수는 "이미 처리됐으면
+그대로 반환"(idempotent) 설계라 동시 호출이 와도 값을 덮어쓸
+뿐이라 안전했다.
+
+**질의 ack/answer/withdraw - 실제 버그 발견**: 같은 방식으로 질의
+쪽(`answerQuestion`/`acknowledgeQuestion`/`withdrawQuestion`)을
+테스트하니 두 가지 문제가 실제로 재현됐다:
+1. **데이터 손상**: 같은 open 질의에 `withdraw`와 `answer`를 동시에
+   보내면 **둘 다 200으로 성공 응답**했다 - 그런데 최종 상태를
+   확인해보니 `withdrawn`이 아니라 `pending`이었다. 두 함수 모두
+   `findUnique`로 상태를 읽고 그 값이 `"open"`이면 통과시킨 뒤
+   별도의 `update`로 다시 쓰는 구조라, 두 요청이 모두 읽기 시점엔
+   `"open"`을 보고 통과한 다음 서로 다른 값으로 마지막에 쓴
+   쪽이 이겼다(answer가 나중에 커밋되면 방금 성공했다고 응답한
+   withdraw의 결과가 조용히 사라짐). 호출자 둘 다 "성공"으로 알고
+   있는데 실제 DB는 그중 하나만 반영한 상태 - 전형적인
+   TOCTOU(check-then-act) 경합.
+2. **내부 에러 노출**: 같은 open 질의에 `answer`를 두 번 동시에
+   보내면 첫 번째는 성공하고 두 번째는 원래 "이미 답변됐거나
+   처리된 질문입니다"라는 안내 메시지가 나와야 하는데, 실제로는
+   `Answer.questionId` 유니크 제약을 그대로 건드려 Prisma 원본
+   예외 메시지("Invalid `prisma.answer.create()` invocation: ...
+   Unique constraint failed...")가 그대로 노출됐다(500은 아니고
+   전역 에러 핸들러가 400으로는 막았지만, 내부 구현이 드러나는
+   문제). 원인은 코드 순서 - `answer.create()`를 먼저 하고
+   `question.status`를 나중에 "pending"으로 옮기고 있어서, 맨 위의
+   "`status !== "open"`이면 막는다"는 가드가 동시 호출 사이의
+   좁은 창(findUnique 이후 ~ update 이전)을 막지 못했다.
+
+**수정**: 세 함수(`answerQuestion`/`acknowledgeQuestion`/
+`withdrawQuestion`) 전부 "먼저 findUnique로 읽고 나중에 update"
+패턴을, `db.question.updateMany({ where: { id, status: <기대값> },
+data: { status: <다음값> } })` 한 번으로 대체 - 이 한 번의 쿼리
+자체가 원자적 조건부 잠금 역할을 한다(WHERE 절에 기대하는 이전
+상태를 넣어 DB가 그 조건을 만족하는 행에만 갱신을 적용하고,
+`count`로 실제 몇 건이 바뀌었는지 돌려준다). `count === 0`이면
+"이미 다른 요청이 먼저 상태를 옮겼다"는 뜻이므로 기존과 같은
+문구의 도메인 에러를 던진다 - 두 동시 요청 중 정확히 하나만
+`count === 1`을 받아 성공하고, 나머지는 이 시점에서 깔끔하게
+막히므로 `answerQuestion`의 경우 `answer.create()`(유니크 제약을
+건드리는 지점) 자체를 조건부 갱신이 실패하면 아예 실행하지 않도록
+순서도 바꿨다(상태 전이 성공 → 그다음에 Answer 행 생성). 갱신
+후 필요한 "새 상태가 반영된 Question 객체"는 별도 재조회 없이
+이미 들고 있던 값에 바뀐 필드만 덮어써 구성한다(불필요한 DB
+왕복 추가 안 함).
+
+**실측 검증**: 수정 전 버그 재현(위 두 시나리오 그대로 실패 확인)
+→ `npx tsc --noEmit` 클린 → `docker compose build backend` →
+`up -d --force-recreate` → 같은 동시성 테스트를 다시 돌려 (1)
+withdraw+answer 동시 시도 시 하나만 성공하고 최종 상태가 정확히
+`withdrawn`으로 남는지, (2) answer 두 번 동시 시도 시 두 번째가
+Prisma 원본 메시지 대신 기존 도메인 에러 문구를 받는지, (3) 기존에
+이미 잘 동작하던 시나리오(질의 ack 10회 동시 호출, bulk-ack에 같은
+코드 중복 포함)가 회귀 없이 그대로 동작하는지 확인. `npm run
+audit:cli-mcp` 클린(CLI/MCP 표면 자체는 안 바뀜). 컨테이너는 테스트
+내내 재시작 없이 `Up` 상태 유지, 로그에 처리되지 않은 예외
+스택트레이스 없음.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

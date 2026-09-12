@@ -329,13 +329,32 @@ export async function answerQuestion(
     throw new Error("답변 요청에는 body(답변 내용)가 필요합니다");
   }
 
+  // status="open" 상태에서 "pending"으로 옮기는 조건부 갱신을 먼저
+  // 원자적으로 시도한다 - 이 한 번의 쿼리가 곧 락 역할을 한다.
+  // 앞의 findUnique 이후 이 시점 사이에 다른 요청이 먼저 답변했거나
+  // (withdrawQuestion으로) 철회했다면 count가 0으로 나와 여기서
+  // 깔끔한 도메인 에러로 끝난다 - 그래야 아래 answer.create()가
+  // Answer.questionId unique 제약을 실제로 건드리기 전에 막힌다.
+  // 예전엔 이 순서가 반대였다(먼저 answer를 만들고 나중에 status를
+  // 옮김) - 동시에 answer 두 개가 들어오면 두 번째가 Prisma의 원본
+  // "Unique constraint failed" 예외를 그대로 사용자에게 노출했고
+  // (500은 아니고 400으로는 막혔지만 메시지가 내부 구현을 드러냄),
+  // withdrawQuestion과 동시에 오면 철회가 성공한 것처럼 응답해놓고
+  // 뒤이어 answer가 status를 "pending"으로 덮어써 철회가 조용히
+  // 사라지는 데이터 손상까지 일어났다(동시성 QA 라운드로 실제
+  // 재현·발견).
+  const transition = await db.question.updateMany({
+    where: { id: question.id, status: "open" },
+    data: { status: "pending" },
+  });
+  if (transition.count === 0) {
+    throw new Error(`이미 답변됐거나 처리된 질문입니다: ${questionTrackingCode}`);
+  }
+
   const answerRow = await db.answer.create({
     data: { questionId: question.id, decision: input.decision ?? null, body: input.body ?? null, answeredBy },
   });
-  const updatedQuestion = await db.question.update({
-    where: { id: question.id },
-    data: { status: "pending" },
-  });
+  const updatedQuestion = { ...question, status: "pending" };
   const refRows = await db.questionReference.findMany({ where: { questionId: question.id } });
   const optionRows = await db.questionOption.findMany({ where: { questionId: question.id }, orderBy: { order: "asc" } });
 
@@ -392,10 +411,17 @@ export async function acknowledgeQuestion(questionTrackingCode: string): Promise
   const db = getDb();
   const question = await db.question.findUnique({ where: { trackingCode: questionTrackingCode } });
   if (!question) throw new Error(`질문을 찾을 수 없습니다: ${questionTrackingCode}`);
-  if (question.status !== "pending") {
+  // answerQuestion/withdrawQuestion과 같은 이유로 조건부 updateMany로
+  // 원자적으로 전이한다(동시성 QA로 발견한 상태 충돌 수정 - 아래
+  // answerQuestion 주석 참고).
+  const transition = await db.question.updateMany({
+    where: { id: question.id, status: "pending" },
+    data: { status: "resolved" },
+  });
+  if (transition.count === 0) {
     throw new Error(`답변 대기 중이거나 이미 처리된 질의입니다: ${questionTrackingCode}`);
   }
-  const updated = await db.question.update({ where: { id: question.id }, data: { status: "resolved" } });
+  const updated = { ...question, status: "resolved" };
   const refRows = await db.questionReference.findMany({ where: { questionId: question.id } });
   const optionRows = await db.questionOption.findMany({ where: { questionId: question.id }, orderBy: { order: "asc" } });
   return {
@@ -426,10 +452,18 @@ export async function withdrawQuestion(questionTrackingCode: string, requesterId
   if (question.askedBy !== requesterId && !(await isSuperAdmin(requesterId))) {
     throw new Error("본인이 등록한 질문만 철회할 수 있습니다");
   }
-  if (question.status !== "open") {
+  // answerQuestion과 같은 이유로 조건부 updateMany로 원자적으로
+  // 전이한다 - answerQuestion과 동시에 오면 둘 중 이 updateMany를
+  // 먼저 커밋한 쪽만 성공하고, 나중 쪽은 count=0으로 깔끔한 도메인
+  // 에러를 받는다(동시성 QA로 발견한 상태 충돌 수정).
+  const transition = await db.question.updateMany({
+    where: { id: question.id, status: "open" },
+    data: { status: "withdrawn" },
+  });
+  if (transition.count === 0) {
     throw new Error(`아직 답변되지 않은 질문만 철회할 수 있습니다: ${questionTrackingCode}`);
   }
-  const updated = await db.question.update({ where: { id: question.id }, data: { status: "withdrawn" } });
+  const updated = { ...question, status: "withdrawn" };
   const refRows = await db.questionReference.findMany({ where: { questionId: question.id } });
   const optionRows = await db.questionOption.findMany({ where: { questionId: question.id }, orderBy: { order: "asc" } });
   return {
