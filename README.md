@@ -340,6 +340,72 @@ docs migrate scan ../concept/docs > manifest.json   # 로컬 스캔, API 호출 
 docs migrate apply <projectId> manifest.json
 ```
 
+### 프론트매터 없는 대형 문서(예: 계속 이어 쓰는 devlog/체인지로그) 옮기기
+
+`docs migrate scan/apply`는 concept 브랜치 스타일(파일 하나당 문서
+하나, YAML frontmatter로 `id`/`type` 구분)만 다룬다 - **하나의 긴
+마크다운 파일 안에 `## 제목`으로 여러 논리적 절이 이어지는 형식**
+(devlog, CHANGELOG, 회의록 누적본 등)은 이 도구가 다루는 형식이
+아니다. 이 저장소 자신도 그런 경우였다 - DESIGN-NOTES.md(라운드별
+`## 제목`)/FEATURES.md(영역별 `## N. 제목`)/QA-SCENARIOS.md/PLANS.md
+네 파일을, 이 시스템 자신이 관리하는 프로젝트(`claude-native-workflow`)
+로 실제로 이렇게 옮겼다:
+
+```js
+// migrate-headings.mjs - 저장소에 포함된 도구가 아니라, 이런 형식을
+// 옮길 때마다 그 자리에서 짧게 작성해 한 번 실행하고 버리는 스크립트다.
+import fs from "node:fs";
+
+const API = "http://localhost";           // 실제 설치 주소로 교체
+const PROJECT_ID = "<projectId>";
+const DOCTYPE_CODE = "DN";                 // 미리 docs doctype-create로 만들어둔 타입
+
+function splitSections(text) {
+  const parts = text.split(/^## /m);       // "## " 로 시작하는 줄마다 분할
+  return parts.slice(1).map((part) => {    // parts[0]은 그 앞의 소개 문단(문서 아님)
+    const nl = part.indexOf("\n");
+    return { heading: part.slice(0, nl).trim(), body: part.slice(nl + 1).trim() };
+  });
+}
+
+const sections = splitSections(fs.readFileSync("DESIGN-NOTES.md", "utf-8"));
+
+const login = await fetch(`${API}/api/auth/login`, {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ username_or_email: "admin", password: "..." }),
+}).then((r) => r.json());
+
+for (const { heading, body } of sections) {
+  const doc = await fetch(`${API}/api/projects/${PROJECT_ID}/documents`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${login.access_token}` },
+    body: JSON.stringify({ docTypeCode: DOCTYPE_CODE, title: heading, body }),
+  }).then((r) => r.json());
+  console.log("created", doc.trackingCode, heading);
+}
+```
+
+실제로 적용할 땐:
+
+1. 파일을 실제로 읽어 `## ` 개수를 `grep -c "^## "`로 먼저 세어보고
+   분할 결과 개수가 맞는지 확인한다(우리 경우 DESIGN-NOTES.md 98개
+   중 마지막 "다음 단계" 절은 라운드 기록이 아니라 "지금 뭐가 남았나"를
+   가리키는, 매번 덮어써지는 포인터라서 제외하고 97개만 옮겼다 - 이런
+   "라운드가 아닌 절"이 섞여 있는지 먼저 확인).
+2. 파일 맨 위, 첫 `## ` 이전의 소개 문단(그 파일이 뭘 위한 건지 설명하는
+   부분)은 각 문서에 반복해서 옮기지 않고, 그 DocType 자체의
+   `guideline`(`docs doctype-create ... --guideline "..."`)으로
+   옮긴다 - 문서 하나하나의 내용이 아니라 타입 전체에 대한 설명이기
+   때문.
+3. 생성 후 전부 같은 상태로 정리하고 싶으면(예: 이미 확정된 과거
+   기록이라면 `approved`) 각 문서마다 `docs transition <trackingCode>
+   approved`를 이어서 호출한다.
+4. 원본 파일을 그대로 git에 남길지(공개본으로 계속 갱신) 지울지는
+   내용의 성격에 달렸다 - 우리는 DESIGN-NOTES.md/FEATURES.md는
+   "공개적으로 계속 읽히면 좋은 요약/기록"이라 git 사본을 남기고 앞으로
+   양쪽 다 갱신하기로 했고, QA-SCENARIOS.md/PLANS.md는 "순수 내부
+   작업용 체크리스트/백로그"라 git 파일을 지우고 DB만 남겼다.
+
 ### MCP
 
 `docs auth login`으로 한 번 로그인해두면(`~/.claude-native-workflow/
