@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { apiCall, apiCallText, loadCredentials, waitForMessagePolling } from "../cli/apiclient.js";
+import { apiCall, apiCallText, loadCredentials, waitForMessageDirect } from "../cli/apiclient.js";
 import { scanDirectory, applyManifest } from "../cli/migrate.js";
 
 // cli/index.ts의 모든 명령을 1:1로 미러링한다("CLI/MCP 명령어 완전성"
@@ -12,6 +12,11 @@ import { scanDirectory, applyManifest } from "../cli/migrate.js";
 // auth register/login/logout은 도구로 노출하지 않는다(비밀번호가 대화
 // 컨텍스트에 남는 걸 피하기 위해 - CLI로 미리 `docs auth login`을 한 번
 // 해두는 걸 전제로 한다). 진단용으로 auth_whoami만 예외로 둔다.
+// message_wait만 이 "REST만 호출" 원칙의 의도적 예외다(설계자 지시 -
+// #message-wait-mqtt-direct) - 자격증명은 여전히 REST(GET /api/auth/me/
+// mqtt-credentials)로만 받아오지만, 실제 대기는 EMQX에 직접 구독해서
+// 한다(cli/apiclient.ts의 waitForMessageDirect() 참고) - 백엔드가 그
+// 구독을 대신 떠맡아 오래 블로킹하지 않기 위해서다.
 
 // AI 안내(prologue) - 응답 객체에 notices: string[]가 있으면 JSON
 // 블록 앞에 별도 text content 블록을 하나 더 붙인다(MCP가 다중 content
@@ -860,9 +865,9 @@ async function main() {
   tool(
     "message_wait",
     "새 메시지 대기",
-    "새 메시지가 오거나 timeoutSec(전체 대기 시간)이 다 될 때까지 기다린다 - 내부적으로 서버가 10초 단위 짧은 폴(EMQX 구독)을 반복해 흉내내므로 커넥션 하나를 오래 붙들지 않으면서도 메시지가 오면 즉시 잡힌다. 받은 메시지는 자동으로 기록(delivered) 처리된다.",
+    "새 메시지가 오거나 timeoutSec(전체 대기 시간)이 다 될 때까지 기다린다 - EMQX에 직접 구독해 대기하므로(서버는 블로킹하지 않음) 메시지가 오면 즉시 잡히고, 이 경로를 못 쓰는 환경에서는 10초 단위 HTTP 폴링으로 자동 폴백한다. 받은 메시지는 자동으로 기록(delivered) 처리된다.",
     { projectId: z.string(), timeoutSec: z.number().optional() },
-    async (a) => waitForMessagePolling(a.projectId as string, (a.timeoutSec as number | undefined) ?? 60),
+    async (a) => waitForMessageDirect(a.projectId as string, (a.timeoutSec as number | undefined) ?? 60),
   );
   tool(
     "message_recent",

@@ -3436,6 +3436,85 @@ PLANS.md 19번(`## 9. git 저장소 연동`, 이 섹션의 마지막 항목이�
 설계 원칙과 자동 PR 생성이 상충 - README.md의 SEKB 배경에서도
 "인간의 검토/지침을 보장"이 핵심 전제). 코드 변경 없음 - 문서만 정리.
 
+## `message wait`를 백엔드 폴링에서 CLI/MCP 직접 MQTT 구독으로 전환(`#message-wait-mqtt-direct`) - 완료 (2026-09-12)
+
+PLANS.md 새 행 추가(대화 중 설계자가 직접 지시 - QA/코드 검토로
+발견된 백로그가 아님). 직전 라운드(`#message-wait-timeout-cap`)의
+결과물 - 백엔드가 서비스 계정으로 EMQX를 직접 구독하고 CLI/MCP는
+그 HTTP 엔드포인트를 최대 10초 단위로 반복 호출(폴링)하는 구조 -
+를 설계자가 반려했다: "message wait에서 EMQX를 백엔드가 구독하라는
+것이 아니라, EMQX의 전체 통제권을 이 시스템이 쥐고 있으니 끝점을
+docker-compose로 노출하고, 계정별로 1:1 매칭되는 EMQX 계정을
+생성/관리할 수 있으므로, message wait을 호출할 때 '생성된 MQTT
+계정'을 조회해(없으면 만들어서) CLI나 MCP에 전달하고, 얘가 직접
+MQTT를 구독하여 대기하라는 것이다. 이렇게 하면 백엔드가 오랫동안
+블로킹될 필요가 없다."
+
+**이미 있던 인프라**: `core/emqxAuth.ts`의 `checkConnect`가 이미
+"username=userId, password=JWT 액세스 토큰"으로 접속하는 경로를
+지원하고 있었다(웹 UI가 EMQX-WS에 직접 붙어 실시간 갱신을 받는 데
+이미 씀). JWT를 그대로 재사용하지 않고 **전용 계정을 새로 만든
+이유**: JWT는 수명이 15분으로 짧아 오래 여는 구독에 안 맞고, REST
+전체 권한이 아니라 MQTT 접속에만 쓰이는 좁은 권한의 자격증명이
+유출 시 위험 범위도 더 작다.
+
+**구현**: `User` 모델에 `mqttPasswordEncrypted Bytes?` 신설(3개
+`.prisma` 스키마 파일 전부) - `core/giteaAccounts.ts`가 이미 쓰는
+"User 행에 암호화해 직접 두고 첫 필요 시점에 지연 생성"과 같은
+패턴(항상 1:1 관계라 별도 테이블 불필요). `core/emqxAuth.ts`에
+`getOrCreateMqttCredential(userId)` 신설, `checkConnect`를 비동기로
+바꾸고(DB 조회 필요해짐 - 유일한 호출부인 `/api/emqx/authn`
+라우트에 `await` 추가) 서비스 계정/JWT 분기 뒤에 이 전용 계정
+분기를 추가(JWT 분기는 웹 UI가 쓰므로 그대로 유지). `GET
+/api/auth/me/mqtt-credentials`(본인 것만 조회) 신설 - 서버에
+`PUBLIC_EMQX_MQTT_URL`이 없으면 전부 null을 돌려준다.
+
+**docker-compose.yml**: EMQX의 원본 MQTT(TCP, 1883) 포트를
+`PUBLIC_EMQX_WS_URL`/8083(웹 UI용 WS)과 같은 방식으로 호스트에
+추가 노출(`EMQX_MQTT_HOST_PORT`, 기본 1883) - CLI/MCP는 브라우저가
+아니라 호스트에서 실행되는 Node 프로세스라 WS가 아니라 원본 TCP로
+붙는다. `.env.example`에 `PUBLIC_EMQX_MQTT_URL` 항목 추가.
+
+**`cli/apiclient.ts`**: 기존 `waitForMessagePolling`(HTTP 반복
+폴)은 그대로 남기고, 새 `waitForMessageDirect()`를 앞에 추가 -
+자격증명을 REST로 받아온 뒤 `mqtt` 패키지(이미 backend 의존성이라
+새 설치 불필요)로 직접 연결·구독한다. `PUBLIC_EMQX_MQTT_URL`
+미설정이거나 실제 연결/구독이 실패하면(방화벽 등) 기존
+`waitForMessagePolling`으로 그대로 폴백(fail-soft -
+`PUBLIC_EMQX_WS_URL` 미설정 시 웹 UI 실시간 갱신만 조용히 꺼지는
+것과 같은 원칙). MQTT로 직접 받은 메시지는 서버가 `deliveredAt`을
+못 찍어주므로, 받자마자 `GET .../messages?status=pending&
+markDelivered=true`를 한 번 더 호출해 "AI가 읽어감 = 기록 처리"
+시맨틱을 그대로 유지한다. CLI `message wait`/MCP `message_wait`
+둘 다 이 함수로 교체 - 명령/도구 이름·파라미터는 안 바뀜(사용자
+입장에서 완전히 투명한 교체, 두 번째 라운드째 같은 패턴).
+`cli/apiclient.ts`/`mcp/server.ts` 상단 주석에 "CLI/MCP는 REST만
+호출하는 순수 클라이언트" 원칙의 의도적 예외임을 명시.
+
+**실측 검증**: docker 재빌드(`emqx`/`backend` 모두
+`--force-recreate` - 포트 매핑 변경 반영), `Test-NetConnection`으로
+1883 포트 실제 노출 확인. `GET /api/auth/me/mqtt-credentials` 왕복
+멱등성 확인(재호출해도 같은 비밀번호). CLI `message wait`을
+백그라운드로 걸고 메시지 전송 → MQTT 직접 구독 경로로 즉시(수 초
+이내) 잡히고 `deliveredAt`이 정상적으로 찍히는 것 확인(첫 시도는
+tsx 콜드스타트가 테스트 스크립트의 대기 시간보다 길어 구독 전에
+메시지가 발행돼 놓친 테스트 하네스 타이밍 문제였음 - 지연을 늘려
+재실측하고 원인 확정, 이전 라운드에서도 겪은 것과 같은 종류의
+실수). MCP `message_wait`도 별도 스크립트로 동일하게 확인(약 2ms
+만에 수신). **폴백 확인**: `PUBLIC_EMQX_MQTT_URL`을 잠시 비우고
+재기동 → `mqtt-credentials`가 전부 null 반환 → `message wait`이
+여전히 동작하되 기존 10초 단위 HTTP 폴링으로 자연스럽게 폴백하는
+것 확인 → 원복. **웹 UI 회귀 확인**: 브라우저로 실제 메시지 화면
+접속 후 CLI로 메시지 전송 → 새로고침 없이 화면에 바로 나타나는지
+확인(JWT 기반 EMQX-WS 경로를 안 건드렸는지의 최종 증거) - 처음엔
+콘솔에 WS 연결 실패가 반복 찍혀 당황했으나, 이 세션에서 훨씬 이전에
+열어두고 안 닫은 좀비 브라우저 탭 4개(오래돼 만료된 JWT로 계속
+재연결을 시도하던 것)가 원인이었고, 그 탭들을 정리하고 나니 현재
+탭은 정상 작동함을 확인(EMQX 로그의 `authentication_failure`가
+전혀 다른 stale 사용자 id로 찍히고 있었던 것으로 확정). `npx tsc
+--noEmit`, `npm run audit:cli-mcp`(명령/도구 이름 안 바뀌어 그대로
+통과) 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

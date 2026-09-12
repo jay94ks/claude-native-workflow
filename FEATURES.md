@@ -265,14 +265,17 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
 
 - 프로젝트 단위 세션 간 소통 - "AI가 CLI/MCP로 읽어갔는가"를 기준으로
   **대기**(`deliveredAt` 없음)와 **기록**(있음)으로 나뉜다.
-- `message wait`는 백엔드가 EMQX를 구독해 새 메시지가 오거나
-  타임아웃될 때까지 응답을 들고 있는 롱폴(CLI/MCP는 여전히 REST만
-  호출). **서버 쪽 단일 호출은 최대 10초로 제한**돼 있어(HTTP
-  커넥션/MQTT 구독을 오래 붙들지 않기 위함) 그 이상 요청해도 조용히
-  10초로 잘린다 - CLI/MCP가 사용자가 요청한 전체 대기 시간을 이
-  짧은 폴을 반복 호출(폴링)해서 흉내낸다(메시지가 오면 그 폴 안에서
-  바로 잡혀 즉시 반환 - 실시간성은 그대로 유지). 전체 대기 시간
-  자체도 최대 1시간으로 제한.
+- **`message wait`는 CLI/MCP가 전용 MQTT 계정으로 EMQX를 직접
+  구독해 대기한다** - 서버는 그 대기를 대신 떠맡지 않는다("CLI/MCP는
+  REST만 호출" 원칙의 의도적 예외 하나, `cli/apiclient.ts`의
+  `waitForMessageDirect()` 참고). `GET /api/auth/me/mqtt-credentials`
+  로 본인 전용 자격증명(User당 1개, 최초 요청 시 지연 생성해 암호화
+  보관)을 받아와 직접 접속·구독하므로, 원하는 만큼 오래 기다려도
+  서버 커넥션을 붙들지 않는다(전체 대기 시간 상한은 여전히 1시간).
+  `PUBLIC_EMQX_MQTT_URL`이 서버에 설정 안 돼 있거나 실제 연결이
+  안 되면(방화벽 등) 예전 방식 - 서버가 최대 10초씩 짧게 구독해
+  응답하는 HTTP 롱폴을 CLI/MCP가 반복 호출(폴링)하는 방식 - 으로
+  자동 폴백한다(느리지만 계속 동작 - fail-soft).
 - `message recent`는 상태를 바꾸지 않는 순수 조회 - 시스템 다운 후
   재접속 시 "마지막에 무슨 일이 있었는지" 확인용, 반복 호출해도 안전.
 - 문서 에디터의 "메시지로 지시" 버튼은 그 문서의 추적 코드를 자동으로
@@ -285,11 +288,13 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   `project/{id}/changes` topic으로 나가고(`message wait`가 구독하는
   `.../messages` topic과는 분리 - 그 토픽에 편집/삭제 이벤트를 올리면
   대기 중인 `message wait` 호출자가 "새 메시지"로 오인하게 됨).
-- **JWT 기반 EMQX 클라이언트 인증 + Member 기준 topic ACL** - 설치
-  전역 JWT를 그대로 MQTT 인증에 재사용, `project/{id}/(changes|
-  messages)` topic은 그 프로젝트 멤버만 구독/발행 가능. 웹 UI가
-  MQTT-over-WebSocket으로 직접 소비(변경 추적 뷰 + 메시징 패널이
-  새로고침 없이 갱신).
+- **EMQX 클라이언트 인증 + Member 기준 topic ACL** - `project/{id}/
+  (changes|messages)` topic은 그 프로젝트 멤버만 구독/발행 가능.
+  인증 방식은 셋: (1) 웹 UI는 설치 전역 JWT를 그대로 MQTT 인증에
+  재사용해 MQTT-over-WebSocket으로 직접 소비(변경 추적 뷰 + 메시징
+  패널이 새로고침 없이 갱신), (2) CLI/MCP의 `message wait`은 위
+  전용 MQTT 계정으로 원본 MQTT(TCP)에 직접 접속, (3) 백엔드 자신의
+  고정 서비스 계정(HTTP 폴백 경로 내부 연결).
 
 ## 12. 검색 / 인덱싱
 

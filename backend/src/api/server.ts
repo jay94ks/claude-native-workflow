@@ -190,7 +190,7 @@ import {
   completeQueueEntry,
 } from "../core/pushHookPrompts.js";
 import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages, editMessage, deleteMessage } from "../core/messages.js";
-import { checkConnect, checkAcl, ensureEmqxAuthConfigured } from "../core/emqxAuth.js";
+import { checkConnect, checkAcl, ensureEmqxAuthConfigured, getOrCreateMqttCredential } from "../core/emqxAuth.js";
 
 const app = express();
 // verify로 원본 바이트를 req.rawBody에 보존 - 웹훅 서명 검증은 express가
@@ -374,6 +374,23 @@ app.get(
   authenticate,
   asyncRoute(async (req, res) => {
     res.json(await listAccessOverridesForUser(req.userId!));
+  }),
+);
+
+// CLI/MCP의 message wait이 EMQX에 직접 구독할 때 쓸 전용 계정을 내려준다
+// (#message-wait-mqtt-direct - 백엔드가 대신 구독하지 않고 클라이언트가
+// 직접 구독하도록 전환). PUBLIC_EMQX_MQTT_URL이 설정 안 돼 있으면(로컬
+// 최소 구성 등) mqttUrl을 null로 돌려주고, 호출부는 기존 HTTP 폴링
+// 방식으로 폴백한다(fail-soft - PUBLIC_EMQX_WS_URL 미설정 시 웹 UI
+// 실시간 갱신만 조용히 꺼지는 것과 같은 원칙).
+app.get(
+  "/api/auth/me/mqtt-credentials",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const mqttUrl = process.env.PUBLIC_EMQX_MQTT_URL ?? null;
+    if (!mqttUrl) { res.json({ mqttUrl: null, username: null, password: null }); return; }
+    const cred = await getOrCreateMqttCredential(req.userId!);
+    res.json({ mqttUrl, ...cred });
   }),
 );
 
@@ -2234,7 +2251,7 @@ app.post(
   "/api/emqx/authn",
   asyncRoute(async (req, res) => {
     const { username, password } = req.body as { username?: string; password?: string };
-    const result = checkConnect(username, password);
+    const result = await checkConnect(username, password);
     res.json({ result });
   }),
 );

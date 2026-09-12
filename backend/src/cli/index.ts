@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
-import { apiCall, apiCallText, saveCredentials, loadCredentials, clearCredentials, credentialsPath, waitForMessagePolling } from "./apiclient.js";
+import { apiCall, apiCallText, saveCredentials, loadCredentials, clearCredentials, credentialsPath, waitForMessageDirect } from "./apiclient.js";
 import { scanDirectory, applyManifest } from "./migrate.js";
 
 const program = new Command();
@@ -1318,8 +1318,8 @@ messageCmd.command("send <projectId> <body...>").action((projectId, bodyParts) =
 );
 messageCmd
   .command("wait <projectId>")
-  .option("--timeout <sec>", "전체 대기 시간(초) - 내부적으로 10초 단위 폴링으로 구현되어 있어 서버가 커넥션을 오래 붙들지 않음", "60")
-  .action((projectId, opts) => run(async () => printJson(await waitForMessagePolling(projectId, Number(opts.timeout)))));
+  .option("--timeout <sec>", "전체 대기 시간(초) - EMQX 직접 구독이 가능하면 그걸로 대기하고, 안 되면 10초 단위 HTTP 폴링으로 자동 폴백", "60")
+  .action((projectId, opts) => run(async () => printJson(await waitForMessageDirect(projectId, Number(opts.timeout)))));
 messageCmd
   .command("recent <projectId>")
   .option("--limit <n>", "기본 20")

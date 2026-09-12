@@ -1,6 +1,8 @@
+import crypto from "node:crypto";
 import { getDb } from "./db.js";
 import { verifyAccessToken } from "./auth.js";
 import { emqxConfig } from "./realtime.js";
+import { encryptSecret, decryptSecret } from "./crypto.js";
 
 // EMQX 클라이언트 인증/인가 - 미래 웹 인터페이스(Phase 5)가 EMQX에
 // MQTT-over-WebSocket으로 직접 붙을 때 쓸 인프라. 웹 UI는 CONNECT 시
@@ -24,10 +26,33 @@ function serviceCredentials(): { username: string; password: string } {
   return { username, password };
 }
 
-/** MQTT CONNECT 인증 - username=userId, password=JWT 액세스 토큰이
- * 전제. 백엔드 자신의 서비스 계정(message wait용 내부 연결)은 고정
- * username/password로 즉시 허용한다. */
-export function checkConnect(username: string | undefined, password: string | undefined): AuthDecision {
+/** CLI/MCP가 message wait에서 EMQX에 직접 구독할 때 쓰는 전용
+ * 계정을 조회하고, 없으면 만든다(설계자 지시 - 백엔드가 대신
+ * 구독하지 않고 CLI/MCP가 직접 구독하도록 전환). JWT 액세스
+ * 토큰과 달리 수명이 없고 REST 전체 권한도 아닌, MQTT 접속에만
+ * 쓰이는 좁은 범위의 자격증명이다 - core/giteaAccounts.ts의
+ * "User 행에 암호화해 직접 두고 첫 필요 시점에 생성"과 같은 패턴
+ * (항상 1:1 관계라 별도 테이블 불필요). */
+export async function getOrCreateMqttCredential(userId: string): Promise<{ username: string; password: string }> {
+  const db = getDb();
+  const user = await db.user.findUnique({ where: { id: userId }, select: { mqttPasswordEncrypted: true } });
+  if (!user) throw new Error("사용자를 찾을 수 없습니다");
+  if (user.mqttPasswordEncrypted) {
+    return { username: userId, password: decryptSecret(user.mqttPasswordEncrypted) };
+  }
+  const password = crypto.randomBytes(24).toString("hex");
+  await db.user.update({ where: { id: userId }, data: { mqttPasswordEncrypted: encryptSecret(password) } });
+  return { username: userId, password };
+}
+
+/** MQTT CONNECT 인증 - username=userId, 아래 세 password 방식 중 하나를
+ * 허용한다: (1) 백엔드 자신의 서비스 계정(고정 username/password,
+ * message wait 폴백 경로의 내부 연결), (2) JWT 액세스 토큰(웹 UI가
+ * EMQX-WS에 직접 붙을 때 씀 - realtime.ts), (3) getOrCreateMqttCredential()
+ * 이 발급한 전용 계정(CLI/MCP의 message wait 직접 구독 - #message-wait-
+ * mqtt-direct). DB 조회가 필요해져 비동기로 바뀜(유일한 호출부인
+ * server.ts의 /api/emqx/authn 라우트에 await 추가). */
+export async function checkConnect(username: string | undefined, password: string | undefined): Promise<AuthDecision> {
   if (!username || !password) return "deny";
 
   let svc: { username: string; password: string };
@@ -35,15 +60,25 @@ export function checkConnect(username: string | undefined, password: string | un
     svc = serviceCredentials();
     if (username === svc.username && password === svc.password) return "allow";
   } catch {
-    // 서비스 계정 미설정 - 아래 일반 JWT 경로로 계속
+    // 서비스 계정 미설정 - 아래 경로로 계속
   }
 
   try {
     const payload = verifyAccessToken(password);
-    return payload.sub === username ? "allow" : "deny";
+    if (payload.sub === username) return "allow";
   } catch {
-    return "deny";
+    // JWT 아님 - 아래 전용 MQTT 계정 경로로 계속
   }
+
+  try {
+    const db = getDb();
+    const user = await db.user.findUnique({ where: { id: username }, select: { mqttPasswordEncrypted: true } });
+    if (user?.mqttPasswordEncrypted && decryptSecret(user.mqttPasswordEncrypted) === password) return "allow";
+  } catch {
+    // 계속 - 아래 deny로
+  }
+
+  return "deny";
 }
 
 const TOPIC_PATTERN = /^project\/([^/]+)\/(changes|messages)$/;

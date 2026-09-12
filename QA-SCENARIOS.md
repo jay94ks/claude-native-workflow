@@ -423,6 +423,14 @@
   정상 타임아웃, `timeout=999`(상한 초과) 직접 호출 → 실제로는 약
   10초 만에 응답(클램프 확인), CLI/MCP 양쪽 다 대기 도중 보낸
   메시지를 다음 폴에서(또는 첫 폴 안에서) 즉시 잡아내는지 확인.
+- [x] **`message wait`의 CLI/MCP 직접 MQTT 구독 전환(`#message-wait-mqtt-direct`)** -
+  전용 MQTT 계정(`GET /api/auth/me/mqtt-credentials`) 왕복 멱등성
+  확인, CLI/MCP 둘 다 메시지 발행 즉시(수 초 이내, MCP는 약 2ms) 잡히고
+  `deliveredAt`이 정상적으로 찍히는지 실측. `PUBLIC_EMQX_MQTT_URL`을
+  비웠을 때 기존 HTTP 폴링으로 정상 폴백하는지, 복원 후 다시 직접
+  구독 경로로 동작하는지 확인. 웹 UI의 JWT 기반 실시간 갱신은 이
+  변경과 무관하게 회귀 없이 그대로 동작(브라우저로 실제 메시지
+  화면을 열어두고 CLI로 메시지를 보내 새로고침 없이 뜨는지 확인).
 - [x] 메시지 수정/삭제(`message edit|delete`/`message_edit`/
   `message_delete`) - 본인이 보낸 메시지만(또는 superAdmin 우회)
   가능, 다른 사람 시도 시 거부 - CLI/MCP/브라우저 전부 실측.

@@ -56,6 +56,12 @@ services:
       # 켜져 있다. 웹 UI(Phase 5 3/3)가 변경 추적 뷰/메시징 패널 실시간
       # 갱신을 위해 브라우저에서 직접 붙는 통로 - PUBLIC_EMQX_WS_URL과 짝.
       - "${EMQX_WS_HOST_PORT:-8083}:8083"
+      # 원본 MQTT(TCP, 1883) - CLI/MCP가 message wait에서 EMQX에 직접
+      # 구독할 때 쓰는 통로(#message-wait-mqtt-direct - 브라우저가 아니라
+      # 호스트에서 실행되는 Node 프로세스라 WS가 아닌 원본 TCP로 붙는다).
+      # PUBLIC_EMQX_MQTT_URL과 짝 - 비워두면 CLI/MCP는 기존 HTTP 폴링으로
+      # 자동 폴백한다.
+      - "${EMQX_MQTT_HOST_PORT:-1883}:1883"
     restart: unless-stopped
 
   # Gitea 자체 메타데이터는 내장 SQLite로 충분(설치용 Postgres와 섞지
@@ -108,6 +114,7 @@ services:
       GITEA_API_TOKEN: ${GITEA_API_TOKEN}
       PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL}
       PUBLIC_EMQX_WS_URL: ${PUBLIC_EMQX_WS_URL}
+      PUBLIC_EMQX_MQTT_URL: ${PUBLIC_EMQX_MQTT_URL}
     ports:
       - "${BACKEND_HOST_PORT:-8760}:8760"
     depends_on:

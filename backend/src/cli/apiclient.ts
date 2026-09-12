@@ -1,10 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import mqtt from "mqtt";
 
 // concept 브랜치 tier3의 docs3 CLI와 같은 패턴 - CLI는 순수 REST
 // 클라이언트다(로컬 DB/파일 직접 접근 없음, "CLI/MCP 명령어 완전성"
 // 원칙). 토큰은 홈 디렉터리에 저장(권한 600).
+// waitForMessageDirect()만 이 원칙의 의도적 예외 - 자격증명은 REST로
+// 받아오지만 실제 대기는 EMQX에 직접 구독한다(설계자 지시 -
+// #message-wait-mqtt-direct, 아래 함수 docstring 참고).
 
 const CREDENTIALS_DIR = path.join(os.homedir(), ".claude-native-workflow");
 const CREDENTIALS_PATH = path.join(CREDENTIALS_DIR, "credentials.json");
@@ -89,11 +93,13 @@ export interface MessageWaitResult {
   message: unknown;
 }
 
-/** `message wait`의 서버 쪽 단일 호출은 MESSAGE_WAIT_POLL_MAX_SEC로
- * 짧게 제한돼 있다(긴 커넥션을 하나 붙들지 않기 위해) - 사용자가
- * 요청한 전체 대기 시간(totalTimeoutSec)은 이 짧은 폴을 반복 호출해
- * 흉내낸다. 메시지가 오면 그 폴 안에서 바로 잡혀 즉시 반환되므로
- * 실시간성은 유지된다. */
+/** `message wait`의 서버 쪽 단일 호출(HTTP 폴백 경로)은
+ * MESSAGE_WAIT_POLL_MAX_SEC로 짧게 제한돼 있다(긴 커넥션을 하나 붙들지
+ * 않기 위해) - 사용자가 요청한 전체 대기 시간(totalTimeoutSec)은 이
+ * 짧은 폴을 반복 호출해 흉내낸다. 메시지가 오면 그 폴 안에서 바로
+ * 잡혀 즉시 반환되므로 실시간성은 유지된다. waitForMessageDirect()가
+ * MQTT 직접 구독을 못 쓸 때(PUBLIC_EMQX_MQTT_URL 미설정, 연결 실패
+ * 등) 쓰는 폴백 경로 - 그 자체로도 완결된 기능이라 그대로 둔다. */
 export async function waitForMessagePolling(projectId: string, totalTimeoutSec: number): Promise<MessageWaitResult> {
   const clampedTotal = Math.min(Math.max(Math.trunc(totalTimeoutSec) || 1, 1), MESSAGE_WAIT_TOTAL_MAX_SEC);
   const deadline = Date.now() + clampedTotal * 1000;
@@ -104,4 +110,98 @@ export async function waitForMessagePolling(projectId: string, totalTimeoutSec: 
     const result = await apiCall<MessageWaitResult>(`/api/projects/${projectId}/messages/wait?timeout=${pollSec}`);
     if (!result.timedOut) return result;
   }
+}
+
+interface MqttCredentials {
+  mqttUrl: string | null;
+  username: string | null;
+  password: string | null;
+}
+
+async function getMqttCredentials(): Promise<MqttCredentials> {
+  return apiCall<MqttCredentials>("/api/auth/me/mqtt-credentials");
+}
+
+interface MessagePublishEvent {
+  id: string;
+  authorId: string | null;
+  body: string;
+  createdAt: string;
+}
+
+/** message wait의 기본 경로 - "CLI/MCP는 REST만 호출하는 순수
+ * 클라이언트" 원칙(이 파일 상단 주석)의 의도적 예외다(설계자 지시 -
+ * 백엔드가 message wait을 대신 구독하며 오래 블로킹하지 않도록,
+ * CLI/MCP가 전용 MQTT 계정으로 EMQX를 직접 구독해 기다린다). 자격
+ * 증명 자체는 여전히 REST(GET /api/auth/me/mqtt-credentials)로만
+ * 받아온다 - core를 직접 부르는 게 아니라 EMQX와의 실시간 통신
+ * 하나만 REST 밖으로 나간다.
+ *
+ * PUBLIC_EMQX_MQTT_URL이 서버에 설정 안 돼 있거나(로컬 최소 구성 등)
+ * 실제 연결/구독이 실패하면(방화벽 등, 서버는 설정돼 있다고 응답했지만
+ * 이 클라이언트에서 도달이 안 되는 경우) waitForMessagePolling(기존
+ * HTTP 반복 폴)으로 그대로 폴백한다 - fail-soft, 이 경로가 아예 안
+ * 되는 게 아니라 덜 효율적인 방식으로 계속 동작한다. */
+export async function waitForMessageDirect(projectId: string, totalTimeoutSec: number): Promise<MessageWaitResult> {
+  const clampedTotal = Math.min(Math.max(Math.trunc(totalTimeoutSec) || 1, 1), MESSAGE_WAIT_TOTAL_MAX_SEC);
+  const creds = await getMqttCredentials().catch(() => ({ mqttUrl: null, username: null, password: null }) as MqttCredentials);
+  if (!creds.mqttUrl || !creds.username || !creds.password) {
+    return waitForMessagePolling(projectId, clampedTotal);
+  }
+
+  const topic = `project/${projectId}/messages`;
+  const mqttUrl = creds.mqttUrl;
+  const username = creds.username;
+  const password = creds.password;
+
+  return new Promise<MessageWaitResult>((resolve) => {
+    let settled = false;
+    const client = mqtt.connect(mqttUrl, { username, password, connectTimeout: 10_000 });
+
+    const finishViaPolling = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client.end(true);
+      waitForMessagePolling(projectId, clampedTotal).then(resolve);
+    };
+    const finish = (r: MessageWaitResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client.end(true);
+      resolve(r);
+    };
+
+    const timer = setTimeout(() => finish({ timedOut: true, message: null }), clampedTotal * 1000);
+
+    client.on("connect", () => {
+      client.subscribe(topic, { qos: 1 }, (err) => {
+        if (err) finishViaPolling();
+      });
+    });
+
+    client.on("message", async (_topic, payload) => {
+      try {
+        const event = JSON.parse(payload.toString("utf-8")) as MessagePublishEvent;
+        // MQTT로 직접 받으면 서버가 deliveredAt을 못 찍어준다 - 기존
+        // "AI가 읽어감 = 기록 처리" 시맨틱을 유지하려고 markDelivered
+        // 조회를 한 번 더 호출해 실제 deliveredAt이 찍힌 행을 가져온다.
+        const list = await apiCall<{ id: string; deliveredAt: string | null }[]>(
+          `/api/projects/${projectId}/messages?status=pending&markDelivered=true`,
+        ).catch(() => []);
+        const matched = list.find((m) => m.id === event.id);
+        finish({
+          timedOut: false,
+          message:
+            matched ??
+            { id: event.id, projectId, authorId: event.authorId, body: event.body, createdAt: event.createdAt, deliveredAt: null },
+        });
+      } catch {
+        finishViaPolling();
+      }
+    });
+
+    client.on("error", finishViaPolling);
+  });
 }

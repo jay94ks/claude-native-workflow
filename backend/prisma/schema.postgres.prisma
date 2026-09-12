@@ -83,6 +83,13 @@ model User {
   // (core/giteaAccounts.ts 참고).
   giteaAccessTokenEncrypted Bytes?
   giteaTokenName            String?
+  // CLI/MCP가 message wait에서 EMQX에 직접 구독할 때 쓰는 전용 계정
+  // 비밀번호 - JWT처럼 수명이 짧지 않고, REST 전체 권한이 아니라 MQTT
+  // 접속에만 쓰이는 좁은 범위의 자격증명이다(설계자 지시 - message
+  // wait을 백엔드가 대신 구독하지 않고 CLI/MCP가 직접 구독하도록 전환).
+  // 첫 요청 시점에 지연 생성(giteaAccounts.ts와 같은 패턴 - 항상 1:1
+  // 관계라 별도 테이블 대신 User에 직접 둠).
+  mqttPasswordEncrypted Bytes?
 
   gitCredentials    GitCredential[]
   refreshTokens     RefreshToken[]
