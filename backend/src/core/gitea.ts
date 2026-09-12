@@ -627,6 +627,118 @@ export async function createUserAccessToken(username: string, password: string, 
   return json.sha1;
 }
 
+// ---------------------------------------------------------------- 브랜치 / Pull Request (저장소 관리 탭)
+// Gitea REST API가 GitHub과 거의 동일한 PR 엔드포인트 모양을 제공한다
+// (/branches, /pulls, /pulls/{index}/merge) - putFileContent()와 같은
+// "actingToken이 있으면 그걸로, 없으면 관리자 토큰 폴백" 패턴을 PR
+// 생성/머지에도 그대로 적용해 설계자 본인 명의로 남게 한다.
+
+async function giteaFetchAs(path: string, actingToken: string | undefined, init?: RequestInit): Promise<Response> {
+  const { apiUrl, token: adminToken } = config();
+  const authToken = actingToken || adminToken;
+  const res = await fetch(`${apiUrl}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `token ${authToken}`,
+      "Content-Type": "application/json",
+      ...(init?.headers as Record<string, string> | undefined),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
+  return res;
+}
+
+export interface BranchSummary {
+  name: string;
+  commitSha: string;
+  lastCommitAt: string | null;
+}
+
+export async function listBranches(slug: string): Promise<BranchSummary[]> {
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/branches?limit=100`);
+  const json = (await res.json()) as Array<{ name: string; commit: { id: string; timestamp?: string } }>;
+  return json.map((b) => ({ name: b.name, commitSha: b.commit.id, lastCommitAt: b.commit.timestamp ?? null }));
+}
+
+export interface PullRequestSummary {
+  index: number;
+  title: string;
+  body: string;
+  state: string;
+  authorUsername: string;
+  headBranch: string;
+  baseBranch: string;
+  merged: boolean;
+  createdAt: string;
+}
+
+interface RawGiteaPullRequest {
+  number: number;
+  title: string;
+  body: string | null;
+  state: string;
+  user?: { login: string } | null;
+  head?: { ref: string } | null;
+  base?: { ref: string } | null;
+  merged?: boolean;
+  created_at: string;
+}
+
+function toPullRequestSummary(pr: RawGiteaPullRequest): PullRequestSummary {
+  return {
+    index: pr.number,
+    title: pr.title,
+    body: pr.body ?? "",
+    state: pr.state,
+    authorUsername: pr.user?.login ?? "?",
+    headBranch: pr.head?.ref ?? "",
+    baseBranch: pr.base?.ref ?? "",
+    merged: !!pr.merged,
+    createdAt: pr.created_at,
+  };
+}
+
+export async function listPullRequests(slug: string, state?: "open" | "closed" | "all"): Promise<PullRequestSummary[]> {
+  const qs = new URLSearchParams();
+  qs.set("state", state ?? "all");
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/pulls?${qs}`);
+  const json = (await res.json()) as RawGiteaPullRequest[];
+  return json.map(toPullRequestSummary);
+}
+
+export async function getPullRequest(slug: string, index: number): Promise<PullRequestSummary> {
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}`);
+  return toPullRequestSummary((await res.json()) as RawGiteaPullRequest);
+}
+
+/** actingToken이 있으면 그 설계자 명의로 PR이 생성된다(없으면 관리자
+ * 토큰 폴백 - putFileContent()와 같은 원칙). */
+export async function createPullRequest(
+  slug: string,
+  input: { title: string; head: string; base: string; body?: string },
+  actingToken?: string,
+): Promise<PullRequestSummary> {
+  const res = await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/pulls`, actingToken, {
+    method: "POST",
+    body: JSON.stringify({ title: input.title, head: input.head, base: input.base, body: input.body ?? "" }),
+  });
+  return toPullRequestSummary((await res.json()) as RawGiteaPullRequest);
+}
+
+/** 실질적인 머지는 프로젝트 소유자만(설계자 요청 - 호출부인
+ * server.ts가 requireProjectRole("owner")로 이중 방어). Gitea의 merge
+ * 옵션 필드명은 대문자로 시작하는 `Do`(swagger MergePullRequestOption
+ * 기준) - 기본 merge 전략만 지원(squash/rebase는 이번 범위 밖). */
+export async function mergePullRequest(slug: string, index: number, actingToken?: string): Promise<void> {
+  await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}/merge`, actingToken, {
+    method: "POST",
+    body: JSON.stringify({ Do: "merge" }),
+  });
+}
+
 /** 재발급(회전) 전 기존 토큰을 지운다 - 실측 확인: 삭제도 그 계정
  * 자신의 Basic Auth로 된다(관리자 sudo 불필요). 이미 없어졌거나
  * 이름이 안 맞아 404가 나도 무시(재발급 흐름을 막지 않기 위해). */

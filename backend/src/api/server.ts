@@ -3033,6 +3033,77 @@ app.post(
   }),
 );
 
+// ---------------------------------------------------------------- 저장소 관리 탭 - 브랜치 / Pull Request
+// "워크트리 리스트"는 이 아키텍처(프로젝트당 공유 Gitea work 저장소
+// 하나, 로컬 다중 clone 없음)에 문자 그대로는 존재할 수 없어 "브랜치
+// 목록 + 브랜치별 소스 열람"으로 재해석(설계자 확인 전제) - git/tree,
+// git/log, git/file이 이미 받던 ref 쿼리 파라미터를 프론트의 브랜치
+// 선택 UI가 실제로 채워 보내면 그대로 동작한다(새 조회 라우트 불필요).
+
+app.get(
+  "/api/projects/:projectId/git/branches",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    res.json(await gitea.listBranches(slug));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/pulls",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const state = req.query.state as "open" | "closed" | "all" | undefined;
+    res.json(await gitea.listPullRequests(slug, state));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/pulls/:index",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    res.json(await gitea.getPullRequest(slug, Number(req.params.index)));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/pulls",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const { title, head, base, body } = req.body as { title?: string; head?: string; base?: string; body?: string };
+    if (!title || !head || !base) {
+      res.status(400).json({ error: "title/head/base가 필요합니다" });
+      return;
+    }
+    // PR이 이 요청을 보낸 설계자 신원으로 귀속되도록 - putFileContent()와
+    // 같은 원칙(없으면 관리자 토큰 폴백).
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    res.json(await gitea.createPullRequest(slug, { title, head, base, body }, actingToken));
+  }),
+);
+
+// 실질적인 머지는 프로젝트 소유자만(설계자 요청 핵심 제약) -
+// requireProjectRole("owner")가 git 저장소 기능 전반과 동일한 수준으로
+// 강제한다(PR 생성은 editor 이상 가능하지만 머지는 owner만).
+app.post(
+  "/api/projects/:projectId/git/pulls/:index/merge",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    await gitea.mergePullRequest(slug, Number(req.params.index), actingToken);
+    res.json({ ok: true });
+  }),
+);
+
 // ---------------------------------------------------------------- 웹훅 수신 (인증 미들웨어 없음 - Gitea/GitHub/GitLab이 직접 호출, 서명/토큰으로 검증)
 
 // Gitea 시스템 웹훅(인스턴스 전체) 전용 경로 - 프로젝트별 시크릿이

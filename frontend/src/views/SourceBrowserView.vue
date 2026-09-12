@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { apiCall, apiCallBlob, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
@@ -14,7 +14,13 @@ const route = useRoute();
 const targetPanelDialog = useTargetPanelDialogStore();
 
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
-const canEditSource = computed(() => roleSatisfies(myRole.value, "editor"));
+// ?ref=<브랜치>로 열리면 저장소 관리 탭의 "탐색" 버튼에서 온 것 - 기본
+// 브랜치가 아닌 다른 브랜치를 보는 중이라 편집/저장은 막는다(git/file
+// PUT이 branch를 안 받아 항상 기본 브랜치에 커밋되므로, 다른 브랜치를
+// 보면서 편집하면 사용자가 보는 브랜치와 실제로 커밋되는 브랜치가
+// 달라지는 혼란을 막기 위함 - 읽기 전용 열람만 지원).
+const branchRef = computed(() => (route.query.ref as string | undefined) || undefined);
+const canEditSource = computed(() => roleSatisfies(myRole.value, "editor") && !branchRef.value);
 const ENTRIES_PAGE_SIZE = 30;
 const entriesPage = ref(1);
 
@@ -60,11 +66,17 @@ async function checkRepo() {
   }
 }
 
+function withRef(qs: URLSearchParams): URLSearchParams {
+  if (branchRef.value) qs.set("ref", branchRef.value);
+  return qs;
+}
+
 async function loadTree(dirPath: string) {
   treeLoading.value = true;
   treeError.value = "";
   try {
-    entries.value = await apiCall<TreeEntry[]>(`/projects/${props.id}/git/tree?path=${encodeURIComponent(dirPath)}`);
+    const qs = withRef(new URLSearchParams({ path: dirPath }));
+    entries.value = await apiCall<TreeEntry[]>(`/projects/${props.id}/git/tree?${qs}`);
     currentDir.value = dirPath;
     entriesPage.value = 1;
   } catch (err) {
@@ -99,7 +111,8 @@ async function openFile(path: string) {
   const kind = classifyFileKind(path);
   try {
     if (kind === "text") {
-      const file = await apiCall<{ content: string }>(`/projects/${props.id}/git/file?path=${encodeURIComponent(path)}`);
+      const qs = withRef(new URLSearchParams({ path }));
+      const file = await apiCall<{ content: string }>(`/projects/${props.id}/git/file?${qs}`);
       revokeMediaUrl();
       selectedPath.value = path;
       fileKind.value = "text";
@@ -107,7 +120,8 @@ async function openFile(path: string) {
       originalContent.value = file.content;
       editMode.value = false;
     } else {
-      const blob = await apiCallBlob(`/projects/${props.id}/git/file/raw?path=${encodeURIComponent(path)}`);
+      const qs = withRef(new URLSearchParams({ path }));
+      const blob = await apiCallBlob(`/projects/${props.id}/git/file/raw?${qs}`);
       revokeMediaUrl();
       selectedPath.value = path;
       fileKind.value = kind;
@@ -178,7 +192,8 @@ async function downloadOriginal() {
   downloading.value = true;
   downloadError.value = "";
   try {
-    const blob = await apiCallBlob(`/projects/${props.id}/git/file/raw?path=${encodeURIComponent(selectedPath.value)}`);
+    const qs = withRef(new URLSearchParams({ path: selectedPath.value }));
+    const blob = await apiCallBlob(`/projects/${props.id}/git/file/raw?${qs}`);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -194,8 +209,7 @@ async function downloadOriginal() {
   }
 }
 
-onMounted(async () => {
-  await checkRepo();
+async function initFromRoute() {
   if (!hasRepo.value) return;
   const initialPath = route.query.path as string | undefined;
   if (initialPath) {
@@ -204,7 +218,18 @@ onMounted(async () => {
   } else {
     await loadTree("");
   }
+}
+
+onMounted(async () => {
+  await checkRepo();
+  await initFromRoute();
 });
+
+// 저장소 관리 탭의 "탐색" 버튼으로 이 화면(같은 경로, ref 쿼리만
+// 다름)에 재진입하면 Vue Router가 컴포넌트를 재사용해 onMounted가
+// 다시 안 돈다(#document-nav-stale-content에서 이미 겪은 것과 같은
+// 패턴) - ref 변경을 별도로 감지해 다시 불러온다.
+watch(() => route.query.ref, initFromRoute);
 
 onBeforeUnmount(() => revokeMediaUrl());
 </script>
@@ -215,6 +240,7 @@ onBeforeUnmount(() => revokeMediaUrl());
   </p>
   <div v-else-if="hasRepo" class="layout">
     <aside class="tree">
+      <p v-if="branchRef" class="branch-badge">🌿 {{ branchRef }}(읽기 전용)</p>
       <div class="path-bar">
         <button v-if="currentDir" @click="loadTree(parentDir(currentDir))">.. (상위)</button>
         <span class="current-path">/{{ currentDir }}</span>
@@ -316,6 +342,14 @@ onBeforeUnmount(() => revokeMediaUrl());
   border: none;
   padding: 4px 8px;
   border-radius: 4px;
+}
+.branch-badge {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-hover);
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin: 0 0 8px;
 }
 .current-path {
   font-size: 12px;

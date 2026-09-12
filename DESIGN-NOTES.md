@@ -5115,8 +5115,85 @@ ID/시크릿)을 이용한 팝업 로그인 왕복 자체는 이번 세션에 �
 흐름(로그인 팝업 → 승인 → 저장소 선택 다이얼로그 → 연동)만 별도로
 한 번 더 확인이 필요하다. 테스트 프로젝트/자격증명은 검증 후 삭제.
 
+## 저장소 관리 탭 - PR 생성/머지 + 브랜치 목록/열람(`#repo-management-tab`) - 완료 (2026-09-13)
+
+**배경**: 3단계 확장 설계의 Phase C(마지막). 프로젝트별 새 탭에서
+PR 생성/머지(머지는 owner만)와 브랜치 목록을 다룬다.
+
+**"워크트리 리스트" 재해석**: 요청 원문의 "워크트리 리스트"는 이
+아키텍처(프로젝트당 공유 Gitea work 저장소 하나, 로컬 다중 clone
+개념 자체가 없음)에서 문자 그대로는 존재할 수 없는 개념이라, 계획
+단계에서 "브랜치 목록 + 브랜치별 소스 열람"으로 재해석해 진행하기로
+하고 실제로 그렇게 구현했다 - `git/tree`/`git/file`/`git/file/raw`가
+이미 받고 있었지만 프론트 어디서도 한 번도 보낸 적 없던 `ref` 쿼리
+파라미터를, `SourceBrowserView.vue`가 실제로 채워 보내도록 확장하는
+방식으로 켰다(완전히 새 브라우저 컴포넌트를 만들지 않음 - 기존 코드
+재사용 극대화).
+
+**`SourceBrowserView.vue`를 ref-aware로 확장(새 컴포넌트 대신)**:
+`route.query.ref`를 `branchRef`로 읽어 `git/tree`/`git/file`/
+`git/file/raw` 호출에 `ref` 쿼리를 실어 보낸다. 다만 **편집/저장은
+`branchRef`가 있으면 막는다** - `PUT git/file`이 대상 브랜치를 받는
+파라미터가 없어(Gitea Contents API의 `branch` 필드를 아직 안 씀)
+항상 기본 브랜치에 커밋되므로, 다른 브랜치를 보면서 편집하면 "보고
+있는 브랜치"와 "실제로 커밋되는 브랜치"가 달라지는 혼란이 생길 수
+있어 이번 범위에서는 읽기 전용 열람만 지원(쓰기 지원은 범위 밖으로
+남김). 같은 라우트 경로에서 `ref` 쿼리만 바뀌며 재진입하면 Vue
+Router가 컴포넌트를 재사용해 `onMounted`가 다시 안 도는
+문제(`#document-nav-stale-content`에서 이미 겪은 것과 같은 패턴)가
+있어 `watch(() => route.query.ref, ...)`로 별도 처리.
+
+**`core/gitea.ts`에 브랜치/PR API 추가**: `listBranches`/
+`listPullRequests`/`getPullRequest`/`createPullRequest`/
+`mergePullRequest` - Gitea REST API가 GitHub과 거의 동일한 PR
+엔드포인트 모양을 제공한다는 사전 조사가 실제로 맞았다. 새
+`giteaFetchAs()` 헬퍼(`putFileContent()`와 같은 "actingToken 있으면
+그걸로, 없으면 관리자 토큰 폴백" 패턴)로 PR 생성/머지가 설계자 본인의
+Gitea PAT로 이뤄져 Gitea 쪽 커밋/PR 작성자가 실제로 그 설계자
+명의로 남는다. 머지는 Gitea API의 `Do:"merge"` 필드(대문자 시작,
+swagger `MergePullRequestOption` 기준)만 지원(squash/rebase는 범위
+밖).
+
+**새 라우트**(전부 `requireGiteaWorkingSlug` 경유): `GET .../git/
+branches`(viewer), `GET .../git/pulls`(viewer, `state` 쿼리로
+open/closed/all), `GET .../git/pulls/:index`(viewer), `POST .../git/
+pulls`(editor 이상 - `getGiteaAccessToken(req.userId!)`를 actingToken
+으로), `POST .../git/pulls/:index/merge`(**owner 전용** -
+`requireProjectRole("owner")`가 요청된 핵심 제약을 강제, PR 생성은
+editor도 가능하지만 머지는 owner만).
+
+**프론트**: `ProjectShellView.vue`에 "저장소 관리" 탭 + 새
+`RepoManagementView.vue` - 브랜치 섹션(이름+마지막 커밋 시각+"탐색"
+버튼 → `/projects/:id/source?ref=<브랜치>`로 이동), PR 섹션(목록에
+제목/작성자/head→base/상태/설명, "PR 만들기" 폼, "머지" 버튼은
+`roleSatisfies(myRole, "owner")`일 때만 노출 - 서버 403과 이중 방어).
+
+**실측 검증**: `npx tsc --noEmit`(backend)/`npx vue-tsc -b`(frontend)
+클린 → `npm run audit:cli-mcp` 클린(이 기능도 기존 git 저장소 범위와
+동일하게 웹 전용) → Docker 백엔드 재빌드+재기동 → 테스트 프로젝트에
+self_hosted 저장소 연결 후 **Gitea REST API를 직접 호출해 실제
+브랜치(`feature/qa-test`)와 그 위의 추가 커밋을 만들어**(이 앱엔 아직
+브랜치 생성 UI가 없어 설계자가 실제로 git push하는 상황을 재현) 검증:
+(1) `GET .../git/branches`가 실제 두 브랜치(commit sha/시각 포함)를
+정확히 돌려주는지, (2) 저장소 관리 탭의 브랜치 목록에서 "탐색"을
+누르면 `/source?ref=feature/qa-test`로 이동하고 **기본 브랜치엔 없는
+파일(`feature-note.md`)까지 실제로 보이는지, 기본 브랜치 뷰로
+돌아가면 그 파일이 다시 안 보이는지**(브랜치별 실제 내용 차이를
+왕복 확인) 실측. **PR 생성/머지 핵심 통합 테스트**: PR을 만들어
+`authorUsername`이 실제로 그 설계자의 Gitea 계정(`admin-2`)으로
+찍히는지 확인 → owner로 머지 클릭 → PR이 "머지됨"으로 바뀌고 **main
+브랜치에 실제로 feature 브랜치의 파일이 병합된 것을 `git/tree`
+재조회로 확인**(진짜 머지 커밋이 만들어짐) → 별도 실제 계정(editor
+역할로 초대한 `qa_repo_editor`)으로 새 PR 생성(그 계정 명의로
+`authorUsername`이 정확히 찍히는 것까지 확인) → 같은 계정으로 머지
+시도 시 서버가 **실제로 403 "이 작업은 최소 owner 권한이 필요합니다"**
+로 거부하는지, 그 계정의 웹 UI에서도 "머지" 버튼 자체가 안 보이는지
+(admin 계정으로 본 같은 PR 목록엔 버튼이 보임과 대비) 확인 - owner
+전용 제약이 서버/프론트 양쪽에서 실제로 일관되게 강제됨을 확인.
+테스트 프로젝트는 검증 후 삭제.
+
 ## 다음 단계
 
-PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
-고른다. `#github-oauth-repo-link` 완료 후 다음은 `#repo-management-tab`
-(PR/브랜치 관리, 이번에 설계자가 요청한 3단계 확장의 Phase C).
+3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
+저장소 관리 탭)가 전부 완료됐다. PLANS.md 색인 표에 남은 ⬜ 항목이
+없다 - 다음 라운드는 새 QA 패스나 설계자의 새 요청을 기다린다.
