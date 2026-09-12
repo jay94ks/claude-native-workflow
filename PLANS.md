@@ -49,7 +49,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 16 | ✅ | `#message-wait-timeout-cap` | 서버 단일 호출 10초 상한 + CLI/MCP 폴링으로 전체 대기 구현 |
 | 17 | ✅ | `#meilisearch-spof` | Meilisearch 장애 시 503+명확한 메시지 응답, 색인 쓰기는 큐+워커로 자동 재처리 |
 | 18 | ✅ | `#git-unlink` | 외부 연동 해제(자체 호스팅으로 전환) - 자체 호스팅은 프로젝트 삭제 전엔 해제 불가 |
-| 19 | ⬜ | `#git-publish-pr-draft` | PR 초안 자동 생성 중간 단계 없음(의도된 설계) |
+| 19 | ✅ | `#git-publish-pr-draft` | 의도된 설계로 재확인 - 자동 PR 생성은 범위 밖(문서만 정리, 코드 변경 없음) |
 | 20 | ⬜ | `#hook-prompt-update` | PushHookPrompt 수정(update) 라우트 없음 |
 | 21 | ⬜ | `#hook-branch-pattern` | 브랜치 패턴(glob/regex) 매칭 없음 |
 | 22 | ⬜ | `#hook-queue-ttl` | push 훅 대기열 만료/자동 정리 없음 |
@@ -86,14 +86,6 @@ revisions/source-links/access/folder, 두 bulk 라우트 포함) 전부가
 바꾸면 중복 조회도 없어지고 장애 중에도 기존 문서 수정/삭제/전이가
 막히지 않게 되지만, 15개 이상의 라우트를 건드리는 변경이라 별도
 라운드로 남겨둔다.
-
-## 9. git 저장소 연동
-
-### `#git-publish-pr-draft`
-**동기화(발행)이 즉시 반영/AI 대기열 둘 중 하나로만 갈라진다** -
-"PR 초안 자동 생성" 같은 중간 단계는 여전히 없다(의도된 설계 - 자동
-PR은 범위 밖으로 명시적으로 남겨둠). 실사용 빈도가 높아지면 재검토할
-여지.
 
 ## 10. push 훅 자동화
 
