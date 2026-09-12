@@ -5915,3 +5915,36 @@ QA-SCENARIOS.md 17개 영역 절(`우선순위 제안` 절은 PLANS.md를 가리
 항목은 GitHub/GitLab 실제 발행 왕복 테스트(외부 자격증명 필요,
 설계자 승인/제공 대기)뿐이며, 다음 라운드는 새 QA 패스나 설계자의 새
 요청을 기다린다.
+
+## 문서 보기 화면 - 본문 텍스트가 하위 섹션과 겹치는 레이아웃 버그 수정
+
+**배경**: 설계자가 실사용 중 문서 보기 화면에서 본문 텍스트가 길면
+아래 "연관된 소스 코드"/"연관 브랜치" 섹션과 겹쳐 보이는 버그를
+발견 - 실제로 이 저장소 자신이 마이그레이션한 긴 `DN` 문서(97개
+라운드 중 하나)로 재현.
+
+**원인**: `DocumentEditorView.vue`가 감싸는 루트 엘리먼트 없이
+`header`/`tabs`/`toolbar`/`message-compose`/본문(`body-view`)/
+`source-links` 두 섹션을 전부 최상위 형제로 렌더링하고 있었다 -
+이 뷰를 호스팅하는 `ProjectShellView.vue`의 `.tab-content`가
+`display:flex;flex-direction:column;flex:1;min-height:0`인 flex
+컨테이너라서(다른 탭 뷰가 헤더+내부 스크롤 목록 레이아웃을 만들 때
+쓰는 의도된 패턴 - `MessagesView.vue`가 그 예), 감싸는 래퍼가 없으면
+그 형제들이 전부 `.tab-content`의 직속 flex 자식이 돼 기본
+`flex-shrink:1`의 영향을 받는다. 문서 본문(`min-height:200px`만 있고
+그 외엔 유연한 높이)이 컨테이너의 제한된 높이에 맞춰 실제 내용보다
+짧게 눌리고, `overflow:visible`이라 그 초과분이 잘리거나 스크롤되지
+않고 그대로 아래 섹션 위에 겹쳐 그려졌다.
+
+**수정**: `DocumentEditorView.vue`의 템플릿 전체를 `<div
+class="document-editor">`로 한 번 감싸고, 그 클래스에 `flex-shrink:
+0`을 준다 - 이제 이 뷰 전체가 `.tab-content`의 유일한 flex 자식이
+되어 눌리지 않고, 자연스러운 콘텐츠 높이로 렌더링되며, 상위
+`main.content`(이미 `overflow-y:auto`)가 정상적으로 페이지 스크롤을
+담당한다. `MessagesView.vue`처럼 내부 스크롤 영역이 실제로 필요한
+다른 탭 뷰에는 영향 없음(그 뷰들은 건드리지 않음).
+
+**검증**: 브라우저로 실제 재현(긴 DN 문서 열어 겹침 확인) → 수정 →
+프론트엔드 재빌드 후 다시 열어 "연관된 소스 코드"/"연관 브랜치"
+섹션이 본문 아래에 정확히 이어서 렌더링되는지 스크린샷으로 확인.
+`vue-tsc -b` 클린.
