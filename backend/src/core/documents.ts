@@ -138,6 +138,30 @@ export async function getDocument(trackingCode: string): Promise<SearchableDocum
   return getDocumentFromIndex(trackingCode);
 }
 
+export interface DocumentAccessInfo {
+  id: string;
+  projectId: string;
+  docTypeId: string;
+  statusId: string;
+}
+
+/** 권한 확인 전용 최소 조회 - DB에서 직접 읽는다(검색 엔진 안
+ * 거침). PUT/DELETE/전이 등 "일단 존재/권한만 확인하고 실제 작업은
+ * core 함수가 따로 DB를 다시 읽어 처리하는" 라우트들이 그 사전
+ * 확인에 쓴다 - 실제 문서 "조회"(GET 단건 응답 본문)는 여전히
+ * getDocument()(검색 엔진 경유)를 쓴다(모든 조회는 검색 엔진을
+ * 거친다는 원칙은 진짜 조회에만 적용, 이건 조회가 아니라 내부
+ * 권한 게이트). 이 분리로 Meilisearch가 죽어 있어도 기존 문서의
+ * 수정/삭제/전이가 막히지 않는다(#document-write-gate-bypass-search) -
+ * #meilisearch-spof가 큐로 보호한 실제 쓰기 단계까지 도달 가능해짐. */
+export async function getDocumentAccessInfo(trackingCode: string): Promise<DocumentAccessInfo | null> {
+  const db = getDb();
+  return db.document.findUnique({
+    where: { trackingCode },
+    select: { id: true, projectId: true, docTypeId: true, statusId: true },
+  });
+}
+
 export async function listDocuments(projectId: string, docTypeId?: string): Promise<SearchableDocument[]> {
   return listDocumentsFromIndex({ projectId, docTypeId });
 }

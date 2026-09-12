@@ -60,33 +60,10 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 27 | ✅ | `#large-list-pagination` | 문서 참조 선택기/변경 추적 문서 이력 선택도 검색·페이지네이션 기반으로 전환(폴더는 트리 구조라 범위 밖) |
 | 28 | ✅ | `#private-visibility-default` | 팀/그룹/프로젝트 기본 비공개 가시성(소속 없으면 안 보임, 공개 설정 시 예외) |
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
-| 30 | ⬜ | `#document-write-gate-bypass-search` | 문서 수정/삭제/전이 등의 사전 권한 확인이 검색 엔진을 거쳐 Meilisearch 장애 중엔 아예 막힘(생성만 예외) |
+| 30 | ✅ | `#document-write-gate-bypass-search` | 문서 수정/삭제/전이 등의 사전 권한 확인을 DB 직접 조회로 전환 - Meilisearch 장애 중에도 안 막힘(내용 조회만 예외) |
 | 31 | ✅ | `#message-wait-mqtt-direct` | message wait을 백엔드 폴링에서 CLI/MCP 직접 MQTT 구독으로 전환(설계자 지시, HTTP 폴링은 폴백으로 유지) |
 
 ---
-
-## 8. 검색/인덱싱
-
-### `#document-write-gate-bypass-search`
-**문서 수정/삭제/전이 등 라우트의 사전 권한 확인이 검색 엔진을
-거쳐서, Meilisearch 장애 중엔 새 문서 생성만 안전하고 기존 문서
-조작은 아예 시도되지도 못하고 막힌다** - `#meilisearch-spof`
-구현·실측 중 발견. `server.ts`의 `/api/documents/:trackingCode`
-계열 라우트(PUT/DELETE/transition/priority/links/backlinks/
-revisions/source-links/access/folder, 두 bulk 라우트 포함) 전부가
-실제 작업 전에 `getDocument()`(검색 엔진 경유)를 먼저 호출해
-{projectId, docTypeId, id}만 뽑아 권한 확인용으로 쓴다 - 그런데 이
-호출 직후 대부분의 core 함수(`saveDocumentBody`/`deleteDocument`/
-`transitionDocumentStatus` 등)가 **자기 자신도 DB를 다시 직접
-읽는다** - 즉 평소에도 중복 조회다. Meilisearch가 죽으면 이 사전
-조회 자체가 503으로 막혀 그 뒤의 실제 쓰기 단계(`#meilisearch-spof`가
-큐로 보호한 지점)에 도달하지 못한다 - 데이터가 조용히 유실되는 건
-아니지만(명확한 503으로 안전하게 막힘), 새 문서 생성보다 보호 범위가
-좁은 비대칭이다. 이 사전 확인을 DB 직접 조회(예:
-`getDocumentAccessInfo(trackingCode)` 같은 경량 함수 신설)로
-바꾸면 중복 조회도 없어지고 장애 중에도 기존 문서 수정/삭제/전이가
-막히지 않게 되지만, 15개 이상의 라우트를 건드리는 변경이라 별도
-라운드로 남겨둔다.
 
 ## 11. 템플릿 관리
 

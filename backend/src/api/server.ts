@@ -89,6 +89,7 @@ import {
 import {
   createDocument,
   getDocument,
+  getDocumentAccessInfo,
   listDocuments,
   listDocumentsPaged,
   listRecentDocuments,
@@ -1317,7 +1318,7 @@ app.put(
     const results = await Promise.all(
       trackingCodes.map(async (trackingCode) => {
         try {
-          const doc = await getDocument(trackingCode);
+          const doc = await getDocumentAccessInfo(trackingCode);
           if (!doc) return { trackingCode, ok: false, error: "문서를 찾을 수 없습니다" };
           const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
           if (!perm.read) return { trackingCode, ok: false, error: "이 문서에 대한 읽기 권한이 없습니다" };
@@ -1336,7 +1337,7 @@ app.put(
   "/api/documents/:trackingCode",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
@@ -1350,7 +1351,7 @@ app.post(
   "/api/documents/:trackingCode/transition",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
@@ -1376,7 +1377,7 @@ app.post(
     const results = await Promise.all(
       trackingCodes.map(async (trackingCode) => {
         try {
-          const doc = await getDocument(trackingCode);
+          const doc = await getDocumentAccessInfo(trackingCode);
           if (!doc) return { trackingCode, ok: false, error: "문서를 찾을 수 없습니다" };
           const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
           if (!perm.write) return { trackingCode, ok: false, error: "이 문서에 대한 쓰기 권한이 없습니다" };
@@ -1397,7 +1398,7 @@ app.put(
   "/api/documents/:trackingCode/priority",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
@@ -1414,7 +1415,7 @@ app.get(
   "/api/documents/:trackingCode/next-statuses",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
@@ -1426,7 +1427,7 @@ app.post(
   "/api/documents/:trackingCode/links",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
@@ -1441,7 +1442,7 @@ app.get(
   "/api/documents/:trackingCode/backlinks",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
@@ -1453,7 +1454,7 @@ app.get(
   "/api/documents/:trackingCode/revisions",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
@@ -1467,7 +1468,7 @@ app.post(
   "/api/documents/:trackingCode/source-links",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
@@ -1481,7 +1482,7 @@ app.get(
   "/api/documents/:trackingCode/source-links",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
@@ -1495,7 +1496,7 @@ app.delete(
   asyncRoute(async (req, res) => {
     const trackingCode = req.query.trackingCode as string | undefined;
     if (!trackingCode) { res.status(400).json({ error: "trackingCode 쿼리가 필요합니다" }); return; }
-    const doc = await getDocument(trackingCode);
+    const doc = await getDocumentAccessInfo(trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
@@ -1508,7 +1509,7 @@ app.delete(
   "/api/documents/:trackingCode",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.delete) { res.status(403).json({ error: "이 문서에 대한 삭제 권한이 없습니다" }); return; }
@@ -1557,7 +1558,7 @@ app.put(
   "/api/documents/:trackingCode/access",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const role = await getMemberRole(doc.projectId, req.userId!);
     if (role !== "owner") { res.status(403).json({ error: "프로젝트 owner만 접근 권한을 설정할 수 있습니다" }); return; }
@@ -1654,7 +1655,7 @@ app.put(
   "/api/documents/:trackingCode/folder",
   authenticate,
   asyncRoute(async (req, res) => {
-    const doc = await getDocument(req.params.trackingCode);
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     // 개인 폴더 배치는 문서 내용을 안 바꾸는 순수 메타데이터라 read
     // 권한이면 충분하다(write 요구 안 함).

@@ -3705,6 +3705,41 @@ Vue 컴포넌트 전부가 공유 테마 체계 없이 `<style scoped>`에 색�
 정상 동작 → "선택 해제" 클릭 시 원래 상태로 복귀 확인.
 `npx vue-tsc -b`(frontend) 클린.
 
+## 문서 쓰기 라우트의 사전 권한 확인을 DB 직접 조회로 전환(`#document-write-gate-bypass-search`) - 완료 (2026-09-12)
+
+PLANS.md 30번. `#meilisearch-spof` 실측 중 발견해뒀던 비대칭을
+마저 닫는 라운드 - 그때는 새 문서 생성만 장애 중에도 되고 기존
+문서 수정/삭제/전이는 사전 권한 확인 자체가 검색 엔진을 거쳐 503
+으로 막혔다.
+
+`core/documents.ts`에 `getDocumentAccessInfo(trackingCode)` 신설 -
+DB에서 `{id, projectId, docTypeId, statusId}`만 직접 읽는다(검색
+엔진 안 거침). `server.ts`의 `/api/documents/:trackingCode` 계열
+라우트 **15곳**(PUT/DELETE/전이/우선순위/링크/역참조/리비전/연관
+소스코드/접근권한/폴더배치, bulk 2곳 포함)에서 권한 확인용
+`getDocument()` 호출을 전부 이 함수로 교체 - 반환 필드 이름이 같아
+뒤따르는 `resolveEffectivePermission(...)` 호출부는 한 글자도 안
+바뀌었다(순수 함수 이름 교체). 유일하게 안 바꾼 곳은 단건 조회
+라우트(`GET /api/documents/:trackingCode`) - 응답 본문 자체가
+문서 내용이라 "모든 조회는 검색 엔진을 거친다"는 원칙이 실제로
+적용돼야 하는 진짜 조회 자리이기 때문. 새 스키마/라우트 없음 -
+기존 함수 호출 지점만 15곳 교체.
+
+**실측 검증**: `docker compose kill meilisearch`로 장애 재현 후,
+장애 전 만들어둔 문서를 상대로 PUT(본문 수정)/전이/우선순위 변경을
+연속 시도 - **전부 200 성공**(수정 전엔 여기서 503이었음, 이번
+라운드의 핵심 변화). 검색 동기화 큐에 그 변경들이 정확히 적재(같은
+트래킹코드라 `upsertDocument` 1건으로 중복 제거된 것도 확인 -
+`#meilisearch-spof`의 유니크 upsert 로직 재확인). 같은 상태에서
+DELETE도 200 성공, 큐에 `deleteDocument`로 전이돼 쌓임. 같은
+문서의 **내용 조회**(`GET /api/documents/:trackingCode`)는 여전히
+503(의도된 경계, 회귀 아님). `docker compose start meilisearch` 후
+드레인 워커가 자동으로 큐를 비우고, 실제로 문서가 삭제된 상태로
+검색에 반영(404)됨을 확인 - 두 라운드(`#meilisearch-spof`와 이번
+라운드)가 실제로 맞물려 동작하는 최종 증거. `npx tsc --noEmit`,
+`npm run audit:cli-mcp`(라우트/CLI/MCP 표면 자체는 안 바뀌어 그대로
+통과) 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
