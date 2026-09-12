@@ -54,7 +54,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 21 | ✅ | `#hook-branch-pattern` | 브랜치 조건에 `*` glob 패턴 지원(예: `release/*`, 세그먼트 안에서만) |
 | 22 | ✅ | `#hook-queue-ttl` | pending 30일 방치 시 자동 expired 전이(주기 워커, 삭제 아님) |
 | 23 | ✅ | `#template-history` | 템플릿 변경 이력(리비전) - 덮어쓰기 직전 내용을 스냅샷, 복원은 재저장 방식(Document 리비전과 동일 패턴) |
-| 24 | ⬜ | `#migrate-idempotent` | 가이디드 마이그레이션 재실행이 멱등하지 않음 |
+| 24 | ✅ | `#migrate-idempotent` | 가이디드 마이그레이션 재실행 안전장치 - 매니페스트에 appliedTrackingCode를 남겨 이미 반영된 항목은 재생성 안 함, 실패 항목만 자동 재시도 |
 | 25 | ✅ | `#migrate-status-mapping-preset` | 옛 상태 어휘(active/wip 등) → 표준 코드 자동 제안(`--no-status-preset`으로 끌 수 있음) |
 | 26 | ⬜ | `#responsive-dark-mode` | 반응형/다크 모드 미지원 |
 | 27 | ✅ | `#large-list-pagination` | 문서 참조 선택기/변경 추적 문서 이력 선택도 검색·페이지네이션 기반으로 전환(폴더는 트리 구조라 범위 밖) |
@@ -66,14 +66,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 33 | ✅ | `#doctype-status-auto-seed` | DocType 생성 시 표준 상태 6개를 항상 자동으로 심음 - 개별 추가/일괄 적용 CRUD 제거(설계자 지시) |
 
 ---
-
-## 12. 가이디드 마이그레이션
-
-### `#migrate-idempotent`
-**재실행이 멱등하지 않다**(이미 문서화된 한계) - 같은 매니페스트를
-두 번 반영하면 문서가 중복 생성된다. `oldId` 기준으로 "이미
-반영됐는지" 표시를 매니페스트에 남기는 정도의 가벼운 보강을 검토할
-만하다(완전한 멱등성까지는 아니더라도 실수 방지 차원).
 
 ## 13. 웹 UI 전반
 

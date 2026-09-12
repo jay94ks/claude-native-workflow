@@ -37,6 +37,12 @@ export interface MigrateCandidate {
   originalStatusCode?: string;
   links: string[];
   skip: boolean;
+  /** 이 값이 있으면 이 항목은 이전 apply 실행에서 이미 문서로
+   * 만들어졌다는 뜻이고, 값 자체가 그 결과 trackingCode다 - applyManifest()
+   * 가 처리 후 매니페스트 파일에 다시 써서 남긴다(#migrate-idempotent).
+   * skip(설계자가 애초에 반영 안 하기로 정한 것)과는 다른 개념이라
+   * 별도 필드로 둔다. */
+  appliedTrackingCode?: string;
 }
 
 /** concept 스타일 프로젝트에서 흔히 쓰이던 옛 상태 어휘 → 이 시스템의
@@ -134,6 +140,9 @@ export function scanDirectory(sourceDir: string, opts: ScanOptions = {}): Migrat
 
 export interface ApplyResult {
   created: { oldId: string; trackingCode: string }[];
+  /** 이번 실행에서 재생성하지 않고 건너뛴, 이미 반영된 항목
+   * (#migrate-idempotent). */
+  alreadyApplied: { oldId: string; trackingCode: string }[];
   errors: { oldId: string; message: string }[];
   warnings: string[];
 }
@@ -145,15 +154,30 @@ interface CreatedDocument {
 
 /** 매니페스트를 읽어 skip 안 된 항목을 순서대로 생성 → 상태 전이(가능하면)
  * → 이번 배치 안에서 해석되는 링크만 연결한다. 개별 항목 실패가 배치
- * 전체를 막지 않는다(리뷰를 거친 배치라도 항목별 실패는 생길 수 있음). */
+ * 전체를 막지 않는다(리뷰를 거친 배치라도 항목별 실패는 생길 수 있음).
+ * 이미 `appliedTrackingCode`가 있는 항목은 재생성하지 않고 건너뛴다
+ * (#migrate-idempotent) - 처리 후 매니페스트 파일 자체를 다시 써서
+ * 새로 성공한 항목의 `appliedTrackingCode`를 남긴다. 완전한 멱등성은
+ * 아니다(이미 반영된 항목의 링크는 재실행 시 다시 확인하지 않음) -
+ * 목표는 재실행으로 인한 문서 중복 생성을 막는 가벼운 안전장치다. */
 export async function applyManifest(projectId: string, manifestPath: string): Promise<ApplyResult> {
   const manifest = JSON.parse(stripBom(fs.readFileSync(manifestPath, "utf-8"))) as MigrateCandidate[];
-  const result: ApplyResult = { created: [], errors: [], warnings: [] };
+  const result: ApplyResult = { created: [], alreadyApplied: [], errors: [], warnings: [] };
   const oldIdToTrackingCode = new Map<string, string>();
   const linksByTrackingCode = new Map<string, string[]>();
 
   for (const item of manifest) {
     if (item.skip) continue;
+    if (item.appliedTrackingCode) {
+      // 이전 실행에서 이미 반영됨 - 재생성하지 않는다. 다른(아직 안
+      // 반영된) 항목의 링크가 이 oldId를 가리킬 수 있으므로 맵에는
+      // 채워 넣되, 이 항목 자신의 링크는 linksByTrackingCode에 안
+      // 넣어 다시 만들지 않는다(DocumentLink에 unique 제약이 없어
+      // 재실행마다 중복 생성되는 걸 막음).
+      oldIdToTrackingCode.set(item.oldId, item.appliedTrackingCode);
+      result.alreadyApplied.push({ oldId: item.oldId, trackingCode: item.appliedTrackingCode });
+      continue;
+    }
     try {
       const sourceContent = stripBom(fs.readFileSync(item.sourcePath, "utf-8"));
       const split = splitFrontmatter(sourceContent);
@@ -164,6 +188,7 @@ export async function applyManifest(projectId: string, manifestPath: string): Pr
         body: JSON.stringify({ docTypeCode: item.docTypeCode, title: item.title, body }),
       });
 
+      item.appliedTrackingCode = doc.trackingCode;
       oldIdToTrackingCode.set(item.oldId, doc.trackingCode);
       linksByTrackingCode.set(doc.trackingCode, item.links);
       result.created.push({ oldId: item.oldId, trackingCode: doc.trackingCode });
@@ -204,6 +229,12 @@ export async function applyManifest(projectId: string, manifestPath: string): Pr
       }
     }
   }
+
+  // 이번 실행에서 새로 성공한 항목의 appliedTrackingCode를 매니페스트
+  // 파일 자체에 남긴다 - 실패한 항목(errors)은 표시가 안 남으므로
+  // 다음 실행에서 자동으로 재시도 대상이 된다. Node fs.writeFileSync는
+  // BOM을 안 남기므로 이 파일의 오랜 BOM 문제를 재발시키지 않는다.
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
 
   return result;
 }

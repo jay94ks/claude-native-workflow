@@ -3937,6 +3937,60 @@ override(content A) → 리비전 없음 확인 → 다시 override(content B로
 확인. 로컬 재빌드한 CLI로 `docs template revisions`도 동일하게
 재확인.
 
+## 가이디드 마이그레이션 재실행 안전장치(`#migrate-idempotent`) - 완료 (2026-09-12)
+
+PLANS.md 24번(백로그 항목, `#template-history`와 함께 설계자가 이미
+승인한 두 항목 중 나머지 하나). `docs migrate apply <projectId>
+<manifestFile>`(`cli/migrate.ts`의 `applyManifest()`)를 같은
+매니페스트로 두 번 돌리면 `skip` 아닌 모든 항목이 매번 `POST
+/documents`를 새로 호출해 문서가 중복 생성됐다 - 실행이 성공했는지
+확인 없이 재시도하면 안 되는 상태였고, FEATURES.md엔 "실패한 항목만
+남겨 재시도"라는 수작업 우회가 적혀 있었다.
+
+핵심 발견: `applyManifest`는 지금까지 `manifestPath`를 읽기만 하고
+절대 다시 쓰지 않았다 - "이미 반영됨" 표시가 남으려면 apply가 처리
+후 자기 입력 파일에 결과를 다시 써야 한다. 또한 링크 해석
+(`oldIdToTrackingCode`)이 그 실행 안에서 새로 만든 항목만으로 매번
+새로 구성되므로, 이미 반영된 항목을 건너뛰더라도 그 trackingCode를
+이 맵에 채워 넣지 않으면 아직 반영 안 된 다른 항목이 그걸 링크로
+가리킬 때 "이번 배치에 없음" 경고가 잘못 떴다 - 그래서 마크는 단순
+boolean이 아니라 결과 trackingCode 자체를 저장해야 했다.
+
+`MigrateCandidate`에 `appliedTrackingCode?: string` 필드 추가 - 값이
+있으면 이미 반영됨, 그 값이 결과 trackingCode. `skip`(설계자가 애초에
+반영 안 하기로 정한 것)과는 의미가 완전히 달라 같은 필드를 재사용하지
+않았다. `applyManifest`의 1차 루프에서 `appliedTrackingCode`가 있는
+항목은 재생성하지 않고 `oldIdToTrackingCode`에만 채워 넣은 뒤
+`alreadyApplied`(새 `ApplyResult` 필드)로 보고 - `linksByTrackingCode`
+에는 안 넣어 그 항목 자신의 링크는 재생성하지 않는다(`DocumentLink`에
+unique 제약이 없어 그대로 두면 재실행마다 링크가 늘어나는 걸 확인해서
+막음). 새로 생성에 성공한 항목은 `item.appliedTrackingCode = doc.
+trackingCode`로 매니페스트 배열 자체(메모리 상)를 갱신하고, 모든 처리가
+끝난 뒤 `fs.writeFileSync(manifestPath, JSON.stringify(manifest, null,
+2), "utf-8")`로 파일에 다시 쓴다 - 실패한 항목(`errors`)은 표시가 안
+남으므로 다음 실행에서 자동으로 재시도 대상이 된다(수작업이 자동화됨).
+Node의 `fs.writeFileSync`는 BOM을 안 남기므로 이 파일의 오랜 BOM 문제
+(`stripBom`)를 재발시키지 않는다. CLI(`cli/index.ts`)/MCP
+(`mcp/server.ts`)는 `applyManifest`의 반환 타입에 필드 하나가 늘었을
+뿐 그대로 결과를 출력/반환하므로 변경이 필요 없었다.
+
+**실측 검증**: `npx tsc --noEmit`/`npm run audit:cli-mcp`(120/109,
+CLI/MCP 표면 자체는 안 바뀌어 그대로) 클린. 실제 frontmatter 마크다운
+2개(서로 링크)+기존에 남아있던 테스트 파일 3개로 `scan`→`apply` 1차
+실행(5건 `created`, 매니페스트 파일이 각 항목에 `appliedTrackingCode`
+로 갱신된 것을 직접 열어 확인) → **같은 매니페스트로 2차 실행**(`created`
+빈 배열, 5건 전부 `alreadyApplied`, 프로젝트 문서 목록이 여전히 5개인
+것으로 중복 없음 확인) → 한 항목(`old-a`, `old-b`를 링크로 가리킴)의
+`appliedTrackingCode`만 수작업으로 지운 뒤 3차 실행 - 그 항목만
+새 trackingCode로 재생성되고 나머지 4건은 그대로 `alreadyApplied`
+(부분 재시도 확인), 재생성된 항목이 **이미 반영된** `old-b`를 향한
+링크를 경고 없이 정확한 trackingCode로 연결하는지 `backlinks`로 대조
+확인(핵심 통찰이었던 "이미 반영된 항목도 링크 대상으로는 여전히
+해석돼야 한다"의 실제 증거) → 존재하지 않는 DocType(`ZZZ`)으로 항목
+하나를 추가해 4차 실행(그 항목만 `errors`, `appliedTrackingCode` 안
+남음) → 5차 실행(그 항목이 `errors`로 다시 나타나 자동 재시도되는지
+확인, 나머지는 여전히 `alreadyApplied`).
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

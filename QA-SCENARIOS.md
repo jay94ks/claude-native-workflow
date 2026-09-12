@@ -682,9 +682,18 @@
   그 필드 자체가 없는지 확인. `--no-status-preset`으로 완전
   옵트아웃되는지, 매핑된 값이 `migrate apply`로 실제 그 상태의
   문서를 만드는지 실측.
+- [x] **`#migrate-idempotent`: 재실행 안전장치** - 같은 매니페스트를
+  두 번 `apply`해도 문서가 중복 생성되지 않는지(1차는 `created`,
+  2차는 전부 `alreadyApplied`로 나오고 문서 목록엔 여전히 원래
+  개수만 있는지), 매니페스트 파일 자체가 `appliedTrackingCode`로
+  갱신되는지, 항목 하나만 수작업으로 표시를 지우면 그 항목만 다시
+  생성되고 나머지는 그대로 `alreadyApplied`인지(부분 재시도), 이미
+  반영된 항목을 링크로 가리키는 아직 안 반영된 항목이 경고 없이
+  정확히 그 trackingCode로 링크되는지, 실패한 항목은 표시가 안 남아
+  재실행 시 자동으로 다시 시도되는지 - 전부 실측.
 
 ### 추가 개발 계획
-`#migrate-idempotent` - 상세는 [PLANS.md](PLANS.md) 참고.
+현재 없음.
 
 ---
 
