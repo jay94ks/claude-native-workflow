@@ -80,6 +80,14 @@ services:
     environment:
       GITEA__database__DB_TYPE: sqlite3
       GITEA__server__ROOT_URL: ${PUBLIC_GITEA_URL:-http://localhost}/
+      # 이게 없으면 완전히 새 volume(진짜 신규 설치)에서 app.ini가
+      # INSTALL_LOCK=false로 생성돼, "웹 설치 마법사 폐지"(CLI 부트스트랩,
+      # #gitea-nginx-lockdown)의 전제가 깨진다 - `gitea admin user create`
+      # 등 CLI 명령이 "Unable to load config file for a installed Gitea
+      # instance"로 거부된다. 기존 dev 스택은 이 옵션이 추가되기 전에
+      # 웹 설치 마법사로 이미 설치된 volume이라 이 문제를 못 보고 넘어갔던
+      # 것 - 완전히 새 설치(C:\CNW, fresh volume)를 실제로 구성하며 발견함.
+      GITEA__security__INSTALL_LOCK: "true"
       # Gitea는 기본적으로 사설/내부 네트워크 호스트로의 웹훅 발송을
       # SSRF 방지 차원에서 막는다 - 이 설정 없이는 backend 컨테이너로
       # 웹훅이 절대 도달하지 못한다(같은 compose 네트워크 안이라도).
