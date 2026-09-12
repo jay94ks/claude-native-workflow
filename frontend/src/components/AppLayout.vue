@@ -8,6 +8,7 @@ import DocumentExplorer from "./DocumentExplorer.vue";
 import DocumentPreviewDialog from "./DocumentPreviewDialog.vue";
 import KanbanCardDialog from "./KanbanCardDialog.vue";
 import EntityPickerDialog from "./EntityPickerDialog.vue";
+import FolderPickerDialog from "./FolderPickerDialog.vue";
 import SidebarSearchBox from "./SidebarSearchBox.vue";
 import SearchScopeDialog from "./SearchScopeDialog.vue";
 import TargetPanelDialog from "./TargetPanelDialog.vue";
@@ -78,6 +79,7 @@ function handleLogout() {
     <DocumentPreviewDialog />
     <KanbanCardDialog />
     <EntityPickerDialog />
+    <FolderPickerDialog />
     <SearchScopeDialog />
     <TargetPanelDialog />
   </div>

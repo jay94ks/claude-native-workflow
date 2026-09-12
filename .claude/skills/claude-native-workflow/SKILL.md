@@ -319,8 +319,10 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 메시지 전송 | `docs message send <projectId> <body...>` | `message_send` |
 | 새 메시지 대기(블로킹) | `docs message wait <projectId> [--timeout <초>]` | `message_wait` |
 | 최근 메시지(비파괴, 장애 복구용) | `docs message recent <projectId> [--limit <n>]` | `message_recent` |
-| 메시지 수정 | `docs message edit <id> <body...>` | `message_edit` |
+| 메시지 수정(대기 상태는 불가 - 삭제만 가능) | `docs message edit <id> <body...>` | `message_edit` |
 | 메시지 삭제 | `docs message delete <id>` | `message_delete` |
+| 메시지 처리 시작(대기→처리중) | `docs message ack <id>` | `message_ack` |
+| 메시지 처리 완료(처리중→기록) | `docs message complete <id>` | `message_complete` |
 | 검색 동기화 큐 상태(Meilisearch 장애 시, 관리자 전용) | `docs search-queue status` | `search_queue_status` |
 | 검색 동기화 큐 수동 드레인(관리자 전용) | `docs search-queue drain` | `search_queue_drain` |
 | 마이그레이션 후보 스캔 | `docs migrate scan <sourceDir>` | `migrate_scan` |

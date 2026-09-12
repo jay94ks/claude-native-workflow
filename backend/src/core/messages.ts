@@ -2,6 +2,7 @@ import mqtt from "mqtt";
 import { getDb } from "./db.js";
 import { realtimePublish, projectMessagesTopic, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 import { isSuperAdmin } from "./auth.js";
+import { getMemberRole } from "./members.js";
 
 export interface MessageDetail {
   id: string;
@@ -9,7 +10,14 @@ export interface MessageDetail {
   authorId: string | null;
   body: string;
   deliveredAt: Date | null;
+  ackedAt: Date | null;
+  completedAt: Date | null;
   createdAt: Date;
+}
+
+async function assertIsProjectMember(projectId: string, userId: string): Promise<void> {
+  const role = await getMemberRole(projectId, userId);
+  if (!role) throw new Error("이 프로젝트의 멤버만 메시지를 처리할 수 있습니다");
 }
 
 interface MessagePublishEvent {
@@ -51,6 +59,12 @@ export async function editMessage(id: string, body: string, requesterId: string)
   if (existing.authorId !== requesterId && !(await isSuperAdmin(requesterId))) {
     throw new Error("본인이 보낸 메시지만 수정할 수 있습니다");
   }
+  // 대기 상태(ackedAt 없음)인 메시지는 수정할 수 없다 - 삭제만 가능
+  // (설계자 지시 - 대기열에 올라온 것은 아직 아무도 처리를 시작하지
+  // 않았으므로 수정 대신 삭제 후 다시 보내는 쪽으로 유도).
+  if (!existing.ackedAt) {
+    throw new Error("대기 중인 메시지는 수정할 수 없습니다 - 삭제만 가능합니다");
+  }
   const row = await db.message.update({ where: { id }, data: { body } });
   await realtimePublish(projectChangesTopic(existing.projectId), {
     entity: "message",
@@ -77,24 +91,73 @@ export async function deleteMessage(id: string, requesterId: string): Promise<vo
   } satisfies ChangeEvent);
 }
 
+/** 대기(ackedAt 없음) → 처리중(ackedAt 있음, completedAt 없음)으로
+ * 명시적으로 옮긴다 - 단순히 목록을 읽는 것(deliveredAt)과는 별개
+ * 축이다(설계자 지시: "읽음"과 "처리 시작"을 분리). 이미 처리중/기록
+ * 상태면 그대로 반환(idempotent - 중복 호출해도 에러 아님). */
+export async function ackMessage(id: string, requesterId: string): Promise<MessageDetail> {
+  const db = getDb();
+  const existing = await db.message.findUnique({ where: { id } });
+  if (!existing) throw new Error(`메시지를 찾을 수 없습니다: ${id}`);
+  await assertIsProjectMember(existing.projectId, requesterId);
+  if (existing.ackedAt) return existing;
+  const now = new Date();
+  const row = await db.message.update({ where: { id }, data: { ackedAt: now } });
+  await realtimePublish(projectChangesTopic(existing.projectId), {
+    entity: "message",
+    action: "update",
+    id,
+    at: now.toISOString(),
+  } satisfies ChangeEvent);
+  return row;
+}
+
+/** 처리중 → 기록(completedAt 있음)으로 옮긴다. ack 없이 바로
+ * complete를 부르면(처리 시작 선언 없이 곧장 완료) ackedAt도 같이
+ * 채워 넣는다 - 이미 완료됐다면 거기서 멈춰 있어야 자연스럽다. 이미
+ * 기록 상태면 그대로 반환(idempotent). */
+export async function completeMessage(id: string, requesterId: string): Promise<MessageDetail> {
+  const db = getDb();
+  const existing = await db.message.findUnique({ where: { id } });
+  if (!existing) throw new Error(`메시지를 찾을 수 없습니다: ${id}`);
+  await assertIsProjectMember(existing.projectId, requesterId);
+  if (existing.completedAt) return existing;
+  const now = new Date();
+  const row = await db.message.update({
+    where: { id },
+    data: { completedAt: now, ackedAt: existing.ackedAt ?? now },
+  });
+  await realtimePublish(projectChangesTopic(existing.projectId), {
+    entity: "message",
+    action: "update",
+    id,
+    at: now.toISOString(),
+  } satisfies ChangeEvent);
+  return row;
+}
+
 export interface ListMessagesOptions {
-  status?: "pending" | "delivered" | "all";
+  status?: "pending" | "processing" | "delivered" | "all";
   markDelivered?: boolean;
 }
 
-/** status로 대기(deliveredAt null)/기록(deliveredAt 있음)을 필터한다.
- * markDelivered=true(CLI/MCP 호출부만 명시적으로 보냄 - "AI가 읽어감"의
- * 정의)면 조회 직후 그 결과 중 아직 대기 상태인 행들을 한 번에
- * deliveredAt=now()로 갱신하고, 반환 객체에도 그대로 반영한다(웹 UI는
- * 이 플래그를 안 보내므로 읽어도 상태가 안 바뀐다). */
+/** status로 대기(ackedAt 없음)/처리중(ackedAt 있음, completedAt 없음)/
+ * 기록(completedAt 있음)을 필터한다 - deliveredAt(AI가 읽어감)은 이
+ * 분류와 별개 축이라 필터에 안 쓰인다. markDelivered=true(CLI/MCP
+ * 호출부만 명시적으로 보냄 - "AI가 읽어감"의 정의)면 조회 직후 그
+ * 결과 중 deliveredAt이 아직 없는 행들을 한 번에 deliveredAt=now()로
+ * 갱신하고, 반환 객체에도 그대로 반영한다(웹 UI는 이 플래그를 안
+ * 보내므로 읽어도 안 바뀐다). */
 export async function listMessages(projectId: string, opts: ListMessagesOptions = {}): Promise<MessageDetail[]> {
   const db = getDb();
   const where =
     opts.status === "pending"
-      ? { projectId, deliveredAt: null }
-      : opts.status === "delivered"
-        ? { projectId, deliveredAt: { not: null } }
-        : { projectId };
+      ? { projectId, ackedAt: null }
+      : opts.status === "processing"
+        ? { projectId, ackedAt: { not: null }, completedAt: null }
+        : opts.status === "delivered"
+          ? { projectId, completedAt: { not: null } }
+          : { projectId };
   const rows = await db.message.findMany({ where, orderBy: { createdAt: "asc" } });
 
   if (opts.markDelivered) {
@@ -124,15 +187,17 @@ export interface MessagePage {
  * CLI/MCP가 쓰는 listMessages()는 그대로 둔다. */
 export async function listMessagesPaged(
   projectId: string,
-  opts: { status?: "pending" | "delivered" | "all"; page: number; pageSize: number },
+  opts: { status?: "pending" | "processing" | "delivered" | "all"; page: number; pageSize: number },
 ): Promise<MessagePage> {
   const db = getDb();
   const where =
     opts.status === "pending"
-      ? { projectId, deliveredAt: null }
-      : opts.status === "delivered"
-        ? { projectId, deliveredAt: { not: null } }
-        : { projectId };
+      ? { projectId, ackedAt: null }
+      : opts.status === "processing"
+        ? { projectId, ackedAt: { not: null }, completedAt: null }
+        : opts.status === "delivered"
+          ? { projectId, completedAt: { not: null } }
+          : { projectId };
   const safePage = Math.max(1, opts.page);
   const [items, total] = await Promise.all([
     db.message.findMany({
@@ -228,6 +293,8 @@ export async function waitForMessage(projectId: string, timeoutSec: number): Pro
             authorId: event.authorId,
             body: event.body,
             deliveredAt: null,
+            ackedAt: null,
+            completedAt: null,
             createdAt: new Date(event.createdAt),
           },
         });

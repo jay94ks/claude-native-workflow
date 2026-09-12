@@ -8,12 +8,14 @@ import UserRef from "../components/UserRef.vue";
 import QAPanel from "../components/QAPanel.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
+import { useFolderPickerStore } from "../stores/folderPicker";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
 const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
 const entityPicker = useEntityPickerStore();
 const targetPanelDialog = useTargetPanelDialogStore();
+const folderPicker = useFolderPickerStore();
 const activeTab = ref<"view" | "qa">("view");
 
 // 메시지로 지시는 문서 자체 권한이 아니라 프로젝트 editor 이상(백엔드
@@ -215,6 +217,20 @@ async function save() {
   }
 }
 
+async function onPickFolder() {
+  const result = await folderPicker.pick(props.id);
+  if (result === undefined) return; // 취소
+  error.value = "";
+  try {
+    await apiCall(`/documents/${props.trackingCode}/folder`, {
+      method: "PUT",
+      body: JSON.stringify({ folderId: result }),
+    });
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "폴더 변경에 실패했습니다";
+  }
+}
+
 async function transition() {
   if (!toStatusCode.value) return;
   transitionError.value = "";
@@ -327,6 +343,7 @@ onMounted(load);
       <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
       <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
       <span class="spacer"></span>
+      <button class="secondary" @click="onPickFolder">폴더</button>
       <button
         class="secondary"
         @click="targetPanelDialog.show('comments', id, 'document', trackingCode)"

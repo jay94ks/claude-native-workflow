@@ -836,8 +836,8 @@ async function main() {
   tool(
     "message_list",
     "인스턴스 메시지 목록",
-    "그 프로젝트의 메시지 기록을 조회한다 - 이 도구로 읽어간 대기(pending) 상태 메시지는 자동으로 기록(delivered) 처리된다(AI가 읽어감의 정의). status로 pending/delivered/all 필터 가능(기본 all).",
-    { projectId: z.string(), status: z.enum(["pending", "delivered", "all"]).optional() },
+    "그 프로젝트의 메시지 기록을 조회한다 - 조회 자체는 상태(대기/처리중/기록)를 안 바꾼다(읽음은 message_ack와 별개 축). status로 pending(대기)/processing(처리중)/delivered(기록)/all 필터 가능(기본 all).",
+    { projectId: z.string(), status: z.enum(["pending", "processing", "delivered", "all"]).optional() },
     async (a) => {
       const qs = new URLSearchParams({ markDelivered: "true", ...(a.status ? { status: String(a.status) } : {}) });
       return call(`/api/projects/${a.projectId}/messages?${qs}`);
@@ -876,6 +876,20 @@ async function main() {
     "본인이 보낸 메시지만 삭제할 수 있다.",
     { id: z.string() },
     async (a) => call(`/api/messages/${a.id}`, { method: "DELETE" }),
+  );
+  tool(
+    "message_ack",
+    "메시지 처리 시작 표시",
+    "대기 → 처리중으로 옮긴다(프로젝트 멤버 누구나 가능 - 보낸 사람이 아니어도 됨). 이미 처리중이거나 기록 상태면 그대로 반환.",
+    { id: z.string() },
+    async (a) => call(`/api/messages/${a.id}/ack`, { method: "PUT" }),
+  );
+  tool(
+    "message_complete",
+    "메시지 처리 완료 표시",
+    "처리중 → 기록으로 옮긴다. ack 없이 바로 불러도 ackedAt까지 자동으로 채워진다. 이미 기록 상태면 그대로 반환.",
+    { id: z.string() },
+    async (a) => call(`/api/messages/${a.id}/complete`, { method: "PUT" }),
   );
 
   // ---------------------------------------------------------------- 검색 엔진 장애 대응 큐(관리자 전용)

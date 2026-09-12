@@ -1285,11 +1285,11 @@ hookCmd
     run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-queue/${id}/done`, { method: "POST" }))),
   );
 
-const messageCmd = program.command("message").description("인스턴스 메시징 - 대기(AI 미확인)/기록(AI 확인함) 상태 구분");
+const messageCmd = program.command("message").description("인스턴스 메시징 - 대기(미확인)/처리중(ack함)/기록(complete함) 상태 구분");
 messageCmd
   .command("list <projectId>")
-  .option("--status <s>", "pending|delivered|all(기본 all)")
-  .description("CLI로 조회하면 대기 상태였던 메시지가 자동으로 기록 처리된다(AI가 읽어감의 정의)")
+  .option("--status <s>", "pending|processing|delivered|all(기본 all)")
+  .description("CLI로 조회해도 상태는 안 바뀐다(읽음은 ack와 별개) - 대기 상태였던 메시지의 deliveredAt만 자동 갱신")
   .action((projectId, opts) => {
     const qs = new URLSearchParams({ markDelivered: "true", ...(opts.status ? { status: opts.status } : {}) });
     return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages?${qs}`)));
@@ -1321,6 +1321,14 @@ messageCmd
   .command("delete <id>")
   .description("본인이 보낸 메시지만 삭제할 수 있다")
   .action((id) => run(async () => printJson(await apiCall(`/api/messages/${id}`, { method: "DELETE" }))));
+messageCmd
+  .command("ack <id>")
+  .description("대기 → 처리중으로 표시(프로젝트 멤버 누구나 가능, 이미 처리중/기록이면 그대로)")
+  .action((id) => run(async () => printJson(await apiCall(`/api/messages/${id}/ack`, { method: "PUT" }))));
+messageCmd
+  .command("complete <id>")
+  .description("처리중 → 기록으로 표시(ack 없이 불러도 자동으로 ack까지 됨, 이미 기록이면 그대로)")
+  .action((id) => run(async () => printJson(await apiCall(`/api/messages/${id}/complete`, { method: "PUT" }))));
 
 // ---------------------------------------------------------------- 검색 엔진 장애 대응 큐 (관리자 전용)
 

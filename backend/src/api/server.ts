@@ -131,7 +131,8 @@ import {
   listAccessOverrides,
   listAccessOverridesForUser,
 } from "../core/permissions.js";
-import { createFolder, renameFolder, deleteFolder, reorderFolder, listFolders, listFolderDocuments, moveDocumentToFolder } from "../core/folders.js";
+import { createFolder, renameFolder, deleteFolder, moveFolder, listFolders, listFolderDocuments, listUnfiledDocuments, moveDocumentToFolder } from "../core/folders.js";
+import type { FolderDetail } from "../core/folders.js";
 import {
   createKanbanColumn,
   listKanbanColumnsForUser,
@@ -187,7 +188,7 @@ import {
   acknowledgeQueueEntry,
   completeQueueEntry,
 } from "../core/pushHookPrompts.js";
-import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages, editMessage, deleteMessage } from "../core/messages.js";
+import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages, editMessage, deleteMessage, ackMessage, completeMessage } from "../core/messages.js";
 import { checkConnect, checkAcl, ensureEmqxAuthConfigured, getOrCreateMqttCredential } from "../core/emqxAuth.js";
 
 const app = express();
@@ -1525,9 +1526,21 @@ app.put(
   "/api/folders/:folderId",
   authenticate,
   asyncRoute(async (req, res) => {
-    const { name } = req.body as { name?: string };
-    if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
-    res.json(await renameFolder(req.params.folderId, name, req.userId!));
+    const { name, parentFolderId, siblingOrder } = req.body as {
+      name?: string;
+      parentFolderId?: string | null;
+      siblingOrder?: string[];
+    };
+    let result: FolderDetail | undefined;
+    if (name !== undefined) {
+      result = await renameFolder(req.params.folderId, name, req.userId!);
+    }
+    if (parentFolderId !== undefined) {
+      if (!Array.isArray(siblingOrder)) { res.status(400).json({ error: "siblingOrder가 필요합니다" }); return; }
+      result = await moveFolder(req.params.folderId, req.userId!, parentFolderId, siblingOrder);
+    }
+    if (!result) { res.status(400).json({ error: "name 또는 parentFolderId가 필요합니다" }); return; }
+    res.json(result);
   }),
 );
 
@@ -1541,17 +1554,6 @@ app.delete(
       return;
     }
     await deleteFolder(req.params.folderId, req.userId!, mode as "recursive" | "promote" | undefined);
-    res.json({ ok: true });
-  }),
-);
-
-app.post(
-  "/api/folders/:folderId/reorder",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    const { direction } = req.body as { direction?: "up" | "down" };
-    if (direction !== "up" && direction !== "down") { res.status(400).json({ error: "direction은 up/down이어야 합니다" }); return; }
-    await reorderFolder(req.params.folderId, direction, req.userId!);
     res.json({ ok: true });
   }),
 );
@@ -1570,6 +1572,15 @@ app.get(
   authenticate,
   asyncRoute(async (req, res) => {
     res.json(await listFolderDocuments(req.params.folderId, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/documents/unfiled",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listUnfiledDocuments(req.params.projectId, req.userId!));
   }),
 );
 
@@ -2109,7 +2120,7 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const status = req.query.status as "pending" | "delivered" | "all" | undefined;
+    const status = req.query.status as "pending" | "processing" | "delivered" | "all" | undefined;
     const markDelivered = req.query.markDelivered === "true";
     res.json(await listMessages(req.params.projectId, { status, markDelivered }));
   }),
@@ -2147,6 +2158,26 @@ app.delete(
   }),
 );
 
+// ack/complete는 소유권이 아니라 프로젝트 멤버십만 확인한다(editMessage/
+// deleteMessage와 다른 점) - 처리 상태는 "누가 보냈나"가 아니라 "누가
+// 처리했나"를 기록하는 축이라 다른 설계자가 보낸 메시지도 ack/complete
+// 할 수 있어야 한다.
+app.put(
+  "/api/messages/:id/ack",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await ackMessage(req.params.id, req.userId!));
+  }),
+);
+
+app.put(
+  "/api/messages/:id/complete",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await completeMessage(req.params.id, req.userId!));
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/messages/wait",
   authenticate,
@@ -2176,7 +2207,7 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const status = req.query.status as "pending" | "delivered" | "all" | undefined;
+    const status = req.query.status as "pending" | "processing" | "delivered" | "all" | undefined;
     const page = Number(req.query.page ?? 1);
     const pageSize = Number(req.query.pageSize ?? 20);
     res.json(await listMessagesPaged(req.params.projectId, { status, page, pageSize }));

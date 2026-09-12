@@ -518,6 +518,8 @@ model Message {
   authorId    String? // null이면 시스템 브로드캐스트
   body        String    @db.LongText
   deliveredAt DateTime?
+  ackedAt     DateTime? // null="대기", 있으면 AI가 명시적으로 ack해 "처리중"
+  completedAt DateTime? // 있으면 "기록"(ackedAt도 같이 채워짐)
   createdAt   DateTime  @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

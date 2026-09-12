@@ -19,6 +19,8 @@ interface MessageItem {
   authorId: string | null;
   body: string;
   deliveredAt: string | null;
+  ackedAt: string | null;
+  completedAt: string | null;
   createdAt: string;
 }
 interface MessagePage {
@@ -30,7 +32,7 @@ interface MessagePage {
 }
 
 const PAGE_SIZE = 20;
-const tab = ref<"pending" | "delivered">("pending");
+const tab = ref<"pending" | "processing" | "delivered">("pending");
 const messages = ref<MessageItem[]>([]);
 const loading = ref(true);
 const error = ref("");
@@ -82,9 +84,30 @@ function canManage(m: MessageItem): boolean {
 }
 
 function startEdit(m: MessageItem) {
+  if (!m.ackedAt) return; // 대기 상태는 수정 불가 - 삭제만 가능
   editingId.value = m.id;
   editDraft.value = m.body;
   error.value = "";
+}
+
+async function ack(m: MessageItem) {
+  error.value = "";
+  try {
+    await apiCall(`/messages/${m.id}/ack`, { method: "PUT" });
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "처리 시작 표시에 실패했습니다";
+  }
+}
+
+async function complete(m: MessageItem) {
+  error.value = "";
+  try {
+    await apiCall(`/messages/${m.id}/complete`, { method: "PUT" });
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "완료 표시에 실패했습니다";
+  }
 }
 
 async function saveEdit() {
@@ -133,6 +156,7 @@ watch(page, load);
   <h1>메시지</h1>
   <div class="tabs">
     <button :class="{ active: tab === 'pending' }" @click="tab = 'pending'">대기</button>
+    <button :class="{ active: tab === 'processing' }" @click="tab = 'processing'">처리중</button>
     <button :class="{ active: tab === 'delivered' }" @click="tab = 'delivered'">기록</button>
   </div>
   <p v-if="error" class="error">{{ error }}</p>
@@ -149,13 +173,17 @@ watch(page, load);
         <span v-else class="system">system</span>
         <span class="body"><TrackingCodeText :text="m.body" /></span>
         <span class="at">{{ new Date(m.createdAt).toLocaleString() }}</span>
+        <button v-if="tab === 'pending'" class="manage-btn" @click="ack(m)">처리 시작</button>
+        <button v-if="tab === 'processing'" class="manage-btn" @click="complete(m)">완료</button>
         <template v-if="canManage(m)">
-          <button class="manage-btn" @click="startEdit(m)">수정</button>
+          <button v-if="m.ackedAt" class="manage-btn" @click="startEdit(m)">수정</button>
           <button class="manage-btn danger" @click="remove(m)">삭제</button>
         </template>
       </template>
     </li>
-    <li v-if="messages.length === 0" class="muted">{{ tab === "pending" ? "대기 중인 메시지가 없습니다." : "기록된 메시지가 없습니다." }}</li>
+    <li v-if="messages.length === 0" class="muted">
+      {{ tab === "pending" ? "대기 중인 메시지가 없습니다." : tab === "processing" ? "처리중인 메시지가 없습니다." : "기록된 메시지가 없습니다." }}
+    </li>
   </ul>
   <Pagination :page="page" :total-pages="totalPages" @update:page="page = $event" />
   <form v-if="canSend" class="send-row" @submit.prevent="send">

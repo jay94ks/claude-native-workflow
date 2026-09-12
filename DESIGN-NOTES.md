@@ -4227,6 +4227,161 @@ flex:1을 안 쓰면 그냥 자연스럽게 넘쳐 `.content`가 스크롤) 회�
 항목 하나만 있던 절이 없었으므로(색인 표에만 존재) 별도 절 삭제는
 불필요.
 
+## 메시지 3단계 분류(대기/처리중/기록) + 대기 상태 수정 금지(`#message-processing-status`) - 완료 (2026-09-12)
+
+**배경**: 설계자 직접 지시(백로그 아님) - 메시지 분류에 "대기"/"기록"
+외에 "처리중"을 추가하고, 대기열(대기 상태)에 올라온 메시지는 수정을
+막고 삭제만 되게 해달라는 요청. "처리중"이 정확히 무엇을 의미하는지
+(단순 조회로 전이되는지, 명시적 액션이 필요한지)는 설계자에게 직접
+확인 - **"AI가 명시적으로 ack해야 처리중으로, 그 후 다시 명시적으로
+완료해야 기록으로"** 를 선택(질문(Question)의 ack 패턴과 유사, 기존
+`deliveredAt`이 "그냥 읽으면 자동으로 넘어가는" 방식이었던 것과는
+분리).
+
+**설계**: `Message`에 `ackedAt`/`completedAt` 두 필드 추가(3개 provider
+스키마 전부). 상태 판정은 이 두 필드만으로: `ackedAt` 없음=대기,
+`ackedAt` 있고 `completedAt` 없음=처리중, `completedAt` 있음=기록.
+기존 `deliveredAt`("AI가 CLI/MCP로 실제 읽어감")은 그대로 두되 이
+분류와는 완전히 별개 축으로 남긴다 - `message_wait`/`message_list`로
+그냥 읽기만 해서는 상태가 안 바뀌고, 오직 새 `ackMessage`/
+`completeMessage`(코어) → `PUT /api/messages/:id/ack`·`.../complete`
+→ CLI `message ack|complete <id>`/MCP `message_ack`/`message_complete`
+경로로만 넘어간다. 이 두 액션은 `editMessage`/`deleteMessage`와
+다르게 **소유권이 아니라 프로젝트 멤버십만 확인**한다("누가 보냈나"가
+아니라 "누가 처리했나"를 기록하는 축이라 다른 설계자가 보낸 메시지도
+ack/complete 가능해야 함). `completeMessage`는 ack 없이 바로 불러도
+`ackedAt`을 같이 채워 자동 승격시키고, 둘 다 이미 그 상태거나 그
+이후 상태면 에러 없이 그대로 반환(idempotent). `editMessage`에
+`existing.ackedAt`이 없으면 거부하는 가드 한 줄 추가 - "삭제만 가능"
+요구사항은 `deleteMessage`가 원래도 상태와 무관하게 항상 허용하므로
+별도 처리 불필요.
+
+**웹 UI**(`MessagesView.vue`): 탭이 대기/처리중/기록 3개로. 대기 탭엔
+"처리 시작" 버튼만(수정 버튼 자체를 안 보여줌 - `m.ackedAt`이 없으면
+`startEdit`도 방어적으로 조기 반환), 처리중 탭엔 "완료"+수정+삭제,
+기록 탭엔 수정+삭제만.
+
+**CLI/MCP**: `message ack`/`message complete`(및 `message_ack`/
+`message_complete`)를 쌍으로 추가 - `npm run audit:cli-mcp`로 대칭성
+확인. 두 SKILL.md(이 저장소용/배포용)의 메시지 명령 표에도 반영.
+
+**실측 검증**: `npx tsc --noEmit`/`vue-tsc -b` 클린, `audit:cli-mcp`
+클린, `docker compose build` → `up --force-recreate` 후 postgres 스키마
+푸시(`ackedAt`/`completedAt` 컬럼 생성) 확인. 브라우저로 메시지 전송 →
+대기 탭에 "처리 시작"만 있고 수정 버튼 없음 확인 → 처리 시작 클릭 →
+처리중 탭으로 이동, 수정 폼이 정상적으로 열리는지 확인(취소) → 완료
+클릭 → 기록 탭으로 이동 확인. 별도로 REST 직접 호출로 새 메시지를
+만들어 곧바로 `PUT .../ack` 없이 `PUT .../edit` 시도 → 400 +
+"대기 중인 메시지는 수정할 수 없습니다 - 삭제만 가능합니다" 확인
+(테스트 메시지는 이후 삭제로 정리).
+
+**PLANS.md**: 새 행(`#message-processing-status`) 추가 + 즉시 ✅
+(직접 지시라 `#doctype-status-auto-seed` 전례와 동일).
+
+## 문서 탭 폴더+문서 통합 트리 뷰(`#document-folder-tree`) - 완료 (2026-09-12)
+
+**배경**: 승인된 계획대로 시작했으나(문서 탭 좌우 분할 → 통합 트리,
+드래그 폴더 이동, 문서 클릭 시 읽기 페이지 이동, 문서 페이지 "폴더"
+버튼+순수 폴더 트리 다이얼로그), 구현 후 실제 화면을 보며 설계자가
+연속으로 방향을 조정했다 - 최종 구현은 최초 승인안과 아래 지점에서
+달라졌다.
+
+**최초 계획대로 구현된 부분**:
+- `backend/src/core/folders.ts`에 `moveFolder(folderId, userId,
+  parentFolderId, siblingOrder)` + `isDescendantOf()`(순환 방지, 옮기려는
+  새 부모가 자기 하위 트리에 있으면 거부) 신설. `PUT /api/folders/:id`
+  가 `name`뿐 아니라 `parentFolderId`+`siblingOrder`도 받도록 확장(칸반
+  컬럼 순서 변경과 동일 패턴 - 이동 후 그 부모 밑 형제 전체의 순서
+  배열을 받아 그대로 `order`에 반영, 이 사용자 소유가 아닌 id는 조용히
+  걸러냄). 인접 형제 맞바꾸기용 구 `reorderFolder()`/`POST
+  /api/folders/:id/reorder`는 완전히 대체돼 삭제.
+- `frontend/src/utils/folderTree.ts`(평평한 목록→중첩 트리 조립,
+  깊이 제한 없음 - 구 `FolderTree.vue`가 템플릿에서 2단계까지만 그려
+  손자 폴더가 안 보이던 버그를 근본적으로 없앰), `FolderNode.vue`
+  (재귀 컴포넌트 - 이름변경/하위생성/삭제(재귀·끌어올리기 선택)/
+  드래그), `FolderPickerDialog.vue`+`stores/folderPicker.ts`(순수
+  읽기전용 폴더 트리 선택 다이얼로그, entityPicker.ts와 같은 Promise
+  패턴) 전부 계획대로 신설. `DocumentEditorView.vue`의 "코멘트" 버튼
+  왼쪽에 "폴더" 버튼 추가.
+- 드래그는 `#kanban-touch-dnd`와 동일하게 `vuedraggable`
+  `force-fallback` 모드 재사용(자동화 도구로 검증 가능 + 고스트 스타일
+  일관성이라는 같은 이유).
+
+**실측 중 발견해 즉석에서 고친 문제**: 순수 폼 상태에서 손자 폴더까지
+만들어 실제로 재귀 렌더링이 전체 깊이로 동작하는지 확인하던 중, 동일
+드래그 시퀀스를 간격 없이 연속으로 여러 번 자동화 테스트했더니 관련
+없는 두 문서/폴더가 전혀 의도치 않은 곳으로 옮겨진 것처럼 보이는
+현상을 발견 - 정밀하게 격리해 재현한 결과 **버그가 아니라 이 QA
+프로젝트에 동명 문서·폴더가 여러 개 있어(이전 라운드들의 테스트
+데이터) 화면상 헷갈린 것**으로 확인(trackingCode로 대조해 실제로는
+의도한 문서 하나만 정확히 옮겨졌음을 확인). 코드 변경 없음 - 조사
+과정 자체를 남겨 다음에 비슷한 혼란이 생기면 "먼저 trackingCode로
+대조"부터 하도록 기록.
+
+**설계자 실시간 피드백으로 최초 계획에서 바뀐 부분**:
+1. **"전체 문서"(검색/문서유형 필터/일괄 상태 전이/일괄 폴더 이동/
+   페이지네이션 목록) 섹션을 트리 위에서 완전히 뺐다** - 원래 계획은
+   "트리 위에 고정 노드로 유지"였으나, 실제로 만들어놓고 보니 불필요
+   하다고 판단해 제거 요청. `DocumentsView.vue`의 `selectedCodes`/
+   `bulkTargetStatus`/`applyBulkTransition`/`applyBulkFolderMove`/
+   체크박스/목록/페이지네이션 전부 삭제 - 이제 문서 탭은 생성 폼 +
+   트리 뿐. 일괄 상태 전이/일괄 폴더 이동 REST 엔드포인트(`PUT
+   /api/documents/bulk-transition`·`bulk-folder`) 자체는 남아있다(CLI는
+   여전히 bulk-transition을 씀, bulk-folder는 이제 웹 UI 트리거가
+   없어졌지만 엔드포인트는 유지 - 직접 호출 대비, 죽은 코드로 보진
+   않음).
+2. **"전체 문서" 대신 "최상위 폴더"(이후 "(미분류 문서)"로 재명명)라는
+   가상 노드를 폴더 트리 안에 통합** - 어느 폴더에도 없는 문서만
+   보여준다(전체가 아님). 새 백엔드 함수
+   `listUnfiledDocuments(projectId, userId)`(`Document.folderEntries`에
+   그 사용자 몫 항목이 하나도 없는 문서 - `folderEntries: { none:
+   { userId } }`) + `GET /projects/:id/documents/unfiled` 신설. 처음엔
+   이 가상 노드를 실제 폴더 목록과 시각적으로 분리된 별도 섹션("전체
+   문서"처럼)으로 뒀다가, "폴더 트리랑 통합해야" 라는 피드백을 받아
+   `DocumentTree.vue`에서 그냥 진짜 폴더들과 같은 `<ul>` 스타일의
+   첫 항목으로 배치(구분선/별도 제목 없이 하나의 목록처럼 보이게).
+3. **문서 유형(문서 코드) 필터 콤보 박스 부활, "+ 새 폴더" 버튼
+   왼쪽에 배치** - 옛 "전체 문서" 목록에 있던 필터를 없앴다가, 이후
+   "이전처럼 필요하다"는 요청으로 트리 툴바에 다시 넣음. `docType`별로
+   트리 전체(미분류 문서 포함)에서 문서 행을 걸러 보여준다. **필터는
+   `v-model` 배열 자체를 거르지 않고 각 행에 `v-show`만 적용** -
+   vuedraggable의 v-model 배열을 거르면 화면 인덱스와 실제 배열
+   인덱스가 어긋나 드래그 계산이 깨지기 때문(배열은 그대로 두고
+   시각적으로만 숨김).
+4. **문서도 드래그로 폴더를 바꿀 수 있게** - 최초 계획은 "드래그는
+   폴더만, 문서는 다이얼로그로만"이었으나, 실제로 써보고 "문서도
+   드래그하자"는 요청으로 뒤집힘. 모든 폴더(가상 미분류 노드 포함)의
+   문서 목록을 `group="tree-documents"`로 공유하는 `<draggable>`로
+   전환 - 같은 목록 안 재정렬(`moved`)은 `DocumentFolderEntry`에
+   순서 개념이 없어 그냥 무시, 다른 목록으로 이동(`added`)만 반응해
+   `PUT /documents/:code/folder`를 부른다. 폴더 드래그와 달리 **문서
+   드래그는 성공해도 실패해도 전부 반응형 로컬 배열에 낙관적으로
+   반영된 상태를 그대로 신뢰하지 않고, 실패 시에만** 지금까지 한 번
+   이상 펼쳐서 불러온 모든 폴더(+미분류 노드)의 문서 목록을 다시
+   불러와 되돌린다(`onDocMoveFailed` - 어느 폴더가 실패했는지 정확히
+   추적하기보다 "이미 로드된 것 전부 재조회"가 더 간단하고 안전).
+5. **문서가 없어도 하위 폴더가 있으면 "문서 없음" 문구를 안 보여줌**
+   (`node.children.length === 0`도 조건에 추가) - 하위 폴더만 있고
+   문서는 없는 흔한 케이스에서 불필요한 문구가 거슬린다는 피드백.
+6. **트리 드래그 중 텍스트가 같이 선택되는 문제 수정** -
+   `#kanban-touch-dnd`에서 이미 겪은 것과 같은 원인(포인터 기반
+   폴백 드래그는 브라우저의 기본 텍스트 선택 동작을 자동으로 막아주지
+   않음). `DocumentTree.vue`의 `.doc-tree`에 `user-select: none`을
+   걸어 하위(FolderNode.vue 포함) 전체에 상속시키고, 폴더 생성/이름
+   변경용 `<input>`에는 `user-select: text`로 개별 복원.
+
+**드래그 완료 처리 철학이 칸반과 다른 이유**(문서화 목적으로 남김):
+폴더/문서 트리는 **설계자 개인 소유**라 동시 편집 충돌 가능성이
+낮다 - 그래서 칸반(`#kanban-touch-dnd`, 공유 보드라 매번 서버 상태로
+재동기화)과 달리, **폴더 이동은 성공 시 재조회를 아예 안 하고(이미
+로컬에 반영된 걸 신뢰), 문서 이동은 성공 시엔 마찬가지로 안 하되
+실패 시에만 이미 로드된 목록들을 다시 불러온다** - 매번 재조회하면
+펼쳐 둔 폴더/이미 불러온 문서 캐시가 자꾸 날아가 사용성이 나빠지기
+때문.
+
+**PLANS.md**: 새 행(`#document-folder-tree`) 추가 + 즉시 ✅(직접
+지시).
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

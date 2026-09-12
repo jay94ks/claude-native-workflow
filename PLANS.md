@@ -66,6 +66,8 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 33 | ✅ | `#doctype-status-auto-seed` | DocType 생성 시 표준 상태 6개를 항상 자동으로 심음 - 개별 추가/일괄 적용 CRUD 제거(설계자 지시) |
 | 34 | ✅ | `#responsive-dark-mode-phase2` | 나머지 ~40개 뷰/컴포넌트 전부 색상 토큰화 완료(46개 파일 전체가 이제 App.vue 테마 토큰 사용) |
 | 35 | ✅ | `#kanban-touch-dnd` | 칸반 보드가 순수 HTML5 드래그라 터치 기기에서 카드 이동이 안 됨 - `vuedraggable`(SortableJS) 도입으로 마우스/터치 통합 드래그 지원 |
+| 36 | ✅ | `#document-folder-tree` | 문서 탭을 폴더+문서 통합 트리 뷰로 전환(드래그 재배치, 임의 깊이 하위 폴더, 미분류 문서 가상 노드, 문서 유형 필터, 문서 읽기 페이지의 폴더 다이얼로그) |
+| 37 | ✅ | `#message-processing-status` | 메시지 분류에 "처리중" 추가(대기→처리중→기록, ack/complete 명시적 전이) - 대기 상태 메시지는 수정 불가·삭제만 가능 |
 
 ---
 

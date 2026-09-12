@@ -523,7 +523,9 @@ model Message {
   projectId   String
   authorId    String? // null이면 시스템 브로드캐스트
   body        String
-  deliveredAt DateTime? // null="대기"(AI가 아직 안 읽음), 값 있으면 "기록"(CLI/MCP가 읽어감)
+  deliveredAt DateTime? // AI(CLI/MCP)가 읽어간 시각 - 분류(대기/처리중/기록)와는 별개 축
+  ackedAt     DateTime? // null="대기", 있으면 AI가 명시적으로 ack해 "처리중"
+  completedAt DateTime? // 있으면 "기록"(ackedAt도 같이 채워짐)
   createdAt   DateTime  @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

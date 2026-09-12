@@ -147,25 +147,69 @@ export async function deleteFolder(folderId: string, userId: string, mode?: Fold
   ]);
 }
 
-/** 인접한 형제(같은 부모+소유자)와 order 값을 맞바꾼다 - 맨 위/맨
- * 아래에서 더 이상 움직일 수 없으면 조용히 아무 일도 안 한다(에러
- * 아님). */
-export async function reorderFolder(folderId: string, direction: "up" | "down", userId: string): Promise<void> {
-  const folder = await assertOwnsFolder(folderId, userId);
+// candidateId(=옮기려는 새 부모)가 ancestorId(=옮기려는 폴더)의 하위
+// 트리에 있는지 - 있으면 그 밑으로 옮기는 순간 순환이 생기므로
+// 거부해야 한다. candidateId부터 parentFolderId를 타고 루트까지
+// 거슬러 올라가며 ancestorId와 일치하는지 확인한다.
+async function isDescendantOf(candidateId: string, ancestorId: string): Promise<boolean> {
   const db = getDb();
-  const siblings = await db.folder.findMany({
-    where: { projectId: folder.projectId, createdBy: userId, parentFolderId: folder.parentFolderId },
-    orderBy: { order: "asc" },
+  let current: string | null = candidateId;
+  const visited = new Set<string>();
+  while (current) {
+    if (current === ancestorId) return true;
+    if (visited.has(current)) return false;
+    visited.add(current);
+    const row: { parentFolderId: string | null } | null = await db.folder.findUnique({
+      where: { id: current },
+      select: { parentFolderId: true },
+    });
+    current = row?.parentFolderId ?? null;
+  }
+  return false;
+}
+
+/** 폴더를 다른 부모 밑으로 옮기고(같은 부모 안에서 순서만 바꾸는
+ * 것도 parentFolderId를 그대로 넘기면 이 함수로 처리된다), 이동 후
+ * 그 부모 밑에 있어야 할 형제 전체의 순서를 siblingOrder가 넘겨준
+ * 배열 순서대로 다시 매긴다(칸반 컬럼 순서 변경과 동일한 패턴 -
+ * 드래그 UI가 로컬에서 이미 재배열한 최종 배열을 그대로 보낸다).
+ * siblingOrder에 이 사용자 소유가 아니거나 같은 프로젝트가 아닌 id가
+ * 섞여 있으면 조용히 걸러내고(다른 설계자의 폴더 order를 함부로
+ * 바꾸지 못하게), 걸러진 id들만 순서대로 재배정한다. */
+export async function moveFolder(
+  folderId: string,
+  userId: string,
+  parentFolderId: string | null,
+  siblingOrder: string[],
+): Promise<FolderDetail> {
+  const folder = await assertOwnsFolder(folderId, userId);
+  if (parentFolderId === folderId) {
+    throw new Error("폴더를 자기 자신 아래로 옮길 수 없습니다");
+  }
+  if (parentFolderId) {
+    const target = await assertOwnsFolder(parentFolderId, userId);
+    if (target.projectId !== folder.projectId) {
+      throw new Error(`상위 폴더를 찾을 수 없습니다: ${parentFolderId}`);
+    }
+    if (await isDescendantOf(parentFolderId, folderId)) {
+      throw new Error("하위 폴더 아래로는 옮길 수 없습니다");
+    }
+  }
+  if (parentFolderId !== folder.parentFolderId) {
+    await assertNoSiblingWithName(folder.projectId, userId, parentFolderId, folder.name, folderId);
+  }
+  const db = getDb();
+  const validRows = await db.folder.findMany({
+    where: { id: { in: siblingOrder }, projectId: folder.projectId, createdBy: userId },
+    select: { id: true },
   });
-  const idx = siblings.findIndex((s: { id: string }) => s.id === folderId);
-  const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-  if (idx < 0 || swapIdx < 0 || swapIdx >= siblings.length) return;
-  const other = siblings[idx];
-  const target = siblings[swapIdx];
+  const validIds = new Set(validRows.map((f: { id: string }) => f.id));
+  const ordered = siblingOrder.filter((id) => validIds.has(id));
   await db.$transaction([
-    db.folder.update({ where: { id: other.id }, data: { order: target.order } }),
-    db.folder.update({ where: { id: target.id }, data: { order: other.order } }),
+    db.folder.update({ where: { id: folderId }, data: { parentFolderId } }),
+    ...ordered.map((id: string, i: number) => db.folder.update({ where: { id }, data: { order: i } })),
   ]);
+  return assertOwnsFolder(folderId, userId);
 }
 
 /** 호출자 자신이 만든 폴더만 반환한다 - 다른 설계자의 폴더는 존재
@@ -198,6 +242,19 @@ export async function listFolderDocuments(folderId: string, userId: string): Pro
     title: e.document.title,
     docTypeId: e.document.docTypeId,
   }));
+}
+
+/** 이 설계자 기준으로 DocumentFolderEntry가 하나도 없는(= 어느 폴더에도
+ * 안 담긴) 문서 - 트리의 가상 "최상위 폴더" 노드가 보여주는 목록.
+ * 다른 설계자가 같은 문서를 자기 폴더에 담아뒀어도 이 설계자에게는
+ * 여전히 미분류로 보인다(폴더는 개인 소유라 서로 안 섞임). */
+export async function listUnfiledDocuments(projectId: string, userId: string): Promise<FolderDocumentSummary[]> {
+  const db = getDb();
+  const docs = await db.document.findMany({
+    where: { projectId, folderEntries: { none: { userId } } },
+    select: { trackingCode: true, title: true, docTypeId: true },
+  });
+  return docs;
 }
 
 /** 문서 자신에 대한 읽기 권한은 호출부(server.ts)가 이미
