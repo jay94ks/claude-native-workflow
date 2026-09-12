@@ -639,12 +639,24 @@
   `link-external`이 웹훅 자동 등록에 실패하면 `manualWebhookInstructions`
   (URL+secret)를 응답에 실어 보냈지만, `GitRepoPanel.vue`가 그
   필드를 타입에 아예 선언 안 해서 화면에 조용히 버려지고 있었음을
-  발견·수정 - 이제 자동 등록 실패 시 웹 UI에 Payload URL/Secret/
-  Content-Type/이벤트(push)를 보여주는 안내 박스가 뜨고 "확인함"으로
-  닫을 수 있다. 실제 공개 저장소(`octocat/Hello-World`)를 자격증명
-  없이 연동해(항상 자동 등록 실패 경로를 타는 조건) 브라우저로 실측
-  - 안내 박스 내용이 실제 응답 값과 일치하는지, 닫기 버튼이 정상
-  동작하는지, 콘솔에 새 에러가 없는지 확인.
+  발견·수정 - 자동 등록 실패 시 웹 UI에 Payload URL/Secret/
+  Content-Type/이벤트(push)를 보여주는 안내 카드가 뜬다.
+- [x] **웹훅 수동 설정 카드 - 접기/펼치기 + 실제 수신 전까지 영구
+  노출(`#webhook-instructions-persistent-card`, 설계자 지시)** -
+  처음엔 "확인함" 버튼으로 영구히 닫히는 1회성 안내였는데, 설계자
+  지시로 "웹훅이 실제로 호출을 받기 전까지는 접을 수 있는 카드로
+  계속 노출"하도록 재설계 - `ProjectGitRepo`에 `webhookAutoRegistered`/
+  `webhookUrl`/`webhookFirstReceivedAt`을 영속화하고, 새
+  `GET .../git/webhook-instructions`(owner 전용)로 새로고침·재방문
+  때마다 다시 조회, 외부 웹훅 수신 라우트가 처음 호출될 때
+  `webhookFirstReceivedAt`을 찍어 그 뒤로는 카드 자체가 안 뜨게 함.
+  실제 GitHub 웹훅 서명(`X-Hub-Signature-256`, HMAC-SHA256)을 그대로
+  재현한 스크립트로 실측: (1) 자격증명 없이 연동해 카드가 뜨는지,
+  (2) 헤더 클릭으로 접기/펼치기가 되는지, (3) 새로고침해도 같은
+  URL/secret으로 카드가 그대로 남아있는지(핵심 - 예전엔 1회성이라
+  안 됐음), (4) 올바른 서명으로 실제 웹훅 호출을 한 번 흉내내면
+  `200 {"ok":true}` 응답과 함께 그 다음 새로고침부터 카드가 완전히
+  사라지는지 확인. 콘솔에 새 에러 없음.
 
 ---
 

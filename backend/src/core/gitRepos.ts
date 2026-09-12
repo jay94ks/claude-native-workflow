@@ -16,6 +16,11 @@ export interface ProjectGitRepoInfo {
   repoUrl: string;
   externalRepoId: string | null;
   gitCredentialId: string | null;
+  // 민감하지 않은 상태 플래그라(비밀 값 아님) viewer도 그대로 본다 -
+  // 프론트가 "웹훅 수동 설정 안내" 카드를 계속 보여줄지 판단하는 데 씀
+  // (자동 등록 실패 + 아직 한 번도 안 받음일 때만 필요).
+  webhookAutoRegistered: boolean;
+  webhookFirstReceivedAt: string | null;
 }
 
 interface ProjectGitRepoRow {
@@ -25,6 +30,9 @@ interface ProjectGitRepoRow {
   externalRepoId: string | null;
   gitCredentialId: string | null;
   webhookSecretEncrypted: Buffer | null;
+  webhookAutoRegistered: boolean;
+  webhookUrl: string | null;
+  webhookFirstReceivedAt: Date | null;
 }
 
 function toInfo(row: ProjectGitRepoRow): ProjectGitRepoInfo {
@@ -34,6 +42,8 @@ function toInfo(row: ProjectGitRepoRow): ProjectGitRepoInfo {
     repoUrl: row.repoUrl,
     externalRepoId: row.externalRepoId,
     gitCredentialId: row.gitCredentialId,
+    webhookAutoRegistered: row.webhookAutoRegistered,
+    webhookFirstReceivedAt: row.webhookFirstReceivedAt ? row.webhookFirstReceivedAt.toISOString() : null,
   };
 }
 
@@ -164,7 +174,6 @@ export async function linkSelfHostedRepo(
 }
 
 export interface LinkExternalResult extends ProjectGitRepoInfo {
-  webhookAutoRegistered: boolean;
   manualWebhookInstructions?: { url: string; secret: string };
 }
 
@@ -224,6 +233,8 @@ export async function linkExternalAsPrimary(
       repoUrl,
       gitCredentialId: gitCredentialId ?? null,
       webhookSecretEncrypted: encryptSecret(secret),
+      webhookAutoRegistered: autoRegistered,
+      webhookUrl: targetUrl,
     },
   });
   // 저장소가 없던 동안 가입한 멤버들에게도 한 번에 협업자 권한을
@@ -233,9 +244,37 @@ export async function linkExternalAsPrimary(
 
   return {
     ...toInfo(row),
-    webhookAutoRegistered: autoRegistered,
     ...(!autoRegistered && targetUrl ? { manualWebhookInstructions: { url: targetUrl, secret } } : {}),
   };
+}
+
+/** "웹훅 수동 설정 안내" 카드용 - 자동 등록에 실패했고 아직 그
+ * 웹훅이 한 번도 실제로 호출된 적이 없을 때만 URL+secret을 돌려준다
+ * (그 외엔 카드가 필요 없다는 뜻으로 null). secret은 저장은 돼
+ * 있지만(검증용) 평소엔 안 돌려주는 값이라 - API 키처럼 "1회만
+ * 노출"은 아니고, 이 카드가 필요한 동안은 owner가 몇 번이고 다시
+ * 볼 수 있어야 하므로(설계자 지시) 매번 복호화해 돌려준다. 호출부
+ * (server.ts)가 owner 권한을 이미 확인했다고 가정한다. */
+export async function getWebhookSetupInstructions(projectId: string): Promise<{ url: string; secret: string } | null> {
+  const db = getDb();
+  const row = await db.projectGitRepo.findUnique({ where: { projectId } });
+  if (!row || row.provider !== "external_linked") return null;
+  if (row.webhookAutoRegistered || row.webhookFirstReceivedAt) return null;
+  if (!row.webhookSecretEncrypted || !row.webhookUrl) return null;
+  return { url: row.webhookUrl, secret: decryptSecret(row.webhookSecretEncrypted) };
+}
+
+/** 외부(GitHub/GitLab) 저장소 자체에서 온 웹훅이 실제로 처음
+ * 도착했을 때 호출한다(server.ts의 웹훅 수신 라우트, gitea가 아닌
+ * provider만) - "웹훅 수동 설정 안내" 카드를 그만 보여줄 시점을
+ * 표시한다. 이미 찍혀 있으면 다시 안 건드린다(idempotent - 매
+ * push마다 쓸데없이 갱신하지 않음). */
+export async function markExternalWebhookReceived(projectId: string): Promise<void> {
+  const db = getDb();
+  await db.projectGitRepo.updateMany({
+    where: { projectId, webhookFirstReceivedAt: null },
+    data: { webhookFirstReceivedAt: new Date() },
+  });
 }
 
 export async function getProjectGitRepo(projectId: string): Promise<ProjectGitRepoInfo | null> {

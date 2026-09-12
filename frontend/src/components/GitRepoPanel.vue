@@ -13,6 +13,8 @@ const isOwner = computed(() => myRole.value === "owner");
 interface GitRepo {
   provider: string;
   repoUrl: string;
+  webhookAutoRegistered: boolean;
+  webhookFirstReceivedAt: string | null;
 }
 interface WebhookInstructions {
   url: string;
@@ -37,6 +39,23 @@ const gitRepo = ref<GitRepo | null>(null);
 const credentials = ref<Credential[]>([]);
 const loading = ref(true);
 const error = ref("");
+// 카드를 접고 펼 수는 있지만(로컬 UI 상태), "보여줄지 말지" 자체는
+// 항상 서버 진실(webhookInstructions가 null이 아님)을 따른다 -
+// 설계자 지시: 웹훅이 실제로 한 번 호출되기 전까진 새로고침해도,
+// 다른 탭에서 다시 들어와도 계속 노출돼야 한다("확인함"으로 영구
+// 닫기는 없앰).
+const webhookCardExpanded = ref(true);
+
+async function loadWebhookInstructionsIfNeeded() {
+  const repo = gitRepo.value;
+  if (!repo || repo.provider !== "external_linked" || repo.webhookAutoRegistered || repo.webhookFirstReceivedAt) {
+    webhookInstructions.value = null;
+    return;
+  }
+  webhookInstructions.value = await apiCall<WebhookInstructions | null>(
+    `/projects/${props.projectId}/git/webhook-instructions`,
+  ).catch(() => null);
+}
 
 async function load() {
   loading.value = true;
@@ -44,6 +63,7 @@ async function load() {
   try {
     credentials.value = await apiCall<Credential[]>("/credentials").catch(() => []);
     gitRepo.value = await apiCall<GitRepo>(`/projects/${props.projectId}/git/repo`).catch(() => null);
+    await loadWebhookInstructionsIfNeeded();
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "정보를 불러오지 못했습니다";
   } finally {
@@ -110,6 +130,7 @@ async function unlinkExternal() {
   unlinkError.value = "";
   try {
     gitRepo.value = await apiCall<GitRepo>(`/projects/${props.projectId}/git/repo`, { method: "DELETE" });
+    webhookInstructions.value = null;
     syncStatus.value = null;
     syncProposal.value = null;
     publishQueueEntry.value = null;
@@ -174,6 +195,7 @@ async function startLink() {
     gitRepo.value = result;
     linkedWithMigrationHint.value = linkMigrationHint.value;
     webhookInstructions.value = result.manualWebhookInstructions ?? null;
+    webhookCardExpanded.value = true;
     authPromptFor.value = null;
   } catch (err) {
     if (isAuthRequired(err)) {
@@ -393,23 +415,29 @@ onUnmounted(() => {
       </p>
 
       <div v-if="webhookInstructions" class="webhook-instructions">
-        <p class="hint">
-          외부 저장소에 웹훅을 자동으로 등록하지 못했습니다 - 이 백엔드가 GitHub/GitLab이 직접 접근할 수 있는 공개
-          주소가 아닌 경우 흔합니다(로컬/사설 서버에 설치한 경우 등). 아래 값으로 저장소 설정(Settings → Webhooks)에서
-          직접 등록하면, 이 시스템을 거치지 않고 그 저장소에 직접 push해도 push 훅 자동화가 그대로 반응합니다 - 등록
-          없이도 "동기화 상태 확인"/"동기화" 버튼으로 직접 확인·반영하는 데는 지장 없습니다.
-        </p>
-        <dl>
-          <dt>Payload URL</dt>
-          <dd><code>{{ webhookInstructions.url }}</code></dd>
-          <dt>Secret</dt>
-          <dd><code>{{ webhookInstructions.secret }}</code></dd>
-          <dt>Content type</dt>
-          <dd><code>application/json</code></dd>
-          <dt>이벤트</dt>
-          <dd><code>push</code>만</dd>
-        </dl>
-        <button @click="webhookInstructions = null">확인함(닫기)</button>
+        <div class="webhook-instructions-header" @click="webhookCardExpanded = !webhookCardExpanded">
+          <span>⚠ 웹훅 수동 설정이 필요합니다</span>
+          <span class="toggle">{{ webhookCardExpanded ? "▲" : "▼" }}</span>
+        </div>
+        <template v-if="webhookCardExpanded">
+          <p class="hint">
+            외부 저장소에 웹훅을 자동으로 등록하지 못했습니다 - 이 백엔드가 GitHub/GitLab이 직접 접근할 수 있는 공개
+            주소가 아닌 경우 흔합니다(로컬/사설 서버에 설치한 경우 등). 아래 값으로 저장소 설정(Settings → Webhooks)에서
+            직접 등록하면, 이 시스템을 거치지 않고 그 저장소에 직접 push해도 push 훅 자동화가 그대로 반응합니다 - 등록
+            없이도 "동기화 상태 확인"/"동기화" 버튼으로 직접 확인·반영하는 데는 지장 없습니다. 실제로 웹훅 호출이 한
+            번이라도 도착하면 이 카드는 자동으로 사라집니다.
+          </p>
+          <dl>
+            <dt>Payload URL</dt>
+            <dd><code>{{ webhookInstructions.url }}</code></dd>
+            <dt>Secret</dt>
+            <dd><code>{{ webhookInstructions.secret }}</code></dd>
+            <dt>Content type</dt>
+            <dd><code>application/json</code></dd>
+            <dt>이벤트</dt>
+            <dd><code>push</code>만</dd>
+          </dl>
+        </template>
       </div>
 
       <div v-if="gitRepo.provider === 'external_linked'" class="sync-panel">
@@ -645,6 +673,18 @@ onUnmounted(() => {
   border-radius: 6px;
   font-size: 12px;
 }
+.webhook-instructions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-warning-text);
+}
+.webhook-instructions-header .toggle {
+  font-size: 10px;
+  color: var(--color-text-faint);
+}
 .webhook-instructions dl {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -657,14 +697,6 @@ onUnmounted(() => {
 .webhook-instructions dd {
   margin: 0;
   word-break: break-all;
-}
-.webhook-instructions button {
-  background: var(--color-surface);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  padding: 5px 12px;
-  border-radius: 6px;
-  font-size: 12px;
 }
 .sync-panel {
   margin-top: 16px;

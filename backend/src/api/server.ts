@@ -183,6 +183,8 @@ import {
   linkExternalAsPrimary,
   unlinkExternalRepo,
   getProjectGitRepo,
+  getWebhookSetupInstructions,
+  markExternalWebhookReceived,
   getWebhookSecret,
   requireGiteaWorkingSlug,
   requestGitSyncStatus,
@@ -2631,6 +2633,19 @@ app.get(
   }),
 );
 
+// "웹훅 수동 설정 안내" 카드를 새로고침 후에도(또는 접었다 폈다 할
+// 때마다) 다시 보여줄 수 있도록 URL/secret을 다시 조회하는 전용
+// 라우트 - git 저장소 관리 기능 전반과 같은 원칙으로 owner 전용
+// (secret이 섞여 있어 GET .../git/repo의 viewer 공개 범위엔 안 둠).
+app.get(
+  "/api/projects/:projectId/git/webhook-instructions",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    res.json(await getWebhookSetupInstructions(req.params.projectId));
+  }),
+);
+
 // 외부 연동(link-external)의 권위 저장소 관계만 끊는다 - 자체 호스팅
 // 저장소는 프로젝트 삭제 없이는 해제할 수 없다(설계자 확정,
 // #git-unlink). 응답은 전환 후 상태(provider:"self_hosted")를 그대로
@@ -2930,6 +2945,7 @@ app.post(
       res.status(401).json({ error: err instanceof Error ? err.message : String(err) });
       return;
     }
+    await markExternalWebhookReceived(projectId);
     const queued = await recordPushEvent(projectId, parsed);
     res.json({ ok: true, queued });
   }),

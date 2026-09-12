@@ -4875,6 +4875,67 @@ Secret이 정확히 뜨는 것을 스크린샷으로 확인 → "확인함" 클�
 404 1건은 "git 저장소 연결 여부 확인"용으로 원래도 있던 것 -
 무관). 테스트 프로젝트는 검증 후 삭제.
 
+## 웹훅 수동 설정 카드를 영구 삭제 없이 "접기/펼치기 + 실제 수신 전까지 계속 노출"로 재설계(`#webhook-instructions-persistent-card`) - 완료 (2026-09-13)
+
+**배경**: 설계자 지시 - "'웹훅 설정 안내'는 웹훅이 call을 수신하기
+전까지 접을 수 있는 형태의 카드로 계속 노출시켜놔." 바로 앞 라운드
+(`#external-webhook-manual-instructions`)에서 만든 "확인함"
+버튼(누르면 영구히 사라짐, 상태는 컴포넌트 로컬 ref일 뿐이라
+새로고침해도 어차피 초기화됨)을 이 요구에 맞게 다시 설계했다 -
+"카드가 필요한 동안은 몇 번을 새로고침하거나 다시 들어와도 그대로
+있어야 하고, 실제로 웹훅이 호출되면(=더 이상 필요 없어지면)
+자동으로 사라져야 한다"는 조건은 로컬 상태만으로는 표현할 수 없어서
+(그 판단 기준 자체가 서버만 아는 사실 - 웹훅이 실제로 도착했는지)
+백엔드에 진짜 상태를 영속화해야 했다.
+
+**스키마 변경**(3 프로바이더 전부): `ProjectGitRepo`에
+`webhookAutoRegistered Boolean @default(false)`(예전엔
+`linkExternalAsPrimary()`의 반환값에만 잠깐 담겼다 사라지던 값 -
+이제 저장), `webhookUrl String?`(등록에 실제로 넘겼던 콜백 URL
+그대로 - provider를 별도로 저장/추론할 필요 없이 나중에 그대로
+재사용), `webhookFirstReceivedAt DateTime?`(그 웹훅이 실제로 처음
+호출된 시각, null이면 아직 한 번도 안 옴) 3개 추가.
+
+**백엔드**: `getWebhookSetupInstructions(projectId)` 신설 - "자동
+등록 안 됐고 + 아직 한 번도 안 받았을 때만" URL+secret을 복호화해
+돌려주고, 그 외엔 `null`(카드 자체가 필요 없다는 뜻). API 키처럼
+1회만 노출하는 값이 아니라 - 카드가 떠 있는 동안은 owner가 몇 번이고
+다시 조회할 수 있어야 하므로(이번 요구의 핵심) 매번 복호화해서
+반환한다. `markExternalWebhookReceived(projectId)`는 외부 웹훅 수신
+라우트(`POST /api/webhooks/:provider/:projectId`, gitea 아닌
+provider만 - Gitea 시스템 웹훅과는 별개 경로임을 재확인하고 거기엔
+안 건드림)가 서명 검증을 통과한 직후 호출 - `webhookFirstReceivedAt`
+이 이미 있으면 다시 안 건드리는 조건부 `updateMany`(idempotent, 매
+push마다 쓸데없이 갱신 안 함). 새 라우트 `GET .../git/
+webhook-instructions`(owner 전용 - `GET .../git/repo`는 viewer도
+보므로 secret이 섞인 이 조회는 별도 라우트로 분리, git 저장소 관리
+기능 전반의 "owner 전용" 원칙 그대로 적용).
+
+**프론트(`GitRepoPanel.vue`)**: "확인함(닫기)" 버튼을 없애고, 카드
+헤더를 클릭하면 접히고 펼쳐지는 형태로 바꿨다(`webhookCardExpanded`
+- 로컬 UI 상태, 접힘 여부만 로컬이고 "보여줄지 말지" 자체는 항상
+서버 진실을 따름). `load()`가 `GET .../git/repo`로 받은
+`webhookAutoRegistered`/`webhookFirstReceivedAt`을 보고 카드가 필요할
+때만 `GET .../git/webhook-instructions`를 추가로 불러온다 - 페이지를
+새로 열 때마다(다른 탭에서 다시 들어와도) 이 조회를 다시 하므로
+카드가 계속 살아있다.
+
+**실측 검증**: `npx tsc --noEmit`(backend)/`npx vue-tsc -b`(frontend)
+클린 → 스키마 변경분 `db push`가 컨테이너 기동 로그에서 실제로
+반영되는지 확인 → 브라우저로 실제 공개 저장소(`octocat/Hello-World`)
+를 자격증명 없이 연동(항상 카드가 뜨는 조건) → 카드 헤더 클릭으로
+접기/펼치기 확인 → **페이지를 완전히 새로고침해도 같은 URL/secret
+그대로 카드가 남아있는지 확인(이번 라운드의 핵심 동작 - 예전 1회성
+"확인함" 버튼으로는 불가능했던 것)** → GitHub의 실제 서명 규칙
+(`X-Hub-Signature-256`, HMAC-SHA256(secret, rawBody))을 그대로
+재현하는 스크립트로 화면에 뜬 URL/secret을 그대로 써서 진짜 웹훅
+호출을 흉내냄(`200 {"ok":true}` 확인) → 그 다음 새로고침부터는 카드가
+완전히 사라지는 것을 확인(`webhookFirstReceivedAt`이 찍혀
+`getWebhookSetupInstructions`가 `null`을 돌려주기 시작함). 콘솔에
+이 변경으로 인한 새 에러 없음. `npm run audit:cli-mcp` 클린(git
+저장소 기능은 원래도 CLI/MCP 표면 밖 - 회귀 확인 차원). 테스트
+프로젝트는 검증 후 삭제.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

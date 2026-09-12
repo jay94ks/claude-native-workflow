@@ -244,6 +244,9 @@ model ProjectGitRepo {
   externalRepoId         String?
   gitCredentialId        String?
   webhookSecretEncrypted Bytes? // AES-256-GCM - 수신 웹훅 서명/토큰 검증용
+  webhookAutoRegistered  Boolean   @default(false) // 외부(GitHub/GitLab) 저장소 자체에 웹훅 자동 등록 성공 여부
+  webhookUrl             String? // 등록에 넘겼던(또는 넘길) 콜백 URL 그대로 - 나중에 수동 설정 안내를 다시 보여줄 때 provider를 따로 안 들고 있어도 재구성 없이 씀
+  webhookFirstReceivedAt DateTime? // 그 외부 웹훅이 처음 실제로 호출된 시각(수동 설정 안내 카드를 언제 접을지 판단)
 
   project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   gitCredential GitCredential? @relation(fields: [gitCredentialId], references: [id])
