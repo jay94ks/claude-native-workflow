@@ -184,6 +184,7 @@ import { verifyAndParseWebhook, recordPushEvent, handleGiteaSystemPush } from ".
 import {
   createPushHookPrompt,
   listPushHookPrompts,
+  updatePushHookPrompt,
   deletePushHookPrompt,
   listQueueEntries,
   acknowledgeQueueEntry,
@@ -2655,6 +2656,16 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     res.json(await listPushHookPrompts(req.params.projectId));
+  }),
+);
+
+app.put(
+  "/api/projects/:projectId/push-hook-prompts/:id",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const body = req.body as { triggerBranch?: string; promptTemplate?: string };
+    res.json(await updatePushHookPrompt(req.params.id, req.params.projectId, body));
   }),
 );
 

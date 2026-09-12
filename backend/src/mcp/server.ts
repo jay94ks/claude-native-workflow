@@ -829,6 +829,18 @@ async function main() {
   tool("hook_list", "push 훅 프롬프트 목록", "프로젝트에 등록된 프롬프트 목록.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/push-hook-prompts`),
   );
+  tool(
+    "hook_update",
+    "push 훅 프롬프트 수정",
+    "트리거 브랜치나 프롬프트 내용을 바꾼다 - triggerBranch에 빈 문자열을 주면 브랜치 제한을 해제한다(모든 브랜치 매칭), 생략하면 기존 값 유지.",
+    { projectId: z.string(), id: z.string(), promptTemplate: z.string().optional(), triggerBranch: z.string().optional() },
+    async (a) => {
+      const body: Record<string, unknown> = {};
+      if (a.promptTemplate !== undefined) body.promptTemplate = a.promptTemplate;
+      if (a.triggerBranch !== undefined) body.triggerBranch = a.triggerBranch;
+      return call(`/api/projects/${a.projectId}/push-hook-prompts/${a.id}`, { method: "PUT", body: JSON.stringify(body) });
+    },
+  );
   tool("hook_delete", "push 훅 프롬프트 삭제", "프롬프트를 삭제한다(이후 push에 더는 매칭되지 않음).", { projectId: z.string(), id: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}/push-hook-prompts/${a.id}`, { method: "DELETE" }),
   );

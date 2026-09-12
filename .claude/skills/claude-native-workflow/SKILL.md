@@ -316,7 +316,7 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 파일 내용 조회 | `docs git cat <projectId> <path> [--ref <r>]` | `git_cat` |
 | 파일 저장(커밋) | `docs git put <projectId> <path> <localFile> [--message <m>]` | `git_put` |
 | 템플릿 배포 | `docs template deploy <projectId>` | `template_deploy` |
-| 훅 프롬프트 생성/목록/삭제 | `docs hook create/list/delete` | `hook_create/list/delete` |
+| 훅 프롬프트 생성/목록/수정/삭제 | `docs hook create/list/update/delete` | `hook_create/list/update/delete` |
 | 훅 대기열 조회/처리 | `docs hook queue/ack/done` | `hook_queue_list`/`hook_ack`/`hook_done` |
 | 메시지 목록(읽으면 기록 전환) | `docs message list <projectId> [--status <s>]` | `message_list` |
 | 메시지 전송 | `docs message send <projectId> <body...>` | `message_send` |

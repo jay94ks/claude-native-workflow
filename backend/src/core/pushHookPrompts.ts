@@ -40,6 +40,31 @@ export async function deletePushHookPrompt(id: string, projectId: string): Promi
   await db.pushHookPrompt.delete({ where: { id } });
 }
 
+/** 트리거 브랜치/프롬프트 내용을 부분 갱신한다 - 넘긴 필드만 바꾸고
+ * 나머지는 그대로 둔다. triggerBranch에 빈 문자열을 주면 브랜치 제한을
+ * 해제(null - 모든 브랜치 매칭)한다 - create()가 이미 "안 넘기면 모든
+ * 브랜치"이므로 그 대칭. deletePushHookPrompt()와 같은 조회+소유
+ * 확인 패턴(다른 프로젝트 소유 리소스를 :projectId만 맞춰 건드리는
+ * 사고 방지). */
+export async function updatePushHookPrompt(
+  id: string,
+  projectId: string,
+  input: { triggerBranch?: string; promptTemplate?: string },
+): Promise<PushHookPrompt> {
+  const db = getDb();
+  const row = await db.pushHookPrompt.findUnique({ where: { id } });
+  if (!row || row.projectId !== projectId) {
+    throw new Error("push hook 프롬프트를 찾을 수 없거나 이 프로젝트 소유가 아닙니다");
+  }
+  if (input.promptTemplate !== undefined && !input.promptTemplate) {
+    throw new Error("promptTemplate이 필요합니다");
+  }
+  const data: { triggerBranch?: string | null; promptTemplate?: string } = {};
+  if (input.triggerBranch !== undefined) data.triggerBranch = input.triggerBranch === "" ? null : input.triggerBranch;
+  if (input.promptTemplate !== undefined) data.promptTemplate = input.promptTemplate;
+  return db.pushHookPrompt.update({ where: { id }, data });
+}
+
 export interface PushHookQueueEntry {
   id: string;
   pushHookPromptId: string;

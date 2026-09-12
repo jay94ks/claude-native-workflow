@@ -50,7 +50,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 17 | ✅ | `#meilisearch-spof` | Meilisearch 장애 시 503+명확한 메시지 응답, 색인 쓰기는 큐+워커로 자동 재처리 |
 | 18 | ✅ | `#git-unlink` | 외부 연동 해제(자체 호스팅으로 전환) - 자체 호스팅은 프로젝트 삭제 전엔 해제 불가 |
 | 19 | ✅ | `#git-publish-pr-draft` | 의도된 설계로 재확인 - 자동 PR 생성은 범위 밖(문서만 정리, 코드 변경 없음) |
-| 20 | ⬜ | `#hook-prompt-update` | PushHookPrompt 수정(update) 라우트 없음 |
+| 20 | ✅ | `#hook-prompt-update` | PushHookPrompt 부분 갱신(update) - 브랜치/프롬프트 내용, CLI/MCP |
 | 21 | ⬜ | `#hook-branch-pattern` | 브랜치 패턴(glob/regex) 매칭 없음 |
 | 22 | ⬜ | `#hook-queue-ttl` | push 훅 대기열 만료/자동 정리 없음 |
 | 23 | ⬜ | `#template-history` | 템플릿 변경 이력(리비전) 없음 |
@@ -89,10 +89,6 @@ revisions/source-links/access/folder, 두 bulk 라우트 포함) 전부가
 라운드로 남겨둔다.
 
 ## 10. push 훅 자동화
-
-### `#hook-prompt-update`
-**`PushHookPrompt` 수정(update) 라우트가 없다** - 생성/삭제만 있고,
-트리거 브랜치나 프롬프트 내용을 바꾸려면 지우고 다시 만들어야 한다.
 
 ### `#hook-branch-pattern`
 **브랜치 매칭이 정확히 일치 또는 전체뿐, 패턴(glob/regex) 매칭이

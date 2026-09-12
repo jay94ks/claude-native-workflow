@@ -583,9 +583,15 @@
   밖이라 null 반환 → `requireProjectRole`이 거부) - 같은 키로 자기
   프로젝트(B) 조회는 200으로 정상 동작해 스코프 게이트가 "이 라우트만
   막힘"이 아니라 "이 라우트도 자동으로 걸림"임을 확인.
+- [x] **`PushHookPrompt` 부분 갱신(`hook update`/`hook_update`,
+  `#hook-prompt-update`)** - 프롬프트 내용만 교체(브랜치 유지),
+  브랜치를 빈 문자열로 교체(제한 해제 - `null`) 각각 실측. 다른
+  프로젝트 id로 시도 시 소유 불일치 거부, 빈 프롬프트 거부 확인.
+  CLI에서 `--branch ""`(공백)는 commander가 값 누락으로 오인하니
+  `--branch=""`(등호)로 붙여 써야 한다는 함정 확인.
 
 ### 추가 개발 계획
-`#hook-prompt-update` `#hook-branch-pattern` `#hook-queue-ttl` - 상세는
+`#hook-branch-pattern` `#hook-queue-ttl` - 상세는
 [PLANS.md](PLANS.md) 참고.
 
 ---

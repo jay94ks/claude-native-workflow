@@ -3515,6 +3515,39 @@ tsx 콜드스타트가 테스트 스크립트의 대기 시간보다 길어 구�
 --noEmit`, `npm run audit:cli-mcp`(명령/도구 이름 안 바뀌어 그대로
 통과) 클린.
 
+## push 훅 프롬프트 수정(update) 라우트 추가(`#hook-prompt-update`) - 완료 (2026-09-12)
+
+PLANS.md 20번(`## 10. push 훅 자동화`). `PushHookPrompt`가 생성/
+조회/삭제만 있고 수정이 없어, 브랜치 조건이나 프롬프트 문구를
+조금 고치려 해도 지우고 다시 만들어야 했다(그러면 `id`가 바뀜).
+
+`core/pushHookPrompts.ts`에 `updatePushHookPrompt(id, projectId,
+input)` 신설 - `deletePushHookPrompt`가 이미 쓰는 "조회 후
+projectId 일치 확인" 패턴(다른 프로젝트 소유 리소스를 `:projectId`만
+맞춰 건드리는 사고 방지 - 큐 항목 쪽에서 이미 한 번 겪은 문제) 재사용.
+넘긴 필드만 부분 갱신하고, `triggerBranch`에 빈 문자열을 주면 브랜치
+제한 해제(null - 모든 브랜치 매칭)로 취급한다(`create`가 이미
+"안 넘기면 모든 브랜치"인 것과 대칭). `PUT /api/projects/:projectId/
+push-hook-prompts/:id`(owner 전용, 기존 라우트들과 동일 가드) + CLI
+`hook update`(`--prompt <file>`/`--branch <branch>` 둘 다 선택) +
+MCP `hook_update` 추가. 프론트엔드/스키마 변경 없음(이 기능 자체가
+웹 UI에 없는 CLI/MCP 전용 워크플로).
+
+**실측 중 발견한 CLI 사용성 함정**: `--branch ""`(공백으로 띄어
+쓴 빈 문자열)를 그대로 넘기면 commander가 "옵션 값 누락"으로
+해석해 파싱 에러를 낸다 - `--branch=""`(등호로 붙여 쓴 형태)라야
+빈 문자열이 실제로 전달된다. 코드 버그는 아니었지만(서버 쪽 로직은
+정확히 의도대로 동작 - `--branch=""`로 재확인해 브랜치 제한이 정말
+해제되는 것 확인) CLI 옵션 설명에 이 함정을 명시해뒀다.
+
+**실측 검증**: docker 재빌드·재기동 후 HTTP+CLI 왕복 - `hook
+create`(브랜치 지정) → `hook update --prompt`(내용만 교체, 브랜치는
+그대로) → `hook list`로 확인 → `hook update --branch=""`(브랜치
+제한 해제) → `triggerBranch: null` 확인. 다른 프로젝트 id로 `PUT`
+시도 시 소유 불일치로 거부, 빈 `promptTemplate` 거부 확인. MCP
+`hook_update`도 별도 스크립트로 왕복 확인. `npx tsc --noEmit`,
+`npm run audit:cli-mcp` 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
