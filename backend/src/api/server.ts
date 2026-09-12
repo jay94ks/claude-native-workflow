@@ -160,6 +160,7 @@ import {
   bulkCreateRelations,
   bulkUpdateRelations,
   bulkDeleteRelations,
+  resetRelations,
 } from "../core/codeRelations.js";
 import type { CodeRelationInput, BulkUpdateItem } from "../core/codeRelations.js";
 import {
@@ -204,7 +205,7 @@ import {
   getWebhookSetupInstructions,
   markExternalWebhookReceived,
   getWebhookSecret,
-  requireGiteaWorkingSlug,
+  requireGiteaWorkingRef,
   requestGitSyncStatus,
   getCachedGitSyncStatus,
   getGitSyncProposal,
@@ -251,6 +252,11 @@ import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecen
 import { checkConnect, checkAcl, ensureEmqxAuthConfigured, getOrCreateMqttCredential } from "../core/emqxAuth.js";
 
 const app = express();
+// nginx 리버스 프록시 뒤에서 실행된다(#gitea-nginx-lockdown) - req.protocol/
+// req.get("host")가 nginx의 X-Forwarded-Proto/Host 헤더를 반영하도록 필요
+// (예: GitHub OAuth 리다이렉트 URI 계산). 로컬에서 nginx 없이 backend를
+// 직접 열어도(개발 편의) 신뢰할 프록시가 없을 뿐 동작에 지장 없음.
+app.set("trust proxy", 1);
 // verify로 원본 바이트를 req.rawBody에 보존 - 웹훅 서명 검증은 express가
 // 재직렬화한 JSON이 아니라 실제로 전송된 원본 바이트에 대해 계산해야
 // 한다(재직렬화 시 키 순서/공백 차이로 서명이 어긋날 수 있음).
@@ -2098,6 +2104,23 @@ app.delete(
   }),
 );
 
+// "관계도 초기화" 버튼 - branchName="__none__"이면 브랜치 없음 버킷만,
+// allBranches=true면 전체. "/relations/:id"보다 먼저 등록해야 한다(위
+// bulk 라우트들과 같은 이유 - Express 라우트 매칭 순서).
+app.delete(
+  "/api/projects/:projectId/relations/reset",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { branchName, allBranches } = req.query as Record<string, string | undefined>;
+    const deleted = await resetRelations(req.params.projectId, req.userId!, {
+      branchName: branchName === "__none__" ? null : branchName,
+      allBranches: allBranches === "true",
+    });
+    res.json({ ok: true, deleted });
+  }),
+);
+
 app.post(
   "/api/projects/:projectId/relations",
   authenticate,
@@ -3046,9 +3069,9 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const ref = req.query.ref as string | undefined;
-    res.json(await gitea.listCommits(slug, { ref }));
+    res.json(await gitea.listCommits(target, { ref }));
   }),
 );
 
@@ -3059,11 +3082,11 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const ref = req.query.ref as string | undefined;
     const page = Number(req.query.page ?? 1);
     const pageSize = Number(req.query.pageSize ?? 20);
-    res.json(await gitea.listCommitsPaged(slug, { ref, page, pageSize }));
+    res.json(await gitea.listCommitsPaged(target, { ref, page, pageSize }));
   }),
 );
 
@@ -3072,8 +3095,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
-    const diff = await gitea.getCommitDiff(slug, req.params.sha);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    const diff = await gitea.getCommitDiff(target, req.params.sha);
     res.type("text/plain").send(diff);
   }),
 );
@@ -3083,10 +3106,10 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const filepath = req.query.path as string | undefined;
     if (!filepath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
-    res.json(await gitea.getBlame(slug, filepath, req.query.ref as string | undefined));
+    res.json(await gitea.getBlame(target, filepath, req.query.ref as string | undefined));
   }),
 );
 
@@ -3095,8 +3118,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
-    res.json(await gitea.getCommit(slug, req.params.sha));
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    res.json(await gitea.getCommit(target, req.params.sha));
   }),
 );
 
@@ -3107,9 +3130,9 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const dirPath = (req.query.path as string | undefined) ?? "";
-    res.json(await gitea.listTree(slug, dirPath, req.query.ref as string | undefined));
+    res.json(await gitea.listTree(target, dirPath, req.query.ref as string | undefined));
   }),
 );
 
@@ -3118,11 +3141,11 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const dirPath = (req.query.path as string | undefined) ?? "";
     res.json(
       await gitea.listTreePaged(
-        slug,
+        target,
         dirPath,
         req.query.ref as string | undefined,
         Number(req.query.page ?? 1),
@@ -3137,10 +3160,10 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const filePath = req.query.path as string | undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
-    res.json(await gitea.getFileContent(slug, filePath, req.query.ref as string | undefined));
+    res.json(await gitea.getFileContent(target, filePath, req.query.ref as string | undefined));
   }),
 );
 
@@ -3152,8 +3175,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
-    res.json(await gitea.getFullTree(slug));
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    res.json(await gitea.getFullTree(target));
   }),
 );
 
@@ -3162,7 +3185,7 @@ app.put(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const filePath = req.query.path as string | undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const { content, message } = req.body as { content?: string; message?: string };
@@ -3171,7 +3194,7 @@ app.put(
     // 설계자의 Gitea PAT를 구해 넘긴다 - 아직 없으면(과도기 상태)
     // putFileContent()가 관리자 토큰으로 폴백한다.
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await gitea.putFileContent(slug, filePath, content, message || `docs: update ${filePath}`, actingToken);
+    await gitea.putFileContent(target, filePath, content, message || `docs: update ${filePath}`, actingToken);
     await syncSourceFileOnSave(req.params.projectId, filePath, content);
     res.json({ ok: true });
   }),
@@ -3186,10 +3209,10 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const filePath = req.query.path as string | undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
-    const raw = await gitea.getFileRaw(slug, filePath, req.query.ref as string | undefined);
+    const raw = await gitea.getFileRaw(target, filePath, req.query.ref as string | undefined);
     res.type(gitea.mimeTypeForPath(filePath));
     res.sendFile(raw.cachePath);
   }),
@@ -3278,8 +3301,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
-    res.json(await gitea.listBranches(slug));
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    res.json(await gitea.listBranches(target));
   }),
 );
 
@@ -3324,7 +3347,7 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const { title, head, base, body } = req.body as { title?: string; head?: string; base?: string; body?: string };
     if (!title || !head || !base) {
       res.status(400).json({ error: "title/head/base가 필요합니다" });
@@ -3333,7 +3356,7 @@ app.post(
     // PR이 이 요청을 보낸 설계자 신원으로 귀속되도록 - putFileContent()와
     // 같은 원칙(없으면 관리자 토큰 폴백).
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    res.json(await gitea.createPullRequest(slug, { title, head, base, body }, actingToken));
+    res.json(await gitea.createPullRequest(target, { title, head, base, body }, actingToken));
   }),
 );
 
@@ -3362,8 +3385,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
-    res.json(await gitea.listPullRequestCommits(slug, Number(req.params.index)));
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    res.json(await gitea.listPullRequestCommits(target, Number(req.params.index)));
   }),
 );
 
@@ -3372,8 +3395,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
-    res.json(await gitea.listPullRequestComments(slug, Number(req.params.index)));
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    res.json(await gitea.listPullRequestComments(target, Number(req.params.index)));
   }),
 );
 
@@ -3382,11 +3405,11 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const target = await requireGiteaWorkingRef(req.params.projectId);
     const { body } = req.body as { body?: string };
     if (!body?.trim()) { res.status(400).json({ error: "body가 필요합니다" }); return; }
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    res.json(await gitea.addPullRequestComment(slug, Number(req.params.index), body.trim(), actingToken));
+    res.json(await gitea.addPullRequestComment(target, Number(req.params.index), body.trim(), actingToken));
   }),
 );
 
@@ -3395,8 +3418,8 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
-    res.json(await gitea.listPullRequestTimeline(slug, Number(req.params.index)));
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    res.json(await gitea.listPullRequestTimeline(target, Number(req.params.index)));
   }),
 );
 
@@ -3642,19 +3665,19 @@ app.post(
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
     const projectId = req.params.projectId;
-    const slug = await requireGiteaWorkingSlug(projectId);
+    const target = await requireGiteaWorkingRef(projectId);
     const deployed: string[] = [];
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
 
     const claudeMd = await resolveTemplate("CLAUDE.md", projectId);
     if (claudeMd) {
-      await gitea.putFileContent(slug, "CLAUDE.md", claudeMd.content, "docs: deploy CLAUDE.md template", actingToken);
+      await gitea.putFileContent(target, "CLAUDE.md", claudeMd.content, "docs: deploy CLAUDE.md template", actingToken);
       deployed.push("CLAUDE.md");
     }
     const skillFilename = ".claude/skills/claude-native-workflow/SKILL.md";
     const skillMd = await resolveTemplate(skillFilename, projectId);
     if (skillMd) {
-      await gitea.putFileContent(slug, skillFilename, skillMd.content, "docs: deploy SKILL.md template", actingToken);
+      await gitea.putFileContent(target, skillFilename, skillMd.content, "docs: deploy SKILL.md template", actingToken);
       deployed.push(skillFilename);
     }
 
@@ -3707,7 +3730,9 @@ async function main() {
   await seedDefaultTemplates();
   await seedDefaultAdminAccount();
   await ensureEmqxAuthConfigured();
-  await gitea.ensureGiteaOrgConfigured();
+  // 프로젝트별 org 구조(#gitea-per-project-namespace)에서는 전역 org를
+  // 부팅 시 미리 만들어둘 필요가 없다 - 프로젝트가 처음 git 저장소를
+  // 연결하는 시점에 ensureProjectOrgConfigured()가 그때그때 만든다.
   await gitea.ensureGiteaSystemWebhookConfigured();
   await ensureAllUsersGiteaAccountsConfigured();
 

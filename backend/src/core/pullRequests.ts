@@ -1,6 +1,6 @@
 import { getDb } from "./db.js";
 import * as gitea from "./gitea.js";
-import { requireGiteaWorkingSlug } from "./gitRepos.js";
+import { requireGiteaWorkingRef } from "./gitRepos.js";
 import { sendMessage } from "./messages.js";
 
 // PR 오케스트레이션 - Gitea 호출 + PullRequestMeta 갱신 + 진행 메시지
@@ -51,8 +51,8 @@ function toDetail(summary: gitea.PullRequestSummary, meta: MetaRow | null): Pull
 }
 
 export async function getPullRequestDetail(projectId: string, index: number): Promise<PullRequestDetail> {
-  const slug = await requireGiteaWorkingSlug(projectId);
-  const [summary, meta] = await Promise.all([gitea.getPullRequest(slug, index), getMeta(projectId, index)]);
+  const target = await requireGiteaWorkingRef(projectId);
+  const [summary, meta] = await Promise.all([gitea.getPullRequest(target, index), getMeta(projectId, index)]);
   return toDetail(summary, meta);
 }
 
@@ -64,8 +64,8 @@ export async function listPullRequestsForProject(
   projectId: string,
   state: "open" | "closed" | "all" | undefined,
 ): Promise<PullRequestDetail[]> {
-  const slug = await requireGiteaWorkingSlug(projectId);
-  const summaries = await gitea.listPullRequests(slug, state);
+  const target = await requireGiteaWorkingRef(projectId);
+  const summaries = await gitea.listPullRequests(target, state);
   summaries.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   if (summaries.length === 0) return [];
   const db = getDb();
@@ -77,9 +77,9 @@ export async function listPullRequestsForProject(
 }
 
 export async function mergePull(projectId: string, index: number, actingUserId: string | null, actingToken?: string): Promise<void> {
-  const slug = await requireGiteaWorkingSlug(projectId);
+  const target = await requireGiteaWorkingRef(projectId);
   try {
-    await gitea.mergePullRequest(slug, index, actingToken);
+    await gitea.mergePullRequest(target, index, actingToken);
     await upsertMeta(projectId, index, { disposition: "merged", lastMergeError: null });
     await sendMessage(projectId, actingUserId, `${prTag(index)}머지되었습니다.`);
   } catch (err) {
@@ -94,15 +94,15 @@ export async function mergePull(projectId: string, index: number, actingUserId: 
  * 직접(또는 AI가 CLI로) 충돌을 해결해 push한 커밋을 Gitea에 "수동으로
  * 병합됨"으로 기록시킨다(요구사항 4번 핵심 메커니즘). */
 export async function mergePullManually(projectId: string, index: number, mergeCommitId: string, actingUserId: string | null, actingToken?: string): Promise<void> {
-  const slug = await requireGiteaWorkingSlug(projectId);
-  await gitea.mergePullRequestManually(slug, index, mergeCommitId, actingToken);
+  const target = await requireGiteaWorkingRef(projectId);
+  await gitea.mergePullRequestManually(target, index, mergeCommitId, actingToken);
   await upsertMeta(projectId, index, { disposition: "merged", lastMergeError: null });
   await sendMessage(projectId, actingUserId, `${prTag(index)}수동 병합이 완료 처리되었습니다(commit: ${mergeCommitId.slice(0, 8)}).`);
 }
 
 export async function rejectPull(projectId: string, index: number, actingUserId: string | null, actingToken?: string): Promise<void> {
-  const slug = await requireGiteaWorkingSlug(projectId);
-  await gitea.setPullRequestState(slug, index, "closed", actingToken);
+  const target = await requireGiteaWorkingRef(projectId);
+  await gitea.setPullRequestState(target, index, "closed", actingToken);
   await upsertMeta(projectId, index, { disposition: "rejected" });
   await sendMessage(projectId, actingUserId, `${prTag(index)}거부되었습니다.`);
 }
@@ -113,9 +113,9 @@ export async function rejectPull(projectId: string, index: number, actingUserId:
  * (머지된 PR은 Gitea에서도 이미 closed) 여기서는 그 경우를 별도로
  * 막지 않는다. */
 export async function closePull(projectId: string, index: number, actingUserId: string | null, actingToken?: string): Promise<void> {
-  const slug = await requireGiteaWorkingSlug(projectId);
+  const target = await requireGiteaWorkingRef(projectId);
   const meta = await getMeta(projectId, index);
-  await gitea.setPullRequestState(slug, index, "closed", actingToken);
+  await gitea.setPullRequestState(target, index, "closed", actingToken);
   if (!meta?.disposition) {
     await upsertMeta(projectId, index, { disposition: "rejected" });
     await sendMessage(projectId, actingUserId, `${prTag(index)}닫혔습니다(머지/거부가 선택되지 않아 거부로 처리됨).`);
@@ -128,8 +128,8 @@ export async function closePull(projectId: string, index: number, actingUserId: 
  * 한다 - 다시 열면 disposition을 지워 다음 mergePull() 호출이 자연스럽게
  * "merged"로 덮어쓸 수 있게 한다. */
 export async function reopenPull(projectId: string, index: number, actingUserId: string | null, actingToken?: string): Promise<void> {
-  const slug = await requireGiteaWorkingSlug(projectId);
-  await gitea.setPullRequestState(slug, index, "open", actingToken);
+  const target = await requireGiteaWorkingRef(projectId);
+  await gitea.setPullRequestState(target, index, "open", actingToken);
   await upsertMeta(projectId, index, { disposition: null, lastMergeError: null });
   await sendMessage(projectId, actingUserId, `${prTag(index)}다시 열렸습니다.`);
 }

@@ -89,10 +89,10 @@ const GITEA_PERMISSION_BY_ROLE: Record<string, "read" | "write" | "admin"> = {
  * 시점(둘 다 모듈 평가가 끝난 뒤)에만 필요하므로 동적 import로 순환을
  * 피한다. 저장소가 아직 없으면(가장 흔한 경우 - 프로젝트 생성 직후)
  * null. */
-async function resolveWorkSlugForCollabSync(projectId: string): Promise<string | null> {
+async function resolveWorkRefForCollabSync(projectId: string): Promise<gitea.GiteaRepoRef | null> {
   try {
-    const { requireGiteaWorkingSlug } = await import("./gitRepos.js");
-    return await requireGiteaWorkingSlug(projectId);
+    const { requireGiteaWorkingRef } = await import("./gitRepos.js");
+    return await requireGiteaWorkingRef(projectId);
   } catch {
     return null;
   }
@@ -109,12 +109,12 @@ export async function syncCollaboratorGrant(projectId: string, userId: string, r
     const db = getDb();
     const user = await db.user.findUnique({ where: { id: userId }, select: { giteaUsername: true } });
     if (!user?.giteaUsername) return;
-    const slug = await resolveWorkSlugForCollabSync(projectId);
-    if (!slug) return;
+    const target = await resolveWorkRefForCollabSync(projectId);
+    if (!target) return;
     if (role === null) {
-      await gitea.removeRepoCollaborator(slug, user.giteaUsername);
+      await gitea.removeRepoCollaborator(target, user.giteaUsername);
     } else {
-      await gitea.setRepoCollaborator(slug, user.giteaUsername, GITEA_PERMISSION_BY_ROLE[role] ?? "read");
+      await gitea.setRepoCollaborator(target, user.giteaUsername, GITEA_PERMISSION_BY_ROLE[role] ?? "read");
     }
   } catch (err) {
     console.error(`syncCollaboratorGrant(${projectId}, ${userId}) 실패:`, err);

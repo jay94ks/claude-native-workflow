@@ -28,46 +28,49 @@ export function repoOwner(): string {
   return config().owner;
 }
 
-// 저장소는 관리자 개인 네임스페이스가 아니라 이 시스템이 만드는 Gitea
-// 조직(organization) 네임스페이스 아래 만든다 - "소유자가 누구냐"라는
-// 질문 자체를 없애고, 그 대신 저장소별 협업자 권한을 Member.role과
-// 동기화하는 방식으로 접근을 표현한다(core/members.ts의
-// syncCollaboratorGrant() 참고). 조직 이름은 새 환경변수 없이 고정
-// 상수를 기본값으로 쓰되, 필요하면 GITEA_ORG_NAME으로 덮어쓸 수 있다.
-const DEFAULT_ORG_LOGIN = "cnwk-projects";
-
-export function orgLogin(): string {
-  return process.env.GITEA_ORG_NAME || DEFAULT_ORG_LOGIN;
+// 저장소는 관리자 개인 네임스페이스가 아니라 프로젝트마다 별도로 만드는
+// Gitea 조직(organization) 네임스페이스 아래 만든다(#gitea-per-project-namespace) -
+// "소유자가 누구냐"라는 질문 자체를 없애고, 그 대신 저장소별 협업자
+// 권한을 Member.role과 동기화하는 방식으로 접근을 표현한다(core/
+// members.ts의 syncCollaboratorGrant() 참고). 예전엔 전체 설치가
+// 하나의 고정 org(cnwk-projects)를 공유했으나, 프로젝트별로 Gitea
+// 네임스페이스를 적극 활용하도록(설계자 지시) 프로젝트 하나당 org
+// 하나로 개편했다 - org 이름 자체(`core/gitRepos.ts`의 orgForProject())는
+// projectId의 순수 함수라 별도 DB 컬럼이 필요 없다. 이 파일은 org
+// 이름이 아니라 항상 호출부가 이미 계산해 넘긴 GiteaRepoRef만 다룬다.
+export interface GiteaRepoRef {
+  org: string;
+  repo: string;
 }
 
-/** 서버 기동 시 호출(Gitea 미설정이면 조용히 스킵 - fail-soft) - 이
- * 시스템의 조직 네임스페이스가 아직 없으면 만든다(멱등 - GET으로 먼저
- * 존재를 확인). 시스템 웹훅/계정 마스터링보다 먼저 실행돼야 한다 -
- * 그 안에 만들어질 저장소들이 이 조직을 전제로 하므로. */
-export async function ensureGiteaOrgConfigured(): Promise<void> {
-  try {
-    config();
-  } catch {
-    return;
+/** 프로젝트 하나의 org를 멱등하게 보장한다(GET으로 먼저 확인, 404면
+ * 생성) - 예전 ensureGiteaOrgConfigured()는 서버 기동 시 전역 org 1개를
+ * 한 번만 만들면 됐지만, 지금은 프로젝트마다 org가 다르므로 그 프로젝트가
+ * 처음 Gitea 저장소를 연결하는 시점(core/gitRepos.ts의
+ * ensureProjectOrgConfigured())에 호출된다 - fail-soft가 아니라 실패를
+ * 그대로 던진다(호출부가 저장소 생성 자체를 이어갈 수 없으므로 조용히
+ * 넘어가면 안 됨). */
+export async function ensureOrgConfigured(org: string): Promise<void> {
+  const { apiUrl, token } = config();
+  const getRes = await fetch(`${apiUrl}/api/v1/orgs/${encodeURIComponent(org)}`, {
+    headers: { Authorization: `token ${token}` },
+  });
+  if (getRes.ok) return;
+  if (getRes.status !== 404) {
+    const body = await getRes.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${getRes.status} ${body}`);
   }
-  try {
-    const { apiUrl, token } = config();
-    const org = orgLogin();
-    const getRes = await fetch(`${apiUrl}/api/v1/orgs/${encodeURIComponent(org)}`, {
-      headers: { Authorization: `token ${token}` },
-    });
-    if (getRes.ok) return;
-    if (getRes.status !== 404) {
-      const body = await getRes.text().catch(() => "");
-      throw new Error(`Gitea API 오류: HTTP ${getRes.status} ${body}`);
-    }
-    await giteaFetch("/api/v1/orgs", {
-      method: "POST",
-      body: JSON.stringify({ username: org, visibility: "private" }),
-    });
-  } catch (err) {
-    console.error("ensureGiteaOrgConfigured 실패:", err);
-  }
+  await giteaFetch("/api/v1/orgs", {
+    method: "POST",
+    body: JSON.stringify({ username: org, visibility: "private" }),
+  });
+}
+
+/** 프로젝트가 삭제될 때 그 프로젝트 전용 org도 함께 정리한다(fail-soft -
+ * 호출부가 이미 저장소 삭제를 마친 뒤 마지막 정리 단계로 부르므로,
+ * 이 호출 하나가 실패해도 나머지 삭제 흐름을 막지 않는다). */
+export async function deleteOrg(org: string): Promise<void> {
+  await giteaFetch(`/api/v1/orgs/${encodeURIComponent(org)}`, { method: "DELETE" });
 }
 
 async function giteaFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -99,33 +102,32 @@ export interface CreatedRepo {
  * 실패 시 수동 병합 완료 기록)의 `mergePullRequestManually()`가
  * "manually-merged is not allowed" 405로 항상 실패한다 - 실제로 이
  * 오류를 재현해서 발견함. */
-async function enableManualMerge(slug: string): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}`, {
+async function enableManualMerge(target: GiteaRepoRef): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}`, {
     method: "PATCH",
     body: JSON.stringify({ allow_manual_merge: true }),
   });
 }
 
-export async function createRepo(slug: string): Promise<CreatedRepo> {
-  const res = await giteaFetch(`/api/v1/orgs/${orgLogin()}/repos`, {
+export async function createRepo(target: GiteaRepoRef): Promise<CreatedRepo> {
+  const res = await giteaFetch(`/api/v1/orgs/${target.org}/repos`, {
     method: "POST",
-    body: JSON.stringify({ name: slug, private: true, auto_init: true }),
+    body: JSON.stringify({ name: target.repo, private: true, auto_init: true }),
   });
   const json = (await res.json()) as { clone_url: string; id: number };
-  await enableManualMerge(slug);
+  await enableManualMerge(target);
   return { cloneUrl: json.clone_url, externalRepoId: String(json.id) };
 }
 
 /** Gitea 저장소 이름을 바꾼다(#git-unlink 전용 - 외부 연동 해제 시
- * `{slug}-work`이던 작업 저장소를 self_hosted 표준 slug(접미사 없음)
- * 로 바꿔, requireGiteaWorkingSlug()의 self_hosted 분기가 그대로
- * 맞아떨어지게 한다 - 그렇지 않으면 DB의 provider만 바뀌고 실제 Gitea
- * 저장소 이름은 여전히 "-work" 접미사라 이후 모든 git 조회/커밋이
- * 엉뚱한(존재하지 않는) slug를 찾아 404가 난다). */
-export async function renameRepo(oldSlug: string, newSlug: string): Promise<CreatedRepo> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${oldSlug}`, {
+ * "work" 저장소를 self_hosted 표준 이름("repo")으로 바꿔,
+ * requireGiteaWorkingRef()의 self_hosted 분기가 그대로 맞아떨어지게
+ * 한다). org는 항상 그 프로젝트의 org로 고정이고 저장소 이름만
+ * 바뀐다(프로젝트당 org 1개 구조라 org 자체를 옮길 일이 없음). */
+export async function renameRepo(target: GiteaRepoRef, newRepoName: string): Promise<CreatedRepo> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}`, {
     method: "PATCH",
-    body: JSON.stringify({ name: newSlug }),
+    body: JSON.stringify({ name: newRepoName }),
   });
   const json = (await res.json()) as { clone_url: string; id: number };
   return { cloneUrl: json.clone_url, externalRepoId: String(json.id) };
@@ -135,12 +137,12 @@ export async function renameRepo(oldSlug: string, newSlug: string): Promise<Crea
  * 자격증명 입력 후 재시도가 실제 사용 경로) 남은 빈 stub 저장소를
  * 지운다. 실측으로 발견: Gitea의 migrate API는 저장소 레코드를 먼저
  * 만들고 그다음 clone을 시도하므로, clone이 인증 실패로 죽으면 빈
- * 저장소만 남는다 - 이 상태로 같은 slug를 또 migrate하면 "저장소가
+ * 저장소만 남는다 - 이 상태로 같은 이름을 또 migrate하면 "저장소가
  * 이미 존재합니다"로 막혀서 자격증명을 새로 넣고 재시도해도 영원히
  * 실패한다(설계자 확인 필요 없이 명백한 버그 - deleteRepo로 정리해야
  * 재시도가 실제로 성립함). */
-export async function deleteRepo(slug: string): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}`, { method: "DELETE" });
+export async function deleteRepo(target: GiteaRepoRef): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}`, { method: "DELETE" });
 }
 
 /** migrateRepo()가 "인증이 필요해서 실패"를 다른 실패와 구분해 던질 때
@@ -167,14 +169,14 @@ export interface MigrateOptions {
  * 인스턴스로 검증해 확정 예정(지금은 401/403과 본문의 인증 관련
  * 문구를 폭넓게 잡는다 - Phase 2에서 webhook/blame 응답 형식을 실제
  * 컨테이너로 확정했던 것과 같은 방식). */
-export async function migrateRepo(slug: string, cloneAddr: string, opts: MigrateOptions): Promise<CreatedRepo> {
+export async function migrateRepo(target: GiteaRepoRef, cloneAddr: string, opts: MigrateOptions): Promise<CreatedRepo> {
   const { apiUrl, token } = config();
   const res = await fetch(`${apiUrl}/api/v1/repos/migrate`, {
     method: "POST",
     headers: { Authorization: `token ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      repo_name: slug,
-      repo_owner: orgLogin(),
+      repo_name: target.repo,
+      repo_owner: target.org,
       clone_addr: cloneAddr,
       mirror: opts.mirror,
       private: true,
@@ -191,9 +193,9 @@ export async function migrateRepo(slug: string, cloneAddr: string, opts: Migrate
   }
   const json = (await res.json()) as { clone_url: string; id: number };
   // PR은 항상 work 저장소(mirror:false)에서만 생성/머지된다
-  // (requireGiteaWorkingSlug 참고) - 읽기 전용 pull-mirror엔 PR 자체가
+  // (requireGiteaWorkingRef 참고) - 읽기 전용 pull-mirror엔 PR 자체가
   // 없으므로 그쪽은 건드릴 필요 없음.
-  if (!opts.mirror) await enableManualMerge(slug);
+  if (!opts.mirror) await enableManualMerge(target);
   return { cloneUrl: json.clone_url, externalRepoId: String(json.id) };
 }
 
@@ -201,16 +203,16 @@ export async function migrateRepo(slug: string, cloneAddr: string, opts: Migrate
  * 이 호출 자체는 완료를 기다리지 않고 즉시 반환된다). 호출부가 실제
  * 완료 시점을 알려면 getMirrorUpdatedAt()으로 타임스탬프 변화를
  * 폴링해야 한다. */
-export async function forceMirrorSync(slug: string): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/mirror-sync`, { method: "POST" });
+export async function forceMirrorSync(target: GiteaRepoRef): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/mirror-sync`, { method: "POST" });
 }
 
 /** 미러가 마지막으로 실제 동기화된 시각(ISO 문자열) - forceMirrorSync()
  * 트리거 전후로 이 값을 비교해 "이번 트리거로 인한 pull이 실제로
  * 끝났는지" 판단하는 데 쓴다(mirror-sync 자체가 비동기 큐잉이라 트리거
  * 직후 바로 비교하면 옛 상태를 읽을 수 있음). */
-export async function getMirrorUpdatedAt(slug: string): Promise<string | null> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}`);
+export async function getMirrorUpdatedAt(target: GiteaRepoRef): Promise<string | null> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}`);
   const json = (await res.json()) as { mirror_updated?: string };
   return json.mirror_updated ?? null;
 }
@@ -232,12 +234,12 @@ export interface PushMirrorStatus {
  * 에러를 던짐 - 호출부가 getPushMirrorStatus로 먼저 존재를 확인해야
  * 한다). username/token은 자격증명에서 복호화한 값을 그대로 전달. */
 export async function configurePushMirror(
-  slug: string,
+  target: GiteaRepoRef,
   remoteAddress: string,
   username: string,
   token: string,
 ): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/push_mirrors`, {
+  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/push_mirrors`, {
     method: "POST",
     body: JSON.stringify({
       remote_address: remoteAddress,
@@ -251,15 +253,15 @@ export async function configurePushMirror(
 /** 등록된 push mirror의 즉시 동기화를 큐에 넣는다(pull-mirror의
  * forceMirrorSync와 마찬가지로 비동기 - 완료 여부는
  * getPushMirrorStatus()의 lastUpdate/lastError로 폴링해 확인). */
-export async function triggerPushMirrorSync(slug: string): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/push_mirrors-sync`, { method: "POST" });
+export async function triggerPushMirrorSync(target: GiteaRepoRef): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/push_mirrors-sync`, { method: "POST" });
 }
 
 /** 등록된 push mirror 목록(이 시스템은 저장소당 하나만 등록하므로
  * 첫 번째만 본다) - lastError가 있으면 마지막 동기화가 실패한 것
  * (자격증명에 push 권한이 없는 경우 등), null이면 성공. */
-export async function getPushMirrorStatus(slug: string): Promise<PushMirrorStatus | null> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/push_mirrors`);
+export async function getPushMirrorStatus(target: GiteaRepoRef): Promise<PushMirrorStatus | null> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/push_mirrors`);
   const json = (await res.json()) as { remote_address: string; last_error?: string; last_update?: string }[];
   if (json.length === 0) return null;
   const first = json[0];
@@ -284,8 +286,8 @@ export interface FullTreeEntry {
  * 봄)로는 두 저장소 전체를 비교할 수 없어서 필요(동기화 상태 비교용).
  * 기본 브랜치의 최신 커밋(ref 생략 시 Gitea가 기본 브랜치로 해석)
  * 트리를 재귀 조회한다. */
-export async function getFullTree(slug: string, ref = "HEAD"): Promise<FullTreeEntry[]> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/git/trees/${ref}?recursive=true`);
+export async function getFullTree(target: GiteaRepoRef, ref = "HEAD"): Promise<FullTreeEntry[]> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/git/trees/${ref}?recursive=true`);
   const json = (await res.json()) as { tree: { path: string; sha: string; type: string; size?: number }[] };
   return json.tree
     .filter((e) => e.type === "blob")
@@ -347,7 +349,10 @@ const SYSTEM_WEBHOOK_EVENTS = ["push", "delete"];
  * 가리키는 시스템 웹훅이 아직 없으면 등록한다(멱등 - 재기동해도 중복
  * 등록 안 됨, `listSystemWebhooks()`로 기존 목록의 url을 먼저 확인).
  * 이미 있는데 events가 최신 목록(SYSTEM_WEBHOOK_EVENTS)을 다 포함하지
- * 않으면(예: "delete" 추가 전에 배포된 기존 웹훅) PATCH로 갱신한다. */
+ * 않으면(예: "delete" 추가 전에 배포된 기존 웹훅) PATCH로 갱신한다.
+ * 이 웹훅은 인스턴스 전체(모든 org의 모든 저장소)를 커버하므로
+ * 프로젝트별 org 구조로 바뀐 뒤에도(#gitea-per-project-namespace)
+ * 여전히 딱 하나만 있으면 된다 - org마다 따로 등록할 필요 없음. */
 export async function ensureGiteaSystemWebhookConfigured(): Promise<void> {
   try {
     config();
@@ -373,11 +378,11 @@ export async function ensureGiteaSystemWebhookConfigured(): Promise<void> {
   }
 }
 
-export async function listCommits(slug: string, opts?: { ref?: string; limit?: number }): Promise<unknown[]> {
+export async function listCommits(target: GiteaRepoRef, opts?: { ref?: string; limit?: number }): Promise<unknown[]> {
   const qs = new URLSearchParams();
   if (opts?.ref) qs.set("sha", opts.ref);
   qs.set("limit", String(opts?.limit ?? 50));
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/commits?${qs}`);
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/commits?${qs}`);
   return res.json() as Promise<unknown[]>;
 }
 
@@ -391,36 +396,36 @@ export interface CommitPage {
  * "다음 페이지에 실제로 항목이 있는가"만 별도로 가벼운 요청(limit=1)
  * 으로 확인하는 방식을 쓴다 - 헤더 유무에 기대지 않아 항상 정확하다. */
 export async function listCommitsPaged(
-  slug: string,
+  target: GiteaRepoRef,
   opts: { ref?: string; page: number; pageSize: number },
 ): Promise<CommitPage> {
   const qs = new URLSearchParams();
   if (opts.ref) qs.set("sha", opts.ref);
   qs.set("limit", String(opts.pageSize));
   qs.set("page", String(opts.page));
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/commits?${qs}`);
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/commits?${qs}`);
   const items = (await res.json()) as unknown[];
 
   const nextQs = new URLSearchParams();
   if (opts.ref) nextQs.set("sha", opts.ref);
   nextQs.set("limit", "1");
   nextQs.set("page", String(opts.page + 1));
-  const nextRes = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/commits?${nextQs}`);
+  const nextRes = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/commits?${nextQs}`);
   const nextItems = (await nextRes.json()) as unknown[];
 
   return { items, hasMore: nextItems.length > 0 };
 }
 
-export async function getCommit(slug: string, sha: string): Promise<unknown> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/git/commits/${sha}`);
+export async function getCommit(target: GiteaRepoRef, sha: string): Promise<unknown> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/git/commits/${sha}`);
   return res.json();
 }
 
 // /api/v1/repos/{owner}/{repo}/git/commits/{sha}.diff - 실제 Gitea
 // 1.27 인스턴스에 대고 검증해서 확정한 경로("/{owner}/{repo}/commit/
 // {sha}.diff" 웹 라우트는 404 - API 하위 경로가 맞다).
-export async function getCommitDiff(slug: string, sha: string): Promise<string> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/git/commits/${sha}.diff`);
+export async function getCommitDiff(target: GiteaRepoRef, sha: string): Promise<string> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/git/commits/${sha}.diff`);
   return res.text();
 }
 
@@ -430,16 +435,16 @@ export async function getCommitDiff(slug: string, sha: string): Promise<string> 
 // 토큰 인증으로는 믿고 쓸 수 없었다. 그래서 실제 조회를 시도하지 않고
 // 알려진 플랫폼 제한을 즉시 알린다(엔드포인트가 있는 척 호출해서 애매한
 // 404를 내는 것보다 명확하다).
-export async function getBlame(_slug: string, _filepath: string, _ref?: string): Promise<never> {
+export async function getBlame(_target: GiteaRepoRef, _filepath: string, _ref?: string): Promise<never> {
   throw new Error(
     "Gitea REST API는 blame 조회를 지원하지 않습니다(알려진 플랫폼 제한 - git log/diff/show로 대신 변경 이력을 확인하세요)",
   );
 }
 
-async function getContentsRaw(slug: string, path: string, ref?: string): Promise<unknown> {
-  const encodedPath = path ? path.split("/").map(encodeURIComponent).join("/") : "";
+async function getContentsRaw(target: GiteaRepoRef, filePath: string, ref?: string): Promise<unknown> {
+  const encodedPath = filePath ? filePath.split("/").map(encodeURIComponent).join("/") : "";
   const qs = ref ? `?ref=${encodeURIComponent(ref)}` : "";
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/contents/${encodedPath}${qs}`);
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/contents/${encodedPath}${qs}`);
   return res.json();
 }
 
@@ -452,8 +457,8 @@ export interface TreeEntry {
 /** Gitea Contents API는 디렉터리면 배열, 파일이면 객체 하나를 돌려준다 -
  * 이 함수는 디렉터리 조회 전용(배열이 아니면 명확한 에러). path 빈
  * 문자열이면 루트. */
-export async function listTree(slug: string, dirPath: string, ref?: string): Promise<TreeEntry[]> {
-  const raw = await getContentsRaw(slug, dirPath, ref);
+export async function listTree(target: GiteaRepoRef, dirPath: string, ref?: string): Promise<TreeEntry[]> {
+  const raw = await getContentsRaw(target, dirPath, ref);
   if (!Array.isArray(raw)) {
     throw new Error(`${dirPath || "/"}는 디렉터리가 아닙니다`);
   }
@@ -469,8 +474,8 @@ export async function listTree(slug: string, dirPath: string, ref?: string): Pro
  * 전체 목록을 한 번에 받아온 뒤 여기서 잘라 반환한다 - 디렉터리
  * 하나가 실제로 수백~수천 항목까지 가는 경우는 드물어 감내 가능한
  * 비용이라고 판단. */
-export async function listTreePaged(slug: string, dirPath: string, ref: string | undefined, page: number, pageSize: number): Promise<Page<TreeEntry>> {
-  const all = await listTree(slug, dirPath, ref);
+export async function listTreePaged(target: GiteaRepoRef, dirPath: string, ref: string | undefined, page: number, pageSize: number): Promise<Page<TreeEntry>> {
+  const all = await listTree(target, dirPath, ref);
   return paginateInMemory(all, page, pageSize);
 }
 
@@ -480,8 +485,8 @@ export interface FileContent {
   sha: string;
 }
 
-export async function getFileContent(slug: string, filePath: string, ref?: string): Promise<FileContent> {
-  const raw = await getContentsRaw(slug, filePath, ref);
+export async function getFileContent(target: GiteaRepoRef, filePath: string, ref?: string): Promise<FileContent> {
+  const raw = await getContentsRaw(target, filePath, ref);
   if (Array.isArray(raw)) {
     throw new Error(`${filePath}는 파일이 아니라 디렉터리입니다`);
   }
@@ -504,8 +509,8 @@ export interface RawFile {
  * ETag/Last-Modified/Range를 Express가 전부 알아서 처리). sha가 이미
  * 내용의 고유 식별자라 내용이 바뀌면 sha도 바뀌어 캐시가 자연히
  * 무효화되고, 같은 내용이면 프로젝트가 달라도 캐시가 재사용된다. */
-export async function getFileRaw(slug: string, filePath: string, ref?: string): Promise<RawFile> {
-  const raw = await getContentsRaw(slug, filePath, ref);
+export async function getFileRaw(target: GiteaRepoRef, filePath: string, ref?: string): Promise<RawFile> {
+  const raw = await getContentsRaw(target, filePath, ref);
   if (Array.isArray(raw)) {
     throw new Error(`${filePath}는 파일이 아니라 디렉터리입니다`);
   }
@@ -549,7 +554,7 @@ export function mimeTypeForPath(filePath: string): string {
  * 상태) 관리자 토큰으로 폴백한다(저장 자체를 막지 않기 위한 방어적
  * 처리 - 호출부가 이 경우 경고를 남긴다). */
 export async function putFileContent(
-  slug: string,
+  target: GiteaRepoRef,
   filepath: string,
   content: string,
   message: string,
@@ -558,7 +563,7 @@ export async function putFileContent(
   const { apiUrl, token: adminToken } = config();
   const authToken = actingToken || adminToken;
   const encodedPath = filepath.split("/").map(encodeURIComponent).join("/");
-  const contentPath = `/api/v1/repos/${orgLogin()}/${slug}/contents/${encodedPath}`;
+  const contentPath = `/api/v1/repos/${target.org}/${target.repo}/contents/${encodedPath}`;
 
   let existingSha: string | undefined;
   const getRes = await fetch(`${apiUrl}${contentPath}`, { headers: { Authorization: `token ${authToken}` } });
@@ -629,18 +634,18 @@ export async function createGiteaUser(input: {
  * (core/members.ts의 syncCollaboratorGrant()). 관리자 토큰으로 호출
  * (저장소가 속한 조직의 관리자 권한이 필요 - 협업자 본인 권한이 아님). */
 export async function setRepoCollaborator(
-  slug: string,
+  target: GiteaRepoRef,
   username: string,
   permission: "read" | "write" | "admin",
 ): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/collaborators/${encodeURIComponent(username)}`, {
+  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/collaborators/${encodeURIComponent(username)}`, {
     method: "PUT",
     body: JSON.stringify({ permission }),
   });
 }
 
-export async function removeRepoCollaborator(slug: string, username: string): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/collaborators/${encodeURIComponent(username)}`, {
+export async function removeRepoCollaborator(target: GiteaRepoRef, username: string): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/collaborators/${encodeURIComponent(username)}`, {
     method: "DELETE",
   });
 }
@@ -703,8 +708,8 @@ export interface BranchSummary {
   lastCommitAt: string | null;
 }
 
-export async function listBranches(slug: string): Promise<BranchSummary[]> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/branches?limit=100`);
+export async function listBranches(target: GiteaRepoRef): Promise<BranchSummary[]> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/branches?limit=100`);
   const json = (await res.json()) as Array<{ name: string; commit: { id: string; timestamp?: string } }>;
   return json.map((b) => ({ name: b.name, commitSha: b.commit.id, lastCommitAt: b.commit.timestamp ?? null }));
 }
@@ -747,27 +752,27 @@ function toPullRequestSummary(pr: RawGiteaPullRequest): PullRequestSummary {
   };
 }
 
-export async function listPullRequests(slug: string, state?: "open" | "closed" | "all"): Promise<PullRequestSummary[]> {
+export async function listPullRequests(target: GiteaRepoRef, state?: "open" | "closed" | "all"): Promise<PullRequestSummary[]> {
   const qs = new URLSearchParams();
   qs.set("state", state ?? "all");
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/pulls?${qs}`);
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/pulls?${qs}`);
   const json = (await res.json()) as RawGiteaPullRequest[];
   return json.map(toPullRequestSummary);
 }
 
-export async function getPullRequest(slug: string, index: number): Promise<PullRequestSummary> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}`);
+export async function getPullRequest(target: GiteaRepoRef, index: number): Promise<PullRequestSummary> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/pulls/${index}`);
   return toPullRequestSummary((await res.json()) as RawGiteaPullRequest);
 }
 
 /** actingToken이 있으면 그 설계자 명의로 PR이 생성된다(없으면 관리자
  * 토큰 폴백 - putFileContent()와 같은 원칙). */
 export async function createPullRequest(
-  slug: string,
+  target: GiteaRepoRef,
   input: { title: string; head: string; base: string; body?: string },
   actingToken?: string,
 ): Promise<PullRequestSummary> {
-  const res = await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/pulls`, actingToken, {
+  const res = await giteaFetchAs(`/api/v1/repos/${target.org}/${target.repo}/pulls`, actingToken, {
     method: "POST",
     body: JSON.stringify({ title: input.title, head: input.head, base: input.base, body: input.body ?? "" }),
   });
@@ -778,8 +783,8 @@ export async function createPullRequest(
  * server.ts가 requireProjectRole("owner")로 이중 방어). Gitea의 merge
  * 옵션 필드명은 대문자로 시작하는 `Do`(swagger MergePullRequestOption
  * 기준) - 기본 merge 전략만 지원(squash/rebase는 이번 범위 밖). */
-export async function mergePullRequest(slug: string, index: number, actingToken?: string): Promise<void> {
-  await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}/merge`, actingToken, {
+export async function mergePullRequest(target: GiteaRepoRef, index: number, actingToken?: string): Promise<void> {
+  await giteaFetchAs(`/api/v1/repos/${target.org}/${target.repo}/pulls/${index}/merge`, actingToken, {
     method: "POST",
     body: JSON.stringify({ Do: "merge" }),
   });
@@ -813,14 +818,14 @@ function toComment(c: RawGiteaComment): PullRequestComment {
 }
 
 /** PR도 issue 취급하는 Gitea API 관례 그대로 - 설계자간 대화(Markdown). */
-export async function listPullRequestComments(slug: string, index: number): Promise<PullRequestComment[]> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/issues/${index}/comments`);
+export async function listPullRequestComments(target: GiteaRepoRef, index: number): Promise<PullRequestComment[]> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/issues/${index}/comments`);
   const json = (await res.json()) as RawGiteaComment[];
   return json.map(toComment);
 }
 
-export async function addPullRequestComment(slug: string, index: number, body: string, actingToken?: string): Promise<PullRequestComment> {
-  const res = await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/issues/${index}/comments`, actingToken, {
+export async function addPullRequestComment(target: GiteaRepoRef, index: number, body: string, actingToken?: string): Promise<PullRequestComment> {
+  const res = await giteaFetchAs(`/api/v1/repos/${target.org}/${target.repo}/issues/${index}/comments`, actingToken, {
     method: "POST",
     body: JSON.stringify({ body }),
   });
@@ -846,8 +851,8 @@ interface RawGiteaTimelineEntry {
 /** "PR이 닫힐 때까지의 전체 히스토리" - Gitea의 issue 타임라인(코멘트/
  * 상태전이/머지/브랜치 참조 등이 type으로 구분된 하나의 이벤트 피드)을
  * 그대로 매핑한다. */
-export async function listPullRequestTimeline(slug: string, index: number): Promise<PullRequestTimelineEntry[]> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/issues/${index}/timeline`);
+export async function listPullRequestTimeline(target: GiteaRepoRef, index: number): Promise<PullRequestTimelineEntry[]> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/issues/${index}/timeline`);
   const json = (await res.json()) as RawGiteaTimelineEntry[];
   return json.map((e) => ({ id: e.id, type: e.type, body: e.body ?? "", authorUsername: e.user?.login ?? null, createdAt: e.created_at }));
 }
@@ -864,15 +869,15 @@ interface RawGiteaPullCommit {
   commit: { message: string; author: { name: string; date: string } };
 }
 
-export async function listPullRequestCommits(slug: string, index: number): Promise<PullRequestCommit[]> {
-  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}/commits`);
+export async function listPullRequestCommits(target: GiteaRepoRef, index: number): Promise<PullRequestCommit[]> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/pulls/${index}/commits`);
   const json = (await res.json()) as RawGiteaPullCommit[];
   return json.map((c) => ({ sha: c.sha, message: c.commit.message, authorName: c.commit.author.name, authoredAt: c.commit.author.date }));
 }
 
 /** Close/Reopen 공용 - EditPullRequestOption.state("open"|"closed"). */
-export async function setPullRequestState(slug: string, index: number, state: "open" | "closed", actingToken?: string): Promise<PullRequestSummary> {
-  const res = await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}`, actingToken, {
+export async function setPullRequestState(target: GiteaRepoRef, index: number, state: "open" | "closed", actingToken?: string): Promise<PullRequestSummary> {
+  const res = await giteaFetchAs(`/api/v1/repos/${target.org}/${target.repo}/pulls/${index}`, actingToken, {
     method: "PATCH",
     body: JSON.stringify({ state }),
   });
@@ -883,8 +888,8 @@ export async function setPullRequestState(slug: string, index: number, state: "o
  * 해결해 push한 뒤, 그 결과를 Gitea에 "수동으로 병합됨"으로 기록시킨다
  * (MergePullRequestOption.do:"manually-merged" - swagger 문서화된 값,
  * 요구사항 4번의 핵심 메커니즘). */
-export async function mergePullRequestManually(slug: string, index: number, mergeCommitId: string, actingToken?: string): Promise<void> {
-  await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}/merge`, actingToken, {
+export async function mergePullRequestManually(target: GiteaRepoRef, index: number, mergeCommitId: string, actingToken?: string): Promise<void> {
+  await giteaFetchAs(`/api/v1/repos/${target.org}/${target.repo}/pulls/${index}/merge`, actingToken, {
     method: "POST",
     body: JSON.stringify({ Do: "manually-merged", merge_commit_id: mergeCommitId }),
   });

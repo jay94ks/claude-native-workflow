@@ -67,14 +67,19 @@ services:
   # Gitea 자체 메타데이터는 내장 SQLite로 충분(설치용 Postgres와 섞지
   # 않음). SSH는 노출하지 않는다 - git clone/push는 설계자가 Gitea의
   # HTTP(S) git 프로토콜로 직접 하고, 백엔드는 REST API로 저장소 생성/
-  # 웹훅 등록/파일 커밋만 한다. 웹 UI 포트만 호스트에 노출해서 설치
-  # 마법사+관리자 계정 생성+PAT 발급을 1회 수동으로 할 수 있게 한다
-  # (EMQX API Key 발급과 같은 패턴).
+  # 웹훅 등록/파일 커밋만 한다. **호스트 포트를 아예 열지 않는다**
+  # (#gitea-nginx-lockdown, 보안 강화) - 예전엔 설치 마법사+PAT 발급을
+  # 위해 웹 UI 포트를 잠깐이라도 열어야 했지만, 이제 관리자 계정/PAT
+  # 발급 전부 `docker exec ... gitea admin user create`/
+  # `generate-access-token` CLI로 대체했다(README.md "Gitea 설정" 절).
+  # git clone/push는 아래 nginx가 `.git`로 끝나는 요청만 골라 이
+  # 컨테이너로 그대로 돌려준다 - Gitea의 웹 UI(저장소 브라우징 등)는
+  # 이 origin을 통해서는 원천적으로 도달 불가능하다.
   gitea:
     image: gitea/gitea:latest
     environment:
       GITEA__database__DB_TYPE: sqlite3
-      GITEA__server__ROOT_URL: http://localhost:${GITEA_HOST_PORT:-3001}/
+      GITEA__server__ROOT_URL: ${PUBLIC_GITEA_URL:-http://localhost}/
       # Gitea는 기본적으로 사설/내부 네트워크 호스트로의 웹훅 발송을
       # SSRF 방지 차원에서 막는다 - 이 설정 없이는 backend 컨테이너로
       # 웹훅이 절대 도달하지 못한다(같은 compose 네트워크 안이라도).
@@ -84,8 +89,11 @@ services:
       GITEA__security__ALLOWED_HOST_LIST: backend
     volumes:
       - gitea-data:/data
-    ports:
-      - "${GITEA_HOST_PORT:-3001}:3000"
+    # ⚠ 임시 디버깅용 - Gitea 웹 UI를 직접 열어야 할 때만 주석 해제하고
+    # 작업이 끝나면 반드시 다시 주석 처리할 것(협업자 권한이 있는
+    # 누구나 이 포트를 통해 파일트리/커밋을 직접 볼 수 있게 됨).
+    # ports:
+    #   - "${GITEA_HOST_PORT:-3001}:3000"
     restart: unless-stopped
 
   backend:
@@ -112,16 +120,36 @@ services:
       GITEA_API_URL: http://gitea:3000
       GITEA_ADMIN_USERNAME: ${GITEA_ADMIN_USERNAME}
       GITEA_API_TOKEN: ${GITEA_API_TOKEN}
+      GITEA_ORG_PREFIX: ${GITEA_ORG_PREFIX}
       PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL}
+      PUBLIC_GITEA_URL: ${PUBLIC_GITEA_URL}
       PUBLIC_EMQX_WS_URL: ${PUBLIC_EMQX_WS_URL}
       PUBLIC_EMQX_MQTT_URL: ${PUBLIC_EMQX_MQTT_URL}
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID}
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET}
-    ports:
-      - "${BACKEND_HOST_PORT:-8760}:8760"
+    # 개발 편의용 - 필요하면 주석 해제(nginx를 거치지 않고 backend에
+    # 직접 붙고 싶을 때만). 운영 배포에서는 nginx만 host에 노출하는
+    # 쪽이 안전하다(#gitea-nginx-lockdown).
+    # ports:
+    #   - "${BACKEND_HOST_PORT:-8760}:8760"
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  # 유일한 기본 호스트 노출 지점(#gitea-nginx-lockdown) - `.git`로
+  # 끝나는 git smart-HTTP 요청만 gitea로, 나머지는 전부 backend로
+  # 돌린다(nginx/default.conf 참고). Gitea 자신의 웹 UI는 이 origin을
+  # 통해서는 아예 도달할 수 없다.
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${PUBLIC_HOST_PORT:-80}:80"
+    depends_on:
+      - backend
+      - gitea
     restart: unless-stopped
 
 volumes:

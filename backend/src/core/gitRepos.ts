@@ -4,11 +4,13 @@ import { encryptSecret, decryptSecret } from "./crypto.js";
 import { assertProjectExists } from "./projects.js";
 import * as gitea from "./gitea.js";
 import { GitAuthRequiredError } from "./gitea.js";
+import type { GiteaRepoRef } from "./gitea.js";
 import { registerWebhook, detectProvider, validateCredential } from "./externalGit.js";
 import { resyncCollaboratorGrantsForProject } from "./members.js";
 import { sendMessage } from "./messages.js";
 
 export { GitAuthRequiredError };
+export type { GiteaRepoRef };
 
 export interface ProjectGitRepoInfo {
   projectId: string;
@@ -35,11 +37,27 @@ interface ProjectGitRepoRow {
   webhookFirstReceivedAt: Date | null;
 }
 
+/** self_hosted 저장소의 clone URL을 응답 시점에 재계산한다(#gitea-per-
+ * project-namespace) - Gitea가 저장소 생성 시점에 반환한 clone_url을
+ * DB에 그대로 얼려두던 예전 방식은 그 시점의 ROOT_URL이 나중에 바뀌면
+ * (도메인 이전, 로컬→원격 이전 등) 전혀 반영되지 않는 문제가 있었다.
+ * PUBLIC_GITEA_URL이 설정돼 있으면 그 값 기준으로 항상 다시 계산해서
+ * 돌려주고(fail-soft - 미설정이면 DB에 저장된 값 그대로 폴백), DB
+ * 컬럼 자체는 그대로 둔다(폴백의 폴백). external_linked의 repoUrl은
+ * GitHub/GitLab 쪽 URL이라 여기서 절대 건드리지 않는다. */
+function resolveRepoUrl(row: ProjectGitRepoRow): string {
+  if (row.provider !== "self_hosted") return row.repoUrl;
+  const base = process.env.PUBLIC_GITEA_URL;
+  if (!base) return row.repoUrl;
+  const ref = selfHostedRef(row.projectId);
+  return `${base.replace(/\/$/, "")}/${ref.org}/${ref.repo}.git`;
+}
+
 function toInfo(row: ProjectGitRepoRow): ProjectGitRepoInfo {
   return {
     projectId: row.projectId,
     provider: row.provider,
-    repoUrl: row.repoUrl,
+    repoUrl: resolveRepoUrl(row),
     externalRepoId: row.externalRepoId,
     gitCredentialId: row.gitCredentialId,
     webhookAutoRegistered: row.webhookAutoRegistered,
@@ -47,48 +65,64 @@ function toInfo(row: ProjectGitRepoRow): ProjectGitRepoInfo {
   };
 }
 
-/** 프로젝트별로 고유하고 Gitea repo 이름 제약(영문/숫자/-/_/.)에 맞는
- * slug - cuid는 이미 그 조건을 만족하므로 그대로 접두사만 붙여 쓴다.
- * 옵션 3(외부 연동)의 미러/작업 저장소는 여기서 결정론적으로 파생되는
- * `-mirror`/`-work` 접미사 slug를 쓴다 - 프로젝트당 이미 고유해서 별도
- * DB 컬럼으로 저장할 필요가 없다. */
-export function slugForProject(projectId: string): string {
-  return `project-${projectId}`;
+// ---------------------------------------------------------------- Gitea 네임스페이스(프로젝트당 org 1개)
+// 예전엔 전체 설치가 하나의 고정 org(cnwk-projects)를 공유했다 -
+// 설계자 지시로 프로젝트별 네임스페이스를 적극 활용하도록 개편
+// (#gitea-per-project-namespace). org 이름 자체는 projectId의 순수
+// 함수라(오늘까지의 slug 스킴과 같은 원칙) 별도 DB 컬럼이 필요 없다.
+// org 안의 저장소 이름은 더 이상 slug(project-<id>[-work/-mirror])가
+// 아니라 짧은 고정 이름("repo"/"work"/"mirror") 하나뿐 - 이미 org
+// 자체가 프로젝트를 유일하게 식별하므로 저장소 이름에 projectId를
+// 또 담을 필요가 없다.
+
+function orgPrefix(): string {
+  return process.env.GITEA_ORG_PREFIX || "proj-";
 }
 
-function mirrorSlugForProject(projectId: string): string {
-  return `${slugForProject(projectId)}-mirror`;
+export function orgForProject(projectId: string): string {
+  return `${orgPrefix()}${projectId}`;
 }
 
-function workSlugForProject(projectId: string): string {
-  return `${slugForProject(projectId)}-work`;
+const REPO_SELF_HOSTED = "repo";
+const REPO_WORK = "work";
+const REPO_MIRROR = "mirror";
+
+export function selfHostedRef(projectId: string): GiteaRepoRef {
+  return { org: orgForProject(projectId), repo: REPO_SELF_HOSTED };
+}
+export function mirrorRef(projectId: string): GiteaRepoRef {
+  return { org: orgForProject(projectId), repo: REPO_MIRROR };
+}
+export function workRef(projectId: string): GiteaRepoRef {
+  return { org: orgForProject(projectId), repo: REPO_WORK };
 }
 
 export type GiteaRepoKind = "self_hosted" | "work" | "mirror";
 
-/** slugForProject()/mirrorSlugForProject()/workSlugForProject()의 역함수 -
- * 시스템 웹훅 payload의 `repository.name`(Gitea repo slug)에서
- * projectId와 저장소 종류를 되짚는다. DB 조회 없는 순수 문자열
- * 파싱만으로 충분한 이유 - cuid엔 하이픈이 없어 접미사 파싱이
- * 모호하지 않다. 이 앱이 만들지 않은 slug(수동으로 만든 저장소 등)면
- * null - 호출부(core/pushHooks.ts)가 그 push를 조용히 무시하는 데
+/** orgForProject()/selfHostedRef()/workRef()/mirrorRef()의 역함수 -
+ * 시스템 웹훅 payload의 `repository.owner.login`(org)+`repository.name`
+ * (저장소 이름)에서 projectId와 저장소 종류를 되짚는다. DB 조회 없는
+ * 순수 문자열 파싱만으로 충분한 이유 - cuid엔 하이픈이 없어 접두사
+ * 파싱이 모호하지 않다. 이 앱이 만들지 않은 org(수동으로 만든 조직 등)
+ * 면 null - 호출부(core/pushHooks.ts)가 그 push를 조용히 무시하는 데
  * 쓴다. */
-export function resolveProjectFromSlug(slug: string): { projectId: string; kind: GiteaRepoKind } | null {
-  const PREFIX = "project-";
-  if (!slug.startsWith(PREFIX)) return null;
-  const rest = slug.slice(PREFIX.length);
-
-  let kind: GiteaRepoKind = "self_hosted";
-  let projectId = rest;
-  if (rest.endsWith("-mirror")) {
-    kind = "mirror";
-    projectId = rest.slice(0, -"-mirror".length);
-  } else if (rest.endsWith("-work")) {
-    kind = "work";
-    projectId = rest.slice(0, -"-work".length);
-  }
+export function resolveProjectFromOrgAndRepo(org: string, repo: string): { projectId: string; kind: GiteaRepoKind } | null {
+  const prefix = orgPrefix();
+  if (!org.startsWith(prefix)) return null;
+  const projectId = org.slice(prefix.length);
   if (!projectId) return null;
+  const kind: GiteaRepoKind | undefined =
+    repo === REPO_SELF_HOSTED ? "self_hosted" : repo === REPO_WORK ? "work" : repo === REPO_MIRROR ? "mirror" : undefined;
+  if (!kind) return null;
   return { projectId, kind };
+}
+
+/** 프로젝트가 처음 Gitea 저장소를 연결하는 시점(linkSelfHostedRepo/
+ * linkExternalAsPrimary)에 그 프로젝트 전용 org를 멱등하게 보장한다. */
+export async function ensureProjectOrgConfigured(projectId: string): Promise<string> {
+  const org = orgForProject(projectId);
+  await gitea.ensureOrgConfigured(org);
+  return org;
 }
 
 // PUBLIC_BACKEND_URL이 없으면(로컬 개발 등, 외부에서 닿을 수 있는 주소가
@@ -111,15 +145,15 @@ async function resolveCredentialToken(gitCredentialId?: string): Promise<string 
 
 /** gitea.migrateRepo()가 clone 단계에서 실패하면(특히 인증 필요) Gitea가
  * 이미 만들어둔 빈 stub 저장소가 남는다(실측으로 발견) - 그대로 두면
- * 같은 slug로 재시도(자격증명 입력 후 재시도가 이 플로우의 핵심 사용
+ * 같은 위치로 재시도(자격증명 입력 후 재시도가 이 플로우의 핵심 사용
  * 경로)할 때마다 "이미 존재합니다"로 막혀 영원히 못 고친다. 실패 시
  * 그 자리에서 정리한 뒤 원래 에러를 그대로 던진다(정리 자체가 실패해도
  * 원래 에러가 더 중요하므로 무시). */
-async function migrateRepoOrCleanUp(slug: string, cloneAddr: string, opts: gitea.MigrateOptions): Promise<gitea.CreatedRepo> {
+async function migrateRepoOrCleanUp(target: GiteaRepoRef, cloneAddr: string, opts: gitea.MigrateOptions): Promise<gitea.CreatedRepo> {
   try {
-    return await gitea.migrateRepo(slug, cloneAddr, opts);
+    return await gitea.migrateRepo(target, cloneAddr, opts);
   } catch (err) {
-    await gitea.deleteRepo(slug).catch(() => {});
+    await gitea.deleteRepo(target).catch(() => {});
     throw err;
   }
 }
@@ -150,13 +184,14 @@ export async function linkSelfHostedRepo(
   const existing = await db.projectGitRepo.findUnique({ where: { projectId } });
   if (existing) throw new Error("이미 git 저장소가 연결된 프로젝트입니다");
 
-  const slug = slugForProject(projectId);
+  await ensureProjectOrgConfigured(projectId);
+  const target = selfHostedRef(projectId);
   const { cloneUrl, externalRepoId } = importFrom
-    ? await migrateRepoOrCleanUp(slug, importFrom.repoUrl, {
+    ? await migrateRepoOrCleanUp(target, importFrom.repoUrl, {
         mirror: false,
         authToken: await resolveCredentialToken(importFrom.gitCredentialId),
       })
-    : await gitea.createRepo(slug);
+    : await gitea.createRepo(target);
 
   const row = await db.projectGitRepo.create({
     data: {
@@ -182,7 +217,7 @@ export interface LinkExternalResult extends ProjectGitRepoInfo {
  * 미러(읽기 전용 pull 사본)와 작업 저장소(이 시스템이 실제로 커밋하는
  * 곳) 두 개를 만든다. 기존 linkExternalRepo(외부 저장소를 그냥
  * 가리키기만 하고 Gitea 사본이 전혀 없던 버전)를 대체 - git log/diff/
- * 소스 에디터가 이제 (requireGiteaWorkingSlug를 통해) 작업 저장소로
+ * 소스 에디터가 이제 (requireGiteaWorkingRef를 통해) 작업 저장소로
  * 전부 동작하게 된다. */
 export async function linkExternalAsPrimary(
   projectId: string,
@@ -195,16 +230,17 @@ export async function linkExternalAsPrimary(
   const existing = await db.projectGitRepo.findUnique({ where: { projectId } });
   if (existing) throw new Error("이미 git 저장소가 연결된 프로젝트입니다");
 
+  await ensureProjectOrgConfigured(projectId);
   const authToken = await resolveCredentialToken(gitCredentialId);
-  const mirrorSlug = mirrorSlugForProject(projectId);
-  const workSlug = workSlugForProject(projectId);
-  await migrateRepoOrCleanUp(mirrorSlug, repoUrl, { mirror: true, authToken, description: "mirror (read-only)" });
+  const mirrorTarget = mirrorRef(projectId);
+  const workTarget = workRef(projectId);
+  await migrateRepoOrCleanUp(mirrorTarget, repoUrl, { mirror: true, authToken, description: "mirror (read-only)" });
   try {
-    await migrateRepoOrCleanUp(workSlug, repoUrl, { mirror: false, authToken, description: "work (this system commits here)" });
+    await migrateRepoOrCleanUp(workTarget, repoUrl, { mirror: false, authToken, description: "work (this system commits here)" });
   } catch (err) {
     // work 저장소 생성이 실패하면 이미 만든 미러도 같이 지운다 - 절반만
     // 연결된(미러만 있고 DB 레코드는 없는) 상태로 남기지 않기 위해.
-    await gitea.deleteRepo(mirrorSlug).catch(() => {});
+    await gitea.deleteRepo(mirrorTarget).catch(() => {});
     throw err;
   }
 
@@ -238,7 +274,7 @@ export async function linkExternalAsPrimary(
     },
   });
   // 저장소가 없던 동안 가입한 멤버들에게도 한 번에 협업자 권한을
-  // 부여한다(work 저장소 기준 - requireGiteaWorkingSlug가 알아서
+  // 부여한다(work 저장소 기준 - requireGiteaWorkingRef가 알아서
   // 작업 저장소를 고름).
   await resyncCollaboratorGrantsForProject(projectId);
 
@@ -251,7 +287,7 @@ export async function linkExternalAsPrimary(
 /** self_hosted → external_linked 승격(unlinkExternalRepo의 반대 방향) -
  * self_hosted의 work 저장소는 새로 만들지 않고 그대로 재사용한다(지금
  *까지의 커밋 히스토리 보존이 이 기능의 핵심 가치) - 이름만
- * `{slug}-work`로 바꿔 requireGiteaWorkingSlug()의 external_linked
+ * "work"로 바꿔 requireGiteaWorkingRef()의 external_linked
  * 분기와 맞춘다. 미러만 새로 만들고, 연결 직후 기존 publishToExternalRepo
  * 를 그대로 한 번 호출해 work 저장소의 현재 상태를 외부 저장소에
  * 즉시 반영한다(빈 저장소가 아니면 기존 push mirror + AI 대기열 로직이
@@ -270,17 +306,16 @@ export async function promoteToExternal(
   const authToken = await resolveCredentialToken(gitCredentialId);
   if (!authToken) throw new Error(`자격증명을 찾을 수 없습니다: ${gitCredentialId}`);
 
-  const mirrorSlug = mirrorSlugForProject(projectId);
-  const plainSlug = slugForProject(projectId);
-  const workSlug = workSlugForProject(projectId);
+  const mirrorTarget = mirrorRef(projectId);
+  const plainTarget = selfHostedRef(projectId);
 
-  await migrateRepoOrCleanUp(mirrorSlug, repoUrl, { mirror: true, authToken, description: "mirror (read-only)" });
+  await migrateRepoOrCleanUp(mirrorTarget, repoUrl, { mirror: true, authToken, description: "mirror (read-only)" });
   try {
-    await gitea.renameRepo(plainSlug, workSlug);
+    await gitea.renameRepo(plainTarget, REPO_WORK);
   } catch (err) {
     // work 저장소 승격이 실패하면 방금 만든 미러도 같이 지운다 - 절반만
     // 승격된 상태로 남기지 않기 위해(linkExternalAsPrimary와 같은 원칙).
-    await gitea.deleteRepo(mirrorSlug).catch(() => {});
+    await gitea.deleteRepo(mirrorTarget).catch(() => {});
     throw err;
   }
 
@@ -368,18 +403,17 @@ export async function unlinkExternalRepo(projectId: string): Promise<ProjectGitR
   if (repo.provider !== "external_linked" && repo.provider !== "github" && repo.provider !== "gitlab") {
     throw new Error("자체 호스팅 저장소는 연결 해제할 수 없습니다 - 프로젝트를 삭제해야 합니다");
   }
-  const mirrorSlug = mirrorSlugForProject(projectId);
-  const workSlug = workSlugForProject(projectId);
-  const plainSlug = slugForProject(projectId);
-  await gitea.deleteRepo(mirrorSlug).catch((err) => {
-    console.error(`unlinkExternalRepo(${projectId}) - 미러 저장소 삭제 실패(${mirrorSlug}):`, err);
+  const mirrorTarget = mirrorRef(projectId);
+  const workTarget = workRef(projectId);
+  await gitea.deleteRepo(mirrorTarget).catch((err) => {
+    console.error(`unlinkExternalRepo(${projectId}) - 미러 저장소 삭제 실패:`, err);
   });
-  // requireGiteaWorkingSlug()의 self_hosted 분기는 접미사 없는
-  // slugForProject()를 기대한다 - DB의 provider만 바꾸고 Gitea 저장소
-  // 이름을 그대로 "-work"로 남기면 이후 모든 git 조회/커밋이 존재하지
-  // 않는 slug를 찾아 404가 난다(실측으로 발견) - 실제로 이름을 바꿔야
-  // self_hosted 프로젝트와 완전히 동일하게 동작한다.
-  const workRepo = await gitea.renameRepo(workSlug, plainSlug);
+  // requireGiteaWorkingRef()의 self_hosted 분기는 저장소 이름 "repo"를
+  // 기대한다 - DB의 provider만 바꾸고 Gitea 저장소 이름을 그대로
+  // "work"로 남기면 이후 모든 git 조회/커밋이 존재하지 않는 이름을
+  // 찾아 404가 난다(실측으로 발견) - 실제로 이름을 바꿔야 self_hosted
+  // 프로젝트와 완전히 동일하게 동작한다.
+  const workRepo = await gitea.renameRepo(workTarget, REPO_SELF_HOSTED);
   const db = getDb();
   const row = await db.projectGitRepo.update({
     where: { projectId },
@@ -396,27 +430,33 @@ export async function unlinkExternalRepo(projectId: string): Promise<ProjectGitR
 
 /** 프로젝트 삭제 시 연결된 Gitea 저장소도 함께 지운다(설계자 확인 -
  * 프로젝트를 삭제하면 DB 데이터뿐 아니라 Gitea 저장소도 같이 삭제).
- * self_hosted는 저장소 하나(slugForProject), external_linked는 미러+
- * 작업 저장소 둘 다(레거시 provider "github"/"gitlab"은 애초에 Gitea
- * 사본이 없던 버전이라 스킵). 실패해도(Gitea 다운 등) 개별적으로
- * 로그만 남기고 계속 진행한다(fail-soft - syncCollaboratorGrant와
- * 같은 원칙 - Gitea가 일시적으로 안 떠 있다고 프로젝트 삭제 자체가
- * 막히면 안 됨). */
+ * self_hosted는 저장소 하나, external_linked는 미러+작업 저장소 둘 다
+ * (레거시 provider "github"/"gitlab"은 애초에 Gitea 사본이 없던
+ * 버전이라 스킵). 실패해도(Gitea 다운 등) 개별적으로 로그만 남기고
+ * 계속 진행한다(fail-soft - syncCollaboratorGrant와 같은 원칙 - Gitea가
+ * 일시적으로 안 떠 있다고 프로젝트 삭제 자체가 막히면 안 됨). 마지막에
+ * 그 프로젝트 전용 org도 정리한다(프로젝트당 org 1개 구조라 저장소를
+ * 다 지우면 org는 빈 껍데기만 남으므로). */
 export async function deleteProjectGitRepo(projectId: string): Promise<void> {
   const repo = await getProjectGitRepo(projectId);
   if (!repo) return;
-  const slugs =
+  const targets =
     repo.provider === "self_hosted"
-      ? [slugForProject(projectId)]
+      ? [selfHostedRef(projectId)]
       : repo.provider === "external_linked"
-        ? [mirrorSlugForProject(projectId), workSlugForProject(projectId)]
+        ? [mirrorRef(projectId), workRef(projectId)]
         : [];
-  for (const slug of slugs) {
+  for (const target of targets) {
     try {
-      await gitea.deleteRepo(slug);
+      await gitea.deleteRepo(target);
     } catch (err) {
-      console.error(`deleteProjectGitRepo(${projectId}) - Gitea 저장소 삭제 실패(${slug}):`, err);
+      console.error(`deleteProjectGitRepo(${projectId}) - Gitea 저장소 삭제 실패(${target.org}/${target.repo}):`, err);
     }
+  }
+  if (targets.length > 0) {
+    await gitea.deleteOrg(orgForProject(projectId)).catch((err) => {
+      console.error(`deleteProjectGitRepo(${projectId}) - Gitea org 삭제 실패:`, err);
+    });
   }
 }
 
@@ -429,18 +469,18 @@ export async function getWebhookSecret(projectId: string): Promise<string | null
 
 /** git log/diff/blame/show/tree/file, template deploy 공통 가드 -
  * 저장소가 없으면 명확한 이유와 함께 즉시 실패시킨다(조용히 빈 결과를
- * 주지 않음). self_hosted면 그 저장소 자신의 slug, external_linked면
- * 작업 저장소의 slug를 반환 - 호출부는 이 슬러그로 Gitea를 그대로
+ * 주지 않음). self_hosted면 그 저장소 자신의 참조, external_linked면
+ * 작업 저장소의 참조를 반환 - 호출부는 이 참조로 Gitea를 그대로
  * 호출하면 된다(어느 provider든 결과가 항상 실제로 존재하는 Gitea
  * 저장소를 가리킴 - 예전엔 external 계열이 전부 400이었지만 이제는
  * 작업 저장소가 있어서 지원됨). */
-export async function requireGiteaWorkingSlug(projectId: string): Promise<string> {
+export async function requireGiteaWorkingRef(projectId: string): Promise<GiteaRepoRef> {
   const repo = await getProjectGitRepo(projectId);
   if (!repo) {
     throw new Error("먼저 git 저장소를 연결하세요(POST .../git/link 또는 .../git/link-external)");
   }
-  if (repo.provider === "self_hosted") return slugForProject(projectId);
-  if (repo.provider === "external_linked") return workSlugForProject(projectId);
+  if (repo.provider === "self_hosted") return selfHostedRef(projectId);
+  if (repo.provider === "external_linked") return workRef(projectId);
   // 레거시 - 과거 linkExternalRepo가 만들던 provider:"github"/"gitlab"
   // (Gitea 사본이 전혀 없던 버전)로 이미 연결된 프로젝트가 있을 수 있음.
   throw new Error("이 연결 방식은 git 이력 조회를 지원하지 않습니다(다시 연결하면 지원됩니다)");
@@ -495,20 +535,20 @@ function diffTrees(mirrorTree: gitea.FullTreeEntry[], workTree: gitea.FullTreeEn
 }
 
 async function computeSyncStatusInBackground(projectId: string): Promise<void> {
-  const mirrorSlug = mirrorSlugForProject(projectId);
-  const workSlug = workSlugForProject(projectId);
+  const mirrorTarget = mirrorRef(projectId);
+  const workTarget = workRef(projectId);
   try {
-    const updatedBefore = await gitea.getMirrorUpdatedAt(mirrorSlug);
-    await gitea.forceMirrorSync(mirrorSlug);
+    const updatedBefore = await gitea.getMirrorUpdatedAt(mirrorTarget);
+    await gitea.forceMirrorSync(mirrorTarget);
 
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
       await sleep(2000);
-      const updatedNow = await gitea.getMirrorUpdatedAt(mirrorSlug);
+      const updatedNow = await gitea.getMirrorUpdatedAt(mirrorTarget);
       if (updatedNow !== updatedBefore) break;
     }
 
-    const [mirrorTree, workTree] = await Promise.all([gitea.getFullTree(mirrorSlug), gitea.getFullTree(workSlug)]);
+    const [mirrorTree, workTree] = await Promise.all([gitea.getFullTree(mirrorTarget), gitea.getFullTree(workTarget)]);
     syncStateByProject.set(projectId, { status: "ready", result: diffTrees(mirrorTree, workTree) });
   } catch (err) {
     syncStateByProject.delete(projectId);
@@ -572,11 +612,11 @@ export async function getGitSyncProposal(projectId: string): Promise<{ files: Gi
   if (cached.status !== "ready") {
     throw new Error("먼저 동기화 상태를 확인하세요(git/sync-status로 요청 후 완료될 때까지 기다려야 합니다)");
   }
-  const workSlug = workSlugForProject(projectId);
+  const workTarget = workRef(projectId);
   const paths = [...cached.added, ...cached.changed];
   const files = await Promise.all(
     paths.map(async (path) => {
-      const file = await gitea.getFileContent(workSlug, path);
+      const file = await gitea.getFileContent(workTarget, path);
       return { path, content: file.content };
     }),
   );
@@ -605,14 +645,14 @@ export async function validateExternalCredential(projectId: string, gitCredentia
   return validateCredential(detectProvider(repo.repoUrl), repo.repoUrl, token);
 }
 
-async function waitForPushMirrorOutcome(slug: string, previousUpdate: string | null): Promise<gitea.PushMirrorStatus | null> {
+async function waitForPushMirrorOutcome(target: GiteaRepoRef, previousUpdate: string | null): Promise<gitea.PushMirrorStatus | null> {
   for (let i = 0; i < 20; i++) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    const status = await gitea.getPushMirrorStatus(slug);
+    const status = await gitea.getPushMirrorStatus(target);
     if (status?.lastError) return status;
     if (status?.lastUpdate && status.lastUpdate !== previousUpdate) return status;
   }
-  return await gitea.getPushMirrorStatus(slug);
+  return await gitea.getPushMirrorStatus(target);
 }
 
 export async function publishToExternalRepo(projectId: string, gitCredentialId: string): Promise<PublishResult> {
@@ -638,15 +678,15 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
   const token = await resolveCredentialToken(gitCredentialId);
   if (!token) throw new Error(`자격증명을 찾을 수 없습니다: ${gitCredentialId}`);
 
-  const workSlug = workSlugForProject(projectId);
-  const existing = await gitea.getPushMirrorStatus(workSlug);
+  const workTarget = workRef(projectId);
+  const existing = await gitea.getPushMirrorStatus(workTarget);
   if (!existing) {
     // push mirror의 "username"은 대부분의 PAT 기반 인증(GitHub/GitLab)에서
     // 실질적으로 무시된다 - 토큰을 그대로 재사용한다.
-    await gitea.configurePushMirror(workSlug, repo.repoUrl, token, token);
+    await gitea.configurePushMirror(workTarget, repo.repoUrl, token, token);
   }
-  await gitea.triggerPushMirrorSync(workSlug);
-  const result = await waitForPushMirrorOutcome(workSlug, existing?.lastUpdate ?? null);
+  await gitea.triggerPushMirrorSync(workTarget);
+  const result = await waitForPushMirrorOutcome(workTarget, existing?.lastUpdate ?? null);
 
   if (!result?.lastError) {
     return { status: "synced" };

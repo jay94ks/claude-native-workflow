@@ -1,6 +1,6 @@
 import { MeiliSearchRequestError } from "meilisearch";
 import * as gitea from "./gitea.js";
-import { requireGiteaWorkingSlug } from "./gitRepos.js";
+import { requireGiteaWorkingRef } from "./gitRepos.js";
 import {
   indexSourceFileUpsert,
   indexSourceFilesBulkUpsert,
@@ -60,16 +60,16 @@ export function isIndexableFile(path: string, sizeBytes?: number): boolean {
  * 기존 fire-and-forget 호출부(gitRepos.ts)는 아래 얇은 래퍼를 그대로
  * 계속 쓴다. */
 export async function backfillProjectSourceIndexRaw(projectId: string): Promise<void> {
-  const slug = await requireGiteaWorkingSlug(projectId);
+  const target = await requireGiteaWorkingRef(projectId);
   await clearSourceFileIndexForProject(projectId);
-  const tree = await gitea.getFullTree(slug);
+  const tree = await gitea.getFullTree(target);
   const candidates = tree.filter((e) => isIndexableFile(e.path, e.size));
 
   const docs: SearchableSourceFile[] = [];
   const now = Date.now();
   for (const entry of candidates) {
     try {
-      const file = await gitea.getFileContent(slug, entry.path);
+      const file = await gitea.getFileContent(target, entry.path);
       if (Buffer.byteLength(file.content, "utf-8") > MAX_INDEXABLE_BYTES) continue;
       docs.push({ id: sourceFileId(projectId, entry.path), projectId, path: entry.path, content: file.content, updatedAt: now });
     } catch (err) {
@@ -132,7 +132,7 @@ export async function syncSourceFilesForPush(projectId: string, parsed: ParsedPu
     }
     if (finalState.size === 0) return;
 
-    const slug = await requireGiteaWorkingSlug(projectId);
+    const target = await requireGiteaWorkingRef(projectId);
     const toDelete: string[] = [];
     const toUpsert: SearchableSourceFile[] = [];
     const now = Date.now();
@@ -144,7 +144,7 @@ export async function syncSourceFilesForPush(projectId: string, parsed: ParsedPu
       }
       if (!isIndexableFile(path)) continue;
       try {
-        const file = await gitea.getFileContent(slug, path);
+        const file = await gitea.getFileContent(target, path);
         if (Buffer.byteLength(file.content, "utf-8") > MAX_INDEXABLE_BYTES) continue;
         toUpsert.push({ id: sourceFileId(projectId, path), projectId, path, content: file.content, updatedAt: now });
       } catch (err) {

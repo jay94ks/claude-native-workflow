@@ -89,10 +89,13 @@ docker compose up -d --build
 만큼만 채우고 나머지는 나중에 채워도 된다(값을 채운 뒤엔
 `docker compose up -d --build`를 다시 실행하면 반영됨).
 
-백엔드는 `:8760`(포트 충돌 시 `.env`에 `BACKEND_HOST_PORT` 지정). 최초
-기동 시(계정이 하나도 없으면) 이 시스템 자신의 관리자 계정이
-`admin`/`12345678`로 항상 자동 생성된다(로그인 직후 바로 비밀번호를
-바꾸는 걸 권장).
+웹 UI/API는 nginx를 거쳐 `:80`으로 열린다(포트 충돌 시 `.env`에
+`PUBLIC_HOST_PORT` 지정) - backend 자신의 `:8760`은 보안 강화
+(#gitea-nginx-lockdown)로 기본 노출되지 않는다(로컬 개발 중 nginx
+없이 backend에 직접 붙고 싶으면 `docker-compose.yml`의 backend
+서비스에 주석 처리된 `ports:` 줄을 해제). 최초 기동 시(계정이 하나도
+없으면) 이 시스템 자신의 관리자 계정이 `admin`/`12345678`로 항상
+자동 생성된다(로그인 직후 바로 비밀번호를 바꾸는 걸 권장).
 
 #### Meilisearch(검색 엔진) - 어디서 값을 "받아올" 필요가 없다
 
@@ -138,33 +141,88 @@ docker compose up -d --build
 
 git 저장소 연결/이력 조회 기능을 쓰지 않을 거라면 이 절은 건너뛰어도
 된다(`GITEA_*` 값을 비워두면 그 기능만 에러를 반환할 뿐 나머지는
-정상). 쓰려면 EMQX와 같은 패턴으로 1회성 수동 단계가 필요하다:
+정상). **보안 강화(#gitea-nginx-lockdown)로 Gitea는 호스트 포트를
+아예 열지 않는다** - `docker-compose.yml`의 `nginx` 서비스가 유일한
+기본 노출 지점이고, `.git`로 끝나는 git smart-HTTP 요청만 Gitea로
+돌려주고 나머지(Gitea 자신의 웹 UI 포함)는 전부 이 앱으로 간다 -
+즉 Gitea의 저장소 브라우징/관리 화면은 원천적으로 바깥에서 열리지
+않는다. 그래서 예전의 "웹 설치 마법사" 단계도 없다 - 관리자 계정/PAT
+발급 전부 컨테이너 안에서 CLI로 한다:
 
-1. `http://localhost:3001`(Gitea 웹 UI)에 접속해 설치 마법사를
-   완료한다(대부분 기본값 그대로 "설치" 눌러도 된다).
-2. 마법사 마지막에 관리자 계정을 만든다(아이디/비밀번호는 본인이
-   직접 정함 - 이후 Gitea 저장소는 전부 이 계정 아래 만들어진다).
-3. 로그인 후 오른쪽 위 프로필 아이콘 → **Settings** → **Applications**
-   로 이동해 **Generate New Token**으로 Personal Access Token을
-   발급한다(권한은 최소 `repository`와 `user` 스코프를 읽기/쓰기로
-   - `repository`만 주면 저장소 생성 시점에 403으로 막힌다. **PR
-   댓글/진행내역 조회까지 쓰려면 `issue` 스코프도 추가한다** - Gitea가
-   Pull Request를 issue로 취급해 그 댓글/타임라인 API를 별도 issue
-   스코프로 게이팅하므로, repository 스코프만으론 403이 난다).
-4. `.env`의 `GITEA_ADMIN_USERNAME`(2번에서 만든 계정 아이디)과
-   `GITEA_API_TOKEN`(3번에서 발급한 값)을 채운다.
-5. `docker compose up -d --build`를 다시 실행한다.
+1. `docker compose up -d --build`로 스택을 띄운다(Gitea 포함).
+2. 컨테이너 이름을 확인한다(`docker compose ps` - 보통
+   `docker-gitea-1`, 컴포즈 프로젝트 디렉터리명에 따라 접두어가
+   다를 수 있음).
+3. 관리자 계정을 만든다:
+   ```bash
+   docker compose exec -u git gitea gitea admin user create \
+     --admin --username <아이디> --password <비밀번호> \
+     --email <이메일> --must-change-password=false
+   ```
+4. Personal Access Token을 발급한다(**issue 스코프 필수** - Gitea가
+   Pull Request를 issue로 취급해 그 댓글/타임라인 조회 API를 별도
+   issue 스코프로 게이팅하므로, repository 스코프만으론 403이 난다):
+   ```bash
+   docker compose exec -u git gitea gitea admin user generate-access-token \
+     --username <아이디> --token-name backend \
+     --scopes "write:admin,write:organization,write:repository,write:user,write:issue"
+   ```
+   출력되는 토큰 값은 이때 한 번만 보인다.
+5. `.env`의 `GITEA_ADMIN_USERNAME`(3번 아이디)과
+   `GITEA_API_TOKEN`(4번 토큰)을 채운다.
+6. `docker compose up -d --build`를 다시 실행한다.
+
+저장소는 프로젝트마다 별도 Gitea 조직(org)에 만들어진다
+(`GITEA_ORG_PREFIX` + projectId, 기본 접두어 `proj-`) - 예전엔 설치
+전체가 하나의 공유 조직을 썼지만, 이제 프로젝트별로 네임스페이스가
+분리된다(#gitea-per-project-namespace). 기존 설치를 업그레이드하는
+경우 아래 "기존 설치 업그레이드" 절을 먼저 확인한다.
+
+**⚠ 정말 필요할 때만** - Gitea 웹 UI를 직접 열어야 하는 드문 경우(예:
+직접 눈으로 뭔가 확인하고 싶을 때)엔 `docker-compose.yml`의 `gitea`
+서비스에 주석 처리돼 있는 `ports:` 줄을 잠깐 해제했다가, 확인이
+끝나면 반드시 다시 주석 처리한다(주석이 풀려 있는 동안은 협업자
+권한이 있는 누구나 그 포트로 저장소 파일트리/커밋을 직접 볼 수 있다).
+
+#### 기존 설치를 업그레이드하는 경우 - Gitea 네임스페이스 마이그레이션
+
+이미 이 시스템을 운영 중이던 설치를 최신 코드로 올리면, 기존
+프로젝트들의 Gitea 저장소가 예전의 공유 조직(`cnwk-projects`) 아래
+있다 - 아래 스크립트를 1회 실행해 프로젝트별 조직으로 실제 이전한다
+(멱등 - 이미 이전된 프로젝트는 자동으로 건너뜀, 여러 번 실행해도
+안전):
+
+```bash
+docker compose exec backend npm run migrate:gitea-namespaces
+docker compose exec backend npm run verify:gitea-namespaces
+```
+
+`migrate:gitea-namespaces`는 각 저장소를 Gitea의 저장소 이전(transfer)
+API로 옮기고, 실패하면 `git clone --mirror`+`git push --mirror`로
+히스토리를 그대로 복사하는 폴백을 쓴다. 항목별 성공/실패 결과표를
+출력하고 실패가 있으면 종료 코드 1을 반환한다 - 실패 항목은 원인(로그의
+`detail` 열)을 보고 개별적으로 조치한 뒤 다시 실행하면 된다(이미
+성공한 항목은 재실행해도 건드리지 않음). `verify:gitea-namespaces`는
+이전 후 모든 저장소가 새 위치에서 실제로 살아있는지(조회+커밋 이력
+확인)만 검증한다.
 
 #### 그 외(선택) - 외부에서 접속할 계획이 없다면 안 건드려도 된다
 
 `PUBLIC_BACKEND_URL`을 채우면 `git link` 시 웹훅과 EMQX 인증/인가
 훅이 자동 등록된다(로컬 전용 개발 환경이면 비워둬도 나머지 기능엔
-지장 없음 - 웹훅/훅 등록만 건너뜀). 웹 UI의 실시간 변경 추적/메시징
-패널 갱신을 쓰려면 `PUBLIC_EMQX_WS_URL`도 채운다(예:
-`ws://localhost:8083/mqtt` - 8083 포트가 이미 다른 걸로 쓰이고 있으면
-`EMQX_WS_HOST_PORT`로 호스트 노출 포트를 바꾸고 URL도 맞춰준다). 비워두면
-`GET /api/realtime-config`가 `null`을 반환해 웹 UI가 실시간 갱신만 조용히
-꺼진 상태로 동작한다.
+지장 없음 - 웹훅/훅 등록만 건너뜀). `PUBLIC_GITEA_URL`을 채우면
+self_hosted 저장소의 clone 주소(designer가 보는 `repoUrl`)가 이 값
+기준으로 항상 다시 계산된다(#gitea-per-project-namespace) - Gitea
+자신이 저장소 생성 시점에 반환한 주소를 그대로 얼려두지 않으므로,
+나중에 도메인을 바꾸거나(로컬→원격 이전 등) 이 값만 갱신하면 즉시
+반영된다. 보통 `PUBLIC_BACKEND_URL`과 같은 공개 주소를 그대로 쓰면
+된다(nginx가 `.git` 요청만 Gitea로 돌려주므로 같은 origin으로 충분).
+비워두면 저장소 생성 시점에 Gitea가 반환한 clone_url을 그대로 쓴다.
+웹 UI의 실시간 변경 추적/메시징 패널 갱신을 쓰려면 `PUBLIC_EMQX_WS_URL`도
+채운다(예: `ws://localhost:8083/mqtt` - 8083 포트가 이미 다른 걸로
+쓰이고 있으면 `EMQX_WS_HOST_PORT`로 호스트 노출 포트를 바꾸고
+URL도 맞춰준다). 비워두면 `GET /api/realtime-config`가 `null`을
+반환해 웹 UI가 실시간 갱신만 조용히 꺼진 상태로 동작한다.
 
 #### 로컬/사설 서버에 설치한 경우 GitHub/GitLab 연동은 어디까지 되는가
 
@@ -253,6 +311,67 @@ credentials.json` 공유), `docs-mcp`를 stdio MCP 서버로 등록해 CLI와
 의도적으로 없는 기능" 절 참고). `auth register/login/logout`은
 비밀번호가 대화 컨텍스트에 남지 않도록 의도적으로 MCP 도구로 노출하지
 않는다(CLI 전용) - `auth_whoami`만 로그인 상태 확인용 예외.
+
+## 도입 시나리오별 안내
+
+이 시스템을 "설치하는 것"과 어떤 작업 폴더를 그 설치에 "연동하는 것"은
+서로 다른 축이다 - 설치(위 "실행 방법")는 한 번만 하고, 이후 여러
+폴더/프로젝트를 그 설치 하나에 계속 연동해 쓸 수 있다. 아래 6가지
+시나리오는 그 두 축의 조합이다. 어느 시나리오에 해당하는지는 먼저
+"이 PC(또는 원격 서버)에 이미 이 시스템이 설치돼 있는가"와 "그 설치가
+이 폴더 하나만을 위한 전용 설치인가, 여러 프로젝트를 담을 공용
+설치인가"로 판단한다.
+
+각 시나리오 공통으로, "현재 작업 폴더"를 연동하는 마지막 단계는 항상
+같다:
+```bash
+docs auth login --api <서버 주소> --username <아이디> --password <비밀번호>   # 최초 1회, 서버당
+docs project-create <프로젝트 이름> --group <groupId>   # 없으면 team-create/group-create부터
+docs git link <projectId>   # Gitea에 빈 저장소 생성, clone URL 반환
+git remote add origin <반환된 clone URL>   # 이미 git 저장소면: git remote set-url 또는 새 원격 추가
+git push -u origin <현재 브랜치>   # 기존 코드를 그 저장소로 최초 push(백엔드는 clone/push를 대행하지 않음)
+docs template deploy <projectId>   # CLAUDE.md/SKILL.md를 Gitea 저장소에 직접 커밋
+git pull   # 방금 커밋된 CLAUDE.md/SKILL.md를 로컬로 받기
+```
+(`docs template deploy`는 로컬 파일을 직접 안 건드리고 Gitea REST API로
+그 저장소에 바로 커밋한다 - 그래서 마지막에 `git pull`이 필요하다.)
+
+1. **로컬 설치(신규) + 현재 작업 폴더 연동** - 위 "Docker Compose"
+   절대로 이 PC에 처음 설치한 뒤, 위 공통 단계를 그대로 따른다. 이후
+   이 PC의 다른 폴더/프로젝트도 같은 설치에 계속 연동할 수 있다(PC
+   전체를 커버하는 공용 설치).
+2. **로컬 설치(기존) + 현재 작업 폴더 연동** - 이 PC에 이미 떠 있는
+   설치가 있으면 설치 단계는 건너뛰고 공통 단계만 따른다(`docs auth
+   login`이 이미 로그인돼 있으면 그것도 생략).
+3. **로컬, 폴더 전용 설치** - "이 폴더 하나만을 위한" 전용 설치를
+   원하면, `docker/` 스택 자체(또는 호스트 직접 설치의 데이터
+   디렉터리)를 그 작업 폴더 하위의 전용 디렉터리(예: `.cnwk-server/`,
+   `.gitignore`에 추가)에 두고 정확히 프로젝트 1개만 만든다 - 절차는
+   시나리오 1과 동일하고, 다른 폴더/프로젝트와 공유하지 않는 개인
+   전용 인스턴스가 된다는 점만 다르다.
+4. **원격 설치(신규) + 현재 작업 폴더 연동** - 원격 서버에서 "Docker
+   Compose" 절을 그대로 따르되, `.env`의 `PUBLIC_BACKEND_URL`/
+   `PUBLIC_GITEA_URL`을 그 서버의 실제 공개 주소로 채운다(예:
+   `https://cnwk.example.com`). 로컬 머신에서는 공통 단계의 `--api`에
+   그 공개 주소를 쓴다.
+5. **원격 설치(기존) + 현재 작업 폴더 연동** - 서버 설치 단계는
+   건너뛰고, 로컬 머신에서 `docs auth login --api https://<서버 주소>
+   ...`부터 공통 단계를 따른다.
+6. **로컬 설치 → 원격 설치로 이전** - 순수 인프라 이전(애플리케이션
+   코드/스키마 변경 없음, `prisma db push`가 그대로 멱등하게 동작):
+   - `postgres-data`/`gitea-data`/`meili-data`/`emqx-data` 네 개
+     Docker 볼륨을 새 호스트로 옮긴다(가장 간단한 방법: `docker
+     run --rm -v <volume>:/from -v /host/backup:/to alpine tar czf
+     /to/<volume>.tgz -C /from .`로 각각 백업 후 새 호스트에서 풀기 -
+     Postgres만 별도로 `pg_dump`/`pg_restore`를 써도 무방).
+   - 새 호스트의 `.env`에서 `PUBLIC_BACKEND_URL`/`PUBLIC_GITEA_URL`을
+     그 서버의 실제 공개 주소로 갱신한다 - self_hosted 저장소의 clone
+     주소가 이 값 기준으로 즉시 재계산되므로(#gitea-per-project-namespace),
+     저장소를 다시 만들거나 옮길 필요가 없다.
+   - 기존에 이 설치를 쓰던 모든 로컬 머신에서 `docs auth login --api
+     <새 주소> ...`를 다시 실행하거나(가장 간단), `~/.claude-native-
+     workflow/credentials.json`의 `api_base` 필드를 직접 새 주소로
+     고친다.
 
 ## 핵심 설계 원칙
 

@@ -511,6 +511,20 @@ relCmd
     ),
   );
 
+relCmd
+  .command("reset <projectId>")
+  .description("이 설계자의 관계도를 브랜치 기준으로 일괄 삭제한다(관계도 초기화)")
+  .option("--branch <name>", "이 브랜치만 삭제(생략하면 '브랜치 없음' 버킷)")
+  .option("--all-branches", "브랜치 구분 없이 전체 삭제")
+  .action((projectId, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams();
+      if (opts.allBranches) qs.set("allBranches", "true");
+      else qs.set("branchName", opts.branch ?? "__none__");
+      printJson(await apiCall(`/api/projects/${projectId}/relations/reset?${qs}`, { method: "DELETE" }));
+    }),
+  );
+
 // ---------------------------------------------------------------- Pull Request
 // git 저장소 관리 기능(브랜치 목록/저장소 연동/발행 등)은 지금까지
 // 웹 전용이었지만, PR은 이번에 CLI/MCP를 예외로 연다 - 자동 머지가

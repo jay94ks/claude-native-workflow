@@ -4,10 +4,12 @@ import { useRoute } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import RelationGraphCanvas from "../components/RelationGraphCanvas.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
+import { useEntityPickerStore } from "../stores/entityPicker";
 import type { RelationGraphEdge, RelationGraphNode } from "../utils/relationGraph";
 
 const props = defineProps<{ id: string }>();
 const route = useRoute();
+const entityPicker = useEntityPickerStore();
 
 interface CodeRelationDetail {
   id: string;
@@ -20,6 +22,7 @@ interface CodeRelationDetail {
   line: number | null;
   column: number | null;
   data: unknown;
+  branchName: string | null;
   trackingCodes: string[];
   tags: string[];
   parentIds: string[];
@@ -155,6 +158,9 @@ const formLine = ref("");
 const formColumn = ref("");
 const formTags = ref("");
 const formTrackingCodes = ref("");
+const formTrackingCodesList = computed(() =>
+  formTrackingCodes.value.split(",").map((s) => s.trim()).filter(Boolean),
+);
 const formData = ref("");
 const formSaving = ref(false);
 const formError = ref("");
@@ -242,6 +248,83 @@ async function removeSelected() {
   }
 }
 
+// ---------------------------------------------------------------- 관계도 초기화
+// 지금 로드된 relationCache는 화면에 펼쳐진 일부(루트/펼친 노드)만 담고
+// 있어 "이 프로젝트의 전체 브랜치 목록"을 뽑아내는 신뢰할 소스가 못
+// 된다 - 다이얼로그를 열 때마다 별도로 전체 목록(allBranches=true, 페이지
+// 파라미터 생략 = 전체 배열, 기존 관례)을 받아와 distinct branchName을
+// 뽑는다.
+const showResetDialog = ref(false);
+const resetBranchChoice = ref("__all__");
+const resetBranches = ref<string[]>([]);
+const resetHasNoBranch = ref(false);
+const resetLoading = ref(false);
+const resetSaving = ref(false);
+const resetError = ref("");
+
+async function openResetDialog() {
+  resetBranchChoice.value = "__all__";
+  resetError.value = "";
+  resetLoading.value = true;
+  showResetDialog.value = true;
+  try {
+    const all = await apiCall<CodeRelationDetail[]>(`/projects/${props.id}/relations?allBranches=true`);
+    const set = new Set<string>();
+    let hasNoBranch = false;
+    for (const d of all) {
+      if (d.branchName) set.add(d.branchName);
+      else hasNoBranch = true;
+    }
+    resetBranches.value = [...set].sort();
+    resetHasNoBranch.value = hasNoBranch;
+  } catch (err) {
+    resetError.value = err instanceof ApiError ? err.message : "브랜치 목록을 불러오지 못했습니다";
+  } finally {
+    resetLoading.value = false;
+  }
+}
+
+async function confirmReset() {
+  resetSaving.value = true;
+  resetError.value = "";
+  try {
+    const qs = new URLSearchParams();
+    if (resetBranchChoice.value === "__all__") qs.set("allBranches", "true");
+    else qs.set("branchName", resetBranchChoice.value); // "__none__" 또는 실제 브랜치명
+    await apiCall(`/projects/${props.id}/relations/reset?${qs}`, { method: "DELETE" });
+    showResetDialog.value = false;
+    selectedId.value = null;
+    await search();
+  } catch (err) {
+    resetError.value = err instanceof ApiError ? err.message : "초기화에 실패했습니다";
+  } finally {
+    resetSaving.value = false;
+  }
+}
+
+// ---------------------------------------------------------------- 추적코드 선택기
+async function pickFormTrackingCodes() {
+  const current = formTrackingCodes.value.trim()
+    ? formTrackingCodes.value.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+  const result = await entityPicker.pick({
+    kind: "document",
+    projectId: props.id,
+    multi: true,
+    allowManualEntry: false,
+    initialSelected: current,
+  });
+  if (result) formTrackingCodes.value = result.join(",");
+}
+
+function removeFormTrackingCode(code: string) {
+  formTrackingCodes.value = formTrackingCodes.value
+    .split(",")
+    .map((s) => s.trim())
+    .filter((c) => c && c !== code)
+    .join(",");
+}
+
 // ---------------------------------------------------------------- 기존 노드와 연결
 const linkParentInput = ref("");
 const linkChildInput = ref("");
@@ -301,6 +384,7 @@ onMounted(() => {
       <input v-model="trackingCodeFilter" type="text" class="file-input" placeholder="추적코드(정확 일치)" @input="onSearchInput" />
       <label class="depth-label">depth <input v-model.number="depth" type="number" min="1" max="20" class="depth-input" /></label>
       <button type="button" class="primary" @click="openCreateForm">새 관계 추가</button>
+      <button type="button" class="danger-outline" @click="openResetDialog">관계도 초기화</button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="loading" class="muted">불러오는 중...</p>
@@ -383,11 +467,45 @@ onMounted(() => {
             <label>열(column)<input v-model="formColumn" type="number" /></label>
           </div>
           <label>태그(쉼표로 구분)<input v-model="formTags" type="text" /></label>
-          <label>연관 문서 추적코드(쉼표로 구분, 여러 개 가능)<input v-model="formTrackingCodes" type="text" placeholder="DC-XXXXXXXX, SP-XXXXXXXX" /></label>
+          <label>
+            연관 문서 추적코드
+            <div class="chip-row">
+              <span v-for="code in formTrackingCodesList" :key="code" class="tag-chip removable">
+                {{ code }} <button type="button" @click="removeFormTrackingCode(code)">✕</button>
+              </span>
+              <button type="button" class="secondary" @click="pickFormTrackingCodes">추적코드 선택</button>
+            </div>
+          </label>
           <label>추가 데이터(JSON, 선택)<textarea v-model="formData" rows="4" placeholder="{}"></textarea></label>
           <p v-if="formError" class="error">{{ formError }}</p>
           <button type="submit" :disabled="formSaving">{{ formSaving ? "저장 중..." : "저장" }}</button>
         </form>
+      </div>
+    </div>
+
+    <div v-if="showResetDialog" class="overlay" @click.self="showResetDialog = false">
+      <div class="form-dialog">
+        <button type="button" class="close-btn" @click="showResetDialog = false">닫기 ✕</button>
+        <h2>관계도 초기화</h2>
+        <p class="hint">선택한 범위의 내 관계가 모두 삭제됩니다 - 되돌릴 수 없습니다.</p>
+        <p v-if="resetLoading" class="muted">브랜치 목록을 불러오는 중...</p>
+        <template v-else>
+          <label>
+            대상 브랜치
+            <select v-model="resetBranchChoice">
+              <option value="__all__">모든 브랜치</option>
+              <option value="__none__">브랜치 없음</option>
+              <option v-for="b in resetBranches" :key="b" :value="b">{{ b }}</option>
+            </select>
+          </label>
+          <p v-if="resetError" class="error">{{ resetError }}</p>
+          <div class="button-row">
+            <button type="button" @click="showResetDialog = false">취소</button>
+            <button type="button" class="danger" :disabled="resetSaving" @click="confirmReset">
+              {{ resetSaving ? "삭제 중..." : "삭제" }}
+            </button>
+          </div>
+        </template>
       </div>
     </div>
   </section>
@@ -441,6 +559,15 @@ button.primary {
   background: var(--color-primary);
   color: #fff;
   border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+}
+button.danger-outline {
+  background: var(--color-surface);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
   padding: 6px 14px;
   border-radius: 6px;
   font-weight: 600;
@@ -597,7 +724,8 @@ button.primary {
   color: var(--color-text-secondary);
 }
 .form-dialog input,
-.form-dialog textarea {
+.form-dialog textarea,
+.form-dialog select {
   padding: 6px 8px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
@@ -605,6 +733,34 @@ button.primary {
   color: var(--color-text);
   font-size: 13px;
   font-family: inherit;
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.tag-chip.removable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tag-chip.removable button {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 10px;
+  padding: 0;
+  line-height: 1;
+}
+.form-dialog button.secondary {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  align-self: flex-start;
 }
 .form-row {
   display: flex;

@@ -275,6 +275,18 @@ async function main() {
     { projectId: z.string(), ids: z.array(z.string()) },
     async (a) => call(`/api/projects/${a.projectId}/relations/bulk`, { method: "DELETE", body: JSON.stringify({ ids: a.ids }) }),
   );
+  tool(
+    "relation_reset",
+    "코드 관계도 일괄 초기화",
+    "이 설계자의 관계를 브랜치 기준으로 한 번에 삭제한다(관계도 초기화). branchName을 생략하고 allBranches도 안 주면 '브랜치 없음' 관계만 삭제한다.",
+    { projectId: z.string(), branchName: z.string().optional(), allBranches: z.boolean().optional() },
+    async (a) => {
+      const qs = new URLSearchParams();
+      if (a.allBranches) qs.set("allBranches", "true");
+      else qs.set("branchName", String(a.branchName ?? "__none__"));
+      return call(`/api/projects/${a.projectId}/relations/reset?${qs}`, { method: "DELETE" });
+    },
+  );
 
   // ---------------------------------------------------------------- Pull Request
   // git 저장소 관리 기능(브랜치/저장소 연동/발행)은 지금까지 웹 전용

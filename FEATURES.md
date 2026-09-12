@@ -404,8 +404,28 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   3. **외부 저장소 연동** - 외부 저장소가 계속 권위(authoritative)를
      갖고, Gitea에 미러(읽기 전용 pull 사본)와 작업 저장소(이
      시스템이 실제로 커밋하는 곳) 두 개를 만든다.
-- 저장소는 전부 이 시스템 전용 Gitea 조직 네임스페이스 아래 생성 -
-  협업자 권한이 프로젝트 `Member.role`과 자동 동기화된다.
+- **저장소는 프로젝트마다 별도 Gitea 조직(org) 네임스페이스 아래
+  생성**(`GITEA_ORG_PREFIX`+projectId, 기본 접두어 `proj-` -
+  #gitea-per-project-namespace) - 예전엔 설치 전체가 하나의 공유
+  조직을 썼지만, 이제 프로젝트 하나당 org 하나(자체 호스팅은
+  `repo`, 외부 연동은 `work`/`mirror` 두 저장소)로 분리된다. 협업자
+  권한은 그대로 저장소별로 프로젝트 `Member.role`과 자동 동기화된다.
+  self_hosted 저장소의 clone 주소(`repoUrl`)는 `PUBLIC_GITEA_URL`
+  환경변수가 설정돼 있으면 조회 시점마다 그 값 기준으로 다시
+  계산된다 - Gitea가 생성 시점에 돌려준 주소를 그대로 얼려두지
+  않으므로, 도메인 이전(로컬→원격 이전 등) 후에도 이 값만 갱신하면
+  즉시 반영된다.
+- **보안 강화**(#gitea-nginx-lockdown) - Gitea는 호스트에 전혀
+  노출되지 않는다(포트 매핑 없음). nginx 리버스 프록시가 유일한 기본
+  노출 지점이고, `.git`로 끝나는 git smart-HTTP 요청만 Gitea로
+  돌려주고 나머지(Gitea 자신의 웹 UI 포함)는 이 앱으로 보낸다 -
+  즉 어떤 저장소도 특별한 명시(운영자가 임시로 포트를 여는 등) 없이는
+  Gitea 자체 화면으로 조회될 수 없다. 최초 관리자 계정/PAT 발급도
+  더 이상 웹 설치 마법사가 아니라 `docker exec ... gitea admin user
+  create`/`generate-access-token` CLI로 한다(README.md "Gitea 설정"
+  절). 기존 설치를 이 구조로 올릴 때는 `npm run migrate:gitea-namespaces`
+  (+ `verify:gitea-namespaces`)로 기존 저장소를 실제로 새 네임스페이스로
+  이전한다(멱등, 항목별 성공/실패 결과표).
 - 비공개 저장소 인증 필요 시 그 자리에서 자격증명을 입력받아
   저장(재사용 가능)한 뒤 자동 재시도.
 - **GitHub 로그인 + 저장소 선택**("외부 저장소 연동"/"외부 저장소로
@@ -654,10 +674,16 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
 - **Prisma 스키마 3드라이버**(PostgreSQL/MySQL/SQLite) - 완전
   정규화(JSON 컬럼 없음), 셋 다 모델이 동일(드라이버별 타입
   어노테이션만 다름).
-- **Docker Compose 스택** - backend + Postgres + Meilisearch + EMQX +
-  Gitea. Meilisearch/EMQX 키는 외부에서 발급받는 게 아니라 설치자가
-  직접 정하는 값(부트스트랩 파일로 기동 시 자동 등록 - 대시보드 로그인
-  불필요). Gitea만 최초 1회 웹 설치 마법사가 필요(자동화 불가).
+- **Docker Compose 스택** - nginx + backend + Postgres + Meilisearch +
+  EMQX + Gitea. Meilisearch/EMQX 키는 외부에서 발급받는 게 아니라
+  설치자가 직접 정하는 값(부트스트랩 파일로 기동 시 자동 등록 -
+  대시보드 로그인 불필요). Gitea의 최초 관리자 계정/PAT 발급도 웹
+  설치 마법사 없이 `docker exec` 기반 CLI로 전부 자동화됨
+  (#gitea-nginx-lockdown).
+- **nginx가 유일한 기본 호스트 노출 지점**(#gitea-nginx-lockdown) -
+  `.git`로 끝나는 git smart-HTTP 요청만 Gitea로, 나머지는 backend로
+  라우팅한다. backend/Gitea 자신의 포트는 기본적으로 호스트에 노출되지
+  않는다(로컬 개발 편의를 위한 주석 처리된 오버라이드만 존재).
 - backend가 frontend 빌드 결과물을 같은 오리진에서 정적 서빙(별도
   컨테이너/포트 없음).
 - 호스트 직접 설치 경로도 지원(Docker 없이 Node.js + 외부 Meilisearch/
@@ -681,6 +707,18 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   `docs relation ...`, MCP `relation_*` 도구, 이 저장소 자신의
   SKILL.md에도 명세돼 있어 Claude가 스스로 언제/어떻게 써야 하는지
   안다.
+- **관계도 초기화**(`relation reset`/`relation_reset`, 웹 UI "관계도
+  초기화" 버튼) - 이 설계자 본인의 관계를 브랜치 기준으로 일괄
+  삭제한다(모든 브랜치/브랜치 없음/특정 브랜치 중 선택). 웹 UI는
+  삭제 전 어떤 범위를 지울지 확인하는 다이얼로그를 띄운다 - 브랜치
+  스코프의 웹훅 기반 자동 정리(deleteRelationsForBranch, 브랜치
+  삭제 시 전체 설계자 대상)와 달리 이건 설계자 본인이 명시적으로
+  요청하는 동작이라 항상 본인 소유 관계만 지운다.
+- **연관 문서 추적코드는 텍스트 입력이 아니라 선택기로 고른다** -
+  관계 추가/수정 다이얼로그에서 "추적코드 선택" 버튼이 기존 문서
+  선택기(EntityPickerDialog, 검색+다중 선택)를 열어 실제 존재하는
+  문서만 고를 수 있다 - 선택된 추적코드는 칩으로 표시되고 개별
+  제거도 가능하다.
 - 부모/자식 방향 깊이 제한 순회(`ancestors`/`descendants`, 기본
   depth 3·최대 20) - 태그/검색어로 필터링 가능.
 - 웹 UI 새 탭 "관계도" - `vis-network` 그래프 시각화(계층 레이아웃 +

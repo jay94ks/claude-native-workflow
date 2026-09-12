@@ -19,7 +19,11 @@ RUN npm run build
 # 추측값으로 대체한다(concept 브랜치에서 이미 겪은 문제).
 FROM node:22-slim
 
-RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+# git은 애플리케이션 런타임엔 필요 없지만(clone/push는 항상 설계자가
+# 직접 함), scripts/migrate-gitea-namespaces.ts의 transfer-API 폴백
+# (git clone --mirror + push --mirror로 히스토리를 그대로 복사)이
+# 컨테이너 안에서 직접 실행되므로 필요하다.
+RUN apt-get update -y && apt-get install -y openssl git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -34,6 +38,11 @@ RUN npm ci
 
 COPY backend/tsconfig.json ./
 COPY backend/src ./src
+# 1회성 마이그레이션/검증 스크립트(예: migrate-gitea-namespaces.ts) -
+# `docker compose exec backend npm run migrate:gitea-namespaces`로
+# 컨테이너 안에서 직접 실행하기 위해 이미지에 포함한다(tsx로 그대로
+# 실행 - 별도 컴파일 단계 없음, audit-cli-mcp.ts와 동일).
+COPY backend/scripts ./scripts
 
 RUN npm run build
 

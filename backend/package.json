@@ -17,6 +17,8 @@
     "cli": "tsx src/cli/index.ts",
     "mcp": "tsx src/mcp/server.ts",
     "audit:cli-mcp": "tsx scripts/audit-cli-mcp.ts",
+    "migrate:gitea-namespaces": "tsx scripts/migrate-gitea-namespaces.ts",
+    "verify:gitea-namespaces": "tsx scripts/verify-gitea-namespaces.ts",
     "db:generate": "prisma generate --schema prisma/schema.postgres.prisma && prisma generate --schema prisma/schema.mysql.prisma && prisma generate --schema prisma/schema.sqlite.prisma"
   },
   "dependencies": {

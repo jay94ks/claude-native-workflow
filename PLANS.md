@@ -82,6 +82,10 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 49 | ✅ | `#repo-management-tab` | 저장소 관리 탭 신설 - PR 생성/머지(머지는 owner만), 브랜치 목록+브랜치별 소스 열람 |
 | 50 | ✅ | `#code-relation-graph` | 코드 관계도 - Claude가 코드 탐색 중 발견한 관계를 스스로 기록하는 설계자별 그래프 DB(다중 부모/순환 허용, vis-network 시각화), CRUD+bulk, CLI/MCP/SKILL.md 전체 반영, 문서 추적코드 다중 연관(`--refs`) |
 | 51 | ✅ | `#pr-workflow-branch-scope` | PR 전용 상세 페이지(메시지/커밋/대화/진행내역, Reject/Close/Reopen, 자동 머지 실패 시 수동 병합 완료 기록)+목록 5개/더보기 분리, 코드 관계도 브랜치 스코프(git 자동 감지 + 브랜치 삭제 시 웹훅 기반 일괄 정리)+문서-브랜치 연관(영구 보존) |
+| 52 | ✅ | `#gitea-per-project-namespace` | Gitea 저장소를 프로젝트당 별도 조직(org)으로 재구성 + self_hosted repoUrl 동적 외부 주소 재계산(PUBLIC_GITEA_URL) + 기존 설치용 마이그레이션/검증 스크립트 |
+| 53 | ✅ | `#gitea-nginx-lockdown` | nginx 리버스 프록시 도입(.git 경로만 Gitea로, 나머지 backend로) + Gitea/backend 호스트 포트 기본 비노출 + CLI 기반 관리자 부트스트랩(웹 설치 마법사 폐지) |
+| 54 | ✅ | `#relations-reset-and-picker` | 관계도 탭 "관계도 초기화"(브랜치별/전체, 확인 다이얼로그) + 관계 추가/수정의 연관 문서 추적코드를 텍스트 입력 대신 선택기(EntityPickerDialog)로 전환 |
+| 55 | ✅ | `#adoption-migration-guide` | README.md 도입 시나리오 6종(로컬/원격 신규·기존 설치 + 폴더 전용 + 이전) + 루트 CLAUDE.md 도입/마이그레이션 가이드(백업 브랜치·MIGRATION.md 규율) + 중대 스키마 변경 시 마이그레이션+검증 스크립트 의무화 규칙 |
 
 ---
 

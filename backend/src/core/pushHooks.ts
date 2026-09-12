@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { getDb } from "./db.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 import { syncSourceFilesForPush } from "./sourceIndex.js";
-import { resolveProjectFromSlug } from "./gitRepos.js";
+import { resolveProjectFromOrgAndRepo } from "./gitRepos.js";
 import { deleteRelationsForBranch } from "./codeRelations.js";
 
 // 웹훅 수신 인프라(Phase 2 범위) - PushHookPrompt를 만들고 매칭 규칙을
@@ -14,17 +14,26 @@ export interface ParsedPush {
   branch: string;
   headSha: string;
   commits: { sha: string; message: string; added: string[]; modified: string[]; removed: string[] }[];
-  /** payload의 `repository.name`(Gitea repo slug) - 시스템 웹훅 경로
-   * (handleGiteaSystemPush())가 이 값으로 어느 프로젝트의 push인지
-   * 판별한다. 프로젝트별 웹훅 경로(기존 /api/webhooks/:provider/
-   * :projectId)는 URL이 이미 projectId를 주므로 이 필드를 안 쓴다. */
-  repoSlug: string;
+  /** payload의 `repository.owner.login`(Gitea org - #gitea-per-project-
+   * namespace 이후로는 org 자체가 프로젝트를 식별한다) - 시스템 웹훅
+   * 경로(handleGiteaSystemPush())가 이 값+repoName으로 어느 프로젝트의
+   * push인지 판별한다. **실측 확인 필요**: repository.owner.login이
+   * 실제 Gitea 시스템 웹훅 payload에 그대로 오는지 실제 push로
+   * 재확인할 것(GitHub 호환 페이로드 관례상 존재해야 하지만 이 필드
+   * 자체는 아직 실측 전). 프로젝트별 웹훅 경로(기존 /api/webhooks/
+   * :provider/:projectId)는 URL이 이미 projectId를 주므로 이 필드를
+   * 안 쓴다. */
+  org: string;
+  /** payload의 `repository.name`(저장소 이름 - "repo"/"work"/"mirror"
+   * 중 하나, 더 이상 slug가 아님). */
+  repoName: string;
 }
 
 export interface ParsedDelete {
   branch: string;
   refType: "branch" | "tag";
-  repoSlug: string;
+  org: string;
+  repoName: string;
 }
 
 /** Gitea의 delete 웹훅 페이로드 - GitHub 호환 형식과 동일하게 ref는
@@ -35,8 +44,10 @@ export interface ParsedDelete {
 function normalizeDelete(json: Record<string, unknown>): ParsedDelete {
   const ref = String(json.ref ?? "").replace(/^refs\/(heads|tags)\//, "");
   const refType = String(json.ref_type ?? "branch") === "tag" ? "tag" : "branch";
-  const repoSlug = String((json.repository as Record<string, unknown> | undefined)?.name ?? "");
-  return { branch: ref, refType, repoSlug };
+  const repository = json.repository as Record<string, unknown> | undefined;
+  const org = String((repository?.owner as Record<string, unknown> | undefined)?.login ?? "");
+  const repoName = String(repository?.name ?? "");
+  return { branch: ref, refType, org, repoName };
 }
 
 function headerValue(v: string | string[] | undefined): string | undefined {
@@ -75,8 +86,10 @@ function normalizePush(json: Record<string, unknown>): ParsedPush {
     modified: stringArray(c.modified),
     removed: stringArray(c.removed),
   }));
-  const repoSlug = String((json.repository as Record<string, unknown> | undefined)?.name ?? "");
-  return { branch, headSha, commits, repoSlug };
+  const repository = json.repository as Record<string, unknown> | undefined;
+  const org = String((repository?.owner as Record<string, unknown> | undefined)?.login ?? "");
+  const repoName = String(repository?.name ?? "");
+  return { branch, headSha, commits, org, repoName };
 }
 
 /** Gitea 시스템 웹훅 전용 - 서명만 검증하고 파싱하지 않는다(push/delete
@@ -198,15 +211,15 @@ export type GiteaSystemPushResult =
   | { status: "ignored"; reason: string };
 
 /** 시스템 웹훅(인스턴스 전체를 커버하는 단일 웹훅) 전용 경로 - payload의
- * repoSlug만으로 어느 프로젝트의 어떤 종류(self_hosted/work/mirror)
+ * org+repoName만으로 어느 프로젝트의 어떤 종류(self_hosted/work/mirror)
  * 저장소인지 DB 조회 없이 판별한다(core/gitRepos.ts의
- * resolveProjectFromSlug()). 미러 저장소의 push는 Gitea 자신의 주기적
- * pull 결과일 뿐 설계자가 뭔가를 바꿨다는 신호가 아니므로 무시한다.
- * 이 앱이 관리하지 않는 slug(수동으로 만든 저장소 등)도 조용히
+ * resolveProjectFromOrgAndRepo()). 미러 저장소의 push는 Gitea 자신의
+ * 주기적 pull 결과일 뿐 설계자가 뭔가를 바꿨다는 신호가 아니므로
+ * 무시한다. 이 앱이 관리하지 않는 org(수동으로 만든 조직 등)도 조용히
  * 무시한다 - 시스템 웹훅은 인스턴스의 모든 저장소 이벤트를 받으므로
  * 이건 에러가 아니라 정상적으로 걸러야 할 이벤트일 뿐이다. */
 export async function handleGiteaSystemPush(parsed: ParsedPush): Promise<GiteaSystemPushResult> {
-  const resolved = resolveProjectFromSlug(parsed.repoSlug);
+  const resolved = resolveProjectFromOrgAndRepo(parsed.org, parsed.repoName);
   if (!resolved) return { status: "ignored", reason: "관리 대상 저장소가 아님" };
   if (resolved.kind === "mirror") return { status: "ignored", reason: "미러 저장소 push는 무시함" };
   const queued = await recordPushEvent(resolved.projectId, parsed);
@@ -218,14 +231,14 @@ export type GiteaSystemDeleteResult =
   | { status: "ignored"; reason: string };
 
 /** 시스템 웹훅의 delete(브랜치/태그 삭제) 이벤트 전용 경로 -
- * handleGiteaSystemPush()와 같은 slug 판별 원칙. 태그 삭제는 코드
- * 관계도와 무관하므로 무시하고, 브랜치 삭제만 그 브랜치를 가리키던
+ * handleGiteaSystemPush()와 같은 org+repoName 판별 원칙. 태그 삭제는
+ * 코드 관계도와 무관하므로 무시하고, 브랜치 삭제만 그 브랜치를 가리키던
  * 모든 설계자의 CodeRelation을 일괄 삭제한다(codeRelations.ts의
  * deleteRelationsForBranch() - 설계자별 소유 스코프의 유일한 의도적
  * 예외, 그 함수 docstring 참고). */
 export async function handleGiteaSystemDelete(parsed: ParsedDelete): Promise<GiteaSystemDeleteResult> {
   if (parsed.refType !== "branch") return { status: "ignored", reason: "브랜치 삭제가 아님(태그)" };
-  const resolved = resolveProjectFromSlug(parsed.repoSlug);
+  const resolved = resolveProjectFromOrgAndRepo(parsed.org, parsed.repoName);
   if (!resolved) return { status: "ignored", reason: "관리 대상 저장소가 아님" };
   if (resolved.kind === "mirror") return { status: "ignored", reason: "미러 저장소의 브랜치 삭제는 무시함" };
   const deletedRelations = await deleteRelationsForBranch(resolved.projectId, parsed.branch);

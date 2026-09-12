@@ -5419,10 +5419,150 @@ SHA로 `merge-manually` 호출 → Gitea가 실제로 `merged:true`로
 남아있는지**(핵심 비대칭) 웹 UI로 직접 확인. 테스트 프로젝트/그룹/
 문서/로컬 clone은 검증 후 정리.
 
+## Gitea 프로젝트별 네임스페이스 + nginx 보안 강화 + 관계도 초기화/추적코드 선택기 + 도입·마이그레이션 가이드 - 완료 (2026-09-13)
+
+**배경**: 설계자 지시(대형 수정, 5개 파트) - (1) self_hosted Gitea
+저장소가 "환경변수로 제공된 Gitea 외부 접속 주소" 변경에 대응하도록,
+그리고 Gitea 네임스페이스(조직)를 프로젝트별로 적극 활용하도록 개편.
+(2) 보안 강화 - Gitea에 생성되는 모든 저장소가 특별한 명시 없이는
+Gitea 자체 Web UI로 조회 불가능해야 함(nginx가 `.git` 요청만 Gitea로
+돌리는 구조 제안). (3) 관계도 탭에 "관계도 초기화"(브랜치별/전체,
+확인 다이얼로그) 버튼과, 관계 추가 다이얼로그의 추적코드 입력을
+텍스트 대신 선택기로. (4) README.md/CLAUDE.md에 "이 시스템 도입"
+가이드(설치 시나리오 6종 + 마이그레이션 시나리오 3종 + 백업/
+MIGRATION.md 규율) 작성, 그리고 앞으로 중대한 스키마 변경 시
+마이그레이션+검증 스크립트를 반드시 만드는 규칙을 CLAUDE.md에
+명문화. (5) CLAUDE.md/DESIGN-NOTES.md/FEATURES.md/PLANS.md/
+QA-SCENARIOS.md 정비.
+
+**설계자가 확인한 핵심 결정 2가지**(AskUserQuestion): 기존 프로젝트들의
+Gitea 저장소도 새 네임스페이스로 **실제 이전**한다(마이그레이션
+스크립트, "새 프로젝트만 적용" 아님) - "전부 이전(권장)" 선택.
+Gitea 호스트 포트 노출을 **완전히 제거**하고 최초 관리자 계정/PAT
+발급도 웹 설치 마법사 대신 `docker exec ... gitea admin user
+create`/`generate-access-token` CLI로 전환한다 - "포트 노출 제거 +
+CLI로 부트스트랩(권장)" 선택.
+
+**Gitea 프로젝트별 네임스페이스(`#gitea-per-project-namespace`)**:
+예전엔 설치 전체가 하나의 고정 org(`cnwk-projects`)를 공유했다
+(`core/gitea.ts`의 `orgLogin()`/`DEFAULT_ORG_LOGIN`) - 이제 프로젝트
+하나당 org 하나(`GITEA_ORG_PREFIX`+projectId, 기본 `proj-`)로
+개편했다. org 안 저장소 이름도 `project-<id>[-work/-mirror]` slug
+대신 짧은 고정 이름(`repo`/`work`/`mirror`)으로 단순화 - 이미 org
+자체가 프로젝트를 유일하게 식별하므로 저장소 이름에 projectId를 또
+담을 필요가 없다. `gitea.ts`의 약 30개 export 함수 전부 `slug:
+string` 대신 `GiteaRepoRef { org, repo }` 객체를 받도록 시그니처
+변경(별도 org 인자 추가가 아니라 인자 하나의 타입만 바꾸는 방식 -
+호출부마다 인자 순서 실수 여지를 없앰). `gitRepos.ts`의
+`slugForProject`/`mirrorSlugForProject`/`workSlugForProject`/
+`resolveProjectFromSlug`는 `orgForProject`/`selfHostedRef`/
+`mirrorRef`/`workRef`/`resolveProjectFromOrgAndRepo`로 교체,
+`requireGiteaWorkingSlug` → `requireGiteaWorkingRef`. org 생성은
+더 이상 서버 부팅 시 1회가 아니라 프로젝트가 처음 Gitea 저장소를
+연결하는 시점(`ensureProjectOrgConfigured`, `linkSelfHostedRepo`/
+`linkExternalAsPrimary` 진입부)에 지연 생성된다. 시스템 웹훅
+핸들러(`pushHooks.ts`)는 `repository.name`(slug) 대신
+`repository.owner.login`(org)+`repository.name`(저장소 이름)으로
+프로젝트를 판별하도록 변경 - 실제 push로 `repository.owner.login`
+필드 존재를 실측 확인.
+
+**동적 `PUBLIC_GITEA_URL` 재계산**: self_hosted 저장소의 `repoUrl`을
+생성 시점에 Gitea가 반환한 `clone_url`로 얼려두지 않고, 새 env
+`PUBLIC_GITEA_URL`이 설정돼 있으면 `gitRepos.ts`의 `toInfo()`가 조회
+시점마다 `${PUBLIC_GITEA_URL}/${org}/repo.git`로 다시 계산해 반환한다
+(fail-soft - 미설정 시 DB 저장값 폴백, `external_linked`의 GitHub/
+GitLab 쪽 URL은 절대 안 건드림) - 도메인 이전 후에도 저장소를 다시
+만들지 않고 즉시 반영되도록.
+
+**마이그레이션/검증 스크립트**(`backend/scripts/migrate-gitea-namespaces.ts`
++`verify-gitea-namespaces.ts`, `npm run migrate:gitea-namespaces`/
+`verify:gitea-namespaces`로 수동 실행) - 레거시 슬러그 계산은 이
+스크립트 안에만 고정 재현(gitRepos.ts에서 완전히 제거됨). 각 저장소를
+먼저 새 위치에 이미 존재하는지 GET으로 확인(멱등 - 재실행 시 스킵)
+한 뒤, Gitea의 저장소 이전(transfer) API를 시도하고 실패하면 `git
+clone --mirror`+`push --mirror` 폴백으로 히스토리를 그대로 복사(이
+폴백을 위해 `backend/Dockerfile`에 `git` 패키지 추가, `scripts/`
+디렉터리도 이미지에 포함). 항목별 `{projectId, provider, status,
+detail}` 결과표 출력, 실패 시 종료 코드 1. **실제 프로덕션급 데이터로
+검증**: 기존 세션에서 쌓인 실제 프로젝트 11건(self_hosted 9건,
+external_linked 1건-mirror+work 2저장소, 이미 새 스킴으로 만든 프로젝트
+1건, Gitea에서 저장소가 이미 삭제된 고아 DB행 1건)에 실행 - transfer
+API가 즉시 완료되는 것을 실측 확인(별도 accept 단계 불필요, 폴백
+경로는 실제로 안 쓰임)해 9건 전부 성공, 신규 프로젝트 1건은
+"이미 이전됨"으로 정확히 스킵, 고아 행 1건만 명확한 실패 사유와 함께
+보고됨(스크립트 버그 아님 - 사전에 이미 Gitea에서만 지워진 데이터
+불일치). `verify-gitea-namespaces`로 전부 재확인, 이전된 프로젝트의
+기존 PR 이력(디스포지션 포함)이 그대로 조회되는 것도 확인.
+
+**보안 강화 - nginx 리버스 프록시(`#gitea-nginx-lockdown`)**:
+`backend/docker/nginx/default.conf`(신규) - `^/[^/]+/[^/]+\.git(/.*)?$`
+경로만 Gitea로, 나머지 전부 backend로 프록시. `docker-compose.yml`에
+`nginx` 서비스 추가(유일한 기본 host 노출, `:80`), `gitea`/`backend`
+서비스의 `ports:`는 완전히 제거하고 "임시 디버깅용" 주석과 함께
+주석 처리된 오버라이드만 남김. `server.ts`에 `app.set("trust proxy",
+1)` 추가(nginx의 `X-Forwarded-*` 헤더를 신뢰해야 GitHub OAuth
+리다이렉트 URI 계산 등이 프록시 뒤에서도 정확함). 최초 관리자 계정/
+PAT 발급은 README.md에서 웹 설치 마법사 절차를 `docker exec ...
+gitea admin user create`+`generate-access-token` CLI 절차로 완전히
+교체 - Gitea 포트가 아예 안 열리므로 웹 UI 자체에 최초 설치 단계에서도
+안 들어가도 된다. **실측 검증**: 스택 재기동 후 `docker compose ps`로
+gitea/backend 포트 미노출+nginx(80)만 노출 확인 → `curl localhost:3001`/
+`:8760` 연결 자체 거부 확인 → nginx(80)를 거친 실제 `git clone`/
+`push`(대용량 push 대비 `client_max_body_size 0` 포함) 성공 확인 →
+같은 origin의 비-`.git` 저장소 경로가 Gitea 웹 UI가 아니라 이 앱
+자신의 프론트엔드 HTML을 반환하는 것 확인 → `docs auth login` 등
+API 전체가 nginx 경유로 정상 동작 확인.
+
+**관계도 초기화 + 추적코드 선택기(`#relations-reset-and-picker`)**:
+`core/codeRelations.ts`에 `resetRelations(projectId, userId, {branchName?,
+allBranches?})` 신규(다른 모든 함수와 동일하게 항상 (projectId,
+userId)로 스코프 - 브랜치 삭제 웹훅용 `deleteRelationsForBranch`와
+달리 설계자 본인이 요청하는 동작이라 자기 소유만 지움).
+`DELETE /api/projects/:projectId/relations/reset`(`branchName`이
+없으면 브랜치 없음 버킷, `allBranches=true`면 전체) - 기존 `bulk`
+라우트들과 같은 이유로 `/relations/:id`보다 먼저 등록. CLI `docs
+relation reset`/MCP `relation_reset` 대칭 추가(`audit-cli-mcp` 자연
+통과, 새 예외 불필요). 프론트(`RelationsView.vue`) - 툴바에 "관계도
+초기화" 버튼 → 확인 다이얼로그(브랜치 select: 모든 브랜치/브랜치
+없음/실제 distinct 브랜치명들, `GET .../relations?allBranches=true`
+전체 조회에서 파생 - 화면에 이미 로드된 `relationCache`는 일부만
+담고 있어 신뢰 못 할 소스이므로 다이얼로그를 열 때마다 별도로 전체
+조회). 추적코드 입력은 텍스트 `<input>`에서 "추적코드 선택" 버튼(기존
+`entityPicker.pick({kind:"document", multi:true})` - `QAPanel.vue`의
+`pickRefs()`와 동일 패턴) + 칩 목록(개별 제거)으로 교체, `formTrackingCodes`
+는 그대로 콤마 조인 문자열로 유지해 `submitForm()`/`openEditForm()`
+무수정. `CodeRelationDetail` 인터페이스에 빠져있던 `branchName` 필드도
+추가(백엔드는 이미 반환 중이었음). **실측 검증**: 웹 UI에서 초기화
+다이얼로그 열기(브랜치 옵션 실제로 뜨는지) → "브랜치 없음" 선택 삭제 →
+CLI로 재조회해 실제로 지워졌는지 확인. "새 관계 추가" 폼에서 추적코드
+선택 버튼 클릭 → 문서 선택 다이얼로그에서 검색+체크+확인 → 칩으로
+반영 → 저장 → 상세 패널에 연관 문서로 정확히 표시되는 것까지 확인.
+
+**도입/마이그레이션 가이드(`#adoption-migration-guide`)**: README.md에
+"도입 시나리오별 안내" 신설 - 로컬/원격 × 신규/기존 설치 + 폴더 전용
+설치 + 로컬→원격 이전까지 6가지, 각각 구체적 명령(공통 절차:
+`git link` → `git remote add`+`push`(백엔드가 clone/push를 대행하지
+않으므로) → `template deploy`(Gitea REST 커밋이라 로컬엔 `git pull`
+필요 - `server.ts`의 실제 `putFileContent()` 호출 확인 후 서술) →
+`git pull`). 루트 `CLAUDE.md`에 새 절 "다른 프로젝트에 이 시스템을
+도입하는 방법" - 설치 시나리오 판단(README 참고) + 마이그레이션
+시나리오 3종(CLAUDE.md/AGENTS.md 있음 / 콘텐츠는 있지만 그 파일들
+없음 / 완전히 빈 프로젝트) 판단 + 공통 절차(git 저장소면 백업 브랜치,
+아니면 격리 폴더 백업 → `MIGRATION.md` 생성해 진행 추적 → 콘텐츠
+이전(`docs migrate scan/apply`는 concept 스타일 frontmatter 문서
+한정 - `cli/migrate.ts` 재확인 후 서술) → 완료 후 `MIGRATION.md` 삭제).
+"작업 방식" 절에 새 표준 규칙 추가 - 설계자 계정/프로젝트/문서 등
+기존 설치 데이터에 영향을 주는 스키마 변경은 `db push`만으로 끝내지
+않고 이번 라운드의 마이그레이션+검증 스크립트 패턴을 앞으로도 표준
+적용한다.
+
 ## 다음 단계
 
 3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
 저장소 관리 탭) + 코드 관계도(`#code-relation-graph`) + PR 워크플로우
 확장/브랜치 스코프 코드 관계도/문서-브랜치 연관(`#pr-workflow-branch-scope`)
-가 전부 완료됐다. PLANS.md 색인 표에 남은 ⬜ 항목이 없다 - 다음
-라운드는 새 QA 패스나 설계자의 새 요청을 기다린다.
++ Gitea 프로젝트별 네임스페이스/nginx 보안 강화/관계도 초기화·추적코드
+선택기/도입·마이그레이션 가이드(`#gitea-per-project-namespace`,
+`#gitea-nginx-lockdown`, `#relations-reset-and-picker`,
+`#adoption-migration-guide`)가 전부 완료됐다. PLANS.md 색인 표에 남은
+⬜ 항목이 없다 - 다음 라운드는 새 QA 패스나 설계자의 새 요청을 기다린다.

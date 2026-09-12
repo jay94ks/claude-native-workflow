@@ -709,6 +709,36 @@
   PR 4개 실전 왕복(자동 머지 성공/거부 후 재오픈+재머지/선택 없이
   Close 시 자동 거부 처리/실제 충돌로 자동 머지 실패시켜 수동 병합
   완료까지). 상세 내용은 DESIGN-NOTES.md 해당 라운드 참고.
+- [x] **Gitea 프로젝트별 네임스페이스(`#gitea-per-project-namespace`)** -
+  실제로 새 프로젝트를 만들어 `git link` → 프로젝트 전용 org(`proj-
+  <id>`)에 `repo` 저장소가 생성되는지 확인 → 그 org로 실제 clone/push
+  → 시스템 웹훅이 push/delete 둘 다 org+저장소 이름 기반으로 정확히
+  프로젝트를 매칭하는지(Meilisearch 소스 색인 반영, 브랜치 삭제 시
+  관계도 cascade) 확인. 기존(구 공유 org `cnwk-projects`) 스킴으로
+  만들어진 실제 프로젝트 11건(self_hosted 9건, external_linked 1건,
+  고아 DB행 1건)에 `migrate-gitea-namespaces`를 실행 - transfer API로
+  9건 성공, 이미 이전된 신규 프로젝트 1건은 멱등하게 스킵, Gitea에서
+  저장소가 이미 삭제된 고아 행 1건만 명확한 실패로 보고되는지 확인 →
+  `verify-gitea-namespaces`로 전부 재확인 → 이전된 프로젝트의 기존
+  PR 이력(디스포지션 포함)이 그대로 남아있는지 확인. `PUBLIC_GITEA_URL`
+  설정 후 `GET .../git/repo`의 `repoUrl`이 그 값 기준으로 즉시
+  재계산되는지 확인.
+- [x] **nginx 리버스 프록시 + Gitea 웹 UI 비노출(`#gitea-nginx-lockdown`)** -
+  실제 스택 기동 후 `docker compose ps`로 gitea/backend 포트가 호스트에
+  전혀 안 열려있고 nginx(80)만 열려있는지 확인 → gitea(3001)/backend
+  (8760) 직접 접속이 연결 자체가 거부되는지 확인 → nginx(80)를 통한
+  `.git` 경로로 실제 `git clone`/`push`가 성공하는지, 동시에 같은
+  origin의 비-`.git` 저장소 경로가 Gitea 웹 UI가 아니라 이 앱 자신의
+  화면으로 응답하는지 확인 → `docker exec ... gitea admin user
+  create`/`generate-access-token` CLI로 관리자 계정/PAT 발급이 실제로
+  되는지 확인(웹 설치 마법사 없이).
+- [x] **관계도 초기화 + 추적코드 선택기(`#relations-reset-and-picker`)** -
+  웹 UI에서 "관계도 초기화" 버튼 → 확인 다이얼로그(모든 브랜치/브랜치
+  없음/실제 브랜치명 선택지) → 삭제 후 해당 범위만 실제로 지워지는지
+  CLI로 재조회해 확인. "새 관계 추가" 폼에서 텍스트 입력 대신 "추적코드
+  선택" 버튼이 문서 선택기(EntityPickerDialog)를 열고, 검색+선택+칩
+  표시/제거가 정상 동작하며 저장 결과에 정확한 추적코드가 반영되는지
+  확인.
 
 ---
 

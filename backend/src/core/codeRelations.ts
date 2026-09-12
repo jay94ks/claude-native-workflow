@@ -402,6 +402,27 @@ export async function deleteRelationsForBranch(projectId: string, branchName: st
   return result.count;
 }
 
+// ---------------------------------------------------------------- 초기화("관계도 초기화" 버튼)
+// deleteRelationsForBranch()와 달리 이건 설계자 본인이 직접 요청하는
+// 동작이라 다른 모든 함수와 동일하게 (projectId, userId)로 스코프된다 -
+// 본인 소유 관계만 지워진다.
+
+export interface ResetRelationsFilter {
+  branchName?: string | null;
+  allBranches?: boolean;
+}
+
+/** "관계도 초기화" 버튼 - branchName을 주면 그 브랜치(null이면 "브랜치
+ * 없음" 버킷)만, allBranches:true면 브랜치 구분 없이 이 설계자의 관계
+ * 전부를 지운다. */
+export async function resetRelations(projectId: string, userId: string, filter: ResetRelationsFilter): Promise<number> {
+  const db = getDb();
+  const where: Record<string, unknown> = { projectId, userId };
+  if (!filter.allBranches) where.branchName = filter.branchName ?? null;
+  const result = await db.codeRelation.deleteMany({ where });
+  return result.count;
+}
+
 // ---------------------------------------------------------------- Bulk
 // 트랜잭션 전체 성공/실패가 아니라 항목별 부분 성공 결과 배열 - 이
 // 코드베이스의 bulk-folder/bulk-transition과 동일한 확립된 관례.
