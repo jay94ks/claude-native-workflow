@@ -87,6 +87,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 54 | ✅ | `#relations-reset-and-picker` | 관계도 탭 "관계도 초기화"(브랜치별/전체, 확인 다이얼로그) + 관계 추가/수정의 연관 문서 추적코드를 텍스트 입력 대신 선택기(EntityPickerDialog)로 전환 |
 | 55 | ✅ | `#adoption-migration-guide` | README.md 도입 시나리오 6종(로컬/원격 신규·기존 설치 + 폴더 전용 + 이전) + 루트 CLAUDE.md 도입/마이그레이션 가이드(백업 브랜치·MIGRATION.md 규율) + 중대 스키마 변경 시 마이그레이션+검증 스크립트 의무화 규칙 |
 | 56 | ✅ | `#frontend-own-service` | frontend를 backend 이미지의 multi-stage 빌드에서 분리해 자기 nginx로 정적 서빙하는 별도 compose 서비스로 재구성 + `docker-compose.yml`/`.env.example`/nginx 설정을 저장소 루트로 이동 |
+| 57 | ✅ | `#self-service-password-change` | 본인이 현재 비밀번호를 알고 있을 때 직접 새 비밀번호로 바꾸는 기능(admin 대행 재설정과 별개) - 웹 UI "내 정보" + `docs auth change-password`(CLI 전용) |
 
 ---
 

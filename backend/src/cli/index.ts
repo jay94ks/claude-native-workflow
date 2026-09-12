@@ -124,6 +124,21 @@ authCmd.command("whoami").action(() =>
   }),
 );
 
+authCmd
+  .command("change-password")
+  .description("이미 로그인된 상태에서 본인 비밀번호를 직접 바꾼다(잊어버렸을 때의 admin 대행 재설정과는 다른 경로 - user reset-password 참고)")
+  .requiredOption("--current <p>", "현재 비밀번호")
+  .requiredOption("--new <p>", "새 비밀번호(최소 8자)")
+  .action((opts) =>
+    run(async () => {
+      await apiCall("/api/auth/me/password", {
+        method: "POST",
+        body: JSON.stringify({ currentPassword: opts.current, newPassword: opts.new }),
+      });
+      console.log("비밀번호를 변경했습니다.");
+    }),
+  );
+
 // ---------------------------------------------------------------- 프로필
 
 const profileCmd = program.command("profile").description("내 프로필 관리");

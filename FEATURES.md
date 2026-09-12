@@ -42,6 +42,13 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   비밀번호를 1회 노출로 발급한다(API 키 secret과 동일한 노출 패턴).
   admin 여부는 `GET /api/auth/me`의 `isSuperAdmin` 필드로 프런트에
   노출되지만, 실제 접근 제어는 항상 서버(`requireSuperAdmin`)가 한다.
+- **본인 비밀번호 변경** - 위 admin 대행 재설정과는 별개로, 이미
+  로그인돼 있고 현재 비밀번호를 아는 통상적인 경우엔 웹 UI "내 정보"
+  화면(또는 `docs auth change-password`)에서 현재 비밀번호 확인 후
+  바로 새 비밀번호로 바꾼다 - 이메일 인증 없이 본인 인증(현재 비밀번호)
+  만으로 처리되는 self-service 경로. CLI 전용(MCP엔 없음) - `auth
+  register/login/logout`과 같은 급의 신원 관리 동작이라 비밀번호가
+  대화 컨텍스트에 남지 않도록 의도적으로 뺐다.
 - **사용자 관리 화면(admin 전용)** - 전체 설계자 목록을 아이디/닉네임/
   이메일로 검색 + 페이지네이션. 사용자명을 누르면 해당 프로필
   화면(`/users/:id`)으로 이동. "소속 조회" 버튼을 누르면 그 사용자가

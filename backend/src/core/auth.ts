@@ -485,3 +485,22 @@ export async function resetPasswordAsAdmin(targetUserId: string): Promise<{ user
   await db.user.update({ where: { id: targetUserId }, data: { passwordHash } });
   return { username: user.username, temporaryPassword };
 }
+
+/** 본인이 이미 알고 있는 현재 비밀번호로 직접 새 비밀번호를 정한다 -
+ * resetPasswordAsAdmin(admin 대행, 이메일 인증 인프라가 없어 잊어버린
+ * 경우의 대안)과는 다른 경로: 이미 로그인돼 있고 현재 비밀번호도 아는
+ * 상태에서 그냥 바꾸고 싶은 통상적인 경우인데, 이 경로가 아예 없다는
+ * 걸 설계자가 실사용 중 발견해 추가 요청함(#self-service-password-change).
+ * register()와 같은 최소 길이 검증을 그대로 적용. */
+export async function changeOwnPassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+  const db = getDb();
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AuthError(`사용자를 찾을 수 없습니다: ${userId}`);
+  const ok = await argon2.verify(user.passwordHash, currentPassword);
+  if (!ok) throw new AuthError("현재 비밀번호가 올바르지 않습니다");
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    throw new AuthError(`비밀번호는 최소 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다`);
+  }
+  const passwordHash = await hashPassword(newPassword);
+  await db.user.update({ where: { id: userId }, data: { passwordHash } });
+}

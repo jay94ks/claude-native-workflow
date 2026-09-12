@@ -5784,6 +5784,37 @@ frontend를 `docker-compose.yml`에 자기 자신의 서비스로 명시적으�
 안내는 그래도 남겨뒀다(같은 이름으로 두 번 clone하는 경우까지
 막으려면).
 
+## 본인 비밀번호 변경(`#self-service-password-change`) - 완료
+
+**배경**: `C:\CNW`를 실제로 쓰던 설계자가 admin 계정 비밀번호를 바꿔보려다
+"내 정보" 화면에 그 기능 자체가 없다는 걸 발견 - `#password-reset`
+라운드(admin 대행 재설정) 이후 QA에서 "self-service change-password는
+범위 밖"이라고 확인만 하고 넘어갔던 바로 그 항목이 실제로 필요한
+것으로 확정됐다. admin 대행 재설정(이메일 인증 인프라가 없어서 잊어버린
+경우의 대안)과는 다른, 이미 로그인돼 있고 현재 비밀번호도 아는
+통상적인 경우의 경로다.
+
+**구현**: `core/auth.ts`에 `changeOwnPassword(userId, currentPassword,
+newPassword)` 신규 - `argon2.verify`로 현재 비밀번호 확인 → `register()`
+와 동일한 최소 8자 검증 → `hashPassword()`로 갱신(admin 대행 재설정의
+`resetPasswordAsAdmin`과 헬퍼 공유, 스키마 변경 없음). `POST
+/api/auth/me/password`(`authenticate`+`requireUnrestrictedScope` -
+프로필 PUT과 동일한 스코프 게이트, 좁은 범위 API 키로는 못 바꾸게).
+CLI `auth change-password --current --new` - `auth register/login/
+logout`과 같은 이유(비밀번호가 대화 컨텍스트에 남으면 안 됨)로 MCP엔
+의도적으로 없음(`audit-cli-mcp.ts`의 `KNOWN_CLI_ONLY`에 `auth_change_password`
+추가). 웹 UI `UserProfileView.vue`의 "연락처" 카드 바로 아래에 "비밀번호"
+카드 신설 - 현재/새/새 비밀번호 확인 3개 입력, 확인 불일치는 서버
+호출 전에 클라이언트에서 먼저 막음, 성공 시 "비밀번호를 변경했습니다"
+메시지와 함께 폼을 접는다.
+
+**검증**: `tsc --noEmit`/`vue-tsc -b`/`audit:cli-mcp` 클린 확인 후
+docker 스택을 재빌드해 HTTP로 직접 세 경우(틀린 현재 비밀번호 400,
+너무 짧은 새 비밀번호 400, 정상 변경 200) 확인 + 변경 후 옛
+비밀번호 로그인 거부/새 비밀번호 로그인 성공 확인. 브라우저로 실제
+로그인 → "내 정보" → "비밀번호 변경" 폼에서 불일치 확인 메시지 →
+재입력 후 저장 → 성공 메시지까지 왕복 확인.
+
 ## 다음 단계
 
 3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
@@ -5791,7 +5822,7 @@ frontend를 `docker-compose.yml`에 자기 자신의 서비스로 명시적으�
 확장/브랜치 스코프 코드 관계도/문서-브랜치 연관(`#pr-workflow-branch-scope`)
 + Gitea 프로젝트별 네임스페이스/nginx 보안 강화/관계도 초기화·추적코드
 선택기/도입·마이그레이션 가이드/실제 신규 설치 버그 수정/frontend
-서비스 분리까지 전부 완료됐다. PLANS.md 색인 표에 남은 ⬜ 항목이 없다 -
-유일하게 열려있는 항목은 GitHub/GitLab 실제 발행 왕복 테스트(외부
-자격증명 필요, 설계자 승인/제공 대기)뿐이며, 다음 라운드는 새 QA
-패스나 설계자의 새 요청을 기다린다.
+서비스 분리/본인 비밀번호 변경까지 전부 완료됐다. PLANS.md 색인 표에
+남은 ⬜ 항목이 없다 - 유일하게 열려있는 항목은 GitHub/GitLab 실제
+발행 왕복 테스트(외부 자격증명 필요, 설계자 승인/제공 대기)뿐이며,
+다음 라운드는 새 QA 패스나 설계자의 새 요청을 기다린다.

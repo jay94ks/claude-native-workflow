@@ -134,6 +134,7 @@ const KNOWN_CLI_ONLY = new Set([
   "auth_register",
   "auth_login",
   "auth_logout",
+  "auth_change_password", // 본인 비밀번호 변경 - auth login/register와 같은 급의 신원 관리 동작(비밀번호가 대화 컨텍스트에 남으면 안 됨)
   "auth_use_key", // 로컬 자격증명 파일 저장 - 서버 호출 자체가 없음
   "key_create",
   "key_list",

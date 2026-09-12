@@ -11,6 +11,7 @@ import {
   seedDefaultAdminAccount,
   getMe,
   updateMe,
+  changeOwnPassword,
   getPublicProfile,
   listUsers,
   isSuperAdmin,
@@ -483,6 +484,21 @@ app.put(
       nickname?: string;
     };
     res.json(await updateMe(req.userId!, { email, phone, emailVisible, phoneVisible, nickname }));
+  }),
+);
+
+app.post(
+  "/api/auth/me/password",
+  authenticate,
+  requireUnrestrictedScope,
+  asyncRoute(async (req, res) => {
+    const { currentPassword, newPassword } = req.body as { currentPassword?: string; newPassword?: string };
+    if (!currentPassword || !newPassword) {
+      res.status(400).json({ error: "currentPassword/newPassword가 필요합니다" });
+      return;
+    }
+    await changeOwnPassword(req.userId!, currentPassword, newPassword);
+    res.json({ ok: true });
   }),
 );
 

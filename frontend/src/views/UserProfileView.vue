@@ -102,6 +102,47 @@ async function save() {
   }
 }
 
+// admin 대행 재설정(user reset-password, 잊어버렸을 때용)과 달리 이미
+// 로그인돼 있고 현재 비밀번호도 아는 통상적인 경우의 경로 -
+// #self-service-password-change.
+const changingPassword = ref(false);
+const currentPasswordDraft = ref("");
+const newPasswordDraft = ref("");
+const newPasswordConfirmDraft = ref("");
+const passwordSaveError = ref("");
+const passwordSaveSuccess = ref(false);
+const passwordSaving = ref(false);
+
+function startPasswordChange() {
+  currentPasswordDraft.value = "";
+  newPasswordDraft.value = "";
+  newPasswordConfirmDraft.value = "";
+  passwordSaveError.value = "";
+  passwordSaveSuccess.value = false;
+  changingPassword.value = true;
+}
+
+async function savePassword() {
+  passwordSaveError.value = "";
+  if (newPasswordDraft.value !== newPasswordConfirmDraft.value) {
+    passwordSaveError.value = "새 비밀번호가 서로 일치하지 않습니다";
+    return;
+  }
+  passwordSaving.value = true;
+  try {
+    await apiCall("/auth/me/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword: currentPasswordDraft.value, newPassword: newPasswordDraft.value }),
+    });
+    changingPassword.value = false;
+    passwordSaveSuccess.value = true;
+  } catch (err) {
+    passwordSaveError.value = err instanceof ApiError ? err.message : "비밀번호 변경에 실패했습니다";
+  } finally {
+    passwordSaving.value = false;
+  }
+}
+
 onMounted(load);
 watch(() => props.id, load);
 </script>
@@ -140,6 +181,30 @@ watch(() => props.id, load);
           <button type="button" class="cancel-btn" @click="editing = false">취소</button>
         </div>
         <p v-if="saveError" class="error">{{ saveError }}</p>
+      </template>
+    </section>
+
+    <section v-if="isSelf" class="card">
+      <h2>비밀번호</h2>
+      <template v-if="!changingPassword">
+        <p v-if="passwordSaveSuccess" class="success">비밀번호를 변경했습니다.</p>
+        <button class="edit-btn" @click="startPasswordChange">비밀번호 변경</button>
+      </template>
+      <template v-else>
+        <div class="field">
+          <label>현재 비밀번호 <input v-model="currentPasswordDraft" type="password" autocomplete="current-password" /></label>
+        </div>
+        <div class="field">
+          <label>새 비밀번호 <input v-model="newPasswordDraft" type="password" autocomplete="new-password" /></label>
+        </div>
+        <div class="field">
+          <label>새 비밀번호 확인 <input v-model="newPasswordConfirmDraft" type="password" autocomplete="new-password" /></label>
+        </div>
+        <div class="actions">
+          <button :disabled="passwordSaving" @click="savePassword">저장</button>
+          <button type="button" class="cancel-btn" @click="changingPassword = false">취소</button>
+        </div>
+        <p v-if="passwordSaveError" class="error">{{ passwordSaveError }}</p>
       </template>
     </section>
 
@@ -255,6 +320,10 @@ h2 {
 }
 .error {
   color: var(--color-danger);
+  font-size: 13px;
+}
+.success {
+  color: var(--color-success-text, var(--color-text-secondary));
   font-size: 13px;
 }
 </style>
