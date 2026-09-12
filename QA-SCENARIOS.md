@@ -601,6 +601,19 @@
 
 ### QA 체크리스트
 - [x] 옵션 1(새 저장소 생성) - Gitea API로 실제 생성 대조(Phase 2).
+- [x] **이번 세션에서 새로 발견·수정**: `gitea.createRepo()`가
+  `auto_init: true`로 Gitea 저장소를 만들어, 호출부(`linkSelfHostedRepo`)
+  자신의 주석이 말하는 "빈 저장소" 의도와 실제로 어긋나 있었음을
+  README.md "도입 시나리오별 안내" 절차를 실제로 리허설하며 발견 -
+  Gitea가 스스로 만든 기본 브랜치(예: `main`, README 자동 커밋 포함)와
+  설계자가 로컬에서 `git push -u origin <다른 이름의 브랜치>`로 만드는
+  브랜치가 서로 무관한 별개 브랜치로 남아, 그 뒤 `template deploy`가
+  (항상 저장소의 `default_branch`에 커밋하므로) 커밋한 CLAUDE.md/
+  SKILL.md가 설계자의 `git pull`에는 전혀 안 보이는 문제로 실측
+  재현됐다(`auto_init:false`로 수정 후 동일 절차 재실행 - 링크 직후
+  `empty:true` 확인, 설계자의 첫 push로 `default_branch`가 그 브랜치
+  이름으로 정확히 바뀌는지, 그 뒤 `template deploy`+`git pull`이
+  fast-forward로 CLAUDE.md/SKILL.md를 정확히 받는지까지 전부 재확인).
 - [x] 옵션 2(외부 저장소 이주) - 실제 커밋 히스토리가 그대로 들어오는지
   Gitea API로 대조.
 - [x] 옵션 3(외부 연동) - 미러+작업 저장소 둘 다 생성, 소스
@@ -838,6 +851,10 @@
 - [x] project→group→team→전역 기본값 override 우선순위 왕복(Phase 1).
 - [x] `template deploy`가 실제 Gitea 저장소에 커밋되는지 Gitea API로
   대조(Phase 2).
+- [x] `template deploy`가 항상 저장소의 `default_branch`에 커밋한다는
+  전제가 self_hosted `git link`(옵션 1) 직후에도 깨지지 않는지 -
+  §11의 `auto_init` 버그 수정 후 재확인 완료(수정 전엔 Gitea가 미리
+  만든 브랜치와 설계자의 push가 갈라져 있어 이 전제가 깨져 있었음).
 - [x] **이번 세션에서 새로 발견·수정**: `PUT /api/templates`가
   스코프(teamId/projectGroupId/projectId) 중 아무것도 안 넘기면
   "설치 전역 기본값" 수정인데, 이 경로에 API 키 스코프 확인이 전혀
@@ -897,6 +914,20 @@
   반영된 항목을 링크로 가리키는 아직 안 반영된 항목이 경고 없이
   정확히 그 trackingCode로 링크되는지, 실패한 항목은 표시가 안 남아
   재실행 시 자동으로 다시 시도되는지 - 전부 실측.
+
+- [x] **`#adoption-migration-guide` 전체 절차 실측 리허설** -
+  README.md/CLAUDE.md가 안내하는 시나리오 1(이미 `CLAUDE.md`가 있는
+  기존 프로젝트) 절차를 처음부터 끝까지 실제로 실행: `concept`
+  브랜치의 실제 frontmatter 문서(DC/DS/PL/SP 5건, 상호 링크 포함)로
+  로컬 git 저장소 구성 → 백업 브랜치(`backup/pre-cnwk-migration`)
+  생성 → `MIGRATION.md` 작성 → `project-create` → `git link` → 로컬
+  브랜치 push → `migrate scan`으로 매니페스트 생성 → 대상 프로젝트에
+  없는 DocType(DC/DS/PL/SP) 생성 → `migrate apply`(5건 전부 생성,
+  상태 프리셋/미매핑 안전-실패/배치 내 링크 해석·배치 밖 링크 스킵
+  경고까지 전부 의도대로 동작 확인) → 재실행으로 멱등성 재확인
+  (전부 `alreadyApplied`) → `template deploy` + `git pull`로
+  CLAUDE.md/SKILL.md 수신까지 왕복 완료. 이 리허설 과정에서 §11/§13의
+  `auto_init` 버그를 발견·수정.
 
 ### 추가 개발 계획
 현재 없음.

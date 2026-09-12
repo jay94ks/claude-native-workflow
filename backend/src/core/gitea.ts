@@ -110,9 +110,18 @@ async function enableManualMerge(target: GiteaRepoRef): Promise<void> {
 }
 
 export async function createRepo(target: GiteaRepoRef): Promise<CreatedRepo> {
+  // auto_init:true였다가 실측으로 발견해 고침(#adoption-migration-guide
+  // 시나리오 리허설) - true면 Gitea가 README 등으로 기본 브랜치(보통
+  // "main")를 스스로 커밋해두는데, 호출부(linkSelfHostedRepo)의 의도는
+  // "빈 저장소"(설계자가 자기 로컬 브랜치로 처음 push)이다. 두 동작이
+  // 어긋나면 설계자가 다른 이름의 로컬 브랜치를 push했을 때 그 커밋이
+  // Gitea가 미리 만든 브랜치와 분리돼버려 이후 template deploy(항상
+  // 저장소의 default_branch에 커밋)의 결과가 설계자의 git pull에 전혀
+  // 안 보이게 된다(실제로 재현 확인). false면 설계자의 첫 push가 그대로
+  // 저장소의 기본 브랜치가 된다.
   const res = await giteaFetch(`/api/v1/orgs/${target.org}/repos`, {
     method: "POST",
-    body: JSON.stringify({ name: target.repo, private: true, auto_init: true }),
+    body: JSON.stringify({ name: target.repo, private: true, auto_init: false }),
   });
   const json = (await res.json()) as { clone_url: string; id: number };
   await enableManualMerge(target);

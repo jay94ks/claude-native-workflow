@@ -5599,6 +5599,68 @@ QA-SCENARIOS.md 해당 두 항목의 "후속 QA 라운드 추가 검증" 절)만
 `#gitea-nginx-lockdown`)의 모든 "확인 필요" 항목이 이번 라운드로 전부
 실측 확인됐다.
 
+## 도입/마이그레이션 가이드 실측 리허설 + `auto_init` 버그 수정 - 완료
+
+**배경**: 설계자가 `test` 브랜치에서 README.md/CLAUDE.md의 "다른
+프로젝트에 이 시스템을 도입하는 방법"(`#adoption-migration-guide`)
+절차를 실제로 끝까지 실행해 검증해보라고 지시했다. 그동안 이 가이드는
+코드 검토와 부분적 실측(예: `migrate scan/apply`의 BOM/멱등성 버그
+수정 라운드)만 거쳤지, 백업 브랜치 → `MIGRATION.md` → `git link` →
+push → 콘텐츠 이전 → `template deploy` → `git pull`까지 전체 절차를
+처음부터 끝까지 이어서 실행해본 적은 없었다.
+
+**리허설 방법**: `concept` 브랜치의 실제 문서 5건(DC-00001/00002,
+DS-00001, PL-00001, SP-00001 - 상호 링크 포함, 상태 어휘도 `applied`/
+`active`/`done` 등 실제 값)을 가져와 로컬 git 저장소를 구성하고,
+CLAUDE.md가 존재하는 시나리오 1로 취급 - 가이드가 명시한 순서(백업
+브랜치 → `MIGRATION.md` → 프로젝트 생성/`git link` → `git remote add`
++`push` → `migrate scan`→검토→`migrate apply` → `template deploy`+
+`git pull` → 정리)를 그대로 실행했다.
+
+**발견한 문제**: `template deploy` 후 `git pull`이 "Already up to
+date"만 보이고 CLAUDE.md/SKILL.md를 전혀 받지 못했다. 원인 추적 결과
+`gitea.createRepo()`가 `auto_init: true`로 호출되고 있었다 - 이
+함수의 유일한 호출부인 `linkSelfHostedRepo()`(가져올 외부 저장소가
+없는 "빈 저장소" 케이스)의 기존 주석은 이미 "없으면 빈 저장소"라고
+명시하고 있었는데, 실제 구현은 Gitea가 스스로 기본 브랜치(README
+자동 커밋 포함)를 만들게 하고 있어 주석과 동작이 어긋나 있었다.
+그 결과 설계자가 로컬에서 다른 이름의 브랜치로 push하면(이번
+리허설에서는 `master`) Gitea가 미리 만든 기본 브랜치(`main`)와
+완전히 무관한 별개 브랜치가 되고, `template deploy`는 항상 저장소의
+`default_branch`에 커밋하므로 그 커밋이 설계자의 브랜치에는 영원히
+나타나지 않는다 - 원격 브랜치 이름이 로컬과 우연히 같았다면 오히려
+공통 조상이 없는 히스토리라 `git push`가 non-fast-forward로 거부됐을
+것이다.
+
+**수정**: `backend/src/core/gitea.ts`의 `createRepo()`를
+`auto_init: false`로 바꿔 호출부의 원래 의도(빈 저장소)와 실제 동작을
+일치시켰다. `createRepo()`의 호출부는 이 한 곳뿐이라(`grep`으로
+확인) 다른 흐름(옵션 2/3의 `migrateRepo` 경로는 항상 외부 저장소의
+실제 브랜치를 그대로 복제하므로 이 문제와 무관)에 영향이 없다.
+프런트엔드(`ChangeTrackingView.vue`)에는 이미 "커밋이 없습니다"
+빈 상태 문구가 있어, 빈 저장소 상태 자체는 이미 예견되고 있던
+설계였다는 것도 재확인했다.
+
+**재검증**: 백엔드 재빌드(`docker compose up -d --build backend`) 후
+새 테스트 프로젝트로 동일 절차 재실행 - `git link` 직후
+`GET .../repo`가 `empty:true`를 반환, 로컬 `master` 브랜치를 push하자
+그 저장소의 `default_branch`가 정확히 `master`로 바뀜, `template
+deploy` 후 `git pull`이 `Fast-forward`로 CLAUDE.md+SKILL.md를 정확히
+받아옴을 확인. 원래 리허설이었던 5건 문서 이전 배치도 `migrate
+apply`가 0 errors로 전부 생성했고, 배치 안에서 해석되는 링크(예:
+DC-00001→DS-00001/SP-00001/PL-00001)는 정확히 연결되고 배치 밖
+대상(SP-00002/00003/00004, DN-00001)은 경고로 건너뛰었으며, 상태
+프리셋(`active`→`approved`, `done`→`approved`)과 미매핑 값(`applied`)의
+안전한 실패(초기 `draft` 유지+경고)도 전부 의도대로 동작함을 재확인
+- `migrate apply` 재실행 시 5건 전부 `alreadyApplied`로 멱등성도
+재확인.
+
+**결론**: 가이드 문서(README.md/CLAUDE.md) 자체는 절차 서술이
+정확했고 고칠 필요가 없었다 - 문제는 코드(`gitea.ts`)가 그 문서와
+자기 자신의 주석이 말하는 의도를 실제로 지키지 못하고 있던 것이었다.
+이 라운드는 `test` 브랜치에서 진행했다 - `main`에 반영할지는 설계자
+확인 후 병합.
+
 ## 다음 단계
 
 3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
@@ -5608,7 +5670,8 @@ QA-SCENARIOS.md 해당 두 항목의 "후속 QA 라운드 추가 검증" 절)만
 선택기/도입·마이그레이션 가이드(`#gitea-per-project-namespace`,
 `#gitea-nginx-lockdown`, `#relations-reset-and-picker`,
 `#adoption-migration-guide`)가 전부 완료됐고, 그 뒤 회귀 QA 후속
-라운드까지 실측 검증을 마쳤다. PLANS.md 색인 표에 남은 ⬜ 항목이 없다 -
-유일하게 열려있는 항목은 GitHub/GitLab 실제 발행 왕복 테스트(외부
-자격증명 필요, 설계자 승인/제공 대기)뿐이며, 다음 라운드는 새 QA
-패스나 설계자의 새 요청을 기다린다.
+라운드 + 도입/마이그레이션 가이드 전체 절차 리허설(`auto_init` 버그
+수정 포함)까지 실측 검증을 마쳤다. PLANS.md 색인 표에 남은 ⬜ 항목이
+없다 - 유일하게 열려있는 항목은 GitHub/GitLab 실제 발행 왕복
+테스트(외부 자격증명 필요, 설계자 승인/제공 대기)뿐이며, 다음 라운드는
+새 QA 패스나 설계자의 새 요청을 기다린다.
