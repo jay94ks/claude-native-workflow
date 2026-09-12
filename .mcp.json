@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "docs-mcp": {
+      "command": "npm",
+      "args": ["run", "--silent", "mcp"],
+      "cwd": "backend"
+    }
+  }
+}
