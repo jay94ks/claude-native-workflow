@@ -589,10 +589,16 @@
   프로젝트 id로 시도 시 소유 불일치 거부, 빈 프롬프트 거부 확인.
   CLI에서 `--branch ""`(공백)는 commander가 값 누락으로 오인하니
   `--branch=""`(등호)로 붙여 써야 한다는 함정 확인.
+- [x] **브랜치 조건 glob 패턴(`#hook-branch-pattern`)** - 실제 Gitea
+  저장소로 실측: `release/*` 프롬프트 등록 → `release/1.0` 브랜치에
+  실제 커밋(Contents API로 백엔드 우회, 진짜 push 웹훅 유발) → 매칭돼
+  큐 항목 생성 확인. `release/2.0/hotfix`(세그먼트 2개) 브랜치 커밋 →
+  매칭 안 되고 큐 항목 없음 확인(세그먼트 경계가 의도대로 `/`를 안
+  넘는지의 핵심 증거). 리터럴 `main` 프롬프트는 이번 변경과 무관하게
+  회귀 없이 그대로 동작.
 
 ### 추가 개발 계획
-`#hook-branch-pattern` `#hook-queue-ttl` - 상세는
-[PLANS.md](PLANS.md) 참고.
+`#hook-queue-ttl` - 상세는 [PLANS.md](PLANS.md) 참고.
 
 ---
 

@@ -1260,7 +1260,7 @@ const hookCmd = program.command("hook").description("git push 훅 프롬프트 �
 hookCmd
   .command("create <projectId>")
   .requiredOption("--prompt <file>", "프롬프트 내용이 담긴 로컬 파일")
-  .option("--branch <branch>", "이 브랜치로 push될 때만 매칭(생략하면 모든 브랜치)")
+  .option("--branch <branch>", '이 브랜치로 push될 때만 매칭(생략하면 모든 브랜치) - "release/*"처럼 *로 브랜치 그룹을 묶을 수 있다(세그먼트 안에서만 - /는 안 넘음)')
   .action((projectId, opts) =>
     run(async () => {
       const fs = await import("node:fs");
@@ -1281,7 +1281,7 @@ hookCmd
 hookCmd
   .command("update <projectId> <id>")
   .option("--prompt <file>", "새 프롬프트 내용이 담긴 로컬 파일(생략하면 기존 내용 유지)")
-  .option("--branch <branch>", '새 트리거 브랜치(--branch="" 처럼 빈 문자열을 주면 브랜치 제한 해제 - 모든 브랜치 매칭, 생략하면 기존 값 유지 - 공백으로 띄어 쓴 --branch ""는 셸/commander가 값 누락으로 처리하니 반드시 =로 붙여 쓸 것)')
+  .option("--branch <branch>", '새 트리거 브랜치("release/*"처럼 *로 그룹 매칭 가능, --branch="" 처럼 빈 문자열을 주면 브랜치 제한 해제 - 모든 브랜치 매칭, 생략하면 기존 값 유지 - 공백으로 띄어 쓴 --branch ""는 셸/commander가 값 누락으로 처리하니 반드시 =로 붙여 쓸 것)')
   .action((projectId, id, opts) =>
     run(async () => {
       const body: { promptTemplate?: string; triggerBranch?: string } = {};

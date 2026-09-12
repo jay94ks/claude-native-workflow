@@ -88,15 +88,36 @@ export function verifyAndParseWebhook(
   throw new Error(`알 수 없는 provider: ${provider}`);
 }
 
+/** triggerBranch를 리터럴 브랜치명 또는 glob 패턴으로 해석해 매칭한다 -
+ * `*`가 없으면 지금까지처럼 정확 일치(#hook-branch-pattern 이전 동작과
+ * 100% 동일), 있으면 그 자리를 세그먼트 안에서만(`/`를 안 넘는)
+ * 와일드카드로 취급한다(`release/*`가 `release/1.0`엔 매칭되지만
+ * `release/1.0/hotfix`엔 안 됨 - git 브랜치 프리픽스 관례에 맞춘
+ * 직관적인 범위). 정규식 전체를 지원하지 않는 건 의도적 - glob 하나만
+ * 지원해도 실제 요청 사례(`release/*`류)는 다 커버되고, 두 문법을
+ * 동시에 지원하면 어느 쪽으로 해석해야 할지 구분하는 규칙이 따로
+ * 필요해져 오히려 헷갈린다. */
+function matchesBranchPattern(pattern: string, branch: string): boolean {
+  if (!pattern.includes("*")) return pattern === branch;
+  const escaped = pattern
+    .split("*")
+    .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${escaped}$`).test(branch);
+}
+
 /** 매칭되는 PushHookPrompt마다 PushHookQueueEntry를 하나씩 쌓는다.
  * 반환값은 실제로 쌓인 개수 - Phase 3 전까지는 PushHookPrompt를 만드는
- * CRUD가 없으므로 0이 정상이다. */
+ * CRUD가 없으므로 0이 정상이다. glob 패턴 매칭은 DB 쿼리로 표현할 수
+ * 없어(프로젝트당 프롬프트 수가 적어 성능 문제 없음) 전체를 불러와
+ * 애플리케이션에서 거른다. */
 export async function recordPushEvent(projectId: string, parsed: ParsedPush): Promise<number> {
   const db = getDb();
-  const prompts = await db.pushHookPrompt.findMany({
-    where: { projectId, OR: [{ triggerBranch: null }, { triggerBranch: parsed.branch }] },
-  });
-  for (const prompt of prompts as { id: string }[]) {
+  const prompts = await db.pushHookPrompt.findMany({ where: { projectId } });
+  const matched = (prompts as { id: string; triggerBranch: string | null }[]).filter(
+    (p) => p.triggerBranch === null || matchesBranchPattern(p.triggerBranch, parsed.branch),
+  );
+  for (const prompt of matched) {
     await db.pushHookQueueEntry.create({
       data: { pushHookPromptId: prompt.id, commitSha: parsed.headSha, status: "pending" },
     });
@@ -113,7 +134,7 @@ export async function recordPushEvent(projectId: string, parsed: ParsedPush): Pr
   // 남기고 조용히 끝남).
   void syncSourceFilesForPush(projectId, parsed);
 
-  return prompts.length;
+  return matched.length;
 }
 
 export type GiteaSystemPushResult =

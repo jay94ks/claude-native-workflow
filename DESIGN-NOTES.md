@@ -3548,6 +3548,42 @@ create`(브랜치 지정) → `hook update --prompt`(내용만 교체, 브랜치
 `hook_update`도 별도 스크립트로 왕복 확인. `npx tsc --noEmit`,
 `npm run audit:cli-mcp` 클린.
 
+## push 훅 브랜치 glob 패턴 매칭(`#hook-branch-pattern`) - 완료 (2026-09-12)
+
+PLANS.md 21번(`## 10. push 훅 자동화`). `PushHookPrompt.triggerBranch`
+가 정확 일치 또는 전체(`null`) 둘 뿐이라 `release/1.0`,
+`release/2.0`처럼 브랜치 그룹을 한 규칙으로 못 묶었다.
+
+**범위를 glob으로만 좁힘** - 백로그 문구는 "glob/regex"였지만, 실제
+필요 사례(`release/*`)는 전형적 glob이고, 두 문법을 동시에 지원하면
+"이 문자열을 어느 쪽으로 해석할지" 구분 규칙이 따로 필요해 오히려
+헷갈린다. `*`가 있으면 glob, 없으면 기존처럼 리터럴 정확 일치로
+자동 판별 - 기존 프롬프트(전부 `*` 없음)는 동작이 전혀 안 바뀐다.
+
+`core/pushHooks.ts`에 `matchesBranchPattern(pattern, branch)` 신설 -
+`*`를 세그먼트 안에서만(`/`를 안 넘는) 와일드카드로 변환해 정규식
+매칭. 라이브러리 없이 직접 변환(`*` 하나만 지원하면 되므로
+minimatch류 새 의존성이 오히려 과함). `recordPushEvent()`의 DB
+쿼리를 "프로젝트의 전체 프롬프트 조회"로 바꾸고(glob은 SQL로 표현
+불가) 애플리케이션 코드에서 필터 - 반환값(큐에 쌓인 개수)도 필터링
+후 배열 기준으로 정정(수정 전엔 필터 전 전체 개수를 그대로 돌려주는
+실수가 있었는데, 커밋 전에 코드 리뷰하며 직접 잡음). 스키마/라우트
+변경 없음(`triggerBranch`는 이미 자유 문자열 컬럼) - CLI/MCP는
+`--branch`/`triggerBranch` 설명 문구만 glob 지원 언급 추가.
+
+**실측 검증**: 실제 Gitea 저장소로 프로젝트 연결 → `release/*`
+프롬프트 + 리터럴 `main` 프롬프트 등록 → Gitea Contents API로
+백엔드를 거치지 않고 직접 커밋(진짜 push 웹훅 유발): `release/1.0`
+브랜치 커밋 → `release/*` 매칭돼 큐 항목 생성 확인. `release/2.0/
+hotfix`(세그먼트 2개, `release/2.0` 브랜치는 따로 만들지 않음 -
+git은 어차피 `release/1.0`과 `release/1.0/hotfix`를 동시에 허용
+안 함, 리프/디렉터리 충돌) 브랜치 커밋 → **매칭 안 되고 큐 항목
+없음** 확인(세그먼트 경계 설계의 핵심 증거). `main` 브랜치 커밋 →
+리터럴 `main` 프롬프트만 매칭돼 큐 항목 생성(회귀 없음) - 세 커밋
+후 큐를 한 번에 조회해 정확히 예상한 항목만 쌓였는지 확인. `npx tsc
+--noEmit`, `npm run audit:cli-mcp`(새 파라미터 없음 - 그대로 통과)
+클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

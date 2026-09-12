@@ -818,7 +818,7 @@ async function main() {
   tool(
     "hook_create",
     "push 훅 프롬프트 생성",
-    "지정한 브랜치(생략하면 전체)로 push될 때 대기열에 쌓일 프롬프트를 등록한다.",
+    '지정한 브랜치(생략하면 전체)로 push될 때 대기열에 쌓일 프롬프트를 등록한다 - "release/*"처럼 *로 브랜치 그룹을 묶을 수 있다(세그먼트 안에서만, /는 안 넘음).',
     { projectId: z.string(), promptTemplate: z.string(), triggerBranch: z.string().optional() },
     async (a) =>
       call(`/api/projects/${a.projectId}/push-hook-prompts`, {
@@ -832,7 +832,7 @@ async function main() {
   tool(
     "hook_update",
     "push 훅 프롬프트 수정",
-    "트리거 브랜치나 프롬프트 내용을 바꾼다 - triggerBranch에 빈 문자열을 주면 브랜치 제한을 해제한다(모든 브랜치 매칭), 생략하면 기존 값 유지.",
+    '트리거 브랜치나 프롬프트 내용을 바꾼다 - triggerBranch에 "release/*"처럼 *를 쓰면 브랜치 그룹을 묶을 수 있고, 빈 문자열을 주면 브랜치 제한을 해제한다(모든 브랜치 매칭), 생략하면 기존 값 유지.',
     { projectId: z.string(), id: z.string(), promptTemplate: z.string().optional(), triggerBranch: z.string().optional() },
     async (a) => {
       const body: Record<string, unknown> = {};

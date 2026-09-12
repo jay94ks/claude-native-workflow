@@ -51,7 +51,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 18 | ✅ | `#git-unlink` | 외부 연동 해제(자체 호스팅으로 전환) - 자체 호스팅은 프로젝트 삭제 전엔 해제 불가 |
 | 19 | ✅ | `#git-publish-pr-draft` | 의도된 설계로 재확인 - 자동 PR 생성은 범위 밖(문서만 정리, 코드 변경 없음) |
 | 20 | ✅ | `#hook-prompt-update` | PushHookPrompt 부분 갱신(update) - 브랜치/프롬프트 내용, CLI/MCP |
-| 21 | ⬜ | `#hook-branch-pattern` | 브랜치 패턴(glob/regex) 매칭 없음 |
+| 21 | ✅ | `#hook-branch-pattern` | 브랜치 조건에 `*` glob 패턴 지원(예: `release/*`, 세그먼트 안에서만) |
 | 22 | ⬜ | `#hook-queue-ttl` | push 훅 대기열 만료/자동 정리 없음 |
 | 23 | ⬜ | `#template-history` | 템플릿 변경 이력(리비전) 없음 |
 | 24 | ⬜ | `#migrate-idempotent` | 가이디드 마이그레이션 재실행이 멱등하지 않음 |
@@ -89,10 +89,6 @@ revisions/source-links/access/folder, 두 bulk 라우트 포함) 전부가
 라운드로 남겨둔다.
 
 ## 10. push 훅 자동화
-
-### `#hook-branch-pattern`
-**브랜치 매칭이 정확히 일치 또는 전체뿐, 패턴(glob/regex) 매칭이
-없다** - `release/*`처럼 브랜치 그룹을 한 규칙으로 묶을 수 없다.
 
 ### `#hook-queue-ttl`
 **대기열 항목에 만료/자동 정리가 없다** - 아무도 안 봐서 영원히
