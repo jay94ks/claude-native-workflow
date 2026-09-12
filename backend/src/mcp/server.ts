@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { apiCall, apiCallText, loadCredentials, waitForMessageDirect } from "../cli/apiclient.js";
+import { apiCall, apiCallText, loadCredentials, waitForMessageDirect, detectCurrentGitBranch } from "../cli/apiclient.js";
 import { scanDirectory, applyManifest } from "../cli/migrate.js";
 
 // cli/index.ts의 모든 명령을 1:1로 미러링한다("CLI/MCP 명령어 완전성"
@@ -144,15 +144,17 @@ async function main() {
     tags: z.array(z.string()).optional(),
     parentIds: z.array(z.string()).optional(),
     childIds: z.array(z.string()).optional(),
+    branchName: z.string().optional(),
   });
 
   tool(
     "relation_add",
     "코드 관계 추가",
-    "무엇을(target) 어디서(referrer) 어느 파일의 몇 줄/몇 열에서(filePath/line/column) 무슨 목적으로(purpose) 참조했는지 기록한다. trackingCodes로 연관 문서(여러 개 가능, 실제 존재하는 문서여야 함)를 묶고, tags로 자유롭게 분류하고, parentIds/childIds로 다른 관계와 다대다로 연결할 수 있다(순환 허용).",
+    "무엇을(target) 어디서(referrer) 어느 파일의 몇 줄/몇 열에서(filePath/line/column) 무슨 목적으로(purpose) 참조했는지 기록한다. trackingCodes로 연관 문서(여러 개 가능, 실제 존재하는 문서여야 함)를 묶고, tags로 자유롭게 분류하고, parentIds/childIds로 다른 관계와 다대다로 연결할 수 있다(순환 허용). branchName을 생략하면 이 MCP 서버 프로세스의 현재 디렉터리에서 git으로 자동 감지한 브랜치가 쓰인다.",
     { projectId: z.string(), ...relationItemObject.shape },
     async (a) => {
       const { projectId, ...body } = a;
+      if (body.branchName === undefined) body.branchName = detectCurrentGitBranch() ?? undefined;
       return call(`/api/projects/${projectId}/relations`, { method: "POST", body: JSON.stringify(body) });
     },
   );
@@ -160,7 +162,7 @@ async function main() {
   tool(
     "relation_update",
     "코드 관계 수정",
-    "필드는 준 것만 갱신된다. tags를 주면 전체 교체, 상위/하위 연결은 addParentIds/removeParentIds/addChildIds/removeChildIds로 개별 추가·제거한다.",
+    "필드는 준 것만 갱신된다. tags를 주면 전체 교체, 상위/하위 연결은 addParentIds/removeParentIds/addChildIds/removeChildIds로 개별 추가·제거한다. branchName을 안 주면 기존 값을 유지한다(자동 감지 안 함).",
     {
       projectId: z.string(),
       id: z.string(),
@@ -187,7 +189,7 @@ async function main() {
   tool(
     "relation_list",
     "코드 관계 목록/검색",
-    "q(target/referrer/purpose 부분 일치)/filePath(정확 일치)/trackingCode(이 문서를 연관 문서로 갖는 관계만, 정확 일치)/tag/rootOnly(최상위만)로 필터. page/pageSize를 둘 다 생략하면 전체 배열, 하나라도 주면 페이지네이션 응답.",
+    "q(target/referrer/purpose 부분 일치)/filePath(정확 일치)/trackingCode(이 문서를 연관 문서로 갖는 관계만, 정확 일치)/tag/rootOnly(최상위만)로 필터. branchName을 생략하면(allBranches도 안 주면) 이 MCP 서버 프로세스의 현재 디렉터리에서 git으로 자동 감지한 브랜치로 필터링되고, allBranches:true면 브랜치 구분 없이 전체(과거 데이터 포함)를 본다. page/pageSize를 둘 다 생략하면 전체 배열, 하나라도 주면 페이지네이션 응답.",
     {
       projectId: z.string(),
       q: z.string().optional(),
@@ -195,6 +197,8 @@ async function main() {
       trackingCode: z.string().optional(),
       tag: z.string().optional(),
       rootOnly: z.boolean().optional(),
+      branchName: z.string().optional(),
+      allBranches: z.boolean().optional(),
       page: z.number().optional(),
       pageSize: z.number().optional(),
     },
@@ -205,6 +209,8 @@ async function main() {
       if (a.trackingCode) qs.set("trackingCode", String(a.trackingCode));
       if (a.tag) qs.set("tag", String(a.tag));
       if (a.rootOnly) qs.set("hasNoParent", "true");
+      if (a.allBranches) qs.set("allBranches", "true");
+      else qs.set("branchName", String(a.branchName ?? detectCurrentGitBranch() ?? ""));
       if (a.page !== undefined) qs.set("page", String(a.page));
       if (a.pageSize !== undefined) qs.set("pageSize", String(a.pageSize));
       return call(`/api/projects/${a.projectId}/relations?${qs}`);
@@ -268,6 +274,87 @@ async function main() {
     "id 배열로 여러 관계를 한 번에 삭제한다. 항목별 성공/실패 결과 배열을 반환.",
     { projectId: z.string(), ids: z.array(z.string()) },
     async (a) => call(`/api/projects/${a.projectId}/relations/bulk`, { method: "DELETE", body: JSON.stringify({ ids: a.ids }) }),
+  );
+
+  // ---------------------------------------------------------------- Pull Request
+  // git 저장소 관리 기능(브랜치/저장소 연동/발행)은 지금까지 웹 전용
+  // 이었지만, PR은 이번에 CLI/MCP를 예외로 연다 - 자동 머지가 실패했을
+  // 때 Claude가 직접 진단하고 수동 병합까지 완료할 수 있어야 하기
+  // 때문(설계자 요구사항 4번). PR 생성은 브랜치 선택 UI와 강하게
+  // 결합돼 있어 여전히 웹에서만 한다.
+
+  tool(
+    "pr_list",
+    "Pull Request 목록",
+    "항상 최신순(createdAt desc). state(open/closed/all, 기본 all)로 필터. page/pageSize를 둘 다 생략하면 전체 배열, 하나라도 주면 페이지네이션 응답.",
+    { projectId: z.string(), state: z.enum(["open", "closed", "all"]).optional(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const qs = new URLSearchParams();
+      if (a.state) qs.set("state", String(a.state));
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      if (paged) {
+        qs.set("page", String(a.page ?? 1));
+        qs.set("pageSize", String(a.pageSize ?? 20));
+      }
+      return call(`/api/projects/${a.projectId}/git/pulls${paged ? "/page" : ""}?${qs}`);
+    },
+  );
+  tool("pr_get", "Pull Request 상세", "이 앱이 추가로 추적하는 disposition(merged/rejected/null)과 lastMergeError를 포함해 반환한다.", { projectId: z.string(), index: z.number() }, async (a) =>
+    call(`/api/projects/${a.projectId}/git/pulls/${a.index}`),
+  );
+  tool("pr_commits", "PR의 커밋 목록", "이 PR에 관여한 커밋 목록.", { projectId: z.string(), index: z.number() }, async (a) =>
+    call(`/api/projects/${a.projectId}/git/pulls/${a.index}/commits`),
+  );
+  tool("pr_comments", "PR 대화 조회", "설계자간 Markdown 대화(Gitea 댓글) 목록.", { projectId: z.string(), index: z.number() }, async (a) =>
+    call(`/api/projects/${a.projectId}/git/pulls/${a.index}/comments`),
+  );
+  tool(
+    "pr_add_comment",
+    "PR 대화에 댓글 추가",
+    "설계자간 대화(Markdown)에 댓글을 남긴다.",
+    { projectId: z.string(), index: z.number(), body: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/pulls/${a.index}/comments`, { method: "POST", body: JSON.stringify({ body: a.body }) }),
+  );
+  tool("pr_timeline", "PR 진행 내역", "PR이 닫힐 때까지의 전체 히스토리(댓글/상태전이/머지/커밋참조 등 타입별 이벤트 피드).", { projectId: z.string(), index: z.number() }, async (a) =>
+    call(`/api/projects/${a.projectId}/git/pulls/${a.index}/timeline`),
+  );
+  tool("pr_messages", "PR에 기록된 이 앱의 메시지", "머지/거부/닫힘/재오픈 등 이 앱이 남긴 진행 메시지 목록.", { projectId: z.string(), index: z.number() }, async (a) =>
+    call(`/api/projects/${a.projectId}/git/pulls/${a.index}/messages`),
+  );
+  tool(
+    "pr_merge",
+    "PR 자동 머지",
+    "owner 전용. 실패하면 lastMergeError가 기록되고 다음 pr_get 호출에서 수동 병합 안내를 확인할 수 있다.",
+    { projectId: z.string(), index: z.number() },
+    async (a) => call(`/api/projects/${a.projectId}/git/pulls/${a.index}/merge`, { method: "POST" }),
+  );
+  tool(
+    "pr_merge_manually",
+    "PR 수동 머지 완료 기록",
+    "owner 전용. 자동 머지가 실패했을 때, 로컬에서 직접(또는 Claude가 CLI로) 충돌을 해결해 push한 커밋 SHA를 넘기면 Gitea에 병합 완료로 기록된다.",
+    { projectId: z.string(), index: z.number(), mergeCommitId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/pulls/${a.index}/merge-manually`, { method: "POST", body: JSON.stringify({ mergeCommitId: a.mergeCommitId }) }),
+  );
+  tool(
+    "pr_reject",
+    "PR 거부",
+    "editor 이상. 거부돼도 이후 pr_reopen + 새 커밋으로 다시 Accept까지 갈 수 있다.",
+    { projectId: z.string(), index: z.number() },
+    async (a) => call(`/api/projects/${a.projectId}/git/pulls/${a.index}/reject`, { method: "POST" }),
+  );
+  tool(
+    "pr_close",
+    "PR 닫기",
+    "editor 이상. 머지/거부 여부와 무관하게 닫는다 - 둘 다 선택되지 않았으면 거부로 처리된다.",
+    { projectId: z.string(), index: z.number() },
+    async (a) => call(`/api/projects/${a.projectId}/git/pulls/${a.index}/close`, { method: "POST" }),
+  );
+  tool(
+    "pr_reopen",
+    "PR 재오픈",
+    "editor 이상. 거부/닫힘 상태의 PR을 다시 연다.",
+    { projectId: z.string(), index: z.number() },
+    async (a) => call(`/api/projects/${a.projectId}/git/pulls/${a.index}/reopen`, { method: "POST" }),
   );
 
   // ---------------------------------------------------------------- 팀/그룹/프로젝트
@@ -686,6 +773,39 @@ async function main() {
       if (a.page === undefined && a.pageSize === undefined) return call(`/api/documents/${a.trackingCode}/source-links`);
       const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
       return call(`/api/documents/${a.trackingCode}/source-links/page?${qs}`);
+    },
+  );
+
+  tool(
+    "document_link_branch",
+    "브랜치 링크 추가",
+    "이 문서와 연관된 git 브랜치를 연결한다(브랜치가 나중에 삭제돼도 이 연결은 유지된다 - 역사적 기록).",
+    { trackingCode: z.string(), branchName: z.string() },
+    async (a) =>
+      call(`/api/documents/${a.trackingCode}/branch-links`, {
+        method: "POST",
+        body: JSON.stringify({ branchName: a.branchName }),
+      }),
+  );
+  tool(
+    "document_unlink_branch",
+    "브랜치 링크 제거",
+    "연결된 브랜치 링크를 제거한다.",
+    { trackingCode: z.string(), linkId: z.string() },
+    async (a) =>
+      call(`/api/document-branch-links/${a.linkId}?trackingCode=${encodeURIComponent(a.trackingCode as string)}`, {
+        method: "DELETE",
+      }),
+  );
+  tool(
+    "document_branch_links",
+    "연관된 브랜치 목록",
+    "이 문서와 연관된 브랜치 목록. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { trackingCode: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/documents/${a.trackingCode}/branch-links`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/documents/${a.trackingCode}/branch-links/page?${qs}`);
     },
   );
 

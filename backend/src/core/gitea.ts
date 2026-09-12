@@ -92,12 +92,27 @@ export interface CreatedRepo {
   externalRepoId: string;
 }
 
+/** Gitea가 새 저장소를 만들 때 `allow_manual_merge`를 기본 false로
+ * 두는 것을 실제 인스턴스로 확인(POST /orgs/{org}/repos의
+ * CreateRepoOption 자체엔 이 필드가 없어 생성 시점에 못 켬 - PATCH로
+ * 생성 직후 별도로 켜야 함). 이게 꺼져 있으면 요구사항 4번(자동 머지
+ * 실패 시 수동 병합 완료 기록)의 `mergePullRequestManually()`가
+ * "manually-merged is not allowed" 405로 항상 실패한다 - 실제로 이
+ * 오류를 재현해서 발견함. */
+async function enableManualMerge(slug: string): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}`, {
+    method: "PATCH",
+    body: JSON.stringify({ allow_manual_merge: true }),
+  });
+}
+
 export async function createRepo(slug: string): Promise<CreatedRepo> {
   const res = await giteaFetch(`/api/v1/orgs/${orgLogin()}/repos`, {
     method: "POST",
     body: JSON.stringify({ name: slug, private: true, auto_init: true }),
   });
   const json = (await res.json()) as { clone_url: string; id: number };
+  await enableManualMerge(slug);
   return { cloneUrl: json.clone_url, externalRepoId: String(json.id) };
 }
 
@@ -175,6 +190,10 @@ export async function migrateRepo(slug: string, cloneAddr: string, opts: Migrate
     throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
   }
   const json = (await res.json()) as { clone_url: string; id: number };
+  // PR은 항상 work 저장소(mirror:false)에서만 생성/머지된다
+  // (requireGiteaWorkingSlug 참고) - 읽기 전용 pull-mirror엔 PR 자체가
+  // 없으므로 그쪽은 건드릴 필요 없음.
+  if (!opts.mirror) await enableManualMerge(slug);
   return { cloneUrl: json.clone_url, externalRepoId: String(json.id) };
 }
 
@@ -276,6 +295,7 @@ export async function getFullTree(slug: string, ref = "HEAD"): Promise<FullTreeE
 export interface SystemWebhook {
   id: number;
   config: { url: string };
+  events: string[];
 }
 
 /** 인스턴스 전체 시스템 웹훅 목록 - 실제 Gitea 1.27.3 인스턴스로 검증해
@@ -300,16 +320,34 @@ export async function createSystemWebhook(targetUrl: string, secret: string): Pr
     body: JSON.stringify({
       type: "gitea",
       config: { url: targetUrl, content_type: "json", secret, is_system_webhook: "true" },
-      events: ["push"],
+      // "delete"(브랜치/태그 삭제) - 브랜치 스코프 코드 관계도 정리
+      // (core/codeRelations.ts의 deleteRelationsForBranch())에 필요.
+      events: ["push", "delete"],
       active: true,
     }),
   });
 }
 
+/** 이미 등록된 시스템 웹훅의 events 목록을 갱신(PATCH) - 기존
+ * ensureGiteaSystemWebhookConfigured()는 "URL이 이미 있으면 스킵"이라
+ * "push"만 구독하던 예전 배포에 "delete"를 새로 추가해도 반영이 안 되는
+ * 문제가 있었다. EditHookOption.events가 swagger에 문서화돼 있어(admin
+ * hooks PATCH) 여기서 events만 갈아친다(다른 필드는 안 건드림). */
+async function updateSystemWebhookEvents(hookId: number, events: string[]): Promise<void> {
+  await giteaFetch(`/api/v1/admin/hooks/${hookId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ events }),
+  });
+}
+
+const SYSTEM_WEBHOOK_EVENTS = ["push", "delete"];
+
 /** 서버 기동 시 호출(Gitea 미설정이면 조용히 스킵 -
  * ensureEmqxAuthConfigured()와 동일한 fail-soft 원칙) - 우리 URL을
  * 가리키는 시스템 웹훅이 아직 없으면 등록한다(멱등 - 재기동해도 중복
- * 등록 안 됨, `listSystemWebhooks()`로 기존 목록의 url을 먼저 확인). */
+ * 등록 안 됨, `listSystemWebhooks()`로 기존 목록의 url을 먼저 확인).
+ * 이미 있는데 events가 최신 목록(SYSTEM_WEBHOOK_EVENTS)을 다 포함하지
+ * 않으면(예: "delete" 추가 전에 배포된 기존 웹훅) PATCH로 갱신한다. */
 export async function ensureGiteaSystemWebhookConfigured(): Promise<void> {
   try {
     config();
@@ -324,8 +362,11 @@ export async function ensureGiteaSystemWebhookConfigured(): Promise<void> {
   try {
     const secret = await getOrCreateGiteaSystemWebhookSecret();
     const existing = await listSystemWebhooks();
-    if (!existing.some((h) => h.config.url === targetUrl)) {
+    const match = existing.find((h) => h.config.url === targetUrl);
+    if (!match) {
       await createSystemWebhook(targetUrl, secret);
+    } else if (!SYSTEM_WEBHOOK_EVENTS.every((e) => match.events.includes(e))) {
+      await updateSystemWebhookEvents(match.id, SYSTEM_WEBHOOK_EVENTS);
     }
   } catch (err) {
     console.error("ensureGiteaSystemWebhookConfigured 실패:", err);
@@ -610,14 +651,19 @@ export async function removeRepoCollaborator(slug: string, username: string): Pr
  * 를 못 씀 - 항상 관리자 토큰만 쓰므로 별도 raw fetch). 응답의 평문
  * 토큰 값은 `sha1` 필드(실측 확인 - `token`이 아님). `write:repository`
  * 스코프 하나면 repo 읽기/쓰기 둘 다 커버되는 것도 실측 확인(별도로
- * `read:repository`를 안 넣어도 됨). */
+ * `read:repository`를 안 넣어도 됨). `write:issue`는 PR 워크플로우
+ * 확장(설계자간 대화 - PR 댓글 작성)에서 실측으로 추가 확인: Gitea가
+ * PR을 issue로 취급해 이 댓글 API를 issue 스코프로 게이팅하므로
+ * repository 스코프만으론 403이 난다(직접 재현해 확인). 기존에 이미
+ * 발급된 토큰은 이 스코프가 없으므로, PR 댓글을 쓰려는 설계자는
+ * `docs git my-token`으로 재발급받아야 한다. */
 export async function createUserAccessToken(username: string, password: string, tokenName: string): Promise<string> {
   const { apiUrl } = config();
   const basic = Buffer.from(`${username}:${password}`).toString("base64");
   const res = await fetch(`${apiUrl}/api/v1/users/${encodeURIComponent(username)}/tokens`, {
     method: "POST",
     headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ name: tokenName, scopes: ["write:repository"] }),
+    body: JSON.stringify({ name: tokenName, scopes: ["write:repository", "write:issue"] }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -736,6 +782,111 @@ export async function mergePullRequest(slug: string, index: number, actingToken?
   await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}/merge`, actingToken, {
     method: "POST",
     body: JSON.stringify({ Do: "merge" }),
+  });
+}
+
+// ---------------------------------------------------------------- PR 워크플로우 확장(댓글/타임라인/커밋/상태전이/수동병합)
+// 기존 mergePullRequest()가 실측 확인한 필드명은 대문자 `Do`이지만,
+// swagger.v1.json에 문서화된 필드명은 소문자다(state/do/merge_commit_id) -
+// 신규 함수는 문서 그대로 소문자로 구현한다(기존 mergePullRequest는
+// 이미 동작 중이므로 건드리지 않음). 아래 함수들은 실제 Gitea
+// 인스턴스로 스모크 테스트해 필드명을 재확인한다.
+
+export interface PullRequestComment {
+  id: number;
+  body: string;
+  authorUsername: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface RawGiteaComment {
+  id: number;
+  body: string;
+  user?: { login: string } | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function toComment(c: RawGiteaComment): PullRequestComment {
+  return { id: c.id, body: c.body, authorUsername: c.user?.login ?? "?", createdAt: c.created_at, updatedAt: c.updated_at };
+}
+
+/** PR도 issue 취급하는 Gitea API 관례 그대로 - 설계자간 대화(Markdown). */
+export async function listPullRequestComments(slug: string, index: number): Promise<PullRequestComment[]> {
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/issues/${index}/comments`);
+  const json = (await res.json()) as RawGiteaComment[];
+  return json.map(toComment);
+}
+
+export async function addPullRequestComment(slug: string, index: number, body: string, actingToken?: string): Promise<PullRequestComment> {
+  const res = await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/issues/${index}/comments`, actingToken, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
+  return toComment((await res.json()) as RawGiteaComment);
+}
+
+export interface PullRequestTimelineEntry {
+  id: number;
+  type: string; // "comment" | "close" | "merge_pull" | "reopen" | "commit_ref" | "label" | ...
+  body: string;
+  authorUsername: string | null;
+  createdAt: string;
+}
+
+interface RawGiteaTimelineEntry {
+  id: number;
+  type: string;
+  body?: string | null;
+  user?: { login: string } | null;
+  created_at: string;
+}
+
+/** "PR이 닫힐 때까지의 전체 히스토리" - Gitea의 issue 타임라인(코멘트/
+ * 상태전이/머지/브랜치 참조 등이 type으로 구분된 하나의 이벤트 피드)을
+ * 그대로 매핑한다. */
+export async function listPullRequestTimeline(slug: string, index: number): Promise<PullRequestTimelineEntry[]> {
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/issues/${index}/timeline`);
+  const json = (await res.json()) as RawGiteaTimelineEntry[];
+  return json.map((e) => ({ id: e.id, type: e.type, body: e.body ?? "", authorUsername: e.user?.login ?? null, createdAt: e.created_at }));
+}
+
+export interface PullRequestCommit {
+  sha: string;
+  message: string;
+  authorName: string;
+  authoredAt: string;
+}
+
+interface RawGiteaPullCommit {
+  sha: string;
+  commit: { message: string; author: { name: string; date: string } };
+}
+
+export async function listPullRequestCommits(slug: string, index: number): Promise<PullRequestCommit[]> {
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}/commits`);
+  const json = (await res.json()) as RawGiteaPullCommit[];
+  return json.map((c) => ({ sha: c.sha, message: c.commit.message, authorName: c.commit.author.name, authoredAt: c.commit.author.date }));
+}
+
+/** Close/Reopen 공용 - EditPullRequestOption.state("open"|"closed"). */
+export async function setPullRequestState(slug: string, index: number, state: "open" | "closed", actingToken?: string): Promise<PullRequestSummary> {
+  const res = await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}`, actingToken, {
+    method: "PATCH",
+    body: JSON.stringify({ state }),
+  });
+  return toPullRequestSummary((await res.json()) as RawGiteaPullRequest);
+}
+
+/** 자동 머지가 실패했을 때 designer(또는 AI)가 로컬에서 직접 충돌을
+ * 해결해 push한 뒤, 그 결과를 Gitea에 "수동으로 병합됨"으로 기록시킨다
+ * (MergePullRequestOption.do:"manually-merged" - swagger 문서화된 값,
+ * 요구사항 4번의 핵심 메커니즘). */
+export async function mergePullRequestManually(slug: string, index: number, mergeCommitId: string, actingToken?: string): Promise<void> {
+  await giteaFetchAs(`/api/v1/repos/${orgLogin()}/${slug}/pulls/${index}/merge`, actingToken, {
+    method: "POST",
+    body: JSON.stringify({ Do: "manually-merged", merge_commit_id: mergeCommitId }),
   });
 }
 

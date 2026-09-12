@@ -107,6 +107,7 @@ model User {
   foldersCreated    Folder[]
   folderEntries     DocumentFolderEntry[]
   sourceLinksAdded  DocumentSourceLink[]
+  branchLinksAdded  DocumentBranchLink[]
   codeRelations     CodeRelation[]
   hiddenProjects    Project[]          @relation("ProjectHiddenBy")
   apiKeysOwned      ApiKey[]           @relation("ApiKeyOwner")
@@ -234,6 +235,7 @@ model Project {
   kanbanCards     KanbanCard[]
   gitSyncQueueEntries GitSyncQueueEntry[]
   codeRelations   CodeRelation[]
+  pullRequestMetas PullRequestMeta[]
 
   @@index([projectGroupId])
 }
@@ -332,6 +334,7 @@ model Document {
   accessOverrides    DocAccessOverride[]
   folderEntries      DocumentFolderEntry[]
   sourceLinks        DocumentSourceLink[]
+  branchLinks        DocumentBranchLink[]
   kanbanCardRefs     KanbanCardDocumentRef[]
 
   @@index([projectId])
@@ -672,6 +675,14 @@ model CodeRelation {
   line      Int?     // 발견 위치(줄) - 모르면 null
   column    Int?     // 발견 위치(열) - 모르면 null
   data      String?  @db.LongText // 임의 추가 데이터 - JSON.stringify 텍스트(Json 타입 미사용 - 스키마 전체 관례)
+  // CLI/MCP가 실행 디렉터리의 `git rev-parse --abbrev-ref HEAD`로 자동
+  // 감지한 작업 브랜치(명시적으로 --branch를 줄 수도 있음). null은
+  // "브랜치 무관"(기존 데이터, 또는 감지 실패) - --all-branches 조회에서만
+  // 보인다. 이 브랜치가 삭제되면(웹훅 delete 이벤트) 이 행 전체가
+  // deleteRelationsForBranch()로 일괄 삭제된다(설계자 지시 - "지금 탐색
+  // 상태"라 사라진 브랜치를 계속 가리키면 오해를 부름, DocumentBranchLink는
+  // 반대로 영구 보존 - 그 모델 주석 참고).
+  branchName String?
 
   project Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User              @relation(fields: [userId], references: [id])
@@ -689,6 +700,7 @@ model CodeRelation {
   @@index([projectId, userId])
   @@index([projectId, userId, target])
   @@index([projectId, userId, filePath])
+  @@index([projectId, userId, branchName])
 }
 
 // 태그(다중 지정 가능) - String[]/Json 미사용, 조인 테이블
@@ -876,3 +888,45 @@ model KanbanCardDocumentRef {
 
 // 카드별 코멘트는 더 이상 별도 모델이 아니다 - 공용 Comment
 // (targetType:"kanbanCard", targetKey=카드의 트래킹 코드)로 흡수됨.
+
+// ---------------------------------------------------------------- PR 워크플로우
+// Gitea PR(#index) 자체는 state(open/closed)+merged(bool)만 주고
+// "거부(rejected)" 개념이 없다(swagger.v1.json 실측 확인) - 이 앱만 아는
+// 여분의 상태를 GitSyncQueueEntry와 같은 원칙(외부가 안 주는 상태만 얇게
+// 기록)으로 얹는다. Gitea가 안정적인 내부 row id를 안 주고 프로젝트당
+// 유일한 번호(index)만 주므로 (projectId, prIndex) 복합키로 건다.
+model PullRequestMeta {
+  id             String   @id @default(cuid())
+  projectId      String
+  prIndex        Int
+  disposition    String?  // null | "merged" | "rejected"
+  lastMergeError String?  @db.LongText // 자동 머지 실패 사유 - 새로고침 후에도 수동 병합 안내 배너를 유지하기 위해 보관
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, prIndex])
+  @@index([projectId])
+}
+
+// 문서 ↔ "연관된 git 브랜치" - DocumentSourceLink와 완전히 같은 패턴
+// (filePath 대신 branchName, 존재 검증 없는 순수 참조). CodeRelation.branchName과
+// 반대로 **브랜치가 삭제돼도 이 행은 지우지 않는다** - "이 문서가 어느
+// 브랜치들에서 구현됐는지"는 브랜치가 사라진 뒤(머지·정리 후)에도
+// 역사적 기록으로 유용하다고 판단(설계자 지시대로 진행, 다르게 보시면
+// 브랜치 삭제 시 함께 정리하도록 바꿀 수 있음).
+model DocumentBranchLink {
+  id         String   @id @default(cuid())
+  documentId String
+  branchName String
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  creator  User     @relation(fields: [createdBy], references: [id])
+
+  @@unique([documentId, branchName])
+  @@index([documentId])
+}

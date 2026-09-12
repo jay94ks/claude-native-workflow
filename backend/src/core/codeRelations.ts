@@ -24,6 +24,7 @@ export interface CodeRelationDetail {
   line: number | null;
   column: number | null;
   data: unknown;
+  branchName: string | null;
   trackingCodes: string[];
   tags: string[];
   parentIds: string[];
@@ -38,6 +39,7 @@ export interface CodeRelationInput {
   line?: number;
   column?: number;
   data?: unknown;
+  branchName?: string | null;
   trackingCodes?: string[];
   tags?: string[];
   parentIds?: string[];
@@ -64,6 +66,7 @@ interface RawRelation {
   line: number | null;
   column: number | null;
   data: string | null;
+  branchName: string | null;
   refs: { trackingCode: string }[];
   tags: { tag: string }[];
   parentEdges: { toId: string }[];
@@ -86,6 +89,7 @@ function toDetail(row: RawRelation): CodeRelationDetail {
     line: row.line,
     column: row.column,
     data: row.data ? JSON.parse(row.data) : null,
+    branchName: row.branchName,
     trackingCodes: row.refs.map((r) => r.trackingCode),
     tags: row.tags.map((t) => t.tag),
     parentIds: row.parentEdges.map((e) => e.toId),
@@ -155,6 +159,7 @@ export async function createRelation(projectId: string, userId: string, input: C
       line: input.line ?? null,
       column: input.column ?? null,
       data: input.data !== undefined ? JSON.stringify(input.data) : null,
+      branchName: input.branchName?.trim() || null,
       tags: input.tags?.length ? { create: [...new Set(input.tags)].map((tag) => ({ tag })) } : undefined,
       refs: trackingCodes.length ? { create: trackingCodes.map((trackingCode) => ({ trackingCode })) } : undefined,
     },
@@ -183,6 +188,7 @@ export async function updateRelation(
   if (patch.line !== undefined) data.line = patch.line;
   if (patch.column !== undefined) data.column = patch.column;
   if (patch.data !== undefined) data.data = JSON.stringify(patch.data);
+  if (patch.branchName !== undefined) data.branchName = patch.branchName?.trim() || null;
   if (Object.keys(data).length > 0) {
     await db.codeRelation.update({ where: { id }, data });
   }
@@ -232,6 +238,12 @@ export interface RelationListFilter {
   trackingCode?: string;
   tag?: string;
   hasNoParent?: boolean;
+  // branchName이 있으면 정확히 그 브랜치만(null 행은 안 걸림) - CLI/MCP가
+  // git으로 자동 감지한 현재 브랜치로 필터링할 때 쓴다. allBranches:true면
+  // branchName 필터 자체를 생략(과거 데이터 + 모든 브랜치를 다 봄) -
+  // branchName과 동시에 오면 allBranches가 우선(더 넓은 조회 의도로 해석).
+  branchName?: string;
+  allBranches?: boolean;
   page?: number;
   pageSize?: number;
 }
@@ -248,6 +260,7 @@ export async function listRelations(
   if (filter.filePath) where.filePath = filter.filePath;
   if (filter.trackingCode) where.refs = { some: { trackingCode: filter.trackingCode } };
   if (filter.hasNoParent) where.parentEdges = { none: {} };
+  if (!filter.allBranches && filter.branchName) where.branchName = filter.branchName;
 
   if (filter.page === undefined && filter.pageSize === undefined) {
     const rows = await db.codeRelation.findMany({ where, include: RELATION_INCLUDE, orderBy: { createdAt: "desc" } });
@@ -371,6 +384,22 @@ export async function listAncestors(
   filter: TraversalFilter,
 ): Promise<TraversalResult[]> {
   return traverse(rootId, projectId, userId, maxDepth, filter, "ancestors");
+}
+
+// ---------------------------------------------------------------- 브랜치 삭제 정리(웹훅 전용)
+
+/** 웹훅의 delete(브랜치 삭제) 이벤트에서만 호출하는 시스템 정리 액션 -
+ * 이 모듈의 다른 모든 함수가 지키는 "항상 (projectId, userId)로 소유자
+ * 스코프"라는 원칙의 유일한 의도적 예외다. 브랜치 자체가 사라지면 그
+ * 브랜치를 가리키던 관계는 그 브랜치를 만든 설계자뿐 아니라 프로젝트의
+ * 모든 설계자에게 동시에 "존재하지 않는 곳을 가리키는 죽은 참조"가
+ * 되므로, 소유자 구분 없이 프로젝트 전체에서 일괄 삭제한다.
+ * CodeRelationEdge/CodeRelationTag/CodeRelationRef는 onDelete:Cascade라
+ * 함께 정리된다. */
+export async function deleteRelationsForBranch(projectId: string, branchName: string): Promise<number> {
+  const db = getDb();
+  const result = await db.codeRelation.deleteMany({ where: { projectId, branchName } });
+  return result.count;
 }
 
 // ---------------------------------------------------------------- Bulk

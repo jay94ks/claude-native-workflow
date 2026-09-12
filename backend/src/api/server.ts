@@ -109,6 +109,7 @@ import {
   deleteDocument,
 } from "../core/documents.js";
 import { addSourceLink, removeSourceLink, listSourceLinks, listSourceLinksPaged } from "../core/documentSourceLinks.js";
+import { addBranchLink, removeBranchLink, listBranchLinks, listBranchLinksPaged } from "../core/documentBranchLinks.js";
 import { createReport } from "../core/report.js";
 import {
   addQuestion,
@@ -214,7 +215,26 @@ import {
 } from "../core/gitRepos.js";
 import { isGithubOAuthConfigured, startGithubOAuth, completeGithubOAuth, listGithubRepos } from "../core/githubOAuth.js";
 import * as gitea from "../core/gitea.js";
-import { verifyAndParseWebhook, recordPushEvent, handleGiteaSystemPush } from "../core/pushHooks.js";
+import {
+  verifyAndParseWebhook,
+  recordPushEvent,
+  handleGiteaSystemPush,
+  classifyGiteaEvent,
+  verifyAndParsePushWebhook,
+  verifyAndParseDeleteWebhook,
+  handleGiteaSystemDelete,
+} from "../core/pushHooks.js";
+import {
+  getPullRequestDetail,
+  listPullRequestsForProject,
+  mergePull,
+  mergePullManually,
+  rejectPull,
+  closePull,
+  reopenPull,
+  listMessagesForPullRequest,
+} from "../core/pullRequests.js";
+import { paginateInMemory } from "../core/pagination.js";
 import {
   createPushHookPrompt,
   listPushHookPrompts,
@@ -1811,6 +1831,63 @@ app.delete(
   }),
 );
 
+// "연관된 브랜치" 링크 - DocumentSourceLink와 완전히 같은 완전성 원칙
+// (CLI/MCP에도 노출), filePath 대신 branchName만 다르다(요구사항 10).
+app.post(
+  "/api/documents/:trackingCode/branch-links",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    const { branchName } = req.body as { branchName?: string };
+    if (!branchName) { res.status(400).json({ error: "branchName이 필요합니다" }); return; }
+    res.json(await addBranchLink(req.params.trackingCode, branchName, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/branch-links",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(await listBranchLinks(req.params.trackingCode));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/branch-links/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(
+      await listBranchLinksPaged(req.params.trackingCode, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+    );
+  }),
+);
+
+app.delete(
+  "/api/document-branch-links/:id",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const trackingCode = req.query.trackingCode as string | undefined;
+    if (!trackingCode) { res.status(400).json({ error: "trackingCode 쿼리가 필요합니다" }); return; }
+    const doc = await getDocumentAccessInfo(trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    await removeBranchLink(req.params.id, trackingCode);
+    res.json({ ok: true });
+  }),
+);
+
 // ---------------------------------------------------------------- 세부 접근 권한 (오너 전용)
 
 app.put(
@@ -2036,7 +2113,7 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const { q, filePath, trackingCode, tag, hasNoParent, page, pageSize } = req.query as Record<string, string | undefined>;
+    const { q, filePath, trackingCode, tag, hasNoParent, branchName, allBranches, page, pageSize } = req.query as Record<string, string | undefined>;
     res.json(
       await listRelations(req.params.projectId, req.userId!, {
         q,
@@ -2044,6 +2121,8 @@ app.get(
         trackingCode,
         tag,
         hasNoParent: hasNoParent === "true",
+        branchName,
+        allBranches: allBranches === "true",
         page: page !== undefined ? Number(page) : undefined,
         pageSize: pageSize !== undefined ? Number(pageSize) : undefined,
       }),
@@ -3204,14 +3283,30 @@ app.get(
   }),
 );
 
+// 목록은 항상 최신순(요구사항 7) - listPullRequestsForProject가
+// createdAt desc로 확정 정렬하고 PullRequestMeta(disposition)도 병합해
+// 반환한다. Gitea Contents API처럼 page 파라미터를 안정적으로 받지
+// 않는 상류 특성상(listTreePaged와 동일 이유) 전체를 받아온 뒤 여기서
+// 자른다 - /page 하위 경로는 저장소 관리 탭의 5개+더보기(요구사항 3)와
+// 별도 PullRequestListView의 완전한 페이지네이션 둘 다에 쓴다.
 app.get(
   "/api/projects/:projectId/git/pulls",
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
     const state = req.query.state as "open" | "closed" | "all" | undefined;
-    res.json(await gitea.listPullRequests(slug, state));
+    res.json(await listPullRequestsForProject(req.params.projectId, state));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/pulls/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const state = req.query.state as "open" | "closed" | "all" | undefined;
+    const all = await listPullRequestsForProject(req.params.projectId, state);
+    res.json(paginateInMemory(all, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
   }),
 );
 
@@ -3220,8 +3315,7 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
-    res.json(await gitea.getPullRequest(slug, Number(req.params.index)));
+    res.json(await getPullRequestDetail(req.params.projectId, Number(req.params.index)));
   }),
 );
 
@@ -3251,9 +3345,112 @@ app.post(
   authenticate,
   requireProjectRole("owner"),
   asyncRoute(async (req, res) => {
-    const slug = await requireGiteaWorkingSlug(req.params.projectId);
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await gitea.mergePullRequest(slug, Number(req.params.index), actingToken);
+    await mergePull(req.params.projectId, Number(req.params.index), req.userId!, actingToken);
+    res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- PR 상세 페이지 - 메시지/커밋/대화/진행내역 + Reject/Close/Reopen/수동병합
+// requireProjectRole("owner")가 머지/수동병합에만(기존 확정 - "머지는
+// 소유자만"), 나머지 액션(거부/닫기/재오픈/댓글 작성)은 PR 생성과 같은
+// 급(editor 이상)으로 뒀다 - 되돌릴 수 있는 동작이고 저장소 히스토리를
+// 바꾸지 않기 때문. 조회는 전부 viewer 이상.
+
+app.get(
+  "/api/projects/:projectId/git/pulls/:index/commits",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    res.json(await gitea.listPullRequestCommits(slug, Number(req.params.index)));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/pulls/:index/comments",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    res.json(await gitea.listPullRequestComments(slug, Number(req.params.index)));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/pulls/:index/comments",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const { body } = req.body as { body?: string };
+    if (!body?.trim()) { res.status(400).json({ error: "body가 필요합니다" }); return; }
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    res.json(await gitea.addPullRequestComment(slug, Number(req.params.index), body.trim(), actingToken));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/pulls/:index/timeline",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    res.json(await gitea.listPullRequestTimeline(slug, Number(req.params.index)));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/pulls/:index/messages",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listMessagesForPullRequest(req.params.projectId, Number(req.params.index)));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/pulls/:index/merge-manually",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    const { mergeCommitId } = req.body as { mergeCommitId?: string };
+    if (!mergeCommitId?.trim()) { res.status(400).json({ error: "mergeCommitId가 필요합니다" }); return; }
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    await mergePullManually(req.params.projectId, Number(req.params.index), mergeCommitId.trim(), req.userId!, actingToken);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/pulls/:index/reject",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    await rejectPull(req.params.projectId, Number(req.params.index), req.userId!, actingToken);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/pulls/:index/close",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    await closePull(req.params.projectId, Number(req.params.index), req.userId!, actingToken);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/pulls/:index/reopen",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    await reopenPull(req.params.projectId, Number(req.params.index), req.userId!, actingToken);
     res.json({ ok: true });
   }),
 );
@@ -3280,15 +3477,29 @@ app.post(
     const secret = await getGiteaSystemWebhookSecret();
     if (!secret) { res.status(503).json({ error: "시스템 웹훅이 아직 설정되지 않았습니다" }); return; }
     const rawBody = (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body));
-    let parsed;
-    try {
-      parsed = verifyAndParseWebhook("gitea", req.headers as Record<string, string | string[] | undefined>, rawBody, secret);
-    } catch (err) {
-      res.status(401).json({ error: err instanceof Error ? err.message : String(err) });
+    const headers = req.headers as Record<string, string | string[] | undefined>;
+    const kind = classifyGiteaEvent(headers);
+    if (kind === "unknown") {
+      // 서명 검증 없이도 조용히 무시 - 시스템 웹훅은 인스턴스 전체
+      // 이벤트를 받으므로 push/delete 외의 이벤트(향후 events 목록이
+      // 늘어나기 전까지는 실제로 안 옴)는 처리 대상이 아닐 뿐 에러가
+      // 아니다.
+      res.json({ ok: true, status: "ignored", reason: `처리 대상이 아닌 이벤트: ${headers["x-gitea-event"] ?? "?"}` });
       return;
     }
-    const result = await handleGiteaSystemPush(parsed);
-    res.json({ ok: true, ...result });
+    try {
+      if (kind === "push") {
+        const parsed = verifyAndParsePushWebhook(headers, rawBody, secret);
+        const result = await handleGiteaSystemPush(parsed);
+        res.json({ ok: true, ...result });
+      } else {
+        const parsed = verifyAndParseDeleteWebhook(headers, rawBody, secret);
+        const result = await handleGiteaSystemDelete(parsed);
+        res.json({ ok: true, ...result });
+      }
+    } catch (err) {
+      res.status(401).json({ error: err instanceof Error ? err.message : String(err) });
+    }
   }),
 );
 

@@ -81,6 +81,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 48 | ✅ | `#github-oauth-repo-link` | GitHub OAuth 로그인 + 저장소 선택 다이얼로그로 외부 연동, self_hosted↔external 상호 전환, 자격증명 오류 시 알림+자동 강등 |
 | 49 | ✅ | `#repo-management-tab` | 저장소 관리 탭 신설 - PR 생성/머지(머지는 owner만), 브랜치 목록+브랜치별 소스 열람 |
 | 50 | ✅ | `#code-relation-graph` | 코드 관계도 - Claude가 코드 탐색 중 발견한 관계를 스스로 기록하는 설계자별 그래프 DB(다중 부모/순환 허용, vis-network 시각화), CRUD+bulk, CLI/MCP/SKILL.md 전체 반영, 문서 추적코드 다중 연관(`--refs`) |
+| 51 | ✅ | `#pr-workflow-branch-scope` | PR 전용 상세 페이지(메시지/커밋/대화/진행내역, Reject/Close/Reopen, 자동 머지 실패 시 수동 병합 완료 기록)+목록 5개/더보기 분리, 코드 관계도 브랜치 스코프(git 자동 감지 + 브랜치 삭제 시 웹훅 기반 일괄 정리)+문서-브랜치 연관(영구 보존) |
 
 ---
 

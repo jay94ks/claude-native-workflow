@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import mqtt from "mqtt";
 
 // concept 브랜치 tier3의 docs3 CLI와 같은 패턴 - CLI는 순수 REST
@@ -43,6 +44,27 @@ export function clearCredentials(): void {
 }
 
 export const credentialsPath = CREDENTIALS_PATH;
+
+/** process.cwd()(CLI/MCP를 실행한 실제 로컬 git clone)가 실제 git
+ * 저장소면 그 현재 체크아웃 브랜치명을 반환한다 - 상태 파일이나
+ * "switch branch" 명령 없이, 매 호출마다 라이브로 실측한다(설계자
+ * 지시 - "로컬 git 저장소에서 자동 감지"). git 미설치/저장소 아님/
+ * detached HEAD(git이 문자열 그대로 "HEAD"를 반환)는 전부 null로
+ * fail-soft한다 - 이 값은 항상 명시적 --branch가 없을 때만 쓰이므로
+ * 감지가 실패해도 절대 throw하지 않고 "브랜치 필터 없음"으로 자연스럽게
+ * 떨어진다. */
+export function detectCurrentGitBranch(cwd: string = process.cwd()): string | null {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf-8",
+    }).trim();
+    return !out || out === "HEAD" ? null : out;
+  } catch {
+    return null;
+  }
+}
 
 // access_token(15분 단명)을 refresh_token으로 갱신 - frontend의
 // api/client.ts와 같은 패턴. api_key(`auth use-key`) 로그인은 만료

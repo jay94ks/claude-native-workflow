@@ -31,6 +31,13 @@ const router = createRouter({
         },
         { path: "source", name: "source", component: () => import("../views/SourceBrowserView.vue"), props: true },
         { path: "repo", name: "repo-management", component: () => import("../views/RepoManagementView.vue"), props: true },
+        { path: "repo/pulls", name: "repo-pull-list", component: () => import("../views/PullRequestListView.vue"), props: true },
+        {
+          path: "repo/pulls/:index",
+          name: "repo-pull-detail",
+          component: () => import("../views/PullRequestDetailView.vue"),
+          props: true,
+        },
         { path: "relations", name: "project-relations", component: () => import("../views/RelationsView.vue"), props: true },
         { path: "changes", name: "changes", component: () => import("../views/ChangeTrackingView.vue"), props: true },
         { path: "kanban", name: "kanban", component: () => import("../views/KanbanBoardView.vue"), props: true },

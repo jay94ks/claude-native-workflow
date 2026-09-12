@@ -147,7 +147,10 @@ git 저장소 연결/이력 조회 기능을 쓰지 않을 거라면 이 절은 
 3. 로그인 후 오른쪽 위 프로필 아이콘 → **Settings** → **Applications**
    로 이동해 **Generate New Token**으로 Personal Access Token을
    발급한다(권한은 최소 `repository`와 `user` 스코프를 읽기/쓰기로
-   - `repository`만 주면 저장소 생성 시점에 403으로 막힌다).
+   - `repository`만 주면 저장소 생성 시점에 403으로 막힌다. **PR
+   댓글/진행내역 조회까지 쓰려면 `issue` 스코프도 추가한다** - Gitea가
+   Pull Request를 issue로 취급해 그 댓글/타임라인 API를 별도 issue
+   스코프로 게이팅하므로, repository 스코프만으론 403이 난다).
 4. `.env`의 `GITEA_ADMIN_USERNAME`(2번에서 만든 계정 아이디)과
    `GITEA_API_TOKEN`(3번에서 발급한 값)을 채운다.
 5. `docker compose up -d --build`를 다시 실행한다.

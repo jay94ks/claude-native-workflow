@@ -325,6 +325,62 @@ user activity`는 이미 있는 `--limit <n>`(단순 "최근 N건" 요약 뷰)�
 - **`--parents`/`--children`/`--tags`/`--refs` 등은 쉼표로 구분한
   문자열 하나**로 받는다(질의/칸반 카드의 `--refs`와 동일한 CLI
   관례) - MCP는 처음부터 배열.
+- **브랜치 자동 감지**: `relation add`/`update`/`list`/`ancestors`/
+  `descendants`는 명령을 실행한 디렉터리가 실제 git clone이면
+  `git rev-parse --abbrev-ref HEAD`로 현재 체크아웃된 브랜치를 자동
+  감지해 그 브랜치로 태깅/필터링한다 - 별도 "브랜치 전환" 명령이나
+  저장되는 상태는 없고, 매 호출마다 그 순간의 실제 브랜치를 라이브로
+  다시 확인한다(`git checkout`으로 브랜치를 바꾸면 다음 호출부터
+  자동으로 반영됨). 다른 브랜치를 명시하려면 `--branch <name>`,
+  브랜치 구분 없이 과거 데이터까지 전부 보려면 `relation list
+  --all-branches`. **이 브랜치가 나중에 삭제되면 그 브랜치로 태깅된
+  관계는 전부 자동으로 함께 삭제된다**(Gitea 웹훅으로 감지 - "지금
+  탐색 상태"라 사라진 브랜치를 계속 가리키면 오히려 오해를 부르기
+  때문. 아래 "연관 브랜치"와는 반대 정책이니 혼동하지 않는다).
+
+## Pull Request
+
+Pull Request의 **생성**은 저장소 관리 탭(웹)에서만 한다(브랜치 선택
+UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·거부·닫기·
+재오픈은 CLI/MCP에도 열려 있다(이 영역 전체 중 유일한 CLI/MCP
+노출 - 브랜치 목록/저장소 연동/발행 등 나머지 git 저장소 관리
+기능은 여전히 웹 전용). AI가 실패한 머지를 직접 진단하고 완료까지
+처리할 수 있어야 하기 때문에 만든 예외다.
+
+- **목록은 항상 최신순**(`pr list`) - `--state open|closed|all`로
+  필터, `--page`/`--count`를 주면 페이지네이션.
+- **상세**(`pr get`)는 Gitea의 state/merged 외에 이 앱만 추적하는
+  `disposition`(`merged`/`rejected`/`null`)과 `lastMergeError`(마지막
+  자동 머지 실패 사유, 있으면 수동 병합이 필요하다는 뜻)를 포함한다.
+- **대화**: `pr comments`(조회)/`pr add-comment <projectId> <index>
+  <body>`(Markdown, 설계자간 대화) - Gitea PR 댓글 그대로.
+- **진행 내역**: `pr timeline`은 댓글/상태전이/머지/커밋참조 등을
+  타입별로 구분한 전체 히스토리, `pr messages`는 이 앱이 머지/거부/
+  닫힘/재오픈마다 남긴 진행 메시지 목록(칸반 카드처럼 본문에
+  `[PR#번호] ` 태그가 붙어 그 PR로만 필터링됨).
+- **머지가 실패하면 수동으로 완료할 수 있다**(핵심 시나리오): `pr
+  merge`가 실패하면 `lastMergeError`가 기록되고, 로컬 클론에서 직접
+  (또는 AI가 CLI로) 충돌을 해결해 push한 뒤, 그 결과 커밋 SHA로
+  `pr merge-manually <projectId> <index> <mergeCommitId>`를 호출하면
+  Gitea에 병합 완료로 기록된다.
+- **Reject/Close/Reopen**(`pr reject`/`pr close`/`pr reopen`): Gitea
+  자체엔 "거부" 개념이 없어 이 앱이 별도로 추적한다. Close는 머지/
+  거부 여부와 무관하게 그냥 닫되, 둘 다 선택된 적이 없으면 거부로
+  간주한다. 거부된 PR도 Reopen 후 새 커밋 + 머지로 결국 Accept에
+  닿을 수 있다.
+- 머지/수동 병합 완료는 owner 전용, 나머지(거부/닫기/재오픈/댓글
+  작성)는 editor 이상.
+
+## 연관 브랜치 (Document ↔ Branch)
+
+문서가 어느 git 브랜치들에서 구현·논의됐는지 식별해두는 순수 연관
+관계 - "연관 소스코드"(위 `link-source`)를 파일 경로 대신 브랜치명으로
+바꾼 것과 똑같은 패턴이다(`docs link-branch <trackingCode>
+<branchName>` / `unlink-branch <trackingCode> <linkId>` /
+`branch-links <trackingCode>`). **위 코드 관계도의 브랜치 자동 삭제와
+반대로, 그 브랜치가 나중에 삭제돼도 이 연결은 그대로 남는다** -
+"지금 브랜치가 있는지"가 아니라 "이 문서가 어떤 브랜치들을 거쳐
+구현됐는지"라는 역사적 기록이기 때문이다.
 
 ## 명령 요약 (CLI `docs` / MCP 도구 이름 병기)
 
@@ -346,6 +402,9 @@ user activity`는 이미 있는 `--limit <n>`(단순 "최근 N건" 요약 뷰)�
 | 연관 소스코드 연결 | `docs link-source <trackingCode> <path>` | `document_link_source` |
 | 연관 소스코드 해제 | `docs unlink-source <trackingCode> <linkId>` | `document_unlink_source` |
 | 연관 소스코드 목록 | `docs source-links <trackingCode>` | `document_source_links` |
+| 연관 브랜치 연결 | `docs link-branch <trackingCode> <branchName>` | `document_link_branch` |
+| 연관 브랜치 해제 | `docs unlink-branch <trackingCode> <linkId>` | `document_unlink_branch` |
+| 연관 브랜치 목록 | `docs branch-links <trackingCode>` | `document_branch_links` |
 | 보고서 생성 | `docs report-new <projectId> --title <t> --body <file>` | `report_new` |
 | 질의 등록(문서/칸반 카드, +참고 문서) | `docs question <trackingCode> <text> [--kind <approval\|answer>] [--refs <codes>]` | `question_add` |
 | 질의 등록(소스 코드 파일) | `docs question-source <projectId> <path> <text> [--kind ...] [--refs ...]` | `question_add_source` |
@@ -402,15 +461,20 @@ user activity`는 이미 있는 `--limit <n>`(단순 "최근 N건" 요약 뷰)�
 | 칸반 카드 목록 | `docs kanban-cards <projectId> [--column <columnId>]` | `kanban_cards` |
 | 칸반 카드 상세 | `docs kanban-card-get <trackingCode>` | `kanban_card_get` |
 | 칸반 카드 이동 | `docs kanban-card-move <trackingCode> <toColumnId> [--index <n>]` | `kanban_card_move` |
-| 코드 관계 추가 | `docs relation add <projectId> --target <t> --referrer <r> --purpose <p> --file <path> [--line <n>] [--column <n>] [--data <json>] [--refs <codes>] [--tags <t1,t2>] [--parents <id1,id2>] [--children <id1,id2>]` | `relation_add` |
-| 코드 관계 수정 | `docs relation update <projectId> <id> [필드 옵션...] [--refs <codes>] [--add-parents/--remove-parents/--add-children/--remove-children <id1,id2>]` | `relation_update` |
+| 코드 관계 추가 | `docs relation add <projectId> --target <t> --referrer <r> --purpose <p> --file <path> [--line <n>] [--column <n>] [--data <json>] [--refs <codes>] [--tags <t1,t2>] [--parents <id1,id2>] [--children <id1,id2>] [--branch <name>]` | `relation_add` |
+| 코드 관계 수정 | `docs relation update <projectId> <id> [필드 옵션...] [--refs <codes>] [--add-parents/--remove-parents/--add-children/--remove-children <id1,id2>] [--branch <name>]` | `relation_update` |
 | 코드 관계 삭제 | `docs relation remove <projectId> <id>` | `relation_remove` |
 | 코드 관계 단건 조회 | `docs relation get <projectId> <id>` | `relation_get` |
-| 코드 관계 목록/검색 | `docs relation list <projectId> [--q <s>] [--file <path>] [--ref <trackingCode>] [--tag <t>] [--root-only] [--page <n>] [--count <n>]` | `relation_list` |
+| 코드 관계 목록/검색 | `docs relation list <projectId> [--q <s>] [--file <path>] [--ref <trackingCode>] [--tag <t>] [--root-only] [--branch <name>] [--all-branches] [--page <n>] [--count <n>]` | `relation_list` |
 | 코드 관계 직접 상위/하위 목록 | `docs relation parents/children <projectId> <id>` | `relation_parents`/`relation_children` |
 | 코드 관계 깊이 순회(상위/하위 방향) | `docs relation ancestors/descendants <projectId> <id> [--depth <n>] [--tag <t>] [--q <s>]` | `relation_ancestors`/`relation_descendants` |
 | 코드 관계 일괄 추가/수정(로컬 JSON 파일) | `docs relation add-bulk/update-bulk <projectId> <file.json>` | `relation_add_bulk`/`relation_update_bulk` |
 | 코드 관계 일괄 삭제 | `docs relation remove-bulk <projectId> <id...>` | `relation_remove_bulk` |
+| PR 목록/상세 | `docs pr list <projectId> [--state <s>] [--page <n>] [--count <n>]` / `docs pr get <projectId> <index>` | `pr_list`/`pr_get` |
+| PR 커밋/대화 조회·작성 | `docs pr commits/comments <projectId> <index>` / `docs pr add-comment <projectId> <index> <body>` | `pr_commits`/`pr_comments`/`pr_add_comment` |
+| PR 진행 내역/메시지 | `docs pr timeline/messages <projectId> <index>` | `pr_timeline`/`pr_messages` |
+| PR 머지/수동 병합 완료(owner) | `docs pr merge <projectId> <index>` / `docs pr merge-manually <projectId> <index> <mergeCommitId>` | `pr_merge`/`pr_merge_manually` |
+| PR 거부/닫기/재오픈(editor+) | `docs pr reject/close/reopen <projectId> <index>` | `pr_reject`/`pr_close`/`pr_reopen` |
 
 ## 가이디드 마이그레이션(옛 파일 기반 프로젝트 옮기기)
 

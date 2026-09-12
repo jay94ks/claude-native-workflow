@@ -7,7 +7,6 @@ const props = defineProps<{ id: string }>();
 
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
 const canCreatePr = computed(() => roleSatisfies(myRole.value, "editor"));
-const canMerge = computed(() => roleSatisfies(myRole.value, "owner"));
 
 interface GitRepo {
   provider: string;
@@ -21,12 +20,9 @@ interface BranchSummary {
 interface PullRequestSummary {
   index: number;
   title: string;
-  body: string;
   state: string;
-  authorUsername: string;
-  headBranch: string;
-  baseBranch: string;
   merged: boolean;
+  disposition: "merged" | "rejected" | null;
   createdAt: string;
 }
 
@@ -35,7 +31,11 @@ const loading = ref(true);
 const error = ref("");
 
 const branches = ref<BranchSummary[]>([]);
+// 목록은 요청 3번대로 최신 5개만 - 백엔드가 이미 createdAt desc로
+// 확정 정렬해 반환하므로 여기서 앞 5개만 자른다(더보기는 전용
+// PullRequestListView로 페이지 이동, 누적 로드가 아님).
 const pulls = ref<PullRequestSummary[]>([]);
+const recentPulls = computed(() => pulls.value.slice(0, 5));
 
 async function checkRepo() {
   try {
@@ -92,26 +92,9 @@ async function createPull() {
   }
 }
 
-// ---------------------------------------------------------------- PR 머지(owner 전용, 서버도 403으로 이중 방어)
-const mergingIndex = ref<number | null>(null);
-const mergeError = ref("");
-
-async function mergePull(pr: PullRequestSummary) {
-  if (!window.confirm(`PR #${pr.index} "${pr.title}"을(를) ${pr.baseBranch}에 머지할까요?`)) return;
-  mergingIndex.value = pr.index;
-  mergeError.value = "";
-  try {
-    await apiCall(`/projects/${props.id}/git/pulls/${pr.index}/merge`, { method: "POST" });
-    await load();
-  } catch (err) {
-    mergeError.value = err instanceof ApiError ? err.message : "머지에 실패했습니다";
-  } finally {
-    mergingIndex.value = null;
-  }
-}
-
 function stateLabel(pr: PullRequestSummary): string {
-  if (pr.merged) return "머지됨";
+  if (pr.disposition === "merged" || pr.merged) return "머지됨";
+  if (pr.disposition === "rejected") return "거부됨";
   return pr.state === "open" ? "열림" : "닫힘";
 }
 
@@ -173,29 +156,17 @@ onMounted(async () => {
           <p v-if="createError" class="error">{{ createError }}</p>
         </form>
 
-        <p v-if="mergeError" class="error">{{ mergeError }}</p>
         <ul class="pr-list">
-          <li v-for="pr in pulls" :key="pr.index">
-            <div class="pr-row">
+          <li v-for="pr in recentPulls" :key="pr.index">
+            <router-link class="pr-row" :to="`/projects/${id}/repo/pulls/${pr.index}`">
               <span class="pr-title">#{{ pr.index }} {{ pr.title }}</span>
-              <span class="pr-state" :class="pr.merged ? 'merged' : pr.state">{{ stateLabel(pr) }}</span>
-            </div>
-            <div class="pr-meta">
-              {{ pr.authorUsername }} - {{ pr.headBranch }} → {{ pr.baseBranch }} -
-              {{ new Date(pr.createdAt).toLocaleString() }}
-            </div>
-            <p v-if="pr.body" class="pr-body">{{ pr.body }}</p>
-            <button
-              v-if="canMerge && !pr.merged && pr.state === 'open'"
-              type="button"
-              :disabled="mergingIndex === pr.index"
-              @click="mergePull(pr)"
-            >
-              {{ mergingIndex === pr.index ? "머지 중..." : "머지" }}
-            </button>
+              <span class="pr-state" :class="pr.disposition ?? (pr.merged ? 'merged' : pr.state)">{{ stateLabel(pr) }}</span>
+            </router-link>
+            <div class="pr-meta">{{ new Date(pr.createdAt).toLocaleString() }}</div>
           </li>
           <li v-if="pulls.length === 0" class="muted">PR이 없습니다.</li>
         </ul>
+        <router-link v-if="pulls.length > 0" class="more-link" :to="`/projects/${id}/repo/pulls`">더보기</router-link>
       </div>
     </template>
   </section>
@@ -317,6 +288,8 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 10px;
+  color: var(--color-text);
+  text-decoration: none;
 }
 .pr-title {
   font-weight: 600;
@@ -335,29 +308,20 @@ onMounted(async () => {
 .pr-state.merged {
   color: var(--color-primary);
 }
+.pr-state.rejected {
+  color: var(--color-danger);
+}
 .pr-meta {
   font-size: 11px;
   color: var(--color-text-faint);
   margin-top: 2px;
 }
-.pr-body {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  margin: 6px 0;
-  white-space: pre-wrap;
-}
-.pr-list button {
-  background: var(--color-surface);
-  border: 1px solid var(--color-primary);
+.more-link {
+  display: inline-block;
+  margin-top: 10px;
   color: var(--color-primary);
-  padding: 5px 12px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 12px;
-  margin-top: 4px;
-}
-.pr-list button:disabled {
-  opacity: 0.6;
+  font-size: 13px;
+  text-decoration: none;
 }
 .muted {
   color: var(--color-text-muted);

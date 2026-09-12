@@ -5303,9 +5303,126 @@ survive하는 것을 재조회로 확인 → 웹 UI에서 "연관 문서" 필드
 돌아오는지(왕복) 확인. 테스트 프로젝트/문서/그룹/팀은 검증 후
 전부 삭제.
 
+## PR 워크플로우 확장 + 코드 관계도 브랜치 스코프 + 문서-브랜치 연관(`#pr-workflow-branch-scope`) - 완료 (2026-09-13)
+
+**배경**: 설계자 지시("대형 수정") - 저장소 관리 탭의 PR 기능(목록+
+인라인 머지 버튼)을 본격적인 워크플로우로 확장: 전용 상세 페이지
+(메시지/커밋/대화/진행내역 전체 표시), Reject/Close/Reopen, 자동
+머지 실패 시 수동 완료 안내, 목록 5개+더보기 분리, 최신순 정렬.
+동시에 코드 관계도가 CLI/MCP의 실제 작업 브랜치를 인식하게 하고,
+브랜치가 삭제되면 그 브랜치의 관계도를 일괄 정리하며, 문서에도 연관
+브랜치를 명시할 수 있어야 한다는 요청. "작업중인 Branch를 어떻게
+식별할지" 하나만 AskUserQuestion으로 확인했다 - 답은 **"로컬 git
+저장소에서 자동 감지"**(CLI가 실행된 현재 디렉터리의 실제 clone에서
+`git rev-parse --abbrev-ref HEAD`를 매 호출마다 라이브로 물어봄,
+별도 상태 파일/전환 명령 없음).
+
+**조사(실제 Gitea 1.27.3 인스턴스 swagger 직접 확인)**: Gitea REST
+API가 요구사항을 전부 이미 지원한다 - PR 댓글은
+`/issues/{index}/comments`(PR도 issue 취급), 진행 내역은
+`/issues/{index}/timeline`(type으로 구분된 이벤트 피드), 상태전이는
+`PATCH /pulls/{index}`의 `state`, **수동 병합 완료는**
+`POST /pulls/{index}/merge`의 `do:"manually-merged"`
+(+`merge_commit_id`). Gitea PR 자체엔 "거부(rejected)" 개념이 없어
+`GitSyncQueueEntry`와 같은 원칙(외부가 안 주는 상태만 얇게 얹음)으로
+`PullRequestMeta`(projectId+prIndex 복합키, disposition/
+lastMergeError)를 신설.
+
+**데이터 모델**: `PullRequestMeta`(신규) + `CodeRelation.branchName
+String?`(nullable 추가 컬럼, 기존 데이터 안 깨짐) + `DocumentBranchLink`
+(신규, `DocumentSourceLink`를 filePath→branchName으로 그대로 미러링).
+**의도적 비대칭**: `CodeRelation.branchName`은 브랜치 삭제 시 웹훅으로
+즉시 일괄 삭제되지만(관계도는 "지금 탐색 상태"), `DocumentBranchLink`는
+브랜치가 삭제돼도 영구 보존한다(문서 쪽은 "이 문서가 어느 브랜치를
+거쳤는지"라는 역사적 기록) - 설계자에게 명시적으로 플래그하고 그대로
+승인됨.
+
+**백엔드**: `core/gitea.ts`에 PR 댓글/타임라인/커밋 조회, `state`
+전이(Close/Reopen), `mergePullRequestManually` 추가. 신규
+`core/pullRequests.ts`(gitea.ts/gitRepos.ts와 별도 모듈 - PR
+오케스트레이션은 자체 완결된 도메인) - `mergePull`(실패 시
+`lastMergeError` 기록 + `[PR#n] `태그 메시지, 칸반 카드의 대괄호
+태그 관례 재사용)/`mergePullManually`/`rejectPull`/`closePull`
+(disposition이 아직 없으면 자동으로 rejected로 간주)/`reopenPull`
+(disposition을 null로 리셋해 다음 머지가 자연스럽게 덮어쓰게 함).
+`core/pushHooks.ts`에 `delete` 이벤트 파싱(`verifyAndParseDeleteWebhook`,
+서명 검증은 `verifyGiteaSignature`로 공유) +
+`handleGiteaSystemDelete` → `codeRelations.deleteRelationsForBranch`
+(설계자별 소유 스코프의 유일한 의도적 예외 - 브랜치가 사라지면 모든
+설계자에게 동시에 무의미해지므로). 시스템 웹훅이 `push`뿐 아니라
+`delete`도 구독하도록 `createSystemWebhook` 변경 + **기존 배포에도
+반영되도록** `ensureGiteaSystemWebhookConfigured`가 이미 등록된
+웹훅의 events에 `delete`가 없으면 PATCH로 보강(재배포 시 수동 조치
+불필요). 신규 `core/documentBranchLinks.ts`(`documentSourceLinks.ts`
+완전 미러). CLI/MCP 공유 `cli/apiclient.ts`에
+`detectCurrentGitBranch()`(`execFileSync("git",["rev-parse",
+"--abbrev-ref","HEAD"])`, 실패 시 전부 null로 fail-soft) - `relation
+add/update/list`에 `--branch`/`--all-branches` 배선.
+
+**실측으로 발견·수정한 배포 문제 2건**(둘 다 사전에 알 수 없었고
+실제 Gitea 인스턴스로 왕복 검증하다 발견):
+1. **Gitea 스코프 토큰 체계** - PR을 issue로 취급하는 Gitea가 댓글/
+   타임라인 조회에 `read:issue`/`write:issue` 스코프를 별도로
+   요구한다(repository 스코프만으론 403). 기존 관리자 API 토큰
+   (`GITEA_API_TOKEN`)과 설계자별 PAT 발급 함수
+   (`createUserAccessToken`, 기존엔 `write:repository`만 요청)
+   둘 다 `write:issue`가 없어서 막혔던 것을 실제로 재현해 확인 -
+   `createUserAccessToken`의 요청 스코프에 `write:issue` 추가,
+   README.md의 Gitea PAT 발급 안내에도 issue 스코프 필요성 명시.
+   기존에 이미 발급된 토큰은 `docs git my-token`으로 재발급해야
+   반영됨(자동 소급 불가 - 안내로 충분하다고 판단).
+2. **`allow_manual_merge` 저장소 기본값이 false** - Gitea가 새
+   저장소를 만들 때 이 설정을 기본으로 꺼둬서(swagger의
+   `CreateRepoOption`엔 이 필드 자체가 없어 생성 시점엔 못 켬),
+   수동 머지 완료 기록이 "manually-merged is not allowed" 405로
+   항상 실패하던 것을 실제로 재현해 발견 - `gitea.ts`의 `createRepo`/
+   `migrateRepo`(work 저장소만, mirror는 PR이 없어 불필요)가 생성
+   직후 `PATCH .../repos/{owner}/{repo}` `{allow_manual_merge:true}`
+   를 자동으로 걸도록 수정.
+
+**프론트엔드**: `repo/pulls`(목록, `Pagination.vue` 재사용, 최신순+
+state 필터) / `repo/pulls/:index`(상세) 신규 라우트 - `documents`/
+`documents/:trackingCode` 형제 라우트 분리 패턴 그대로. 신규
+`components/PullRequestTimeline.vue`(이 코드베이스에 타임라인/활동
+피드 컴포넌트가 전혀 없어 새로 제작 - type별 아이콘 색상의 세로
+카드 피드). `RepoManagementView.vue`는 최신 5개+"더보기"로 축소,
+인라인 머지 버튼/로직은 제거해 상세 페이지로 이전(PR 생성 폼은
+브랜치 목록과 결합돼 있어 그대로 유지). `DocumentEditorView.vue`에
+"연관 브랜치" 섹션 추가(기존 "연관된 소스 코드" 섹션과 병렬 구조).
+
+**실측 검증**: 백엔드/프론트 `tsc`/`vue-tsc` 클린 →
+`audit:cli-mcp`(신규 `pr_*`/`document_link_branch` 등 대칭 확인,
+`link_branch`/`unlink_branch`/`branch_links` 를 `KNOWN_RENAMES`에
+등록) → Docker 이미지 재빌드+재기동(`db push`로 postgres 스키마
+반영 확인) → 실제 로컬 clone(`git clone`)으로 브랜치 3개 생성해
+PR 4개 실전 왕복: **PR#1** 생성→자동 머지 성공(`disposition:
+"merged"`, `[PR#1] 머지되었습니다.` 메시지 확인) → **PR#2** 거부
+(`disposition:"rejected"`) → 재오픈(`disposition`이 null로
+리셋되는지 확인) → 새 커밋 push → 재머지 성공(**요구사항 5 핵심
+시나리오 - 거부 후에도 결국 Accept 도달 확인**) → **PR#3** 머지/
+거부 선택 없이 바로 Close(`disposition`이 자동으로 "rejected"로,
+메시지 문구도 정확히 확인 - **요구사항 6 확인**) → **PR#4** 실제
+머지 충돌을 만들어(같은 파일을 서로 다른 브랜치에서 다르게 수정)
+자동 머지 실패시켜 `lastMergeError`가 기록되고 새로고침 후에도
+남아있는지 확인 → 실제로 로컬에서 충돌 해결 후 push → 그 커밋
+SHA로 `merge-manually` 호출 → Gitea가 실제로 `merged:true`로
+표시하는지 확인(**요구사항 4 핵심 시나리오**, 위 `allow_manual_merge`
+버그를 이 과정에서 발견·수정). 웹 UI에서도 목록(최신순, 배지 정확)/
+상세(메시지·커밋·대화·진행내역 4섹션, 액션 버튼 상태별 노출)를
+직접 클릭해 확인, 댓글 작성 후 진행내역에 실시간 반영되는지도 확인.
+**브랜치 자동 감지**: 실제 로컬 clone에서 `git checkout`으로 브랜치를
+오가며 플래그 없이 `relation list`가 자동으로 바뀌는지, `--all-branches`
+가 전체를 보여주는지 확인. **브랜치 삭제 cascade**: 문서에
+`link-branch`로 브랜치를 연결해두고 실제로 Gitea API로 그 브랜치를
+삭제 → 시스템 웹훅의 `delete` 이벤트가 실제로 처리돼(로그로 확인)
+그 브랜치의 코드 관계는 삭제되고, **문서의 브랜치 링크는 그대로
+남아있는지**(핵심 비대칭) 웹 UI로 직접 확인. 테스트 프로젝트/그룹/
+문서/로컬 clone은 검증 후 정리.
+
 ## 다음 단계
 
 3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
-저장소 관리 탭) + 코드 관계도(`#code-relation-graph`)가 전부
-완료됐다. PLANS.md 색인 표에 남은 ⬜ 항목이 없다 - 다음 라운드는
-새 QA 패스나 설계자의 새 요청을 기다린다.
+저장소 관리 탭) + 코드 관계도(`#code-relation-graph`) + PR 워크플로우
+확장/브랜치 스코프 코드 관계도/문서-브랜치 연관(`#pr-workflow-branch-scope`)
+가 전부 완료됐다. PLANS.md 색인 표에 남은 ⬜ 항목이 없다 - 다음
+라운드는 새 QA 패스나 설계자의 새 요청을 기다린다.

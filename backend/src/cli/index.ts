@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
-import { apiCall, apiCallText, saveCredentials, loadCredentials, clearCredentials, credentialsPath, waitForMessageDirect } from "./apiclient.js";
+import { apiCall, apiCallText, saveCredentials, loadCredentials, clearCredentials, credentialsPath, waitForMessageDirect, detectCurrentGitBranch } from "./apiclient.js";
 import { scanDirectory, applyManifest } from "./migrate.js";
 
 const program = new Command();
@@ -331,6 +331,7 @@ relCmd
   .option("--tags <t1,t2>", "쉼표로 구분")
   .option("--parents <id1,id2>", "쉼표로 구분 - 상위 관계 id들")
   .option("--children <id1,id2>", "쉼표로 구분 - 하위 관계 id들")
+  .option("--branch <name>", "생략하면 현재 디렉터리의 git 브랜치를 자동 감지")
   .action((projectId, opts) =>
     run(async () => {
       printJson(
@@ -348,6 +349,7 @@ relCmd
             tags: splitCsv(opts.tags),
             parentIds: splitCsv(opts.parents),
             childIds: splitCsv(opts.children),
+            branchName: opts.branch ?? detectCurrentGitBranch() ?? undefined,
           }),
         }),
       );
@@ -369,6 +371,7 @@ relCmd
   .option("--remove-parents <id1,id2>", "쉼표로 구분")
   .option("--add-children <id1,id2>", "쉼표로 구분")
   .option("--remove-children <id1,id2>", "쉼표로 구분")
+  .option("--branch <name>", "명시해야만 갱신됨(생략하면 기존 값 유지 - 자동 감지 안 함)")
   .action((projectId, id, opts) =>
     run(async () => {
       printJson(
@@ -388,6 +391,7 @@ relCmd
             removeParentIds: splitCsv(opts.removeParents),
             addChildIds: splitCsv(opts.addChildren),
             removeChildIds: splitCsv(opts.removeChildren),
+            branchName: opts.branch,
           }),
         }),
       );
@@ -411,6 +415,8 @@ relCmd
   .option("--ref <trackingCode>", "이 문서를 연관 문서로 갖는 관계만(정확 일치)")
   .option("--tag <tag>")
   .option("--root-only", "상위 관계가 없는 최상위만")
+  .option("--branch <name>", "생략하면 현재 디렉터리의 git 브랜치를 자동 감지해서 필터")
+  .option("--all-branches", "브랜치 필터 없이 전체(과거 데이터 포함) 조회")
   .option("--page <n>")
   .option("--count <n>")
   .action((projectId, opts) =>
@@ -421,6 +427,8 @@ relCmd
       if (opts.ref) qs.set("trackingCode", opts.ref);
       if (opts.tag) qs.set("tag", opts.tag);
       if (opts.rootOnly) qs.set("hasNoParent", "true");
+      if (opts.allBranches) qs.set("allBranches", "true");
+      else qs.set("branchName", opts.branch ?? detectCurrentGitBranch() ?? "");
       if (opts.page !== undefined) qs.set("page", opts.page);
       if (opts.count !== undefined) qs.set("pageSize", opts.count);
       printJson(await apiCall(`/api/projects/${projectId}/relations?${qs}`));
@@ -501,6 +509,110 @@ relCmd
     run(async () =>
       printJson(await apiCall(`/api/projects/${projectId}/relations/bulk`, { method: "DELETE", body: JSON.stringify({ ids }) })),
     ),
+  );
+
+// ---------------------------------------------------------------- Pull Request
+// git 저장소 관리 기능(브랜치 목록/저장소 연동/발행 등)은 지금까지
+// 웹 전용이었지만, PR은 이번에 CLI/MCP를 예외로 연다 - 자동 머지가
+// 실패했을 때 AI(Claude)가 CLI로 직접 진단하고 수동 병합까지 완료할
+// 수 있어야 하기 때문(설계자 요구사항 4번). PR 생성은 브랜치 선택
+// UI와 강하게 결합돼 있어 여전히 웹에서만 한다.
+
+const prCmd = program.command("pr").description("Pull Request 조회/처리(생성은 웹 저장소 관리 탭에서만)");
+
+prCmd
+  .command("list <projectId>")
+  .option("--state <s>", "open|closed|all(기본)")
+  .option("--page <n>")
+  .option("--count <n>")
+  .action((projectId, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams();
+      if (opts.state) qs.set("state", opts.state);
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      if (paged) {
+        qs.set("page", opts.page ?? "1");
+        qs.set("pageSize", opts.count ?? "20");
+      }
+      printJson(await apiCall(`/api/projects/${projectId}/git/pulls${paged ? "/page" : ""}?${qs}`));
+    }),
+  );
+
+prCmd
+  .command("get <projectId> <index>")
+  .action((projectId, index) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}`))));
+
+prCmd
+  .command("commits <projectId> <index>")
+  .action((projectId, index) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}/commits`))));
+
+prCmd
+  .command("comments <projectId> <index>")
+  .action((projectId, index) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}/comments`))));
+
+prCmd
+  .command("add-comment <projectId> <index> <body>")
+  .description("설계자간 대화(Markdown)에 댓글을 남긴다")
+  .action((projectId, index, body) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/pulls/${index}/comments`, {
+          method: "POST",
+          body: JSON.stringify({ body }),
+        }),
+      ),
+    ),
+  );
+
+prCmd
+  .command("timeline <projectId> <index>")
+  .description("PR이 닫힐 때까지의 전체 진행 내역")
+  .action((projectId, index) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}/timeline`))));
+
+prCmd
+  .command("messages <projectId> <index>")
+  .description("이 PR에 대해 기록된 이 앱의 메시지(머지/거부/닫힘/재오픈 등)")
+  .action((projectId, index) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}/messages`))));
+
+prCmd
+  .command("merge <projectId> <index>")
+  .description("자동 머지 - 실패하면 lastMergeError가 기록되고 수동 병합 안내가 뜬다(owner 전용)")
+  .action((projectId, index) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}/merge`, { method: "POST" }))),
+  );
+
+prCmd
+  .command("merge-manually <projectId> <index> <mergeCommitId>")
+  .description("자동 머지가 실패했을 때, 로컬에서 직접(또는 AI가) 충돌을 해결해 push한 커밋을 병합 완료로 기록한다(owner 전용)")
+  .action((projectId, index, mergeCommitId) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/pulls/${index}/merge-manually`, {
+          method: "POST",
+          body: JSON.stringify({ mergeCommitId }),
+        }),
+      ),
+    ),
+  );
+
+prCmd
+  .command("reject <projectId> <index>")
+  .description("PR을 거부한다(이후 재오픈+새 커밋으로 다시 Accept까지 갈 수 있음)")
+  .action((projectId, index) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}/reject`, { method: "POST" }))),
+  );
+
+prCmd
+  .command("close <projectId> <index>")
+  .description("머지/거부 여부와 무관하게 닫는다(둘 다 선택 안 했으면 거부로 처리됨)")
+  .action((projectId, index) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}/close`, { method: "POST" }))),
+  );
+
+prCmd
+  .command("reopen <projectId> <index>")
+  .action((projectId, index) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}/reopen`, { method: "POST" }))),
   );
 
 // ---------------------------------------------------------------- 팀/그룹/프로젝트
@@ -1053,6 +1165,48 @@ program
       const paged = opts.page !== undefined || opts.count !== undefined;
       const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
       printJson(await apiCall(`/api/documents/${trackingCode}/source-links${paged ? "/page" : ""}${qs}`));
+    }),
+  );
+
+// ---------------------------------------------------------------- 연관된 브랜치
+
+program
+  .command("link-branch <trackingCode> <branchName>")
+  .description("이 문서와 연관된 git 브랜치를 연결한다(브랜치가 나중에 삭제돼도 이 연결은 유지됨)")
+  .action((trackingCode, branchName) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/documents/${trackingCode}/branch-links`, {
+          method: "POST",
+          body: JSON.stringify({ branchName }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("unlink-branch <trackingCode> <linkId>")
+  .description("연결된 브랜치 링크를 제거한다")
+  .action((trackingCode, linkId) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/document-branch-links/${linkId}?trackingCode=${encodeURIComponent(trackingCode)}`, {
+          method: "DELETE",
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("branch-links <trackingCode>")
+  .description("이 문서와 연관된 브랜치 목록")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((trackingCode, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/documents/${trackingCode}/branch-links${paged ? "/page" : ""}${qs}`));
     }),
   );
 

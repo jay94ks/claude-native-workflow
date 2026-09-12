@@ -48,6 +48,10 @@ interface SourceLink {
   id: string;
   filePath: string;
 }
+interface BranchLink {
+  id: string;
+  branchName: string;
+}
 
 const doc = ref<DocumentDetail | null>(null);
 const body = ref("");
@@ -68,6 +72,10 @@ const savingPriority = ref(false);
 const sourceLinks = ref<SourceLink[]>([]);
 const sourceLinksError = ref("");
 const newSourcePath = ref("");
+
+const branchLinks = ref<BranchLink[]>([]);
+const branchLinksError = ref("");
+const newBranchName = ref("");
 
 const deleting = ref(false);
 const deleteError = ref("");
@@ -157,6 +165,40 @@ function openSourceFile(filePath: string) {
   router.push(`/projects/${props.id}/source?path=${encodeURIComponent(filePath)}`);
 }
 
+async function loadBranchLinks() {
+  try {
+    branchLinks.value = await apiCall<BranchLink[]>(`/documents/${props.trackingCode}/branch-links`);
+  } catch {
+    branchLinks.value = [];
+  }
+}
+
+async function addBranchLink() {
+  const branchName = newBranchName.value.trim();
+  if (!branchName) return;
+  branchLinksError.value = "";
+  try {
+    await apiCall(`/documents/${props.trackingCode}/branch-links`, {
+      method: "POST",
+      body: JSON.stringify({ branchName }),
+    });
+    newBranchName.value = "";
+    await loadBranchLinks();
+  } catch (err) {
+    branchLinksError.value = err instanceof ApiError ? err.message : "연결에 실패했습니다";
+  }
+}
+
+async function removeBranchLink(id: string) {
+  branchLinksError.value = "";
+  try {
+    await apiCall(`/document-branch-links/${id}?trackingCode=${encodeURIComponent(props.trackingCode)}`, { method: "DELETE" });
+    await loadBranchLinks();
+  } catch (err) {
+    branchLinksError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
+  }
+}
+
 async function load() {
   loading.value = true;
   error.value = "";
@@ -165,7 +207,7 @@ async function load() {
     body.value = doc.value.body;
     priorityInput.value = doc.value.priority === null ? "" : String(doc.value.priority);
     mode.value = "read";
-    await Promise.all([loadNextStatuses(), loadSourceLinks()]);
+    await Promise.all([loadNextStatuses(), loadSourceLinks(), loadBranchLinks()]);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "문서를 불러오지 못했습니다";
   } finally {
@@ -443,6 +485,22 @@ onMounted(load);
         <p v-else class="muted">연결된 소스코드가 없습니다.</p>
         <button v-if="doc.perm.write" type="button" class="secondary" @click="pickSourceLink">+ 소스 파일 연결</button>
       </section>
+
+      <section class="source-links">
+        <h2>연관 브랜치</h2>
+        <p v-if="branchLinksError" class="error">{{ branchLinksError }}</p>
+        <ul v-if="branchLinks.length > 0" class="source-list">
+          <li v-for="link in branchLinks" :key="link.id">
+            <span class="source-path">{{ link.branchName }}</span>
+            <button v-if="doc.perm.write" type="button" class="remove-btn" @click="removeBranchLink(link.id)">해제</button>
+          </li>
+        </ul>
+        <p v-else class="muted">연결된 브랜치가 없습니다.</p>
+        <form v-if="doc.perm.write" class="branch-add-row" @submit.prevent="addBranchLink">
+          <input v-model="newBranchName" type="text" placeholder="브랜치 이름" />
+          <button type="submit" class="secondary" :disabled="!newBranchName.trim()">+ 브랜치 연결</button>
+        </form>
+      </section>
     </template>
     <template v-else>
       <QAPanel :project-id="id" target-type="document" :target-key="trackingCode" @status-transitioned="refreshStatus" />
@@ -626,6 +684,18 @@ button:disabled {
 .source-links h2 {
   font-size: 15px;
   margin: 0 0 10px;
+}
+.branch-add-row {
+  display: flex;
+  gap: 8px;
+}
+.branch-add-row input {
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .source-list {
   list-style: none;
