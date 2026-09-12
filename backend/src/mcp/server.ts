@@ -739,6 +739,45 @@ async function main() {
     },
   );
   tool(
+    "document_read",
+    "문서 부분 읽기",
+    "문서 본문을 줄 단위로 부분 읽기(큰 문서를 전체로 안 올리고 필요한 범위만) - 둘 다 생략하면 처음 2000줄.",
+    { trackingCode: z.string(), offset: z.number().int().optional(), limit: z.number().int().optional() },
+    async (a) => {
+      const qs = new URLSearchParams();
+      if (a.offset !== undefined) qs.set("offset", String(a.offset));
+      if (a.limit !== undefined) qs.set("limit", String(a.limit));
+      return call(`/api/documents/${a.trackingCode}/lines${qs.toString() ? `?${qs}` : ""}`);
+    },
+  );
+  tool(
+    "document_grep",
+    "문서 본문 검색",
+    "문서 본문을 정규식(JS 문법)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열.",
+    {
+      trackingCode: z.string(),
+      pattern: z.string(),
+      caseInsensitive: z.boolean().optional(),
+      context: z.number().int().optional(),
+    },
+    async (a) => {
+      const qs = new URLSearchParams({ q: String(a.pattern) });
+      if (a.caseInsensitive) qs.set("caseInsensitive", "true");
+      if (a.context !== undefined) qs.set("context", String(a.context));
+      return call(`/api/documents/${a.trackingCode}/grep?${qs}`);
+    },
+  );
+  tool(
+    "document_diff",
+    "문서 버전 비교",
+    "두 시점의 본문을 줄 단위로 비교한다 - from/to는 document_revisions의 리비전 id 또는 리터럴 \"current\"(지금 본문). to 생략 시 current.",
+    { trackingCode: z.string(), from: z.string(), to: z.string().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({ from: String(a.from), ...(a.to ? { to: String(a.to) } : {}) });
+      return call(`/api/documents/${a.trackingCode}/diff?${qs}`);
+    },
+  );
+  tool(
     "document_next_statuses",
     "다음 선택 가능 상태 목록",
     "이 문서에서 지금 전이 가능한 다음 상태 목록(코드/라벨/지침).",

@@ -1,4 +1,5 @@
 import { MeiliSearchRequestError } from "meilisearch";
+import { diffLines, type Change } from "diff";
 import { getDb } from "./db.js";
 import { withTrackingCode } from "./tracking.js";
 import { findDocTypeByCode, findDocStatusByCode, initialStatusFor, allowedNextStatuses } from "./docTypes.js";
@@ -278,6 +279,104 @@ export async function listDocumentRevisionsPaged(
       editedAt: r.editedAt.toISOString(),
     })),
   };
+}
+
+// ---------------------------------------------------------------- 부분 읽기/검색/비교
+// 큰 문서(예: 이 저장소 자신을 이주하며 만든 DN 문서들)를 매번 전체
+// 본문으로 컨텍스트에 올리지 않아도 되도록 - Read/Grep 도구가 파일에
+// 대해 하는 것과 같은 일을 문서 본문에 대해 한다. 셋 다 getDocument()
+// (검색 엔진 경유 - "모든 조회는 검색 엔진을 거친다" 원칙)로 이미 가져온
+// 본문 위에서 순수하게 문자열만 다루는 후처리라, 이 원칙을 우회하는
+// 별도 조회 경로가 아니다.
+
+export interface DocumentLinesResult {
+  totalLines: number;
+  offset: number;
+  lines: string[];
+}
+
+const DEFAULT_LINES_LIMIT = 2000;
+
+/** offset(1부터)부터 최대 limit줄 - 둘 다 생략하면 처음부터
+ * DEFAULT_LINES_LIMIT줄(Read 도구의 offset/limit 관례와 동일). */
+export async function readDocumentLines(trackingCode: string, offset?: number, limit?: number): Promise<DocumentLinesResult> {
+  const doc = await getDocumentFromIndex(trackingCode);
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const allLines = doc.body.split("\n");
+  const start = Math.max(1, offset ?? 1);
+  const count = limit ?? DEFAULT_LINES_LIMIT;
+  return {
+    totalLines: allLines.length,
+    offset: start,
+    lines: allLines.slice(start - 1, start - 1 + count),
+  };
+}
+
+export interface DocumentGrepMatch {
+  line: number;
+  text: string;
+}
+
+export interface DocumentGrepOptions {
+  caseInsensitive?: boolean;
+  /** 앞뒤로 몇 줄씩 더 붙일지(grep -C와 동일) - 붙은 줄도 matches 배열에
+   * 그대로 섞여 나오고, 실제 매치 여부는 각 항목에 없으므로 호출부가
+   * 굳이 구분할 필요가 없을 때(대부분의 탐색)만 쓴다. */
+  context?: number;
+}
+
+/** 정규식(JS 문법) 패턴으로 본문을 줄 단위 검색한다 - Grep 도구의
+ * "content" 출력 모드와 같은 모양(줄 번호+텍스트). 잘못된 정규식은
+ * 명확한 에러로 거부(추측해서 고쳐주지 않음). */
+export async function grepDocument(trackingCode: string, pattern: string, opts: DocumentGrepOptions = {}): Promise<DocumentGrepMatch[]> {
+  const doc = await getDocumentFromIndex(trackingCode);
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  let re: RegExp;
+  try {
+    re = new RegExp(pattern, opts.caseInsensitive ? "i" : "");
+  } catch (err) {
+    throw new Error(`잘못된 정규식입니다: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const lines = doc.body.split("\n");
+  const contextSize = Math.max(0, opts.context ?? 0);
+  const matchedLineNumbers = new Set<number>();
+  lines.forEach((line, i) => {
+    if (!re.test(line)) return;
+    for (let n = Math.max(0, i - contextSize); n <= Math.min(lines.length - 1, i + contextSize); n++) {
+      matchedLineNumbers.add(n);
+    }
+  });
+  return [...matchedLineNumbers]
+    .sort((a, b) => a - b)
+    .map((i) => ({ line: i + 1, text: lines[i] }));
+}
+
+export interface DocumentDiffResult {
+  from: string;
+  to: string;
+  changes: Change[];
+}
+
+/** revisionId 하나 또는 리터럴 "current"(지금 저장된 본문)를 받아 두
+ * 시점의 본문을 줄 단위로 비교한다 - `diff` 라이브러리(jsdiff)의
+ * diffLines 결과를 그대로 반환(added/removed/value로 이미 구조화돼
+ * 있어 그대로 렌더링하기 좋음). */
+export async function diffDocument(trackingCode: string, from: string, to: string): Promise<DocumentDiffResult> {
+  const db = getDb();
+  const doc = await db.document.findUnique({ where: { trackingCode } });
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+
+  async function resolveBody(ref: string): Promise<string> {
+    if (ref === "current") return doc!.body;
+    const revision = await db.documentRevision.findUnique({ where: { id: ref } });
+    if (!revision || revision.documentId !== doc!.id) {
+      throw new Error(`이 문서의 리비전이 아니거나 존재하지 않습니다: ${ref}`);
+    }
+    return revision.body;
+  }
+
+  const [fromBody, toBody] = await Promise.all([resolveBody(from), resolveBody(to)]);
+  return { from, to, changes: diffLines(fromBody, toBody) };
 }
 
 export async function saveDocumentBody(

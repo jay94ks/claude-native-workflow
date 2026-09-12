@@ -105,6 +105,9 @@ import {
   listDocumentRevisions,
   listDocumentRevisionsPaged,
   deleteDocument,
+  readDocumentLines,
+  grepDocument,
+  diffDocument,
 } from "../core/documents.js";
 import { addSourceLink, removeSourceLink, listSourceLinks, listSourceLinksPaged } from "../core/documentSourceLinks.js";
 import { addBranchLink, removeBranchLink, listBranchLinks, listBranchLinksPaged } from "../core/documentBranchLinks.js";
@@ -1777,6 +1780,55 @@ app.get(
     res.json(
       await listDocumentRevisionsPaged(req.params.trackingCode, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
     );
+  }),
+);
+
+// 큰 문서를 매번 전체 본문으로 컨텍스트에 올리지 않아도 되도록 -
+// Read/Grep 도구가 파일에 대해 하는 일을 문서 본문에 대해 한다
+// (#document-partial-read-grep-diff).
+app.get(
+  "/api/documents/:trackingCode/lines",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
+    const limit = req.query.limit !== undefined ? Number(req.query.limit) : undefined;
+    res.json(await readDocumentLines(req.params.trackingCode, offset, limit));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/grep",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    const { q } = req.query as { q?: string };
+    if (!q) { res.status(400).json({ error: "q가 필요합니다" }); return; }
+    const matches = await grepDocument(req.params.trackingCode, q, {
+      caseInsensitive: req.query.caseInsensitive === "true",
+      context: req.query.context !== undefined ? Number(req.query.context) : undefined,
+    });
+    res.json(matches);
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/diff",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    const { from, to } = req.query as { from?: string; to?: string };
+    if (!from) { res.status(400).json({ error: "from이 필요합니다" }); return; }
+    res.json(await diffDocument(req.params.trackingCode, from, to ?? "current"));
   }),
 );
 

@@ -1146,6 +1146,44 @@ program
   );
 
 program
+  .command("read <trackingCode>")
+  .description("문서 본문을 줄 단위로 부분 읽기(큰 문서를 전체로 안 올리고 필요한 범위만) - 둘 다 생략하면 처음 2000줄")
+  .option("--offset <n>", "시작 줄 번호(1부터)")
+  .option("--limit <n>", "최대 줄 수")
+  .action((trackingCode, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams();
+      if (opts.offset !== undefined) qs.set("offset", opts.offset);
+      if (opts.limit !== undefined) qs.set("limit", opts.limit);
+      printJson(await apiCall(`/api/documents/${trackingCode}/lines${qs.toString() ? `?${qs}` : ""}`));
+    }),
+  );
+
+program
+  .command("grep <trackingCode> <pattern>")
+  .description("문서 본문을 정규식(JS 문법)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열")
+  .option("--case-insensitive", "대소문자 구분 안 함")
+  .option("--context <n>", "매치된 줄 앞뒤로 n줄씩 더 포함(grep -C와 동일)")
+  .action((trackingCode, pattern, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({ q: pattern });
+      if (opts.caseInsensitive) qs.set("caseInsensitive", "true");
+      if (opts.context !== undefined) qs.set("context", opts.context);
+      printJson(await apiCall(`/api/documents/${trackingCode}/grep?${qs}`));
+    }),
+  );
+
+program
+  .command("diff <trackingCode> <from> [to]")
+  .description("두 시점의 본문을 줄 단위로 비교 - from/to는 `docs revisions`의 리비전 id 또는 리터럴 \"current\"(지금 본문). to 생략 시 current")
+  .action((trackingCode, from, to) =>
+    run(async () => {
+      const qs = new URLSearchParams({ from, ...(to ? { to } : {}) });
+      printJson(await apiCall(`/api/documents/${trackingCode}/diff?${qs}`));
+    }),
+  );
+
+program
   .command("delete <trackingCode>")
   .description("문서를 삭제한다(리비전/링크/코멘트/질문+답변까지 함께 정리)")
   .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}`, { method: "DELETE" }))));
