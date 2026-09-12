@@ -377,30 +377,32 @@ h2 {
 }
 .hint {
   font-size: 12px;
-  color: #999;
+  color: var(--color-text-faint);
   margin: 0 0 10px;
 }
 .search-input {
   width: 100%;
   box-sizing: border-box;
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
   margin-bottom: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .questions {
   list-style: none;
   padding: 0;
   margin: 0 0 10px;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .questions li {
   padding: 10px 14px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
 }
 .questions li:last-child {
   border-bottom: none;
@@ -414,7 +416,7 @@ h2 {
 }
 .q-row code {
   font-size: 11px;
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
   flex-shrink: 0;
@@ -423,40 +425,40 @@ h2 {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #f0e9fb;
-  color: #6a3ea1;
+  background: var(--color-purple-bg);
+  color: var(--color-purple-text);
   flex-shrink: 0;
 }
 .status {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #eef0f6;
-  color: #555;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
   flex-shrink: 0;
 }
 .status.resolved {
-  background: #e3f6ec;
-  color: #1f9254;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 .status.pending {
-  background: #e4e9fb;
-  color: #3454d1;
+  background: var(--color-tcode-hover-bg);
+  color: var(--color-primary);
 }
 .status.open {
-  background: #fdf0e3;
-  color: #b96a1a;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
 }
 .status.withdrawn {
-  background: #f0f1f5;
-  color: #888;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
 }
 .text {
   flex: 1;
 }
 .q-meta {
   font-size: 11px;
-  color: #999;
+  color: var(--color-text-faint);
   margin-top: 3px;
   display: flex;
   align-items: center;
@@ -469,7 +471,7 @@ h2 {
 .answer {
   margin-top: 6px;
   padding: 8px 10px;
-  background: #f7f8fb;
+  background: var(--color-bg);
   border-radius: 6px;
   font-size: 13px;
   display: flex;
@@ -484,24 +486,24 @@ h2 {
   font-weight: 600;
 }
 .decision.approved {
-  background: #e3f6ec;
-  color: #1f9254;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 .decision.rejected {
-  background: #fbe4e8;
-  color: #d1344b;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 .answer .meta {
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 11px;
   display: flex;
   align-items: center;
   gap: 4px;
 }
 .options-toggle {
-  background: #fff;
-  border: 1px solid #3454d1;
-  color: #3454d1;
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 11px;
@@ -519,8 +521,8 @@ h2 {
 .option-btn {
   width: 100%;
   text-align: left;
-  background: #f7f8fb;
-  border: 1px solid #e4e6ee;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-light);
   border-radius: 6px;
   padding: 6px 10px;
   display: flex;
@@ -528,17 +530,17 @@ h2 {
   gap: 2px;
 }
 .option-btn:hover {
-  background: #eef0f6;
-  border-color: #3454d1;
+  background: var(--color-surface-hover);
+  border-color: var(--color-primary);
 }
 .option-label {
   font-size: 13px;
   font-weight: 600;
-  color: #222;
+  color: var(--color-text);
 }
 .option-detail {
   font-size: 11px;
-  color: #888;
+  color: var(--color-text-muted);
 }
 .options-overlay {
   position: fixed;
@@ -550,7 +552,8 @@ h2 {
   z-index: 1100;
 }
 .options-dialog {
-  background: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
   border-radius: 10px;
   padding: 20px;
   width: min(420px, 90vw);
@@ -563,16 +566,17 @@ h2 {
   position: absolute;
   top: 14px;
   right: 14px;
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
 }
 .ack-btn {
-  background: #fff;
-  border: 1px solid #3454d1;
-  color: #3454d1;
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 11px;
@@ -580,9 +584,9 @@ h2 {
   margin-top: 2px;
 }
 .withdraw-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
-  color: #d1344b;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-danger);
   padding: 2px 8px;
   border-radius: 6px;
   font-size: 11px;
@@ -609,12 +613,14 @@ h2 {
 .approval-row textarea {
   flex: 1;
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   min-width: 100px;
   font-family: inherit;
   font-size: 13px;
   resize: vertical;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .ask-controls,
 .approval-actions {
@@ -624,19 +630,22 @@ h2 {
 }
 .ask-controls select {
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .refs-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 8px 12px;
   border-radius: 6px;
   font-size: 12px;
 }
 .answer-row button,
 .ask-controls button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -648,7 +657,7 @@ h2 {
   opacity: 0.6;
 }
 .approval-actions .approve {
-  background: #1f9254;
+  background: var(--color-success);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -656,7 +665,7 @@ h2 {
   font-weight: 600;
 }
 .approval-actions .reject {
-  background: #d1344b;
+  background: var(--color-danger);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -667,15 +676,15 @@ h2 {
   opacity: 0.6;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 .notice {
-  color: #1f9254;
+  color: var(--color-success);
   font-size: 13px;
 }
 </style>

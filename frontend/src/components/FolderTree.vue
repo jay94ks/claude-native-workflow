@@ -205,7 +205,7 @@ onMounted(load);
 
 <style scoped>
 .tree {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 10px;
@@ -221,11 +221,11 @@ onMounted(load);
   font-size: 13px;
 }
 .node:hover {
-  background: #f8f9fb;
+  background: var(--color-surface-hover);
 }
 .node.active {
-  background: #e4e9fb;
-  color: #3454d1;
+  background: var(--color-tcode-hover-bg);
+  color: var(--color-primary);
   font-weight: 600;
 }
 .node span {
@@ -239,14 +239,14 @@ onMounted(load);
 .order-btn {
   background: none;
   border: none;
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 12px;
   flex-shrink: 0;
 }
 .add-btn:hover,
 .remove-btn:hover,
 .order-btn:hover:not(:disabled) {
-  color: #3454d1;
+  color: var(--color-primary);
 }
 .order-btn:disabled {
   opacity: 0.3;
@@ -257,7 +257,7 @@ onMounted(load);
 }
 .new-root-btn {
   width: 100%;
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 6px 8px;
@@ -274,18 +274,19 @@ onMounted(load);
 }
 .delete-choice-label {
   font-size: 11px;
-  color: #d1344b;
+  color: var(--color-danger);
 }
 .choice-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 11px;
 }
 .choice-btn.danger {
-  border-color: #e2a2ad;
-  color: #d1344b;
+  border-color: var(--color-danger-border-strong);
+  color: var(--color-danger);
 }
 .children {
   list-style: none;
@@ -303,12 +304,14 @@ onMounted(load);
 .new-form input {
   flex: 1;
   padding: 4px 6px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 4px;
   font-size: 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .new-form button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 4px 8px;
@@ -317,13 +320,15 @@ onMounted(load);
 }
 .rename-input {
   padding: 3px 6px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 4px;
   font-size: 12px;
   flex: 1;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 12px;
 }
 </style>

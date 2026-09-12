@@ -187,21 +187,21 @@ h2 {
 }
 .hint {
   font-size: 12px;
-  color: #999;
+  color: var(--color-text-faint);
   margin: 0 0 10px;
 }
 .comments {
   list-style: none;
   padding: 0;
   margin: 0 0 10px;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .comments li {
   padding: 8px 14px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
 }
 .comments li:last-child {
   border-bottom: none;
@@ -222,7 +222,7 @@ h2 {
   min-width: 120px;
 }
 .at {
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 11px;
   flex-shrink: 0;
 }
@@ -233,20 +233,21 @@ h2 {
   align-items: center;
 }
 .c-actions button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 5px 10px;
   border-radius: 6px;
   font-size: 12px;
 }
 .c-actions button:hover {
-  background: #eef0f6;
+  background: var(--color-surface-hover);
 }
 .c-actions button.cancel {
-  color: #888;
+  color: var(--color-text-muted);
 }
 .c-actions button.danger {
-  color: #d1344b;
+  color: var(--color-danger);
 }
 .status-badge {
   font-size: 11px;
@@ -263,31 +264,33 @@ h2 {
 }
 .status-badge.open,
 .status-select.open {
-  background: #fdf0e3;
-  color: #b96a1a;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
 }
 .status-badge.closed,
 .status-select.closed {
-  background: #eef0f6;
-  color: #555;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
 }
 .status-badge.solved,
 .status-select.solved {
-  background: #e3f6ec;
-  color: #1f9254;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 .status-badge.etc,
 .status-select.etc {
-  background: #f0e9fb;
-  color: #6a3ea1;
+  background: var(--color-purple-bg);
+  color: var(--color-purple-text);
 }
 textarea {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-family: inherit;
   resize: vertical;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .add-row {
   display: flex;
@@ -296,14 +299,16 @@ textarea {
 .add-row textarea {
   flex: 1;
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-family: inherit;
   font-size: 13px;
   resize: vertical;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .add-row button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -315,11 +320,11 @@ textarea {
   opacity: 0.6;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

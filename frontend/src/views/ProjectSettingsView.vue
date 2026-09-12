@@ -223,8 +223,9 @@ section {
   flex-wrap: wrap;
 }
 .chips li {
-  background: #fff;
-  border: 1px solid #e2e4ea;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   border-radius: 999px;
   padding: 5px 12px;
   font-size: 13px;
@@ -237,23 +238,28 @@ section {
 .create-row input {
   flex: 1;
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .pick-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 8px 12px;
   border-radius: 6px;
   font-size: 13px;
 }
 .create-row select {
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .create-row button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -262,20 +268,20 @@ section {
 }
 .hint {
   font-size: 12px;
-  color: #999;
+  color: var(--color-text-faint);
   margin: 0 0 12px;
 }
 .list {
   list-style: none;
   padding: 0;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .list li {
   padding: 10px 16px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
   display: flex;
   justify-content: space-between;
 }
@@ -283,7 +289,7 @@ section {
   border-bottom: none;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .member-controls {
@@ -293,14 +299,16 @@ section {
 }
 .member-controls select {
   padding: 4px 6px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .remove-btn {
-  background: #fff;
-  border: 1px solid #e2a2ad;
-  color: #d1344b;
+  background: var(--color-surface);
+  border: 1px solid var(--color-danger-border-strong);
+  color: var(--color-danger);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
@@ -310,20 +318,20 @@ section {
   cursor: not-allowed;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 .danger-zone {
-  border: 1px solid #e2a2ad;
+  border: 1px solid var(--color-danger-border-strong);
   border-radius: 8px;
   padding: 16px;
-  background: #fff8f8;
+  background: var(--color-danger-zone-bg);
 }
 .danger-zone h2 {
-  color: #d1344b;
+  color: var(--color-danger);
 }
 .delete-project-btn {
-  background: #d1344b;
+  background: var(--color-danger);
   color: #fff;
   border: none;
   padding: 8px 16px;
