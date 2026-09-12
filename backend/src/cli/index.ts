@@ -563,40 +563,10 @@ program
 
 program
   .command("doctype-apply-standard-flow <projectId> <docTypeId>")
-  .description("표준 상태 6개(draft/review/pending/approved/deprecated/archived) + 전이를 한 번에 세팅")
+  .description("표준 상태 6개(draft/review/pending/approved/deprecated/archived)를 한 번에 세팅")
   .action((projectId, docTypeId) =>
     run(async () =>
       printJson(await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/standard-flow`, { method: "POST" })),
-    ),
-  );
-
-program
-  .command("doctype-transition-add <projectId> <docTypeId> <fromCode> <toCode>")
-  .option("--label <l>", "전이 라벨(선택)")
-  .action((projectId, docTypeId, fromCode, toCode, opts) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/transitions`, {
-          method: "POST",
-          body: JSON.stringify({ fromStatusCode: fromCode, toStatusCode: toCode, label: opts.label }),
-        }),
-      ),
-    ),
-  );
-
-program
-  .command("doctype-transitions <projectId> <docTypeId>")
-  .action((_projectId, docTypeId) => run(async () => printJson(await apiCall(`/api/doc-types/${docTypeId}/transitions`))));
-
-program
-  .command("doctype-transition-delete <projectId> <docTypeId> <transitionId>")
-  .action((projectId, docTypeId, transitionId) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/transitions/${transitionId}`, {
-          method: "DELETE",
-        }),
-      ),
     ),
   );
 

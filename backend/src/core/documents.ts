@@ -279,7 +279,7 @@ export async function transitionDocumentStatus(trackingCode: string, toStatusCod
   if (!target) {
     const currentStatus = await db.docStatus.findUnique({ where: { id: existing.statusId } });
     throw new Error(
-      `"${currentStatus?.code ?? existing.statusId}"에서 "${toStatusCode}"로의 전이가 정의돼 있지 않습니다(DocStatusTransition 확인)`,
+      `"${currentStatus?.code ?? existing.statusId}"에서 "${toStatusCode}"로 전이할 수 없습니다(이 문서 타입에 없는 상태이거나, draft로는 어떤 상태에서도 되돌아갈 수 없습니다)`,
     );
   }
 

@@ -311,34 +311,9 @@ async function main() {
   tool(
     "doctype_apply_standard_flow",
     "표준 상태 흐름 일괄 적용",
-    "표준 상태 6개(draft/review/pending/approved/deprecated/archived)와 draft를 제외한 모든 전이를 한 번에 세팅한다.",
+    "표준 상태 6개(draft/review/pending/approved/deprecated/archived)를 한 번에 세팅한다.",
     { projectId: z.string(), docTypeId: z.string() },
     async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/standard-flow`, { method: "POST" }),
-  );
-  tool(
-    "doctype_transition_add",
-    "문서 타입 상태 전이 추가",
-    "두 상태(코드로 지정) 사이의 허용된 전이를 정의한다 - 정의된 전이만 docs transition으로 이동 가능.",
-    { projectId: z.string(), docTypeId: z.string(), fromStatusCode: z.string(), toStatusCode: z.string(), label: z.string().optional() },
-    async (a) =>
-      call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/transitions`, {
-        method: "POST",
-        body: JSON.stringify({ fromStatusCode: a.fromStatusCode, toStatusCode: a.toStatusCode, label: a.label }),
-      }),
-  );
-  tool(
-    "doctype_transitions",
-    "문서 타입 전이 목록",
-    "그 문서 타입에 정의된 상태 전이 전체 목록.",
-    { docTypeId: z.string() },
-    async (a) => call(`/api/doc-types/${a.docTypeId}/transitions`),
-  );
-  tool(
-    "doctype_transition_delete",
-    "문서 타입 상태 전이 삭제",
-    "정의된 상태 전이를 지운다 - 다른 테이블이 참조하지 않아 삭제 자체엔 제약이 없다.",
-    { projectId: z.string(), docTypeId: z.string(), transitionId: z.string() },
-    async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/transitions/${a.transitionId}`, { method: "DELETE" }),
   );
   // ---------------------------------------------------------------- 문서
 

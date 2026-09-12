@@ -3740,6 +3740,84 @@ DELETE도 200 성공, 큐에 `deleteDocument`로 전이돼 쌓임. 같은
 `npm run audit:cli-mcp`(라우트/CLI/MCP 표면 자체는 안 바뀌어 그대로
 통과) 클린.
 
+## DocStatus 전이를 설계자 CRUD가 아니라 AI 판단으로(`#doctype-transition-ai-governed`) - 완료 (2026-09-12)
+
+설계자 직접 지시(백로그 항목 아님): "문서 타입에서 전이가 가능하고
+불가능하고를 결정하는 것은, 설계자가 아니라 실질적인 작업자인 AI여야
+한다 - 상태 머신을 입력하거나 규제하려는 시도를 하지 않아야 한다. 다만
+draft는 한번 벗어나면 다시 draft가 될 수 없다." 지금까지는
+`DocStatusTransition`이라는 별도 테이블로 설계자가
+`doctype-transition-add`/`-delete`를 통해 어느 상태에서 어느 상태로
+갈 수 있는지 CRUD로 직접 정의했다. `seedStandardStatusFlow`가 기본으로
+완전 연결 그래프(draft 도착만 제외)를 심어주긴 했지만, 설계자가 그
+뒤에 개별 전이를 지워 그래프를 마음대로 좁힐 수 있는 구조 자체가
+지시의 원칙에 반했다 - 실제로 손봐야 할 지점은 "기본 그래프가 너무
+좁다"가 아니라 "설계자가 그래프를 좁힐 수 있는 CRUD가 존재한다"는
+것이었다.
+
+**핵심 통찰**: `transitionDocumentStatus()`(`core/documents.ts`)와
+`GET /next-statuses` 라우트는 이미 `allowedNextStatuses()`의 반환값을
+그대로 소비할 뿐이라("허용 목록에서 찾아지면 허용, 아니면 거부"),
+`allowedNextStatuses()`의 내부 구현만 바꾸면 두 소비처는 코드 한 줄도
+안 건드리고 새 규칙을 그대로 물려받았다.
+
+**스키마**(3드라이버 전부): `DocStatusTransition` 모델과 그 두 관계
+(`DocType.transitions`, `DocStatus.transitionsFrom`/`transitionsTo`)를
+삭제. 이 프로젝트는 마이그레이션 파일 대신 컨테이너 기동 시
+`prisma db push`로 스키마를 맞추는 방식이라(`docker-entrypoint.sh`)
+별도 마이그레이션 생성 없이 스키마 파일만 고치면 된다.
+
+**`core/docTypes.ts`**: `DocStatusTransition` 인터페이스와
+`addDocStatusTransition`/`deleteDocStatusTransition`/
+`addDocStatusTransitionByCode`/`listDocStatusTransitions` 전부 삭제.
+`allowedNextStatuses(docTypeId, fromStatusId)`를 DB의 전이 테이블을
+안 보고 `listDocStatuses()` 결과에서 자기 자신과 `code === "draft"`만
+걸러내도록 재작성 - 이제 이 DocType에 정의된 모든 상태(자기 자신 제외)
+가 항상 다음 상태로 허용된다. `initialStatusFor()`는 원래 "전이
+그래프에서 누구의 도착지도 아닌 상태"로 진입점을 찾았는데, 테이블이
+없어지면서 이 로직 자체가 깨지므로 `findDocStatusByCode(docTypeId,
+"draft")`를 우선 찾고 없으면 `listDocStatuses()[0]`으로 폴백하도록
+재설계(숨은 의존성 - 단순히 `allowedNextStatuses`만 고치면 이 함수는
+조용히 잘못된 값을 낼 뻔했다). `seedStandardStatusFlow()`는 상태 6개를
+심는 앞부분만 남기고 전이 심기 루프를 제거해 단순화.
+
+**`server.ts`/`cli/index.ts`/`mcp/server.ts`**: 전이 CRUD 라우트
+3개(`POST/DELETE .../transitions`, `GET /doc-types/:id/transitions`),
+CLI 명령 3개(`doctype-transition-add`/`doctype-transitions`/
+`doctype-transition-delete`), MCP 도구 3개(`doctype_transition_add`/
+`doctype_transitions`/`doctype_transition_delete`)를 쌍으로 동시
+제거 - CLI/MCP 완전성 원칙은 제거에도 그대로 적용되므로
+`audit-cli-mcp.ts`의 예외 목록엔 손댈 게 없었다(그대로 클린).
+`doctype-apply-standard-flow`/`doctype_apply_standard_flow` 설명
+문구에서 "+ 전이"/"draft를 제외한 모든 전이" 부분 제거.
+
+**`DocTypeManager.vue`**: 전이 목록/추가 폼/삭제 버튼과 관련 상태
+(`transitions` ref, `addTransition`/`removeTransition`, 전이 표시
+전용이던 `statusCode()` 헬퍼) 전부 제거. `loadDetail()`은 상태만
+조회하도록 축소.
+
+**SKILL.md 2벌**(`.claude/skills/claude-native-workflow/`와
+`backend/prisma/seed-templates/`, 수동 동기화) - "절대 규칙" 문단의
+근거를 "전이 정의 자체가 거부되므로"에서 "허용되는 다음 상태 목록
+자체에 draft가 항상 빠지므로"로 재작성, 표준 흐름/전이 CRUD 관련
+문장·명령 표 행 제거.
+
+**실측 검증**: 로컬 `npx tsc --noEmit`/`vue-tsc -b`/
+`npm run audit:cli-mcp`(CLI 121개·MCP 110개, 대칭성 이상 없음) 클린
+확인 후 `npm run db:generate`로 3드라이버 클라이언트 재생성,
+`docker compose build backend` → `up -d --force-recreate backend`(실제
+Postgres 컨테이너 로그에 `DocStatusTransition` 테이블 드롭이 찍힘 -
+`db push --accept-data-loss`가 의도대로 동작). HTTP 왕복으로 새
+문서(`draft`)를 만들어 `DocStatusTransition` 레코드가 한 번도 존재한
+적 없는 조합(`pending`→`approved`)으로 전이 → 200 성공, `approved`에서
+`draft`로 전이 시도 → 400 거부(유일하게 남은 하드 규칙), 제거된 라우트
+2곳은 404 확인. 로컬 재빌드한 CLI에서 `doctype-transition-add` →
+"unknown command" 확인, `doctype-apply-standard-flow --help` 설명
+문구 갱신 확인. 브라우저로 `DocTypeManager.vue`를 열어 타입 확장 시
+"전이" 섹션이 더 이상 안 보이고 상태 목록/상태 추가/"표준 상태 흐름
+한 번에 적용" 버튼은 그대로 동작(재적용 시 200, 콘솔에 전이 관련
+요청 자체가 없음)하는 것을 확인.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

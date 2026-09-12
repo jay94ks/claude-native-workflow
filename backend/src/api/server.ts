@@ -77,13 +77,10 @@ import {
   listDocStatuses,
   addDocStatus,
   getDocTypeById,
-  addDocStatusTransitionByCode,
-  listDocStatusTransitions,
   seedStandardStatusFlow,
   setDocTypeGuideline,
   updateDocType,
   deleteDocType,
-  deleteDocStatusTransition,
   allowedNextStatuses,
 } from "../core/docTypes.js";
 import {
@@ -1097,42 +1094,6 @@ app.post(
   }),
 );
 
-app.post(
-  "/api/projects/:projectId/doc-types/:docTypeId/transitions",
-  authenticate,
-  requireProjectRole("owner"),
-  asyncRoute(async (req, res) => {
-    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    const { fromStatusCode, toStatusCode, label } = req.body as {
-      fromStatusCode?: string;
-      toStatusCode?: string;
-      label?: string;
-    };
-    if (!fromStatusCode || !toStatusCode) {
-      res.status(400).json({ error: "fromStatusCode/toStatusCode가 필요합니다" });
-      return;
-    }
-    res.json(await addDocStatusTransitionByCode(req.params.docTypeId, fromStatusCode, toStatusCode, label));
-  }),
-);
-
-app.delete(
-  "/api/projects/:projectId/doc-types/:docTypeId/transitions/:transitionId",
-  authenticate,
-  requireProjectRole("owner"),
-  asyncRoute(async (req, res) => {
-    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    await deleteDocStatusTransition(req.params.docTypeId, req.params.transitionId);
-    res.json({ ok: true });
-  }),
-);
-
 app.put(
   "/api/projects/:projectId/doc-types/:docTypeId/guideline",
   authenticate,
@@ -1159,14 +1120,6 @@ app.post(
     }
     await seedStandardStatusFlow(req.params.docTypeId);
     res.json({ ok: true });
-  }),
-);
-
-app.get(
-  "/api/doc-types/:docTypeId/transitions",
-  authenticate,
-  asyncRoute(async (req, res) => {
-    res.json(await listDocStatusTransitions(req.params.docTypeId));
   }),
 );
 

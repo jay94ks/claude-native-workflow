@@ -76,17 +76,18 @@ description: claude-native-workflow로 관리되는 프로젝트에서 문서/�
 | `archived` | 보관됨 | 폐기가 아니라 보관 - 유일한 종료(isTerminal) 상태 |
 
 **절대 규칙: `draft`가 아닌 상태에서 `draft`로는 어떤 경우에도 되돌아갈
-수 없다** - 이 전이는 정의 자체가 거부되므로, 문서 편집기의 상태
-콤보박스에도 애초에 옵션으로 뜨지 않는다.
+수 없다** - 허용되는 다음 상태 목록(`allowedNextStatuses`) 자체에
+draft가 항상 빠지므로, 문서 편집기의 상태 콤보박스에도 애초에 옵션으로
+뜨지 않는다. 이 규칙 하나를 빼면, 어떤 상태에서 어떤 상태로 옮길 수
+있는지를 설계자가 미리 그래프로 규제하지 않는다 - 실질적인 작업자인
+AI가 그때그때 판단한다(설계자 지시).
 
-새 타입에 이 표준 흐름을 한 번에 심으려면(6개 상태 + draft를 제외한
-모든 조합의 전이) `docs doctype-apply-standard-flow <projectId>
-<docTypeId>`를 쓴다(문서 타입은 항상 프로젝트 자신에게만 정의된다 -
-그룹/팀 단위로 획일화해 정하는 기능은 없음). 상태를
-하나씩 붙이려면 `docs doctype-status-add <projectId> <docTypeId>
-<code>`(6개 표준 코드 중 하나만 허용 - 라벨/지침은 입력받지 않고
-고정값이 자동 적용된다), 전이는 `docs doctype-transition-add
-<projectId> <docTypeId> <fromCode> <toCode>`. 문서 상태를 바꿀 땐
+새 타입에 표준 상태 6개를 한 번에 심으려면 `docs
+doctype-apply-standard-flow <projectId> <docTypeId>`를 쓴다(문서 타입은
+항상 프로젝트 자신에게만 정의된다 - 그룹/팀 단위로 획일화해 정하는
+기능은 없음). 상태를 하나씩 붙이려면 `docs doctype-status-add
+<projectId> <docTypeId> <code>`(6개 표준 코드 중 하나만 허용 - 라벨/
+지침은 입력받지 않고 고정값이 자동 적용된다). 문서 상태를 바꿀 땐
 `docs transition <trackingCode> <toStatusCode>`, 지금 문서에서 갈 수
 있는 다음 상태 목록(라벨+지침 포함)은 `docs document next-statuses
 <trackingCode>`로 확인한다.
@@ -300,8 +301,6 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 문서 타입 삭제 | `docs doctype-delete <projectId> <docTypeId>` | `doctype_delete` |
 | 표준 상태 흐름 일괄 적용 | `docs doctype-apply-standard-flow <projectId> <docTypeId>` | `doctype_apply_standard_flow` |
 | 상태 코드 추가(표준 6개 중) | `docs doctype-status-add <projectId> <docTypeId> <code>` | `doctype_status_add` |
-| 상태 전이 정의 | `docs doctype-transition-add <projectId> <docTypeId> <fromCode> <toCode>` | `doctype_transition_add` |
-| 상태 전이 삭제 | `docs doctype-transition-delete <projectId> <docTypeId> <transitionId>` | `doctype_transition_delete` |
 | 저장소 연결(생성/이주) | `docs git link <projectId> [--import-from <url>] [--credential <id>]` | `git_link` |
 | 저장소 연결(외부 연동) | `docs git link-external <projectId> --provider <github\|gitlab> --url <url> [--credential <id>]` | `git_link_external` |
 | 연결 정보 조회 | `docs git repo <projectId>` | `git_repo` |

@@ -5,7 +5,7 @@ import { PROJECT_MY_ROLE_KEY } from "../utils/projectContext";
 
 const props = defineProps<{ projectId: string }>();
 
-// 문서 타입 CRUD·상태/전이 관리는 전부 프로젝트 owner 전용(백엔드
+// 문서 타입 CRUD·상태 관리는 전부 프로젝트 owner 전용(백엔드
 // requireProjectRole("owner")와 동일한 기준) - 타입 자체를 보는 건
 // 누구나 가능, 관리 버튼만 owner에게만 보인다.
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
@@ -27,12 +27,6 @@ interface DocStatus {
 }
 
 const STANDARD_STATUS_CODES = ["draft", "review", "pending", "approved", "deprecated", "archived"];
-interface DocStatusTransition {
-  id: string;
-  fromStatusId: string;
-  toStatusId: string;
-  label: string | null;
-}
 
 // 문서 타입은 항상 그 프로젝트 자신에게만 정의된다(팀/그룹 단위로
 // 획일화해 정하는 기능은 없음 - 설계자 확인) - 스코프 분기가 필요
@@ -126,7 +120,6 @@ async function removeType(t: DocType) {
 
 const expandedId = ref<string | null>(null);
 const statuses = ref<DocStatus[]>([]);
-const transitions = ref<DocStatusTransition[]>([]);
 const detailError = ref("");
 const detailLoading = ref(false);
 
@@ -134,16 +127,6 @@ const newStatusCode = ref("");
 const statusAddError = ref("");
 const applyingStandardFlow = ref(false);
 const standardFlowError = ref("");
-
-const newTransitionFrom = ref("");
-const newTransitionTo = ref("");
-const newTransitionLabel = ref("");
-const transitionAddError = ref("");
-const transitionDeleteError = ref("");
-
-function statusCode(statusId: string): string {
-  return statuses.value.find((s) => s.id === statusId)?.code ?? statusId;
-}
 
 // ---------------------------------------------------------------- 지침(guideline) 보기/수정
 
@@ -182,14 +165,9 @@ async function loadDetail(docTypeId: string) {
   detailLoading.value = true;
   detailError.value = "";
   try {
-    const [statusList, transitionList] = await Promise.all([
-      apiCall<DocStatus[]>(`/doc-types/${docTypeId}/statuses`),
-      apiCall<DocStatusTransition[]>(`/doc-types/${docTypeId}/transitions`),
-    ]);
-    statuses.value = statusList;
-    transitions.value = transitionList;
+    statuses.value = await apiCall<DocStatus[]>(`/doc-types/${docTypeId}/statuses`);
   } catch (err) {
-    detailError.value = err instanceof ApiError ? err.message : "상태/전이를 불러오지 못했습니다";
+    detailError.value = err instanceof ApiError ? err.message : "상태를 불러오지 못했습니다";
   } finally {
     detailLoading.value = false;
   }
@@ -202,7 +180,6 @@ async function toggleExpand(docTypeId: string) {
   }
   expandedId.value = docTypeId;
   statusAddError.value = "";
-  transitionAddError.value = "";
   editingGuideline.value = false;
   await loadDetail(docTypeId);
 }
@@ -236,37 +213,6 @@ async function applyStandardFlow() {
   }
 }
 
-async function addTransition() {
-  if (!expandedId.value || !newTransitionFrom.value || !newTransitionTo.value) return;
-  transitionAddError.value = "";
-  try {
-    await apiCall(`${basePath.value}/${expandedId.value}/transitions`, {
-      method: "POST",
-      body: JSON.stringify({
-        fromStatusCode: newTransitionFrom.value,
-        toStatusCode: newTransitionTo.value,
-        label: newTransitionLabel.value.trim() || undefined,
-      }),
-    });
-    newTransitionFrom.value = "";
-    newTransitionTo.value = "";
-    newTransitionLabel.value = "";
-    await loadDetail(expandedId.value);
-  } catch (err) {
-    transitionAddError.value = err instanceof ApiError ? err.message : "전이 추가에 실패했습니다";
-  }
-}
-
-async function removeTransition(tr: DocStatusTransition) {
-  if (!expandedId.value) return;
-  transitionDeleteError.value = "";
-  try {
-    await apiCall(`${basePath.value}/${expandedId.value}/transitions/${tr.id}`, { method: "DELETE" });
-    await loadDetail(expandedId.value);
-  } catch (err) {
-    transitionDeleteError.value = err instanceof ApiError ? err.message : "전이 삭제에 실패했습니다";
-  }
-}
 
 onMounted(loadTypes);
 </script>
@@ -352,30 +298,6 @@ onMounted(loadTypes);
             </form>
             <p v-if="statusAddError" class="error">{{ statusAddError }}</p>
             <p v-if="standardFlowError" class="error">{{ standardFlowError }}</p>
-
-            <h4>전이</h4>
-            <ul class="transitions">
-              <li v-for="tr in transitions" :key="tr.id">
-                {{ statusCode(tr.fromStatusId) }} → {{ statusCode(tr.toStatusId) }}
-                <span v-if="tr.label" class="muted">({{ tr.label }})</span>
-                <button v-if="isOwner" class="transition-delete-btn" @click="removeTransition(tr)">삭제</button>
-              </li>
-              <li v-if="transitions.length === 0" class="muted">정의된 전이가 없습니다.</li>
-            </ul>
-            <p v-if="transitionDeleteError" class="error">{{ transitionDeleteError }}</p>
-            <form v-if="isOwner" class="add-row" @submit.prevent="addTransition">
-              <select v-model="newTransitionFrom">
-                <option value="">시작 상태</option>
-                <option v-for="s in statuses" :key="s.id" :value="s.code">{{ s.code }}</option>
-              </select>
-              <select v-model="newTransitionTo">
-                <option value="">도착 상태</option>
-                <option v-for="s in statuses" :key="s.id" :value="s.code">{{ s.code }}</option>
-              </select>
-              <input v-model="newTransitionLabel" type="text" placeholder="라벨(선택)" />
-              <button type="submit">전이 추가</button>
-            </form>
-            <p v-if="transitionAddError" class="error">{{ transitionAddError }}</p>
           </template>
         </div>
       </li>
@@ -509,24 +431,14 @@ onMounted(loadTypes);
   color: #666;
   margin: 10px 0 6px;
 }
-.statuses,
-.transitions {
+.statuses {
   list-style: none;
   padding: 0;
   margin: 0;
   font-size: 13px;
 }
-.statuses li,
-.transitions li {
+.statuses li {
   padding: 4px 0;
-}
-.transition-delete-btn {
-  margin-left: 8px;
-  background: #fff;
-  border: 1px solid #d8dae0;
-  padding: 1px 8px;
-  border-radius: 6px;
-  font-size: 11px;
 }
 .statuses code {
   background: #f0f1f5;

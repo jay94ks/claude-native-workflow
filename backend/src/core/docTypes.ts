@@ -30,8 +30,11 @@ export interface DocStatus {
 // 고정된 의미를 갖는 6개 표준 코드만 허용한다. archived는 폐기가
 // 아니라 보관, deprecated는 프로젝트 내에서 더 이상 인용되지 않는다는
 // 뜻일 뿐 상황에 따라 다른 상태로 되돌릴 수 있다(다만 draft로는 어떤
-// 상태에서도 되돌아갈 수 없다 - addDocStatusTransition[ByCode]에서
-// 강제).
+// 상태에서도 되돌아갈 수 없다 - allowedNextStatuses가 draft를 목록에서
+// 항상 제외해 강제). 그 외의 어떤 상태 조합이 실제로 가능한지는
+// 설계자가 미리 규제하지 않는다 - 상태 전이 그래프를 설계자가 CRUD로
+// 입력/제한하는 개념 자체를 두지 않고, 실질적인 작업자인 AI가 그때
+// 그때 판단한다(설계자 지시).
 export const STANDARD_DOC_STATUSES: { code: string; label: string; guideline: string; isTerminal: boolean }[] = [
   { code: "draft", label: "초안", guideline: "아직 작업 중인 단계 - 검토 전 자유롭게 고칠 수 있다.", isTerminal: false },
   { code: "review", label: "검토 중", guideline: "다른 설계자나 AI의 확인을 기다리는 단계.", isTerminal: false },
@@ -48,13 +51,6 @@ export const STANDARD_DOC_STATUSES: { code: string; label: string; guideline: st
 
 function findStandardStatus(code: string): (typeof STANDARD_DOC_STATUSES)[number] | undefined {
   return STANDARD_DOC_STATUSES.find((s) => s.code === code.toLowerCase());
-}
-
-export interface DocStatusTransition {
-  id: string;
-  fromStatusId: string;
-  toStatusId: string;
-  label: string | null;
 }
 
 export async function createDocType(
@@ -153,34 +149,6 @@ export async function addDocStatus(docTypeId: string, code: string): Promise<Doc
   return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isTerminal: row.isTerminal };
 }
 
-export async function addDocStatusTransition(
-  docTypeId: string,
-  fromStatusId: string,
-  toStatusId: string,
-  label?: string,
-): Promise<DocStatusTransition> {
-  const db = getDb();
-  const to = await db.docStatus.findUnique({ where: { id: toStatusId } });
-  if (to?.code === "draft") {
-    throw new Error("draft 상태로는 어떤 상태에서도 되돌아갈 수 없습니다");
-  }
-  const row = await db.docStatusTransition.create({
-    data: { docTypeId, fromStatusId, toStatusId, label: label ?? null },
-  });
-  return { id: row.id, fromStatusId: row.fromStatusId, toStatusId: row.toStatusId, label: row.label };
-}
-
-/** 다른 테이블이 DocStatusTransition.id를 참조하지 않아(Document는
- * 현재 statusId만 기록, 어떤 전이를 거쳤는지는 안 남김) 삭제에
- * 참조 무결성 가드가 필요 없다 - docTypeId 소속만 확인하고 바로
- * 지운다. */
-export async function deleteDocStatusTransition(docTypeId: string, transitionId: string): Promise<void> {
-  const db = getDb();
-  const transition = await db.docStatusTransition.findFirst({ where: { id: transitionId, docTypeId } });
-  if (!transition) throw new Error("이 문서 타입에 해당 전이가 없습니다");
-  await db.docStatusTransition.delete({ where: { id: transitionId } });
-}
-
 export async function listDocTypes(projectId: string): Promise<DocType[]> {
   const db = getDb();
   const rows = await db.docType.findMany({ where: { projectId } });
@@ -217,83 +185,39 @@ export async function getDocTypeById(docTypeId: string): Promise<(DocType & { pr
   return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isDefault: row.isDefault, projectId: row.projectId };
 }
 
-/** addDocStatusTransition()은 id 기반(seedDefaultDocTypes 내부용) -
- * API/CLI는 다른 곳(`docs transition <trackingCode> <toStatusCode>`
- * 등)과 마찬가지로 상태 코드로 다뤄야 하므로 이 래퍼를 통한다. */
-export async function addDocStatusTransitionByCode(
-  docTypeId: string,
-  fromCode: string,
-  toCode: string,
-  label?: string,
-): Promise<DocStatusTransition> {
-  const from = await findDocStatusByCode(docTypeId, fromCode);
-  if (!from) throw new Error(`"${fromCode}" 상태가 이 타입에 정의돼 있지 않습니다`);
-  const to = await findDocStatusByCode(docTypeId, toCode);
-  if (!to) throw new Error(`"${toCode}" 상태가 이 타입에 정의돼 있지 않습니다`);
-  return addDocStatusTransition(docTypeId, from.id, to.id, label);
-}
-
-export async function listDocStatusTransitions(docTypeId: string): Promise<DocStatusTransition[]> {
-  const db = getDb();
-  const rows = await db.docStatusTransition.findMany({ where: { docTypeId } });
-  return rows.map((r: DocStatusTransition) => ({
-    id: r.id,
-    fromStatusId: r.fromStatusId,
-    toStatusId: r.toStatusId,
-    label: r.label,
-  }));
-}
-
-/** 그 상태에서 실제로 갈 수 있는 다음 상태 id 목록(DocStatusTransition
- * 기준) - "터미널 상태가 아니면 무조건 다음 상태로" 같은 임의 규칙이
- * 아니라, 정의된 전이만 허용한다. */
+/** 그 상태에서 실제로 갈 수 있는 다음 상태 목록 - 상태 전이 그래프를
+ * 설계자가 CRUD로 미리 규제하지 않는다(설계자 지시). 유일한 하드
+ * 규칙은 draft 재진입 금지뿐 - 그 외엔 이 DocType에 정의된 모든 상태
+ * (자기 자신 제외)가 항상 다음 상태로 허용된다. 실제로 어느 상태로
+ * 옮기는 게 적절한지의 판단은 이 목록을 소비하는 AI(작업자)에게
+ * 맡긴다. */
 export async function allowedNextStatuses(docTypeId: string, fromStatusId: string): Promise<DocStatus[]> {
-  const db = getDb();
-  const transitions = await db.docStatusTransition.findMany({
-    where: { docTypeId, fromStatusId },
-    include: { toStatus: true },
-  });
-  return transitions.map((t: { toStatus: DocStatus }) => t.toStatus);
+  const all = await listDocStatuses(docTypeId);
+  return all.filter((s) => s.id !== fromStatusId && s.code !== "draft");
 }
 
-/** 새 문서를 만들 때 쓸 "시작 상태" - 어떤 전이의 도착점(toStatusId)도
- * 아닌 상태를 찾는다(전이 그래프상 진입점). 여러 개거나 하나도 없으면
- * (전이가 아예 없는 단일 상태 타입 등) 첫 번째로 조회된 상태로 폴백. */
+/** 새 문서를 만들 때 쓸 "시작 상태" - draft 상태를 우선으로 찾는다.
+ * (표준 흐름을 심은 DocType은 항상 draft가 있다) draft가 없는
+ * 예외적인 커스텀 타입이면 첫 번째로 조회된 상태로 폴백. */
 export async function initialStatusFor(docTypeId: string): Promise<DocStatus> {
-  const db = getDb();
+  const draft = await findDocStatusByCode(docTypeId, "draft");
+  if (draft) return draft;
   const statuses = await listDocStatuses(docTypeId);
   if (statuses.length === 0) {
     throw new Error(`docType(${docTypeId})에 정의된 상태가 없습니다`);
   }
-  const transitions = await db.docStatusTransition.findMany({ where: { docTypeId } });
-  const targets = new Set(transitions.map((t: { toStatusId: string }) => t.toStatusId));
-  const entryPoints = statuses.filter((s) => !targets.has(s.id));
-  return entryPoints[0] ?? statuses[0];
+  return statuses[0];
 }
 
-/** 표준 6개 상태를 전부 추가하고, draft를 도착지로 하는 것만 제외한
- * 모든 순서쌍(25개)으로 전이를 완전 연결한다 - 관리자가 하나씩 안
- * 그어도 문서 편집기가 항상 유연하게 다음 상태를 고를 수 있다. 이미
- * 있는 상태/전이는 건너뛴다(재호출해도 안전). */
+/** 표준 6개 상태를 전부 추가한다 - 상태 간 전이는 그래프로 미리
+ * 규제하지 않으므로(allowedNextStatuses 참고) 여기서 할 일은 상태
+ * 자체를 심는 것뿐이다. 이미 있는 상태는 건너뛴다(재호출해도 안전). */
 export async function seedStandardStatusFlow(docTypeId: string): Promise<void> {
   const existing = await listDocStatuses(docTypeId);
   const existingCodes = new Set(existing.map((s) => s.code));
-  const statusIdByCode = new Map<string, string>(existing.map((s) => [s.code, s.id]));
   for (const std of STANDARD_DOC_STATUSES) {
     if (existingCodes.has(std.code)) continue;
-    const status = await addDocStatus(docTypeId, std.code);
-    statusIdByCode.set(std.code, status.id);
-  }
-  const existingTransitions = await listDocStatusTransitions(docTypeId);
-  const existingPairs = new Set(existingTransitions.map((t) => `${t.fromStatusId}->${t.toStatusId}`));
-  for (const from of STANDARD_DOC_STATUSES) {
-    for (const to of STANDARD_DOC_STATUSES) {
-      if (from.code === to.code || to.code === "draft") continue;
-      const fromId = statusIdByCode.get(from.code);
-      const toId = statusIdByCode.get(to.code);
-      if (!fromId || !toId || existingPairs.has(`${fromId}->${toId}`)) continue;
-      await addDocStatusTransition(docTypeId, fromId, toId);
-    }
+    await addDocStatus(docTypeId, std.code);
   }
 }
 

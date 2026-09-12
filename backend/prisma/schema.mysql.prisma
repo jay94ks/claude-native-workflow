@@ -278,7 +278,6 @@ model DocType {
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   statuses        DocStatus[]
-  transitions     DocStatusTransition[]
   documents       Document[]
   accessOverrides DocAccessOverride[]
 
@@ -293,26 +292,10 @@ model DocStatus {
   guideline  String?  @db.Text
   isTerminal Boolean @default(false)
 
-  docType         DocType               @relation(fields: [docTypeId], references: [id], onDelete: Cascade)
-  documents       Document[]
-  transitionsFrom DocStatusTransition[] @relation("TransitionFrom")
-  transitionsTo   DocStatusTransition[] @relation("TransitionTo")
+  docType   DocType    @relation(fields: [docTypeId], references: [id], onDelete: Cascade)
+  documents Document[]
 
   @@unique([docTypeId, code])
-}
-
-model DocStatusTransition {
-  id           String  @id @default(cuid())
-  docTypeId    String
-  fromStatusId String
-  toStatusId   String
-  label        String?
-
-  docType    DocType   @relation(fields: [docTypeId], references: [id], onDelete: Cascade)
-  fromStatus DocStatus @relation("TransitionFrom", fields: [fromStatusId], references: [id], onDelete: Cascade)
-  toStatus   DocStatus @relation("TransitionTo", fields: [toStatusId], references: [id], onDelete: Cascade)
-
-  @@index([docTypeId])
 }
 
 // ---------------------------------------------------------------- 문서/링크/버전이력
