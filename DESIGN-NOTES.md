@@ -5556,6 +5556,49 @@ CLI로 재조회해 실제로 지워졌는지 확인. "새 관계 추가" 폼에
 않고 이번 라운드의 마이그레이션+검증 스크립트 패턴을 앞으로도 표준
 적용한다.
 
+## Gitea 네임스페이스/보안 강화 QA 후속 라운드 - 완료
+
+**배경**: 위 Gitea 프로젝트별 네임스페이스(`#gitea-per-project-namespace`)
++ nginx 보안 강화(`#gitea-nginx-lockdown`) 구현 라운드를 실제 Docker
+스택에 대해 회귀 QA로 재검증한 라운드. 설계자가 "푸시 커밋하고 QA
+진행해 - 자고 올테니 승인이 필요한건 모아놔"라고 지시해, 코드를 고치는
+라운드가 아니라 이미 구현된 것을 실측으로 다시 확인하고 승인이
+필요한 항목만 모아두는 라운드로 진행했다.
+
+**검증 내역**: org-per-project 생성 + 웹훅 `repository.owner.login`
+매칭(실제 push로 재확인), `PUBLIC_GITEA_URL` 미설정 시 DB 저장값
+폴백, `migrate-gitea-namespaces`/`verify-gitea-namespaces`를 레거시
+공유-org 테스트 프로젝트 11개에 대해 실행(멱등성 - 재실행 시 전부
+스킵됨도 확인), `git link-external`(mirror+work 생성)/`git
+unlink`(rename+히스토리 보존+mirror 정리)/멤버 추가·제거 시 Gitea
+협업자 동기화/프로젝트 삭제 시 org 삭제(`GET /orgs/{org}` 404로 확인)
+전부 실측, `gitea admin user create`/`generate-access-token`의 정확한
+플래그를 `--help`로 재확인(README와 일치), nginx를 통한 5MB 크기 push
+성공, Web UI 비-`.git` 경로가 여전히 완전히 비노출인지 확인.
+
+**발견한 문제**: 코드 버그는 0건. 다만 QA용 로컬 `.env`에
+`PUBLIC_GITEA_URL=http://localhost:3001`(nginx 도입 전, Gitea 포트를
+직접 노출했던 시절의 값)이 그대로 남아있어, 화면에 표시되는 clone
+주소가 이제는 닫혀있는 포트를 계속 가리키는 것을 발견했다 - 기존
+설치를 이번 nginx 보안 강화로 업그레이드하는 모든 사용자가 겪을 수
+있는 실제 함정이라 판단해, README.md의 업그레이드 절차에 이 상황을
+명시하는 경고 문단을 추가했다(`PUBLIC_GITEA_URL`을 포트 없는
+`PUBLIC_BACKEND_URL`류 주소로 갱신 + `docker compose up -d
+--force-recreate backend` 재기동 필요).
+
+**승인 대기로 남긴 항목**: QA-SCENARIOS.md에 기존에 있던 GitHub/GitLab
+실제 발행(publish) 왕복 테스트(`[ ]` 항목)는 실제 외부 저장소
+자격증명이 필요해 이번 라운드에서 수행하지 않고 설계자에게 그대로
+남겨뒀다 - 임의의 공개 저장소(예: `octocat/Hello-World`)에 대해
+push/publish를 실측하는 것은 범위 밖의 부작용을 일으킬 수 있어 시도하지
+않았다(읽기/clone은 Gitea 자체 mirror 기능으로만 확인).
+
+**결론**: 이번 라운드는 코드 변경 없이 문서(README.md 경고 문단,
+QA-SCENARIOS.md 해당 두 항목의 "후속 QA 라운드 추가 검증" 절)만
+갱신했다. 위 두 기능(`#gitea-per-project-namespace`,
+`#gitea-nginx-lockdown`)의 모든 "확인 필요" 항목이 이번 라운드로 전부
+실측 확인됐다.
+
 ## 다음 단계
 
 3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
@@ -5564,5 +5607,8 @@ CLI로 재조회해 실제로 지워졌는지 확인. "새 관계 추가" 폼에
 + Gitea 프로젝트별 네임스페이스/nginx 보안 강화/관계도 초기화·추적코드
 선택기/도입·마이그레이션 가이드(`#gitea-per-project-namespace`,
 `#gitea-nginx-lockdown`, `#relations-reset-and-picker`,
-`#adoption-migration-guide`)가 전부 완료됐다. PLANS.md 색인 표에 남은
-⬜ 항목이 없다 - 다음 라운드는 새 QA 패스나 설계자의 새 요청을 기다린다.
+`#adoption-migration-guide`)가 전부 완료됐고, 그 뒤 회귀 QA 후속
+라운드까지 실측 검증을 마쳤다. PLANS.md 색인 표에 남은 ⬜ 항목이 없다 -
+유일하게 열려있는 항목은 GitHub/GitLab 실제 발행 왕복 테스트(외부
+자격증명 필요, 설계자 승인/제공 대기)뿐이며, 다음 라운드는 새 QA
+패스나 설계자의 새 요청을 기다린다.

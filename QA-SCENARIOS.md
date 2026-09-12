@@ -722,7 +722,15 @@
   `verify-gitea-namespaces`로 전부 재확인 → 이전된 프로젝트의 기존
   PR 이력(디스포지션 포함)이 그대로 남아있는지 확인. `PUBLIC_GITEA_URL`
   설정 후 `GET .../git/repo`의 `repoUrl`이 그 값 기준으로 즉시
-  재계산되는지 확인.
+  재계산되는지, **미설정 시 DB 저장값으로 정확히 폴백하는지도**(잠시
+  값을 지우고 backend 재기동 → 확인 → 원복) 확인. **후속 QA 라운드
+  추가 검증**: `git link-external`로 mirror+work 두 저장소가 새 org
+  아래 실제로 생성되는지, `git unlink`가 work를 "repo"로 이름만 바꿔
+  self_hosted로 전환하면서 커밋 히스토리(`git log`)가 그대로 살아있고
+  mirror는 정리되는지, 프로젝트 멤버 추가/제거 시 Gitea 협업자 목록이
+  새 org의 저장소 기준으로 정확히 동기화되는지, 프로젝트 삭제 시
+  저장소뿐 아니라 그 프로젝트 전용 org 자체도 Gitea에서 사라지는지
+  (`GET /orgs/{org}` 404) 전부 실제로 만들고 지워보며 확인.
 - [x] **nginx 리버스 프록시 + Gitea 웹 UI 비노출(`#gitea-nginx-lockdown`)** -
   실제 스택 기동 후 `docker compose ps`로 gitea/backend 포트가 호스트에
   전혀 안 열려있고 nginx(80)만 열려있는지 확인 → gitea(3001)/backend
@@ -731,7 +739,16 @@
   origin의 비-`.git` 저장소 경로가 Gitea 웹 UI가 아니라 이 앱 자신의
   화면으로 응답하는지 확인 → `docker exec ... gitea admin user
   create`/`generate-access-token` CLI로 관리자 계정/PAT 발급이 실제로
-  되는지 확인(웹 설치 마법사 없이).
+  되는지 확인(웹 설치 마법사 없이). **후속 QA 라운드 추가 검증**:
+  `gitea admin user create`/`generate-access-token`의 실제 `--help`
+  출력이 README에 적힌 플래그와 정확히 일치하는지 재확인, nginx
+  기본 body 크기 제한(1m)보다 큰 5MB 파일 push가 `client_max_body_size
+  0` 설정 덕에 실제로 성공하는지 확인(둘 다 통과) - **이 과정에서
+  실수 하나 발견**: 로컬 테스트 `.env`의 `PUBLIC_GITEA_URL`이 nginx
+  도입 이전의 직접 노출 Gitea 포트(`:3001`)를 그대로 가리키고
+  있었던 것 - 그 상태면 designer에게 보이는 clone 주소가 접속 불가
+  포트를 계속 가리키게 됨을 재현 확인 후 nginx 경유 주소로 정정,
+  README의 "기존 설치 업그레이드" 절에 동일한 실수를 막는 경고 추가.
 - [x] **관계도 초기화 + 추적코드 선택기(`#relations-reset-and-picker`)** -
   웹 UI에서 "관계도 초기화" 버튼 → 확인 다이얼로그(모든 브랜치/브랜치
   없음/실제 브랜치명 선택지) → 삭제 후 해당 범위만 실제로 지워지는지
