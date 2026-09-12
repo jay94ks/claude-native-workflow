@@ -1,3 +1,4 @@
+import { MeiliSearchRequestError } from "meilisearch";
 import * as gitea from "./gitea.js";
 import { requireGiteaWorkingSlug } from "./gitRepos.js";
 import {
@@ -9,6 +10,7 @@ import {
   sourceFileId,
   type SearchableSourceFile,
 } from "./search.js";
+import { enqueueSearchSync } from "./searchSyncQueue.js";
 import type { ParsedPush } from "./pushHooks.js";
 
 // 소스 코드 "포함" 검색(사이드바 다중 스코프 검색, 웹 전용)이 조회하는
@@ -53,31 +55,41 @@ export function isIndexableFile(path: string, sizeBytes?: number): boolean {
   return INDEXABLE_EXTENSIONS.has(ext);
 }
 
+/** backfillProjectSourceIndex의 실제 로직 - 에러를 삼키지 않고 그대로
+ * 던진다(드레인 워커가 성공/실패를 구분해야 하므로 - #meilisearch-spof).
+ * 기존 fire-and-forget 호출부(gitRepos.ts)는 아래 얇은 래퍼를 그대로
+ * 계속 쓴다. */
+export async function backfillProjectSourceIndexRaw(projectId: string): Promise<void> {
+  const slug = await requireGiteaWorkingSlug(projectId);
+  await clearSourceFileIndexForProject(projectId);
+  const tree = await gitea.getFullTree(slug);
+  const candidates = tree.filter((e) => isIndexableFile(e.path, e.size));
+
+  const docs: SearchableSourceFile[] = [];
+  const now = Date.now();
+  for (const entry of candidates) {
+    try {
+      const file = await gitea.getFileContent(slug, entry.path);
+      if (Buffer.byteLength(file.content, "utf-8") > MAX_INDEXABLE_BYTES) continue;
+      docs.push({ id: sourceFileId(projectId, entry.path), projectId, path: entry.path, content: file.content, updatedAt: now });
+    } catch (err) {
+      console.error(`소스 파일 백필 실패 - ${projectId}:${entry.path}:`, err);
+    }
+  }
+  await indexSourceFilesBulkUpsert(docs);
+}
+
 /** 저장소를 처음 연결했을 때 전체 파일을 훑어 색인한다 - 링크 라우트가
  * 응답을 기다리지 않고 호출(`void backfillProjectSourceIndex(...)`)하는
  * 백그라운드 1회성 작업. 실패해도 로그만 남기고 조용히 끝난다(gitRepos.ts의
  * computeSyncStatusInBackground()와 같은 fail-soft 패턴 - 저장소 연결
- * 자체를 막을 이유가 없음). */
+ * 자체를 막을 이유가 없음). Meilisearch 연결 실패는 추가로 큐에 남겨
+ * 장애 해소 후 자동 재처리되게 한다. */
 export async function backfillProjectSourceIndex(projectId: string): Promise<void> {
   try {
-    const slug = await requireGiteaWorkingSlug(projectId);
-    await clearSourceFileIndexForProject(projectId);
-    const tree = await gitea.getFullTree(slug);
-    const candidates = tree.filter((e) => isIndexableFile(e.path, e.size));
-
-    const docs: SearchableSourceFile[] = [];
-    const now = Date.now();
-    for (const entry of candidates) {
-      try {
-        const file = await gitea.getFileContent(slug, entry.path);
-        if (Buffer.byteLength(file.content, "utf-8") > MAX_INDEXABLE_BYTES) continue;
-        docs.push({ id: sourceFileId(projectId, entry.path), projectId, path: entry.path, content: file.content, updatedAt: now });
-      } catch (err) {
-        console.error(`소스 파일 백필 실패 - ${projectId}:${entry.path}:`, err);
-      }
-    }
-    await indexSourceFilesBulkUpsert(docs);
+    await backfillProjectSourceIndexRaw(projectId);
   } catch (err) {
+    if (err instanceof MeiliSearchRequestError) await enqueueSearchSync("resyncProjectSourceFiles", { projectId });
     console.error(`소스 코드 색인 백필 실패 (project ${projectId}):`, err);
   }
 }
@@ -91,7 +103,17 @@ export async function syncSourceFileOnSave(projectId: string, path: string, cont
     await indexSourceFileDelete(projectId, path).catch(() => {});
     return;
   }
-  await indexSourceFileUpsert({ id: sourceFileId(projectId, path), projectId, path, content, updatedAt: Date.now() });
+  try {
+    await indexSourceFileUpsert({ id: sourceFileId(projectId, path), projectId, path, content, updatedAt: Date.now() });
+  } catch (err) {
+    // Meilisearch가 죽어 있어도 저장 자체(Gitea 커밋)는 이미 끝났으니
+    // 이 호출을 실패로 보이게 하지 않는다 - 큐에 남겨 나중에 재처리.
+    if (err instanceof MeiliSearchRequestError) {
+      await enqueueSearchSync("resyncProjectSourceFiles", { projectId });
+    } else {
+      throw err;
+    }
+  }
 }
 
 /** push 웹훅으로 들어온 커밋들의 added/modified/removed를 순서대로
@@ -133,6 +155,7 @@ export async function syncSourceFilesForPush(projectId: string, parsed: ParsedPu
     await indexSourceFilesBulkDelete(projectId, toDelete);
     await indexSourceFilesBulkUpsert(toUpsert);
   } catch (err) {
+    if (err instanceof MeiliSearchRequestError) await enqueueSearchSync("resyncProjectSourceFiles", { projectId });
     console.error(`소스 코드 색인 증분 동기화 실패 (project ${projectId}):`, err);
   }
 }

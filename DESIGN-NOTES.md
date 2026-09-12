@@ -3253,6 +3253,125 @@ HTTP 호출당 짧게만 MQTT로 대기하고, 사용자가 원하는 "전체 �
 `npm run audit:cli-mcp`(도구/명령 이름 자체는 안 바뀌어 그대로 통과)
 전부 클린. 프론트 변경 없음.
 
+## Meilisearch 장애 대응: 쓰기 큐 + 워커 + 에러 메시지 개선(`#meilisearch-spof`) - 완료 (2026-09-12)
+
+PLANS.md 17번(`## 8. 검색/인덱싱` 완전 종료). 처음엔 "에러 메시지
+품질만 확인"하는 좁은 범위로 계획했으나, **설계자가 반려하며 범위를
+확장**했다: "Meilisearch가 다운되거나 REST API 호출을 받지 못하는
+경우에 인덱스들이 변동되면 그게 반영되지 않을 수 있다. 별도의 queue
+성격의 테이블을 두고, 장애시 그걸 갱신해뒀다가 장애상황이 해소되면
+worker가 그 queue를 일괄 처리하고 queue를 비우게 만들어야 한다." -
+에러 메시지 개선만으로는 부족하고 쓰기가 유실되지 않게 큐잉 + 자동
+재처리 워커까지 만들라는 지시. 이 항목은 스키마 변경(새 테이블)을
+동반하지만, 설계자가 이 구체적 스키마 변경을 직접 요청한 것이라
+"자동 진행 중엔 스키마 변경 항목은 남겨둔다"는 일반 방침의 예외로
+취급했다.
+
+**조사로 발견한 두 개별 버그**(docker에서 `docker compose kill
+meilisearch`로 실제 재현):
+1. Meilisearch가 죽으면 `400 {"error":"Request to
+   http://meilisearch:7700/... has failed"}`처럼 내부 Docker
+   호스트명이 그대로 노출되고, 상태 코드도 500대(서버 의존 서비스
+   장애)가 맞는데 400(클라이언트 잘못)이었다.
+2. `getDocumentFromIndex()`가 `catch { return null; }`로 **모든**
+   에러(연결 실패 포함)를 "못 찾음"으로 뭉개서, Meilisearch가 죽어
+   있을 때 문서 단건 조회가 404("문서가 없음")로 오인되는 실제
+   버그였다 - 이 백로그 항목이 우려하는 "에러 메시지가 원인을
+   알려주는지" 그 실제 사례.
+
+**수정**: `core/search.ts`가 `MeiliSearchApiError`(Meilisearch가
+응답은 했지만 에러 상태 - 진짜 404 등)와 `MeiliSearchRequestError`
+(네트워크 레벨 실패 - "요청 자체를 못 보냈다")를 `instanceof`로
+구분한다. `getDocumentFromIndex()`는 진짜 404만 null, 나머지는 그대로
+던진다. `server.ts`의 전역 에러 핸들러가 `MeiliSearchRequestError`를
+잡아 503 + "검색 엔진(Meilisearch)에 연결할 수 없습니다..." 로
+응답(내부 URL은 서버 로그에만).
+
+**큐 + 워커**: 새 모델 `SearchSyncQueueEntry`(3개 `.prisma` 스키마
+파일 모두 동일하게 추가 - 이 저장소가 Postgres/MySQL/SQLite 세 DB
+백엔드를 각각 별도 스키마 파일로 관리하는 구조라 하나만 고치면
+나머지 두 백엔드가 깨짐). `kind`(`upsertDocument` |
+`deleteDocument` | `resyncProjectSourceFiles`) + `trackingCode`/
+`projectId`(둘 다 nullable 대신 빈 문자열 기본값 - NULL을 포함한
+복합 유니크 제약은 DB마다 취급이 달라 세 백엔드에서 동일하게
+동작하려면 항상 값을 채워야 함) + `@@unique([kind, trackingCode,
+projectId])`(같은 대상에 대한 중복 적재를 원자적 upsert 하나로
+방지) + `@@index([createdAt])`. FK 관계 없음 - `Comment`의
+`targetType`/`targetKey`처럼 존재가 보장되지 않는 느슨한 참조(문서가
+이미 삭제된 뒤에도 그 트래킹 코드를 가리키는 항목이 남을 수 있음).
+
+새 모듈 `core/searchSyncQueue.ts`: `enqueueSearchSync`(유니크
+제약 기반 `upsert` - findFirst 후 create 방식은 동시 요청이 둘 다
+존재 확인을 통과해 중복 행을 만들 수 있어 피함), `getSearchSyncQueueStatus`,
+`drainSearchSyncQueue`(오래된 순 최대 100개를 순서대로 처리, 연결
+실패를 만나면 나머지도 다 실패할 게 뻔하므로 그 배치를 즉시
+중단하고 다음 워커 틱을 기다림 - 매 항목마다 타임아웃을 반복해서
+기다리는 낭비 방지). `documents.ts`/`sourceIndex.ts` → 이 모듈의
+`enqueueSearchSync`만 정적 import하고, 이 모듈이 그 둘을 다시
+정적으로 import하면 순환이 생기므로 `drainSearchSyncQueue()` 안에서
+`documents.js`/`search.js`/`sourceIndex.js`를 전부 동적 `import()`로
+지연 로드해 순환을 원천적으로 끊었다.
+
+`core/documents.ts`의 `syncAndPublish()`(모든 문서 쓰기의 단일
+합류점)와 `deleteDocument()`의 직접 `indexSyncDelete` 호출을
+try/catch로 감싸 `MeiliSearchRequestError`만 큐에 적재하고 삼킨다(그
+외 에러는 그대로 던짐) - DB 커밋은 이미 끝난 뒤라 여기서 다시
+던지면 이미 성공한 문서 생성/수정까지 실패로 보이던 게 이번에 고친
+핵심 버그. `core/sourceIndex.ts`의 `backfillProjectSourceIndex`를
+얇은 래퍼로 남기고 실제 로직을 에러를 삼키지 않는
+`backfillProjectSourceIndexRaw`로 분리(드레인 워커가 성공/실패를
+구분해야 하므로), `syncSourceFileOnSave`/`syncSourceFilesForPush`도
+같은 패턴으로 `resyncProjectSourceFiles` 큐 항목을 남긴다(소스
+파일은 파일 단위가 아니라 프로젝트 단위로 뭉뚱그려 재백필 - 파일별
+큐잉은 과설계로 판단).
+
+30초 주기 백그라운드 워커(`server.ts`의 `main()`, `setInterval`) +
+`draining` 플래그로 이전 드레인이 안 끝났으면 이번 틱은 건너뜀(큐가
+커서 30초 안에 못 끝나면 두 드레인이 겹쳐 같은 배치를 동시에
+처리하는 걸 방지). admin 전용 `GET /api/admin/search-queue`(상태) +
+`POST /api/admin/search-queue/drain`(수동 즉시 드레인) - 장애
+해소를 확인한 관리자가 30초를 안 기다리고 바로 비울 수 있게. CLI
+`search-queue status`/`drain`, MCP `search_queue_status`/
+`search_queue_drain` - 신원 관리가 아니라 운영/진단 성격이라
+`user_list` 류의 CLI 전용 선례를 안 따르고 CLI+MCP 둘 다 노출.
+
+**실측 중 발견한 중요한 설계 경계** - 문서 PUT/DELETE/전이 등
+"기존 문서"를 다루는 모든 라우트(`server.ts`의 `/api/documents/
+:trackingCode` 계열 전부)는 실제 작업 전에 권한 확인용으로
+`getDocument()`(검색 엔진 경유)를 먼저 호출한다. 이 사전 조회
+자체가 Meilisearch 장애 중엔 503으로 막히므로, 그 라우트의 실제
+쓰기 단계(내가 큐로 보호한 지점)까지 도달하지 못한다 - 즉 **새
+문서 생성은 장애 중에도 항상 되지만, 기존 문서의 수정/삭제/전이는
+장애 중엔 아예 시도되지 않고 즉시 503으로 막힌다**(내부 자동
+재동기화 경로인 `resyncDocumentIndex`는 DB를 직접 읽어 이 사전
+조회를 안 거치므로 영향 없음 - `questions.ts`의 자동 상태 전이가
+계속 큐로 보호됨). 이건 데이터가 조용히 유실되는 게 아니라 명확한
+503으로 안전하게 막히는 것이라 이번 백로그가 우려한 "장애 시 반영이
+안 됨"의 핵심 위험(침묵 속 유실)은 아니지만, 큐의 보호 범위가
+새 문서 생성보다 좁다는 실질적 비대칭이다. 이 사전 확인을 DB
+직접 조회로 바꾸면(각 라우트가 이미 실제 작업 단계에서 core 함수가
+별도로 DB를 다시 읽고 있어 중복 조회이기도 함) 보호 범위를 넓힐 수
+있지만, 15개 이상의 라우트를 건드리는 더 큰 변경이라 이번 승인된
+설계 범위 밖으로 판단 - PLANS.md에 `#document-write-gate-bypass-search`
+로 별도 등록해 남겨둠.
+
+**실측 검증**(docker 스택, `docker compose kill meilisearch`/
+`start meilisearch`): (1) `docker compose stop`(graceful)로 먼저
+시도했다가 - SIGTERM 후 프로세스가 몇 초간 살아있는 동안 이미 열려
+있던 pooled keep-alive 커넥션은 여전히 성공하는 레이스가 있어(반면
+DNS 등록은 먼저 사라져 신규 커넥션은 즉시 실패) 쓰기 경로 테스트가
+비결정적이었다 - `kill`(SIGKILL, 그레이스 기간 없음)로 바꿔 확정적으로
+재현. 장애 중: 목록/단건 조회 503(내부 호스트명 없음), 신규 문서
+생성 200(큐에 `upsertDocument` 1건 적재), 기존 문서 수정/삭제
+503(위 경계), 진짜 존재하지 않는 트래킹 코드는 여전히 정상 404(회귀
+없음). 복구 후: 30초 워커가 자동으로 큐를 비우고 실제로 검색에
+반영됨(큐만 지워진 게 아님을 재조회로 확인), 장애 중 막혔던
+수정/삭제도 이제 정상 동작. 컨테이너 내부에서 `enqueueSearchSync`를
+동일 인자로 3번 연속 호출 → 큐에 정확히 1건만 남는 것을 직접
+확인(유니크 제약 기반 upsert 중복 방지 검증). `npx tsc --noEmit`,
+`npm run audit:cli-mcp`, `npm run db:generate`(3개 백엔드 전부)
+클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

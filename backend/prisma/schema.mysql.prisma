@@ -496,6 +496,29 @@ model PushHookQueueEntry {
   @@index([pushHookPromptId])
 }
 
+// ---------------------------------------------------------------- 검색 엔진 장애 대응 큐
+// Meilisearch가 죽어 있는 동안(REST 호출 실패) 놓친 색인 쓰기를 여기
+// 적재해뒀다가, 장애가 풀리면 워커(drainSearchSyncQueue)가 일괄
+// 재처리한다(#meilisearch-spof - 설계자가 명시적으로 요청한 스키마
+// 변경). FK 관계를 두지 않는다 - trackingCode/projectId는 Comment의
+// targetType/targetKey처럼 존재가 보장되지 않는 느슨한 참조라(문서가
+// 이미 삭제된 뒤에도 그 트래킹 코드를 가리키는 항목이 남을 수 있음).
+model SearchSyncQueueEntry {
+  id           String   @id @default(cuid())
+  kind         String   // upsertDocument | deleteDocument | resyncProjectSourceFiles
+  trackingCode String   @default("") // upsertDocument/deleteDocument 전용, 그 외엔 ""
+  projectId    String   @default("") // resyncProjectSourceFiles 전용, 그 외엔 ""
+  createdAt    DateTime @default(now())
+
+  // trackingCode/projectId를 nullable로 두지 않고 빈 문자열 기본값으로
+  // 통일한 이유: NULL을 포함한 복합 유니크 제약은 DB마다 취급이 달라
+  // (NULL은 보통 "서로 다른 값"으로 간주돼 제약이 무력화될 수 있음)
+  // 세 DB 백엔드에서 동일하게 "같은 대상 중복 적재 방지"로 동작하려면
+  // 항상 값을 채워야 한다.
+  @@unique([kind, trackingCode, projectId])
+  @@index([createdAt])
+}
+
 // ---------------------------------------------------------------- 인스턴스 메시징
 
 model Message {

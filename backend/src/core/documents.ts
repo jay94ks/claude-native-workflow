@@ -1,8 +1,10 @@
+import { MeiliSearchRequestError } from "meilisearch";
 import { getDb } from "./db.js";
 import { withTrackingCode } from "./tracking.js";
 import { findDocTypeByCode, findDocStatusByCode, initialStatusFor, allowedNextStatuses } from "./docTypes.js";
 import { indexSyncUpsert, indexSyncDelete, getDocumentFromIndex, listDocumentsFromIndex, listDocumentsFromIndexPaged, searchDocuments } from "./search.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
+import { enqueueSearchSync } from "./searchSyncQueue.js";
 import type { SearchableDocument } from "./search.js";
 
 export interface DocumentDetail {
@@ -56,10 +58,22 @@ async function syncAndPublish(
   doc: SearchableDocument,
   action: "create" | "update" | "delete",
 ): Promise<void> {
-  if (action === "delete") {
-    await indexSyncDelete(doc.trackingCode);
-  } else {
-    await indexSyncUpsert(doc);
+  try {
+    if (action === "delete") {
+      await indexSyncDelete(doc.trackingCode);
+    } else {
+      await indexSyncUpsert(doc);
+    }
+  } catch (err) {
+    // Meilisearch에 연결할 수 없을 때만 큐에 적재하고 삼킨다 - DB 커밋은
+    // 이미 끝난 뒤라, 여기서 다시 던지면 이미 성공한 문서 생성/수정까지
+    // 실패로 보이게 된다(#meilisearch-spof가 고치는 핵심 버그). 다른
+    // 종류의 에러(예: 실제 색인 작업 실패)는 그대로 드러내야 하므로 던진다.
+    if (err instanceof MeiliSearchRequestError) {
+      await enqueueSearchSync(action === "delete" ? "deleteDocument" : "upsertDocument", { trackingCode: doc.trackingCode });
+    } else {
+      throw err;
+    }
   }
   const event: ChangeEvent = {
     entity: "document",
@@ -353,7 +367,15 @@ export async function deleteDocument(trackingCode: string): Promise<void> {
     db.question.deleteMany({ where: { targetType: "document", targetKey: trackingCode } }),
     db.document.delete({ where: { trackingCode } }),
   ]);
-  await indexSyncDelete(trackingCode);
+  try {
+    await indexSyncDelete(trackingCode);
+  } catch (err) {
+    if (err instanceof MeiliSearchRequestError) {
+      await enqueueSearchSync("deleteDocument", { trackingCode });
+    } else {
+      throw err;
+    }
+  }
   await realtimePublish(projectChangesTopic(existing.projectId), {
     entity: "document",
     action: "delete",

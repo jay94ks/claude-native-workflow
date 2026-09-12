@@ -47,7 +47,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 14 | ✅ | `#comment-edit-delete` | 이미 구현돼 있었음 - 문서만 정리(코드 변경 없음) |
 | 15 | ✅ | `#message-edit-delete` | 메시지 수정/삭제(본인만, CLI/MCP/웹) |
 | 16 | ✅ | `#message-wait-timeout-cap` | 서버 단일 호출 10초 상한 + CLI/MCP 폴링으로 전체 대기 구현 |
-| 17 | ⬜ | `#meilisearch-spof` | Meilisearch 장애 시 에러 메시지 품질 미점검 |
+| 17 | ✅ | `#meilisearch-spof` | Meilisearch 장애 시 503+명확한 메시지 응답, 색인 쓰기는 큐+워커로 자동 재처리 |
 | 18 | ⬜ | `#git-unlink` | git 저장소 연결 해제(unlink) 기능 없음 |
 | 19 | ⬜ | `#git-publish-pr-draft` | PR 초안 자동 생성 중간 단계 없음(의도된 설계) |
 | 20 | ⬜ | `#hook-prompt-update` | PushHookPrompt 수정(update) 라우트 없음 |
@@ -60,18 +60,32 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 27 | ⬜ | `#large-list-pagination` | 대량 목록 페이지네이션 미확인 |
 | 28 | ✅ | `#private-visibility-default` | 팀/그룹/프로젝트 기본 비공개 가시성(소속 없으면 안 보임, 공개 설정 시 예외) |
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
+| 30 | ⬜ | `#document-write-gate-bypass-search` | 문서 수정/삭제/전이 등의 사전 권한 확인이 검색 엔진을 거쳐 Meilisearch 장애 중엔 아예 막힘(생성만 예외) |
 
 ---
 
 ## 8. 검색/인덱싱
 
-### `#meilisearch-spof`
-**Meilisearch가 단일 장애점** - "모든 조회가 검색 엔진을 거친다"는
-설계 원칙 자체의 자연스러운 귀결이지만, Meilisearch가 죽으면 문서
-읽기/쓰기가 전부 막힌다(DB는 멀쩡해도). 장애 시 사용자에게 보이는
-에러가 "그냥 500"인지 "검색 엔진 연결 안 됨"처럼 원인을 알 수 있는
-메시지인지는 점검해본 적이 없다 - 최소한 에러 메시지 품질만이라도
-확인할 가치가 있다.
+### `#document-write-gate-bypass-search`
+**문서 수정/삭제/전이 등 라우트의 사전 권한 확인이 검색 엔진을
+거쳐서, Meilisearch 장애 중엔 새 문서 생성만 안전하고 기존 문서
+조작은 아예 시도되지도 못하고 막힌다** - `#meilisearch-spof`
+구현·실측 중 발견. `server.ts`의 `/api/documents/:trackingCode`
+계열 라우트(PUT/DELETE/transition/priority/links/backlinks/
+revisions/source-links/access/folder, 두 bulk 라우트 포함) 전부가
+실제 작업 전에 `getDocument()`(검색 엔진 경유)를 먼저 호출해
+{projectId, docTypeId, id}만 뽑아 권한 확인용으로 쓴다 - 그런데 이
+호출 직후 대부분의 core 함수(`saveDocumentBody`/`deleteDocument`/
+`transitionDocumentStatus` 등)가 **자기 자신도 DB를 다시 직접
+읽는다** - 즉 평소에도 중복 조회다. Meilisearch가 죽으면 이 사전
+조회 자체가 503으로 막혀 그 뒤의 실제 쓰기 단계(`#meilisearch-spof`가
+큐로 보호한 지점)에 도달하지 못한다 - 데이터가 조용히 유실되는 건
+아니지만(명확한 503으로 안전하게 막힘), 새 문서 생성보다 보호 범위가
+좁은 비대칭이다. 이 사전 확인을 DB 직접 조회(예:
+`getDocumentAccessInfo(trackingCode)` 같은 경량 함수 신설)로
+바꾸면 중복 조회도 없어지고 장애 중에도 기존 문서 수정/삭제/전이가
+막히지 않게 되지만, 15개 이상의 라우트를 건드리는 변경이라 별도
+라운드로 남겨둔다.
 
 ## 9. git 저장소 연동
 

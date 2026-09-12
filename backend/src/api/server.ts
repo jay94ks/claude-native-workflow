@@ -125,8 +125,10 @@ import {
   setCommentStatus,
 } from "../core/comments.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
+import { MeiliSearchRequestError } from "meilisearch";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
 import { backfillProjectSourceIndex, syncSourceFileOnSave } from "../core/sourceIndex.js";
+import { getSearchSyncQueueStatus, drainSearchSyncQueue } from "../core/searchSyncQueue.js";
 import {
   resolveEffectivePermission,
   setAccessOverride,
@@ -405,6 +407,31 @@ app.get(
   requireSuperAdmin,
   asyncRoute(async (req, res) => {
     res.json(await listAccessOverridesForUser(req.params.userId));
+  }),
+);
+
+// ---------------------------------------------------------------- 검색 엔진 장애 대응 큐 (관리자 전용)
+// Meilisearch 장애 중 밀린 색인 쓰기 큐의 상태 조회/수동 드레인
+// (#meilisearch-spof) - 30초 주기 백그라운드 워커(main() 참고)가
+// 자동으로 비우지만, 장애 해소를 확인한 관리자가 기다리지 않고 즉시
+// 비울 수 있게 수동 트리거도 둔다.
+app.get(
+  "/api/admin/search-queue",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (_req, res) => {
+    res.json(await getSearchSyncQueueStatus());
+  }),
+);
+
+app.post(
+  "/api/admin/search-queue/drain",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (_req, res) => {
+    res.json(await drainSearchSyncQueue());
   }),
 );
 
@@ -2688,6 +2715,14 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     res.status(429).set("Retry-After", String(err.retryAfterSeconds)).json({ error: err.message });
     return;
   }
+  if (err instanceof MeiliSearchRequestError) {
+    // 내부 Docker 호스트명이 그대로 노출되던 원본 메시지는 로그에만
+    // 남기고, 응답은 원인을 알 수 있는 일반화된 메시지로 바꾼다
+    // (#meilisearch-spof 조사로 발견 - 이전엔 400 + 원본 메시지였음).
+    console.error(err);
+    res.status(503).json({ error: "검색 엔진(Meilisearch)에 연결할 수 없습니다 - 서비스 상태를 확인한 뒤 다시 시도하세요" });
+    return;
+  }
   // 알 수 없는 예외는 서버 로그에만 자세히 남기고, 응답은 일반화한다 -
   // concept 세션 QA로 발견: 안 그러면 fs/Prisma 에러 메시지에 섞인
   // 서버 내부 경로 구조가 클라이언트에 그대로 노출된다.
@@ -2707,6 +2742,19 @@ async function main() {
   await gitea.ensureGiteaOrgConfigured();
   await gitea.ensureGiteaSystemWebhookConfigured();
   await ensureAllUsersGiteaAccountsConfigured();
+
+  // Meilisearch 장애 중 밀린 색인 쓰기 큐를 주기적으로 비운다
+  // (#meilisearch-spof). draining 플래그로 이전 드레인이 아직 진행
+  // 중이면 이번 틱을 건너뛴다 - 큐가 커서 30초 안에 못 끝나는 경우 두
+  // 드레인이 겹쳐 같은 배치를 동시에 처리하는 걸 방지.
+  let draining = false;
+  setInterval(() => {
+    if (draining) return;
+    draining = true;
+    drainSearchSyncQueue()
+      .catch((err) => console.error("검색 동기화 큐 드레인 실패:", err))
+      .finally(() => { draining = false; });
+  }, 30_000);
 
   const port = Number(process.env.PORT ?? 8760);
   const host = process.env.HOST ?? "127.0.0.1";

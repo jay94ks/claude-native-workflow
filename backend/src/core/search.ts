@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { MeiliSearch, type Task } from "meilisearch";
+import { MeiliSearch, MeiliSearchApiError, type Task } from "meilisearch";
 
 // 클로드가 호출하는 모든 조회 경로(get/list/tree/pending/search 등)는
 // DB를 직접 안 타고 이 검색 엔진을 거친다(설계자 지시) - Document는
@@ -99,8 +99,13 @@ export async function indexSyncDelete(trackingCode: string): Promise<void> {
 export async function getDocumentFromIndex(trackingCode: string): Promise<SearchableDocument | null> {
   try {
     return (await meili().index(DOCUMENTS_INDEX).getDocument(trackingCode)) as SearchableDocument;
-  } catch {
-    return null; // 404 등 - 못 찾음
+  } catch (err) {
+    // Meilisearch가 응답은 했지만 진짜 404인 경우만 "못 찾음"으로 본다 -
+    // 그 외(연결 실패 등 MeiliSearchRequestError)를 여기서 삼키면
+    // "검색 엔진에 연결할 수 없다"가 "문서가 없다"로 둔갑해버린다(실제
+    // 버그였음 - #meilisearch-spof 조사로 발견).
+    if (err instanceof MeiliSearchApiError && err.response.status === 404) return null;
+    throw err;
   }
 }
 

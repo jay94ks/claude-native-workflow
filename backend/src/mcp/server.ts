@@ -882,6 +882,23 @@ async function main() {
     async (a) => call(`/api/messages/${a.id}`, { method: "DELETE" }),
   );
 
+  // ---------------------------------------------------------------- 검색 엔진 장애 대응 큐(관리자 전용)
+
+  tool(
+    "search_queue_status",
+    "검색 동기화 큐 상태",
+    "Meilisearch 장애 중 밀린 색인 쓰기 큐의 현재 상태를 조회한다(관리자 전용) - 30초 주기 워커가 자동으로 비우지만, 장애가 실제로 해소됐는지 확인하는 용도.",
+    {},
+    async () => call("/api/admin/search-queue"),
+  );
+  tool(
+    "search_queue_drain",
+    "검색 동기화 큐 수동 드레인",
+    "밀린 색인 쓰기 큐를 즉시 일괄 재처리한다(관리자 전용) - 장애 해소를 확인한 뒤 30초 워커 주기를 기다리지 않고 바로 비우고 싶을 때.",
+    {},
+    async () => call("/api/admin/search-queue/drain", { method: "POST" }),
+  );
+
   // ---------------------------------------------------------------- 가이디드 마이그레이션 (Phase 6)
 
   tool(

@@ -1332,6 +1332,18 @@ messageCmd
   .description("본인이 보낸 메시지만 삭제할 수 있다")
   .action((id) => run(async () => printJson(await apiCall(`/api/messages/${id}`, { method: "DELETE" }))));
 
+// ---------------------------------------------------------------- 검색 엔진 장애 대응 큐 (관리자 전용)
+
+const searchQueueCmd = program.command("search-queue").description("Meilisearch 장애 시 밀린 색인 동기화 큐(관리자 전용)");
+searchQueueCmd
+  .command("status")
+  .description("큐 상태 조회 - 30초 주기 워커가 자동으로 비우지만, 장애 해소를 확인하는 용도")
+  .action(() => run(async () => printJson(await apiCall("/api/admin/search-queue"))));
+searchQueueCmd
+  .command("drain")
+  .description("큐를 즉시 일괄 재처리 - 워커 주기를 기다리지 않고 바로 비우고 싶을 때")
+  .action(() => run(async () => printJson(await apiCall("/api/admin/search-queue/drain", { method: "POST" }))));
+
 // ---------------------------------------------------------------- 가이디드 마이그레이션 (Phase 6)
 
 const migrateCmd = program.command("migrate").description("파일 기반(concept 스타일) 프로젝트를 DB로 옮기기");
