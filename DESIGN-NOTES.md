@@ -4482,6 +4482,66 @@ B로 넘어가면 B도 편집 모드로 뜨는 등 2차 문제가 남는다).
 뷰에서 문서를 연 뒤 사이드바의 다른 문서를 클릭하는 교차 이동도
 정상 동작하는지 확인.
 
+## CLI/MCP 접속 유지 - refresh_token 미사용 발견·수정(`#cli-token-refresh`) - 완료 (2026-09-12)
+
+**배경**: 문서 읽기 페이지 이동 버그를 고친 뒤 이어서 진행한 QA
+라운드 중, CLI로 팀/그룹 스코프 템플릿 상속을 실측하려다 admin
+세션의 `docs teams` 호출이 "유효하지 않거나 만료된 토큰입니다"로
+실패했다 - access 토큰 수명(15분)이 그 사이 지난 것. 이상하게 여겨
+`backend/src/cli/apiclient.ts`를 읽어보니, 로그인 시 `refresh_token`을
+`credentials.json`에 저장은 해두면서도 **그 값을 실제로 쓰는 코드가
+어디에도 없었다** - `apiCall`은 401이 오면 그냥 에러를 던질 뿐, 다시
+시도하거나 갱신하는 로직이 전무했다. `docs auth logout`이 서버에
+`refresh_token`을 보내 폐기하는 호출 한 곳만 그 필드를 참조했고, 그
+외엔 저장만 되고 죽은 값이었다. 반면 웹 프론트(`frontend/src/api/
+client.ts`)는 이미 401 → `/api/auth/refresh` → 재시도 흐름이 구현돼
+있었다(QA-SCENARIOS.md의 "JWT 자동 갱신" 항목이 지금까지 코드 확인
+위주였던 건 바로 이 프론트 쪽 구현을 가리킨 것 - CLI/MCP 쪽은 애초에
+같은 확인 대상이 아니었다).
+
+MCP 서버(`backend/src/mcp/server.ts`)는 이 파일의 `apiCall`/
+`apiCallText`를 그대로 재사용하므로, CLI와 MCP 둘 다 같은 결함을
+안고 있었다 - 15분 넘게 이어지는 세션(마이그레이션 대량 작업, 장시간
+대기하는 `message wait` 반복 호출, 이 시스템을 쓰는 AI 에이전트의
+평범한 장시간 작업)은 중간에 이유 없이 인증 실패로 끊기고, 사용자가
+`docs auth login`을 수동으로 다시 해야 했다.
+
+**수정**: `apiclient.ts`의 `apiFetch()`에 프론트와 동일한 패턴 추가 -
+요청이 401로 실패하고 `access_token`+`refresh_token`이 모두 있으며
+(`api_key` 로그인이 아닐 때만 - API 키는 TTL 기반의 별개 만료 개념이라
+대상에서 제외) `POST /api/auth/refresh`로 갱신에 성공하면, 갱신된
+토큰 쌍을 `credentials.json`에 다시 저장하고 원래 요청을 새 토큰으로
+한 번 재시도한다. `apiCall`/`apiCallText`는 `apiFetch`를 감싸기만 하므로
+변경 없이 그대로 혜택을 받고, 이 파일 하나만 고쳐 CLI/MCP 둘 다 동시에
+해결됐다.
+
+**실측 검증**: `npx tsc --noEmit` 클린 → `npm run build`로 CLI 재빌드
+→ 테스트 계정으로 로그인 후 저장된 `access_token`을 일부러 훼손(끝
+10자를 임의 문자열로 교체 - 실제 만료를 15분 기다리는 대신 즉시
+재현)한 채 `docs auth whoami` 실행 → 성공적으로 응답을 받고
+`credentials.json`의 `access_token`/`refresh_token`이 둘 다 새 값으로
+자동 회전된 것을 확인. 반대로 `access_token`/`refresh_token` 둘 다
+훼손한 뒤엔 무한 재시도 없이 깔끔하게 "유효하지 않거나 만료된
+토큰입니다" 에러 한 번으로 끝나는지도 확인(폭주 방지). `npm run
+audit:cli-mcp` 클린 - CLI/MCP 표면 자체는 안 바뀌었으므로 회귀 없음
+확인 차원.
+
+**이어서 진행한 QA(코드 변경 없음)**:
+- 팀 스코프 CLAUDE.md override가 그 산하 프로젝트에 실제로 상속되는지
+  (`#template-history`/`#doctype-status-auto-seed` 라운드 이후 재검증
+  안 됐던 항목, QA-SCENARIOS.md) - 테스트용 팀/그룹/프로젝트를 만들어
+  팀 스코프에 override를 걸고 프로젝트 스코프로 조회해 그대로
+  상속되는 것을 확인, 이어서 그룹 스코프에 override를 걸어 팀
+  스코프보다 우선 적용되는 것도 확인(상속 우선순위: 프로젝트 >
+  그룹 > 팀 > 전역, 코드 그대로 재확인) - 문제 없음, 테스트 데이터는
+  검증 후 삭제.
+- 참고 문서(`--refs`)가 삭제된 뒤에도 그 문서를 참고한 질의/답변이
+  안전하게 남아있는지(QA-SCENARIOS.md) - 문서 A를 문서 B의 질의에
+  참고 문서로 태그하고 답변까지 단 뒤 문서 A를 삭제 → 질의/답변 본문은
+  그대로 남고 `refs` 배열에서만 A의 트래킹 코드가 빠지는 것을 실측
+  확인(스키마상 예상된 cascade 방향과 일치) - 문제 없음, 테스트
+  데이터는 검증 후 삭제.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

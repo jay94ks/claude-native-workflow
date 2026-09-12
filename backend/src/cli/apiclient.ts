@@ -44,6 +44,26 @@ export function clearCredentials(): void {
 
 export const credentialsPath = CREDENTIALS_PATH;
 
+// access_token(15분 단명)을 refresh_token으로 갱신 - frontend의
+// api/client.ts와 같은 패턴. api_key(`auth use-key`) 로그인은 만료
+// 개념이 아예 다르므로(TTL 기반, 여기서 다루지 않음) 대상에서 제외.
+async function refreshAccessToken(apiBase: string, creds: StoredCredentials): Promise<boolean> {
+  if (!creds.refresh_token) return false;
+  try {
+    const res = await fetch(`${apiBase}/api/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: creds.refresh_token }),
+    });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { access_token: string; refresh_token: string };
+    saveCredentials({ ...creds, access_token: body.access_token, refresh_token: body.refresh_token });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function apiFetch(pathSuffix: string, init?: RequestInit): Promise<Response> {
   const creds = loadCredentials();
   const apiBase = process.env.CNW_API_BASE ?? creds?.api_base;
@@ -53,7 +73,21 @@ async function apiFetch(pathSuffix: string, init?: RequestInit): Promise<Respons
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> ?? {}) };
   const token = creds?.api_key ?? creds?.access_token;
   if (token) headers.Authorization = `Bearer ${token}`;
-  return fetch(`${apiBase}${pathSuffix}`, { ...init, headers });
+  const res = await fetch(`${apiBase}${pathSuffix}`, { ...init, headers });
+  if (res.status === 401 && creds?.access_token && creds.refresh_token && !creds.api_key) {
+    // access_token이 만료됐을 가능성 - refresh_token으로 한 번 갱신
+    // 시도한 뒤 원래 요청을 재시도한다(CLI/MCP는 이 파일 하나를
+    // 공유하므로 두 표면 모두 여기서 한 번에 고쳐진다). 이전엔
+    // refresh_token을 저장만 해두고 실제로는 한 번도 쓰지 않아, 15분
+    // 넘게 이어지는 세션이면 매번 재로그인이 필요했다(이번 QA 라운드
+    // 중 실제로 겪어 발견).
+    if (await refreshAccessToken(apiBase, creds)) {
+      const retried = loadCredentials();
+      const retryHeaders = { ...headers, Authorization: `Bearer ${retried?.access_token}` };
+      return fetch(`${apiBase}${pathSuffix}`, { ...init, headers: retryHeaders });
+    }
+  }
+  return res;
 }
 
 export async function apiCall<T>(pathSuffix: string, init?: RequestInit): Promise<T> {
