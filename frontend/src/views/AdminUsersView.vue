@@ -119,7 +119,7 @@ onMounted(load);
 
 <style scoped>
 .card {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 16px;
@@ -128,30 +128,30 @@ onMounted(load);
 h2 {
   font-size: 14px;
   margin: 0 0 4px;
-  color: #555;
+  color: var(--color-text-secondary);
 }
 .hint {
   font-size: 12px;
-  color: #888;
+  color: var(--color-text-muted);
   margin: 0 0 12px;
 }
 .reveal-box {
-  background: #fff8e1;
-  border: 1px solid #f0c14b;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 16px;
 }
 .reveal-warning {
   font-size: 12px;
-  color: #8a6300;
+  color: var(--color-warning-text);
   margin: 0 0 8px;
   font-weight: 600;
 }
 .secret {
   display: block;
-  background: #1a1a2e;
-  color: #d6f8d6;
+  background: var(--color-terminal-bg);
+  color: var(--color-terminal-text);
   padding: 10px 12px;
   border-radius: 6px;
   font-size: 13px;
@@ -163,8 +163,9 @@ h2 {
   gap: 8px;
 }
 .reveal-actions button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 12px;
@@ -179,7 +180,7 @@ h2 {
 }
 .list li {
   padding: 8px 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
   font-size: 12px;
 }
 .list li:last-child {
@@ -193,38 +194,39 @@ h2 {
 .access-panel {
   margin-top: 8px;
   padding: 10px;
-  background: #f7f8fb;
+  background: var(--color-surface-hover);
   border-radius: 6px;
 }
 .username {
   font-weight: 600;
-  color: #333;
+  color: var(--color-text);
 }
 .label {
-  color: #555;
+  color: var(--color-text-secondary);
 }
 .email {
-  color: #888;
+  color: var(--color-text-muted);
 }
 .at {
   margin-left: auto;
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 11px;
   white-space: nowrap;
 }
 .reset-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 11px;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

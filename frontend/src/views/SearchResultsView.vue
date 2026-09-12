@@ -157,7 +157,7 @@ h1 {
 }
 .meta {
   font-size: 12px;
-  color: #888;
+  color: var(--color-text-muted);
   margin: 0 0 20px;
 }
 h2 {
@@ -171,14 +171,14 @@ section {
   list-style: none;
   padding: 0;
   margin: 0;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .list li {
   padding: 12px 16px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
 }
 .list li:last-child {
   border-bottom: none;
@@ -187,10 +187,10 @@ section {
   cursor: pointer;
 }
 .list li.clickable:hover {
-  background: #f7f8fb;
+  background: var(--color-surface-hover);
 }
 .list a {
-  color: #1a1a2e;
+  color: var(--color-text);
   text-decoration: none;
   font-size: 13px;
 }
@@ -199,15 +199,15 @@ section {
 }
 .project-badge {
   font-size: 11px;
-  color: #555;
-  background: #eef0f6;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-hover);
   padding: 2px 8px;
   border-radius: 999px;
   margin-right: 6px;
 }
 .list code {
   font-size: 12px;
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
   margin-right: 4px;
@@ -217,28 +217,28 @@ section {
 }
 .status {
   font-size: 11px;
-  color: #888;
+  color: var(--color-text-muted);
   margin-left: 6px;
 }
 .snippet {
   margin: 6px 0 0;
   font-size: 12px;
-  color: #555;
+  color: var(--color-text-secondary);
   font-family: ui-monospace, monospace;
   white-space: pre-wrap;
   word-break: break-word;
 }
 .snippet mark {
-  background: #fdf0a8;
+  background: var(--color-mark-bg);
   color: inherit;
   border-radius: 2px;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

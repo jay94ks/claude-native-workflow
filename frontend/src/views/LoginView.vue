@@ -55,7 +55,7 @@ async function handleSubmit() {
   justify-content: center;
 }
 .card {
-  background: #fff;
+  background: var(--color-surface);
   padding: 32px;
   border-radius: 12px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
@@ -74,15 +74,17 @@ label {
   flex-direction: column;
   gap: 6px;
   font-size: 13px;
-  color: #555;
+  color: var(--color-text-secondary);
 }
 input {
   padding: 9px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 10px;
@@ -94,7 +96,7 @@ button:disabled {
   opacity: 0.6;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
   margin: 0;
 }

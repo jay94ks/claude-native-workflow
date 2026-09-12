@@ -270,7 +270,8 @@ const kindTitle = computed(() => {
   z-index: 1100;
 }
 .dialog {
-  background: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
   border-radius: 10px;
   padding: 20px;
   width: min(520px, 90vw);
@@ -290,17 +291,20 @@ const kindTitle = computed(() => {
   margin: 0;
 }
 .close-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
 }
 .search {
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   margin-bottom: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .list {
   list-style: none;
@@ -308,7 +312,7 @@ const kindTitle = computed(() => {
   margin: 0 0 10px;
   overflow-y: auto;
   flex: 1;
-  border: 1px solid #eee;
+  border: 1px solid var(--color-border-light);
   border-radius: 8px;
 }
 .list li {
@@ -316,7 +320,7 @@ const kindTitle = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px solid #f0f1f5;
+  border-bottom: 1px solid var(--color-surface-hover);
   cursor: pointer;
   font-size: 13px;
 }
@@ -324,7 +328,7 @@ const kindTitle = computed(() => {
   border-bottom: none;
 }
 .list li:hover {
-  background: #f7f8fb;
+  background: var(--color-surface-hover);
 }
 .list li.empty {
   cursor: default;
@@ -340,14 +344,15 @@ const kindTitle = computed(() => {
 }
 .tree-path-bar button {
   font-size: 12px;
-  background: #eef0f6;
+  background: var(--color-surface-hover);
+  color: var(--color-text);
   border: none;
   padding: 4px 8px;
   border-radius: 4px;
 }
 .tree-current-path {
   font-size: 12px;
-  color: #888;
+  color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -356,7 +361,7 @@ const kindTitle = computed(() => {
   font-weight: 600;
 }
 .tree-list li.active {
-  background: #e4e9fb;
+  background: var(--color-tcode-hover-bg);
 }
 .manual-row {
   display: flex;
@@ -366,12 +371,15 @@ const kindTitle = computed(() => {
 .manual-row input {
   flex: 1;
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .manual-row button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 6px 12px;
   border-radius: 6px;
 }
@@ -382,7 +390,7 @@ const kindTitle = computed(() => {
   margin-bottom: 10px;
 }
 .chip {
-  background: #eef0f6;
+  background: var(--color-surface-hover);
   border-radius: 999px;
   padding: 3px 8px;
   font-size: 12px;
@@ -394,7 +402,7 @@ const kindTitle = computed(() => {
   background: none;
   border: none;
   cursor: pointer;
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1;
 }
@@ -404,13 +412,14 @@ const kindTitle = computed(() => {
   gap: 8px;
 }
 .actions .cancel {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 8px 16px;
   border-radius: 6px;
 }
 .actions .confirm {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -418,11 +427,11 @@ const kindTitle = computed(() => {
   font-weight: 600;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

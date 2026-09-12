@@ -48,7 +48,8 @@ watch(
   z-index: 1000;
 }
 .dialog {
-  background: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
   border-radius: 10px;
   padding: 24px;
   width: min(640px, 90vw);
@@ -61,8 +62,9 @@ watch(
   position: absolute;
   top: 16px;
   right: 16px;
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;

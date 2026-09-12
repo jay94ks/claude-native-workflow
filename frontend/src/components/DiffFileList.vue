@@ -66,7 +66,7 @@ function fileLabel(f: FileDiff): string {
   gap: 8px;
 }
 .file-card {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   overflow: hidden;
@@ -77,7 +77,8 @@ function fileLabel(f: FileDiff): string {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: #f7f8fb;
+  background: var(--color-bg);
+  color: var(--color-text);
   border: none;
   font-size: 13px;
   text-align: left;
@@ -85,7 +86,7 @@ function fileLabel(f: FileDiff): string {
 }
 .chevron {
   font-size: 10px;
-  color: #888;
+  color: var(--color-text-muted);
   transition: transform 0.1s;
   flex-shrink: 0;
 }
@@ -107,13 +108,13 @@ function fileLabel(f: FileDiff): string {
   flex-shrink: 0;
 }
 .stats .add {
-  color: #1f9254;
+  color: var(--color-success);
 }
 .stats .del {
-  color: #d1344b;
+  color: var(--color-danger);
 }
 .stats.muted {
-  color: #888;
+  color: var(--color-text-muted);
 }
 .file-body {
   padding: 8px 12px;
@@ -124,7 +125,7 @@ function fileLabel(f: FileDiff): string {
 .hunk-header {
   font-family: ui-monospace, monospace;
   font-size: 11px;
-  color: #888;
+  color: var(--color-text-muted);
   margin-bottom: 2px;
 }
 .diff {
@@ -138,15 +139,15 @@ function fileLabel(f: FileDiff): string {
   display: block;
 }
 .diff .add {
-  background: #e6ffec;
-  color: #1f9254;
+  background: var(--color-diff-add-bg);
+  color: var(--color-success);
 }
 .diff .del {
-  background: #ffeef0;
-  color: #d1344b;
+  background: var(--color-diff-del-bg);
+  color: var(--color-danger);
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .empty {

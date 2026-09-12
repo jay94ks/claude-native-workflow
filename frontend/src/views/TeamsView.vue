@@ -216,11 +216,13 @@ h1 {
 .create-row input {
   flex: 1;
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .create-row button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -232,7 +234,7 @@ h1 {
   align-items: center;
   gap: 4px;
   font-size: 13px;
-  color: #555;
+  color: var(--color-text-secondary);
   white-space: nowrap;
 }
 .public-check input {
@@ -245,23 +247,23 @@ h1 {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #f0f1f5;
-  color: #888;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
 }
 .public-badge.on {
-  background: #e3f6ec;
-  color: #1f9254;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 .list {
   list-style: none;
   padding: 0;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .list li {
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
 }
 .list li:last-child {
   border-bottom: none;
@@ -275,25 +277,28 @@ h1 {
 }
 .edit-input {
   padding: 5px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .manage-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 5px 10px;
   border-radius: 6px;
   font-size: 12px;
 }
 .manage-btn:hover {
-  background: #eef0f6;
+  background: var(--color-surface-hover);
 }
 .danger-btn {
   margin-left: auto;
-  background: #fff;
-  border: 1px solid #e2a2ad;
-  color: #d1344b;
+  background: var(--color-surface);
+  border: 1px solid var(--color-danger-border-strong);
+  color: var(--color-danger);
   padding: 5px 10px;
   border-radius: 6px;
   font-size: 12px;
@@ -311,7 +316,7 @@ h1 {
   gap: 10px;
   align-items: center;
   padding: 6px 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
   font-size: 13px;
 }
 .member-list li:last-child {
@@ -319,15 +324,15 @@ h1 {
 }
 .hint {
   font-size: 12px;
-  color: #999;
+  color: var(--color-text-faint);
   margin: 0 0 8px;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 .error.inline {

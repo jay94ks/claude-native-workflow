@@ -79,7 +79,8 @@ watch(
   z-index: 1000;
 }
 .dialog {
-  background: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
   border-radius: 10px;
   padding: 24px;
   width: min(720px, 90vw);
@@ -92,8 +93,9 @@ watch(
   position: absolute;
   top: 16px;
   right: 16px;
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
@@ -106,14 +108,14 @@ watch(
 }
 .header code {
   font-size: 12px;
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
 }
 .status {
   font-size: 12px;
-  color: #555;
-  background: #eef0f6;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-hover);
   padding: 2px 8px;
   border-radius: 999px;
 }
@@ -124,14 +126,14 @@ h2 {
 .open-link {
   display: inline-block;
   margin-top: 16px;
-  color: #3454d1;
+  color: var(--color-primary);
   font-size: 13px;
   text-decoration: none;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
 }
 </style>

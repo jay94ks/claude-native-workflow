@@ -64,7 +64,8 @@ function run() {
   z-index: 1100;
 }
 .dialog {
-  background: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
   border-radius: 10px;
   padding: 20px;
   width: min(440px, 90vw);
@@ -84,8 +85,9 @@ function run() {
   white-space: nowrap;
 }
 .close-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
@@ -110,7 +112,7 @@ function run() {
   font-size: 13px;
   margin-bottom: 18px;
   padding-top: 10px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--color-border-light);
 }
 .actions {
   display: flex;
@@ -118,13 +120,14 @@ function run() {
   gap: 8px;
 }
 .actions .cancel {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 8px 16px;
   border-radius: 6px;
 }
 .actions .run {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 8px 16px;

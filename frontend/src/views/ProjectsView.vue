@@ -134,16 +134,20 @@ h1 {
 .create-row input {
   flex: 1;
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .create-row select {
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .create-row button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -155,7 +159,7 @@ h1 {
   align-items: center;
   gap: 4px;
   font-size: 13px;
-  color: #555;
+  color: var(--color-text-secondary);
   white-space: nowrap;
 }
 .public-check input {
@@ -168,24 +172,24 @@ h1 {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #f0f1f5;
-  color: #888;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
 }
 .public-badge.on {
-  background: #e3f6ec;
-  color: #1f9254;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 .list {
   list-style: none;
   padding: 0;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .list li {
   padding: 12px 16px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
   display: flex;
   justify-content: space-between;
 }
@@ -203,24 +207,25 @@ h1 {
 }
 .hidden-badge {
   font-size: 11px;
-  background: #fbeee0;
-  color: #8a5a1a;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
   padding: 2px 8px;
   border-radius: 999px;
 }
 .hide-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

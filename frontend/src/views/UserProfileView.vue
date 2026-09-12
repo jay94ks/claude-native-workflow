@@ -173,7 +173,7 @@ h1 {
   gap: 10px;
 }
 .card {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 16px;
@@ -182,7 +182,7 @@ h1 {
 h2 {
   font-size: 14px;
   margin: 0 0 12px;
-  color: #555;
+  color: var(--color-text-secondary);
 }
 .field {
   margin-bottom: 8px;
@@ -191,28 +191,31 @@ h2 {
 .field .label {
   display: inline-block;
   width: 90px;
-  color: #888;
+  color: var(--color-text-muted);
 }
 .field input {
   padding: 5px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   margin-left: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .checkbox {
   margin-left: 10px;
   font-size: 12px;
-  color: #666;
+  color: var(--color-text-secondary);
 }
 .hint {
   margin: 4px 0 0;
   font-size: 11px;
-  color: #b58a00;
+  color: var(--color-warning-text);
 }
 .edit-btn,
 .actions button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 5px 12px;
   border-radius: 6px;
   font-size: 12px;
@@ -223,7 +226,7 @@ h2 {
   gap: 8px;
 }
 .actions .cancel-btn {
-  color: #888;
+  color: var(--color-text-muted);
 }
 .activity-list {
   list-style: none;
@@ -232,7 +235,7 @@ h2 {
 }
 .activity-list li {
   padding: 6px 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
   font-size: 13px;
   display: flex;
   justify-content: space-between;
@@ -242,16 +245,16 @@ h2 {
   border-bottom: none;
 }
 .at {
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 11px;
   flex-shrink: 0;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

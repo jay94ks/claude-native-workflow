@@ -48,14 +48,14 @@ span {
 }
 .tcode {
   white-space: normal;
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12px;
-  color: #3454d1;
+  color: var(--color-primary);
   cursor: pointer;
 }
 .tcode:hover {
-  background: #e4e9fb;
+  background: var(--color-tcode-hover-bg);
 }
 </style>

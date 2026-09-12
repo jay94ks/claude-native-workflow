@@ -44,19 +44,19 @@ function onClick(e: MouseEvent) {
   word-break: break-word;
 }
 .markdown-body :deep(.tcode-link) {
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12px;
-  color: #3454d1;
+  color: var(--color-primary);
   cursor: pointer;
   font-family: monospace;
 }
 .markdown-body :deep(.tcode-link:hover) {
-  background: #e4e9fb;
+  background: var(--color-tcode-hover-bg);
 }
 .markdown-body :deep(pre) {
-  background: #f6f7f9;
+  background: var(--color-bg);
   padding: 10px 12px;
   border-radius: 6px;
   overflow-x: auto;
@@ -72,7 +72,7 @@ function onClick(e: MouseEvent) {
 }
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
-  border: 1px solid #e0e2e8;
+  border: 1px solid var(--color-border);
   padding: 4px 8px;
 }
 </style>

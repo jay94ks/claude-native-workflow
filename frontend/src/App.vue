@@ -48,6 +48,13 @@ useThemeStore().init();
   --color-info-border: #c7d2f5;
   --color-primary-muted: #a9b4e0;
   --color-danger-border: #f0c7d0;
+  --color-danger-border-strong: #e2a2ad;
+  --color-mark-bg: #fdf0a8;
+  --color-terminal-bg: #1a1a2e;
+  --color-terminal-text: #d6f8d6;
+  --color-tcode-hover-bg: #e4e9fb;
+  --color-diff-add-bg: #e6ffec;
+  --color-diff-del-bg: #ffeef0;
   --color-sidebar-bg: #1a1a2e;
   --color-sidebar-text: #fff;
   --color-sidebar-muted: #c7c9e8;
@@ -78,6 +85,11 @@ useThemeStore().init();
   --color-info-border: #39407a;
   --color-primary-muted: #3a4470;
   --color-danger-border: #5a2530;
+  --color-danger-border-strong: #7a3540;
+  --color-mark-bg: #6b5b1a;
+  --color-tcode-hover-bg: #2c3a6b;
+  --color-diff-add-bg: #113322;
+  --color-diff-del-bg: #3a1520;
   /* 사이드바는 원래도 항상 어두웠으므로 다크 모드에서 그대로 둔다. */
 }
 * {

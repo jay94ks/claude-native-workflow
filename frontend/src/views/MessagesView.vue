@@ -175,29 +175,30 @@ h1 {
   margin-bottom: 16px;
 }
 .tabs button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 6px 14px;
   border-radius: 6px;
   font-size: 13px;
 }
 .tabs button.active {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
-  border-color: #3454d1;
+  border-color: var(--color-primary);
 }
 .messages {
   list-style: none;
   padding: 0;
   margin: 0 0 14px;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .messages li {
   padding: 10px 14px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
   display: flex;
   gap: 10px;
   align-items: baseline;
@@ -208,7 +209,7 @@ h1 {
 }
 .system {
   font-weight: 600;
-  color: #888;
+  color: var(--color-text-muted);
   flex-shrink: 0;
 }
 .body {
@@ -217,23 +218,26 @@ h1 {
 .edit-input {
   flex: 1;
   padding: 5px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .manage-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 11px;
   flex-shrink: 0;
 }
 .manage-btn.danger {
-  color: #d1344b;
+  color: var(--color-danger);
 }
 .at {
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 11px;
   flex-shrink: 0;
 }
@@ -244,11 +248,13 @@ h1 {
 .send-row input {
   flex: 1;
   padding: 8px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .send-row button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 8px 16px;
@@ -259,11 +265,11 @@ h1 {
   opacity: 0.6;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>
