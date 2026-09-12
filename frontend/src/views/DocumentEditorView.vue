@@ -390,125 +390,139 @@ onMounted(load);
   <p v-if="loading">불러오는 중...</p>
   <p v-else-if="error && !doc" class="error">{{ error }}</p>
   <template v-else-if="doc">
-    <div class="header">
-      <div>
-        <code>{{ doc.trackingCode }}</code>
-        <h1>{{ doc.title }}</h1>
-        <div class="meta">작성자 <UserRef :user-id="doc.createdBy" /></div>
+    <div class="document-editor">
+      <div class="header">
+        <div>
+          <code>{{ doc.trackingCode }}</code>
+          <h1>{{ doc.title }}</h1>
+          <div class="meta">작성자 <UserRef :user-id="doc.createdBy" /></div>
+        </div>
+        <div class="actions">
+          <span v-if="doc.priority !== null" class="priority-badge">우선순위 {{ doc.priority }}</span>
+          <span class="status">{{ doc.statusCode }}</span>
+        </div>
       </div>
-      <div class="actions">
-        <span v-if="doc.priority !== null" class="priority-badge">우선순위 {{ doc.priority }}</span>
-        <span class="status">{{ doc.statusCode }}</span>
+  
+      <div v-if="doc.notices && doc.notices.length > 0" class="notice-banner">
+        <p v-for="(n, i) in doc.notices" :key="i">⚠ {{ n }}</p>
       </div>
-    </div>
-
-    <div v-if="doc.notices && doc.notices.length > 0" class="notice-banner">
-      <p v-for="(n, i) in doc.notices" :key="i">⚠ {{ n }}</p>
-    </div>
-
-    <div class="tabs">
-      <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
-      <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
-      <span class="spacer"></span>
-      <button class="secondary" @click="onPickFolder">폴더</button>
-      <button
-        class="secondary"
-        @click="targetPanelDialog.show('comments', id, 'document', trackingCode)"
-      >
-        코멘트
-      </button>
-    </div>
-
-    <template v-if="activeTab === 'view'">
-      <p v-if="error" class="error">{{ error }}</p>
-      <p v-if="saveMessage" class="saved">{{ saveMessage }}</p>
-      <p v-if="messageSent" class="saved">메시지를 보냈습니다.</p>
-
-      <div class="toolbar">
-        <template v-if="doc.perm.write">
-          <select v-model="toStatusCode">
-            <option value="">상태 전이...</option>
-            <option v-for="s in nextStatuses" :key="s.code" :value="s.code">{{ s.label }}</option>
-          </select>
-          <button class="secondary" :disabled="!toStatusCode" @click="transition">전이</button>
-          <span v-if="transitionError" class="error">{{ transitionError }}</span>
-        </template>
-
-        <template v-if="doc.perm.write && PRIORITY_EDITABLE_STATUSES.has(doc.statusCode)">
-          <input v-model="priorityInput" type="number" step="1" class="priority-input" placeholder="우선순위" />
-          <button class="secondary" :disabled="savingPriority" @click="savePriority">
-            {{ savingPriority ? "저장 중..." : "우선순위 저장" }}
-          </button>
-          <span v-if="priorityError" class="error">{{ priorityError }}</span>
-        </template>
-
+  
+      <div class="tabs">
+        <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
+        <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
         <span class="spacer"></span>
-
-        <button v-if="mode === 'read' && canSendInstruction" class="secondary" @click="messageOpen = !messageOpen">메시지로 지시</button>
-        <button v-if="mode === 'read' && doc.perm.write" class="secondary" @click="startEdit">편집</button>
-        <button v-if="mode === 'read' && doc.perm.delete" class="danger" :disabled="deleting" @click="remove">
-          {{ deleting ? "삭제 중..." : "삭제" }}
+        <button class="secondary" @click="onPickFolder">폴더</button>
+        <button
+          class="secondary"
+          @click="targetPanelDialog.show('comments', id, 'document', trackingCode)"
+        >
+          코멘트
         </button>
       </div>
-      <p v-if="selectedNextStatusGuideline" class="guideline-hint">{{ selectedNextStatusGuideline }}</p>
-      <p v-if="deleteError" class="error">{{ deleteError }}</p>
-
-      <div v-if="messageOpen" class="message-compose">
-        <textarea v-model="messageDraft" rows="2" :placeholder="`[${trackingCode}] 지시할 내용을 입력...`"></textarea>
-        <div class="message-actions">
-          <button :disabled="messageSending" @click="sendInstructionMessage">전송</button>
-          <button type="button" class="secondary" @click="messageOpen = false">취소</button>
+  
+      <template v-if="activeTab === 'view'">
+        <p v-if="error" class="error">{{ error }}</p>
+        <p v-if="saveMessage" class="saved">{{ saveMessage }}</p>
+        <p v-if="messageSent" class="saved">메시지를 보냈습니다.</p>
+  
+        <div class="toolbar">
+          <template v-if="doc.perm.write">
+            <select v-model="toStatusCode">
+              <option value="">상태 전이...</option>
+              <option v-for="s in nextStatuses" :key="s.code" :value="s.code">{{ s.label }}</option>
+            </select>
+            <button class="secondary" :disabled="!toStatusCode" @click="transition">전이</button>
+            <span v-if="transitionError" class="error">{{ transitionError }}</span>
+          </template>
+  
+          <template v-if="doc.perm.write && PRIORITY_EDITABLE_STATUSES.has(doc.statusCode)">
+            <input v-model="priorityInput" type="number" step="1" class="priority-input" placeholder="우선순위" />
+            <button class="secondary" :disabled="savingPriority" @click="savePriority">
+              {{ savingPriority ? "저장 중..." : "우선순위 저장" }}
+            </button>
+            <span v-if="priorityError" class="error">{{ priorityError }}</span>
+          </template>
+  
+          <span class="spacer"></span>
+  
+          <button v-if="mode === 'read' && canSendInstruction" class="secondary" @click="messageOpen = !messageOpen">메시지로 지시</button>
+          <button v-if="mode === 'read' && doc.perm.write" class="secondary" @click="startEdit">편집</button>
+          <button v-if="mode === 'read' && doc.perm.delete" class="danger" :disabled="deleting" @click="remove">
+            {{ deleting ? "삭제 중..." : "삭제" }}
+          </button>
         </div>
-        <p v-if="messageError" class="error">{{ messageError }}</p>
-      </div>
-
-      <template v-if="mode === 'read'">
-        <MarkdownBody :body="doc.body" class="body-view" />
+        <p v-if="selectedNextStatusGuideline" class="guideline-hint">{{ selectedNextStatusGuideline }}</p>
+        <p v-if="deleteError" class="error">{{ deleteError }}</p>
+  
+        <div v-if="messageOpen" class="message-compose">
+          <textarea v-model="messageDraft" rows="2" :placeholder="`[${trackingCode}] 지시할 내용을 입력...`"></textarea>
+          <div class="message-actions">
+            <button :disabled="messageSending" @click="sendInstructionMessage">전송</button>
+            <button type="button" class="secondary" @click="messageOpen = false">취소</button>
+          </div>
+          <p v-if="messageError" class="error">{{ messageError }}</p>
+        </div>
+  
+        <template v-if="mode === 'read'">
+          <MarkdownBody :body="doc.body" class="body-view" />
+        </template>
+        <template v-else>
+          <MonacoEditor v-model="body" language="markdown" class="editor" />
+          <div class="edit-actions">
+            <button :disabled="saving" @click="save">{{ saving ? "저장 중..." : "저장" }}</button>
+            <button type="button" class="secondary" @click="cancelEdit">취소</button>
+          </div>
+        </template>
+  
+        <section class="source-links">
+          <h2>연관된 소스 코드</h2>
+          <p v-if="sourceLinksError" class="error">{{ sourceLinksError }}</p>
+          <ul v-if="sourceLinks.length > 0" class="source-list">
+            <li v-for="link in sourceLinks" :key="link.id">
+              <button type="button" class="source-path" @click="openSourceFile(link.filePath)">{{ link.filePath }}</button>
+              <button v-if="doc.perm.write" type="button" class="remove-btn" @click="removeSourceLink(link.id)">해제</button>
+            </li>
+          </ul>
+          <p v-else class="muted">연결된 소스코드가 없습니다.</p>
+          <button v-if="doc.perm.write" type="button" class="secondary" @click="pickSourceLink">+ 소스 파일 연결</button>
+        </section>
+  
+        <section class="source-links">
+          <h2>연관 브랜치</h2>
+          <p v-if="branchLinksError" class="error">{{ branchLinksError }}</p>
+          <ul v-if="branchLinks.length > 0" class="source-list">
+            <li v-for="link in branchLinks" :key="link.id">
+              <span class="source-path">{{ link.branchName }}</span>
+              <button v-if="doc.perm.write" type="button" class="remove-btn" @click="removeBranchLink(link.id)">해제</button>
+            </li>
+          </ul>
+          <p v-else class="muted">연결된 브랜치가 없습니다.</p>
+          <form v-if="doc.perm.write" class="branch-add-row" @submit.prevent="addBranchLink">
+            <input v-model="newBranchName" type="text" placeholder="브랜치 이름" />
+            <button type="submit" class="secondary" :disabled="!newBranchName.trim()">+ 브랜치 연결</button>
+          </form>
+        </section>
       </template>
       <template v-else>
-        <MonacoEditor v-model="body" language="markdown" class="editor" />
-        <div class="edit-actions">
-          <button :disabled="saving" @click="save">{{ saving ? "저장 중..." : "저장" }}</button>
-          <button type="button" class="secondary" @click="cancelEdit">취소</button>
-        </div>
+        <QAPanel :project-id="id" target-type="document" :target-key="trackingCode" @status-transitioned="refreshStatus" />
       </template>
-
-      <section class="source-links">
-        <h2>연관된 소스 코드</h2>
-        <p v-if="sourceLinksError" class="error">{{ sourceLinksError }}</p>
-        <ul v-if="sourceLinks.length > 0" class="source-list">
-          <li v-for="link in sourceLinks" :key="link.id">
-            <button type="button" class="source-path" @click="openSourceFile(link.filePath)">{{ link.filePath }}</button>
-            <button v-if="doc.perm.write" type="button" class="remove-btn" @click="removeSourceLink(link.id)">해제</button>
-          </li>
-        </ul>
-        <p v-else class="muted">연결된 소스코드가 없습니다.</p>
-        <button v-if="doc.perm.write" type="button" class="secondary" @click="pickSourceLink">+ 소스 파일 연결</button>
-      </section>
-
-      <section class="source-links">
-        <h2>연관 브랜치</h2>
-        <p v-if="branchLinksError" class="error">{{ branchLinksError }}</p>
-        <ul v-if="branchLinks.length > 0" class="source-list">
-          <li v-for="link in branchLinks" :key="link.id">
-            <span class="source-path">{{ link.branchName }}</span>
-            <button v-if="doc.perm.write" type="button" class="remove-btn" @click="removeBranchLink(link.id)">해제</button>
-          </li>
-        </ul>
-        <p v-else class="muted">연결된 브랜치가 없습니다.</p>
-        <form v-if="doc.perm.write" class="branch-add-row" @submit.prevent="addBranchLink">
-          <input v-model="newBranchName" type="text" placeholder="브랜치 이름" />
-          <button type="submit" class="secondary" :disabled="!newBranchName.trim()">+ 브랜치 연결</button>
-        </form>
-      </section>
-    </template>
-    <template v-else>
-      <QAPanel :project-id="id" target-type="document" :target-key="trackingCode" @status-transitioned="refreshStatus" />
-    </template>
+    </div>
   </template>
 </template>
 
 <style scoped>
+/* ProjectShellView.vue의 .tab-content가 flex:1;min-height:0인 flex
+   컨테이너라(다른 탭 뷰의 헤더+내부 스크롤 목록 레이아웃을 위한 것) -
+   이 뷰는 그 방식이 필요 없는 평범한 위→아래 문서 뷰인데, 감싸는
+   div 없이 header/tabs/toolbar/body-view 등이 전부 .tab-content의
+   직속 flex 자식이 되면서 기본 flex-shrink:1 때문에 문서 본문이 실제
+   내용보다 짧게 눌리고(overflow:visible이라 클리핑도 스크롤도 안 되고
+   그 아래 섹션들 위로 텍스트가 겹쳐 보임) - 이 래퍼 하나만 눌리지
+   않게 하면 자연스러운 높이로 렌더링되고 상위 main.content의
+   overflow-y:auto가 정상적으로 스크롤을 담당한다(실제 재현 확인). */
+.document-editor {
+  flex-shrink: 0;
+}
 .header {
   display: flex;
   justify-content: space-between;
