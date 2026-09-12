@@ -523,15 +523,16 @@ onUnmounted(() => {
   margin-bottom: 12px;
 }
 .mode-tabs button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 12px;
 }
 .mode-tabs button.active {
-  background: #3454d1;
-  border-color: #3454d1;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
   color: #fff;
 }
 .mode-body {
@@ -543,13 +544,15 @@ onUnmounted(() => {
 .mode-body input,
 .mode-body select {
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .mode-body button {
   align-self: flex-start;
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 6px 14px;
@@ -571,20 +574,22 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 6px;
   padding: 10px;
-  background: #fff7e6;
-  border: 1px solid #f0c674;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
   border-radius: 6px;
 }
 .auth-prompt input,
 .auth-prompt select {
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .auth-prompt button {
   align-self: flex-start;
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 5px 12px;
@@ -594,23 +599,23 @@ onUnmounted(() => {
 .migration-hint {
   margin-top: 10px;
   padding: 8px 10px;
-  background: #e3f6ec;
+  background: var(--color-success-bg);
   border-radius: 6px;
   font-size: 12px;
 }
 .sync-panel {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--color-border-light);
 }
 .sync-panel h3 {
   font-size: 14px;
   margin: 0 0 6px;
 }
 .sync-panel button {
-  background: #fff;
-  border: 1px solid #3454d1;
-  color: #3454d1;
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
   padding: 6px 12px;
   border-radius: 6px;
   font-weight: 600;
@@ -622,9 +627,9 @@ onUnmounted(() => {
   font-size: 13px;
 }
 .danger {
-  background: #fff;
-  border: 1px solid #d1344b;
-  color: #d1344b;
+  background: var(--color-surface);
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
   padding: 6px 12px;
   border-radius: 6px;
   font-weight: 600;
@@ -641,13 +646,13 @@ onUnmounted(() => {
   list-style: none;
   padding: 0;
   margin: 10px 0;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .files li {
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
 }
 .files li:last-child {
   border-bottom: none;
@@ -660,7 +665,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .file-row:hover {
-  background: #f8f9fb;
+  background: var(--color-surface-hover);
 }
 .file-row code {
   flex: 1;
@@ -668,12 +673,12 @@ onUnmounted(() => {
 }
 .file-row .toggle {
   font-size: 10px;
-  color: #999;
+  color: var(--color-text-faint);
 }
 .file-content {
   margin: 0;
   padding: 10px 14px;
-  background: #fafbfc;
+  background: var(--color-bg);
   font-size: 12px;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -682,7 +687,7 @@ onUnmounted(() => {
 .publish-panel {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--color-border-light);
 }
 .publish-panel h3 {
   font-size: 14px;
@@ -690,15 +695,17 @@ onUnmounted(() => {
 }
 .publish-panel select {
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 12px;
   margin-right: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .publish-panel button {
-  background: #fff;
-  border: 1px solid #3454d1;
-  color: #3454d1;
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
   padding: 6px 12px;
   border-radius: 6px;
   font-weight: 600;
@@ -709,27 +716,27 @@ onUnmounted(() => {
 }
 .publish-queued {
   padding: 10px;
-  background: #fff7e6;
-  border: 1px solid #f0c674;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
   border-radius: 6px;
   font-size: 12px;
 }
 .publish-success {
-  color: #2a8a4a;
+  color: var(--color-success);
   font-size: 13px;
   margin-top: 6px;
 }
 .hint {
   font-size: 12px;
-  color: #999;
+  color: var(--color-text-faint);
   margin: 0 0 8px;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

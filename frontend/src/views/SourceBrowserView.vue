@@ -295,7 +295,7 @@ onBeforeUnmount(() => revokeMediaUrl());
 .tree {
   width: 260px;
   flex-shrink: 0;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 10px;
@@ -311,14 +311,15 @@ onBeforeUnmount(() => revokeMediaUrl());
 }
 .path-bar button {
   font-size: 12px;
-  background: #eef0f6;
+  background: var(--color-surface-hover);
+  color: var(--color-text);
   border: none;
   padding: 4px 8px;
   border-radius: 4px;
 }
 .current-path {
   font-size: 12px;
-  color: #888;
+  color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -336,10 +337,10 @@ onBeforeUnmount(() => revokeMediaUrl());
   font-size: 13px;
 }
 .entries li:hover {
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
 }
 .entries li.active {
-  background: #e4e9fb;
+  background: var(--color-tcode-hover-bg);
 }
 .new-file {
   display: flex;
@@ -349,16 +350,19 @@ onBeforeUnmount(() => revokeMediaUrl());
 .new-file input {
   flex: 1;
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .new-file button {
   font-size: 12px;
   padding: 6px 10px;
   border-radius: 6px;
-  border: 1px solid #d8dae0;
-  background: #fff;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .editor-pane {
   flex: 1;
@@ -378,7 +382,7 @@ onBeforeUnmount(() => revokeMediaUrl());
 }
 .editor-header code {
   font-size: 12px;
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -389,7 +393,7 @@ onBeforeUnmount(() => revokeMediaUrl());
   flex-wrap: wrap;
 }
 .header-actions button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 6px 14px;
@@ -398,9 +402,9 @@ onBeforeUnmount(() => revokeMediaUrl());
   font-size: 13px;
 }
 .header-actions button.secondary {
-  background: #fff;
-  color: #333;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   font-weight: 500;
 }
 .header-actions button:disabled {
@@ -420,15 +424,15 @@ onBeforeUnmount(() => revokeMediaUrl());
   display: block;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 .saved {
-  color: #1f9254;
+  color: var(--color-success);
   font-size: 13px;
 }
 </style>

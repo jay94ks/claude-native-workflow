@@ -258,7 +258,7 @@ onMounted(loadTypes);
 
 <style scoped>
 .manager {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 12px;
@@ -275,19 +275,23 @@ onMounted(loadTypes);
 .create-row input,
 .type-row input {
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .guideline-input {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
   font-family: inherit;
   resize: vertical;
   margin-bottom: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .guideline-view {
   display: flex;
@@ -303,24 +307,27 @@ onMounted(loadTypes);
 }
 .edit-btn,
 .guideline-edit-actions button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
   flex-shrink: 0;
 }
 .edit-btn:hover {
-  background: #eef0f6;
+  background: var(--color-surface-hover);
 }
 .guideline-edit textarea {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
   font-family: inherit;
   resize: vertical;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .guideline-edit-actions {
   display: flex;
@@ -328,10 +335,10 @@ onMounted(loadTypes);
   margin-top: 4px;
 }
 .guideline-edit-actions .cancel-btn {
-  color: #888;
+  color: var(--color-text-muted);
 }
 .create-row button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 6px 12px;
@@ -345,7 +352,7 @@ onMounted(loadTypes);
   margin: 8px 0 0;
 }
 .types > li {
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--color-border-light);
 }
 .types > li:first-child {
   border-top: none;
@@ -359,26 +366,26 @@ onMounted(loadTypes);
   font-size: 13px;
 }
 .type-row:hover {
-  background: #f8f9fb;
+  background: var(--color-surface-hover);
 }
 .type-row code {
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 12px;
 }
 .type-row .toggle {
   margin-left: auto;
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 11px;
 }
 .detail {
   padding: 4px 12px 14px 12px;
-  background: #fafbfc;
+  background: var(--color-bg);
 }
 .detail h4 {
   font-size: 12px;
-  color: #666;
+  color: var(--color-text-secondary);
   margin: 10px 0 6px;
 }
 .statuses {
@@ -391,21 +398,21 @@ onMounted(loadTypes);
   padding: 4px 0;
 }
 .statuses code {
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12px;
 }
 .badge {
-  background: #e4e9fb;
-  color: #3454d1;
+  background: var(--color-tcode-hover-bg);
+  color: var(--color-primary);
   border-radius: 999px;
   padding: 1px 8px;
   font-size: 11px;
   margin-left: 6px;
 }
 .status-guideline {
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 12px;
   margin-left: 4px;
 }
@@ -416,11 +423,11 @@ onMounted(loadTypes);
   gap: 4px;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 .error.inline {

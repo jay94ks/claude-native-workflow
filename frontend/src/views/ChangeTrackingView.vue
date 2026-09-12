@@ -302,7 +302,7 @@ section {
 .commit-list {
   width: 280px;
   flex-shrink: 0;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 8px;
@@ -323,13 +323,13 @@ section {
   gap: 2px;
 }
 .entries li:hover {
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
 }
 .entries li.active {
-  background: #e4e9fb;
+  background: var(--color-tcode-hover-bg);
 }
 .entries code {
-  color: #888;
+  color: var(--color-text-muted);
 }
 .commit-pagination {
   display: flex;
@@ -339,8 +339,9 @@ section {
   padding: 6px 0 2px;
 }
 .commit-pagination button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
@@ -350,7 +351,7 @@ section {
 }
 .commit-pagination .status {
   font-size: 12px;
-  color: #555;
+  color: var(--color-text-secondary);
 }
 .diff-pane {
   flex: 1;
@@ -365,29 +366,32 @@ section {
 }
 .filter-row select {
   padding: 6px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .filter-row button {
   padding: 6px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
   font-size: 13px;
 }
 .selected-doc-label {
   font-size: 13px;
 }
 .clear-btn {
-  color: #d1344b;
-  border-color: #d1344b !important;
+  color: var(--color-danger);
+  border-color: var(--color-danger) !important;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

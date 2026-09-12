@@ -310,7 +310,7 @@ onUnmounted(() => disconnect?.());
   margin-bottom: 12px;
 }
 .board-toolbar button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 7px 14px;
@@ -319,9 +319,9 @@ onUnmounted(() => disconnect?.());
   font-weight: 600;
 }
 .board-toolbar button.secondary {
-  background: #fff;
-  color: #333;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
 }
 .new-column-form {
   display: flex;
@@ -330,11 +330,13 @@ onUnmounted(() => disconnect?.());
 }
 .new-column-form input {
   padding: 6px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .hidden-panel {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 10px 14px;
@@ -348,8 +350,9 @@ onUnmounted(() => disconnect?.());
   font-size: 13px;
 }
 .hidden-row button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 3px 8px;
   border-radius: 6px;
   font-size: 11px;
@@ -363,7 +366,7 @@ onUnmounted(() => disconnect?.());
 }
 .column {
   flex: 0 0 260px;
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   border-radius: 8px;
   padding: 10px;
   min-height: 120px;
@@ -382,20 +385,20 @@ onUnmounted(() => disconnect?.());
 }
 .column-count {
   font-size: 11px;
-  color: #888;
-  background: #fff;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
   padding: 1px 7px;
   border-radius: 999px;
 }
 .menu-btn {
   background: none;
   border: none;
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 14px;
   padding: 0 4px;
 }
 .column-menu {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 6px;
   padding: 8px 10px;
   margin-bottom: 8px;
@@ -412,7 +415,8 @@ onUnmounted(() => disconnect?.());
   min-height: 8px;
 }
 .card {
-  background: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
   border-radius: 6px;
   padding: 8px 10px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
@@ -433,8 +437,8 @@ onUnmounted(() => disconnect?.());
 }
 .badge {
   font-size: 10px;
-  color: #a3410c;
-  background: #fdecdc;
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
   padding: 1px 6px;
   border-radius: 999px;
   font-weight: 600;
@@ -443,7 +447,7 @@ onUnmounted(() => disconnect?.());
 .hide-btn {
   background: none;
   border: none;
-  color: #bbb;
+  color: var(--color-text-faint);
   font-size: 11px;
   flex-shrink: 0;
   opacity: 0;
@@ -452,23 +456,23 @@ onUnmounted(() => disconnect?.());
   opacity: 1;
 }
 .hide-btn:hover {
-  color: #d1344b;
+  color: var(--color-danger);
 }
 .add-card-btn {
   width: 100%;
   background: none;
-  border: 1px dashed #c5c8d1;
+  border: 1px dashed var(--color-border);
   border-radius: 6px;
   padding: 6px;
   font-size: 12px;
-  color: #666;
+  color: var(--color-text-secondary);
   margin-top: 6px;
 }
 .add-card-btn:hover {
-  background: #fff;
+  background: var(--color-surface);
 }
 .new-card-form {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 6px;
   padding: 8px;
   margin-top: 6px;
@@ -479,15 +483,18 @@ onUnmounted(() => disconnect?.());
 .new-card-form input,
 .new-card-form textarea {
   padding: 5px 7px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 4px;
   font-size: 12px;
   font-family: inherit;
   resize: vertical;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .pick-refs-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
   padding: 5px 7px;
   font-size: 12px;
@@ -498,7 +505,7 @@ onUnmounted(() => disconnect?.());
   gap: 6px;
 }
 .new-card-actions button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 5px 12px;
@@ -506,16 +513,16 @@ onUnmounted(() => disconnect?.());
   font-size: 12px;
 }
 .new-card-actions button.secondary {
-  background: #fff;
-  color: #888;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>
