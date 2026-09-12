@@ -596,9 +596,12 @@
   매칭 안 되고 큐 항목 없음 확인(세그먼트 경계가 의도대로 `/`를 안
   넘는지의 핵심 증거). 리터럴 `main` 프롬프트는 이번 변경과 무관하게
   회귀 없이 그대로 동작.
-
-### 추가 개발 계획
-`#hook-queue-ttl` - 상세는 [PLANS.md](PLANS.md) 참고.
+- [x] **대기열 만료/자동 정리(`#hook-queue-ttl`)** - 30일을 실제로
+  기다릴 수 없어 `triggeredAt`을 직접 31일 전으로 되돌려 재현:
+  `acknowledged` 처리한 오래된 항목은 그대로 유지, `pending`인
+  오래된 항목만 `expired`로 전이, 최근 `pending` 항목은 안 바뀌는지
+  확인. `hook queue --status expired` 필터가 코드 변경 없이 바로
+  동작하는지 확인.
 
 ---
 

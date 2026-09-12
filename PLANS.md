@@ -52,7 +52,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 19 | ✅ | `#git-publish-pr-draft` | 의도된 설계로 재확인 - 자동 PR 생성은 범위 밖(문서만 정리, 코드 변경 없음) |
 | 20 | ✅ | `#hook-prompt-update` | PushHookPrompt 부분 갱신(update) - 브랜치/프롬프트 내용, CLI/MCP |
 | 21 | ✅ | `#hook-branch-pattern` | 브랜치 조건에 `*` glob 패턴 지원(예: `release/*`, 세그먼트 안에서만) |
-| 22 | ⬜ | `#hook-queue-ttl` | push 훅 대기열 만료/자동 정리 없음 |
+| 22 | ✅ | `#hook-queue-ttl` | pending 30일 방치 시 자동 expired 전이(주기 워커, 삭제 아님) |
 | 23 | ⬜ | `#template-history` | 템플릿 변경 이력(리비전) 없음 |
 | 24 | ⬜ | `#migrate-idempotent` | 가이디드 마이그레이션 재실행이 멱등하지 않음 |
 | 25 | ⬜ | `#migrate-status-mapping-preset` | 마이그레이션 상태 매핑 프리셋 없음 |
@@ -87,12 +87,6 @@ revisions/source-links/access/folder, 두 bulk 라우트 포함) 전부가
 바꾸면 중복 조회도 없어지고 장애 중에도 기존 문서 수정/삭제/전이가
 막히지 않게 되지만, 15개 이상의 라우트를 건드리는 변경이라 별도
 라운드로 남겨둔다.
-
-## 10. push 훅 자동화
-
-### `#hook-queue-ttl`
-**대기열 항목에 만료/자동 정리가 없다** - 아무도 안 봐서 영원히
-pending으로 남는 항목이 쌓일 수 있다(정리 명령이나 TTL 없음).
 
 ## 11. 템플릿 관리
 

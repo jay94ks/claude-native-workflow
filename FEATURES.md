@@ -375,6 +375,10 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   커버하는 Gitea 시스템 웹훅 1개**로 이뤄진다(서버 부팅 시 자동
   등록·멱등) - `repository.name`만으로 어느 프로젝트의 어떤 종류
   저장소(self_hosted/mirror/work)인지 순수 파싱.
+- 대기열 항목은 `pending`으로 30일 넘게 방치되면 매일 도는 주기
+  워커가 자동으로 `expired`로 전이한다(삭제 아님 - `hook queue
+  --status expired`로 계속 조회 가능). 이미 `acknowledged`된 항목은
+  대상에서 제외(진행 중인 작업을 임의로 만료 취급하지 않음).
 
 ## 15. Gitea 사용자 계정 마스터링
 

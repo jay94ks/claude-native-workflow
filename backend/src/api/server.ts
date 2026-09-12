@@ -186,6 +186,7 @@ import {
   listPushHookPrompts,
   updatePushHookPrompt,
   deletePushHookPrompt,
+  expireStalePushHookQueueEntries,
   listQueueEntries,
   acknowledgeQueueEntry,
   completeQueueEntry,
@@ -2797,6 +2798,13 @@ async function main() {
       .catch((err) => console.error("검색 동기화 큐 드레인 실패:", err))
       .finally(() => { draining = false; });
   }, 30_000);
+
+  // push 훅 대기열 중 아무도 안 봐서 영원히 pending으로 남는 항목을
+  // 주기적으로 expired 처리한다(#hook-queue-ttl) - TTL이 30일 단위라
+  // 하루에 한 번이면 충분하다.
+  setInterval(() => {
+    expireStalePushHookQueueEntries().catch((err) => console.error("push 훅 대기열 만료 처리 실패:", err));
+  }, 24 * 60 * 60 * 1000);
 
   const port = Number(process.env.PORT ?? 8760);
   const host = process.env.HOST ?? "127.0.0.1";

@@ -132,3 +132,22 @@ export async function acknowledgeQueueEntry(id: string, projectId: string): Prom
 export async function completeQueueEntry(id: string, projectId: string): Promise<void> {
   await transitionQueueEntry(id, projectId, ["pending", "acknowledged"], "done");
 }
+
+const PUSH_HOOK_QUEUE_TTL_DAYS = 30;
+
+/** pending 상태로 TTL_DAYS 넘게 방치된 큐 항목을 "expired"로 전이한다 -
+ * 아무도 그 프로젝트를 다시 안 열어 영원히 pending으로 쌓이는 걸
+ * 막는다(삭제 대신 상태만 바꿔 감사 기록은 남김 - 문서를 archived로
+ * 보관하는 것과 같은 이 저장소의 소프트 정리 원칙). `acknowledged`는
+ * 이미 사람/세션이 관여한 흔적이라 TTL 대상에서 제외 - 진행 중인
+ * 작업을 임의로 만료 취급하면 안 된다. server.ts의 주기 워커가
+ * 호출한다. */
+export async function expireStalePushHookQueueEntries(): Promise<number> {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - PUSH_HOOK_QUEUE_TTL_DAYS * 24 * 60 * 60 * 1000);
+  const result = await db.pushHookQueueEntry.updateMany({
+    where: { status: "pending", triggeredAt: { lt: cutoff } },
+    data: { status: "expired" },
+  });
+  return result.count;
+}

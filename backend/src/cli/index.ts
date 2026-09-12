@@ -1302,7 +1302,7 @@ hookCmd
 
 hookCmd
   .command("queue <projectId>")
-  .option("--status <s>", "pending|acknowledged|done(생략하면 전체)")
+  .option("--status <s>", "pending|acknowledged|done|expired(생략하면 전체) - pending으로 30일 넘게 방치된 항목은 자동으로 expired 처리됨")
   .action((projectId, opts) => {
     const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
     return run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-queue${qs}`)));

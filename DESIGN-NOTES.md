@@ -3584,6 +3584,42 @@ git은 어차피 `release/1.0`과 `release/1.0/hotfix`를 동시에 허용
 --noEmit`, `npm run audit:cli-mcp`(새 파라미터 없음 - 그대로 통과)
 클린.
 
+## push 훅 대기열 만료/자동 정리(`#hook-queue-ttl`) - 완료 (2026-09-12)
+
+PLANS.md 22번(`## 10. push 훅 자동화`, 이 섹션의 마지막 항목이라
+헤더도 함께 제거). `PushHookQueueEntry`는 그 프로젝트를 다시 여는
+세션이 ack/done 처리해주는 걸 전제로 하는데, 아무도 다시 안 열면
+영원히 `pending`으로 쌓였다 - 정리 명령/TTL이 없었다.
+
+**삭제 대신 상태 전이(소프트 정리)** - 문서를 archived로 보관하고
+프로젝트/팀을 hidden으로 감추는 이 저장소의 기존 원칙과 같은 방향.
+`status` 컬럼이 이미 자유 문자열(`String @default("pending")`)이라
+**스키마 변경 없이**(3개 `.prisma` 파일의 주석만 `pending |
+acknowledged | done | expired`로 갱신) 새 값 `expired`를 그대로
+쓸 수 있었다.
+
+`core/pushHookPrompts.ts`에 `expireStalePushHookQueueEntries()` 신설
+- `pending` 상태로 30일(`PUSH_HOOK_QUEUE_TTL_DAYS`) 넘게 방치된
+항목만 `expired`로 전이. **`acknowledged`는 대상에서 제외** - 이미
+사람/세션이 관여한 흔적이라 임의로 만료 취급하면 진행 중인 작업을
+지워버리는 셈이 된다. `server.ts`에 `core/searchSyncQueue.ts`의
+주기 워커(`#meilisearch-spof`)와 같은 패턴으로 `setInterval`(24시간
+주기 - TTL 자체가 30일 단위라 짧은 주기 불필요) 등록. 기존 `hook
+queue --status <s>`가 이미 임의 문자열을 그대로 필터로 받는 구조라
+`--status expired`가 코드 변경 없이 바로 동작 - 새 라우트/CLI/MCP
+커맨드 불필요, `--status` 옵션 설명 문구만 갱신.
+
+**실측 검증**: 30일을 실제로 기다릴 수 없어 DB에서
+`triggeredAt`을 직접 31일 전으로 되돌려 재현 - `acknowledged` 처리한
+항목 1개 + `pending`인 항목 1개를 각각 backdate하고, 다른
+`pending` 항목 1개는 최근 그대로 둔 채 `expireStalePushHookQueueEntries()`
+를 컨테이너 안에서 직접 호출: 반환값 `1`(정확히 pending+오래된
+것 하나만), 이후 조회로 `acknowledged`는 그대로 `acknowledged`,
+최근 `pending`은 그대로 `pending`, backdate된 `pending`만
+`expired`로 바뀐 것 확인 - `hook queue --status expired` 필터로도
+정확히 그 항목만 걸러지는지 확인. `npx tsc --noEmit`, `npm run
+audit:cli-mcp` 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
