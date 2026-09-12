@@ -3654,6 +3654,57 @@ CLI `migrate scan --no-status-preset`, MCP `migrate_scan`의
 `applyStatusPreset:false`로 별도 확인. `npx tsc --noEmit`, `npm run
 audit:cli-mcp` 클린.
 
+## 대량 문서 목록 미페이지네이션 지점 제거(`#large-list-pagination`) - 완료 (2026-09-12)
+
+PLANS.md 27번(`## 13. 웹 UI 전반`). 다음 백로그 항목이었던
+`#responsive-dark-mode`는 설계자에게 직접 확인 후(프론트엔드 43개
+Vue 컴포넌트 전부가 공유 테마 체계 없이 `<style scoped>`에 색상을
+하드코딩한 상태라 다른 라운드들보다 훨씬 큰 재설계가 필요 - 설계자가
+"실제 필요 여부는 설계자 판단"이라고 이미 명시해둔 항목이기도 함)
+지금은 보류하기로 하고 건너뜀 - 이 항목으로 진행.
+
+코드 확인 결과, 핵심 문서 목록 화면(`DocumentsView.vue`, 사이드바
+`DocumentExplorer.vue`)은 이전 라운드에서 이미 `/documents/page`
+페이지네이션을 쓰고 있었다. 실제로 안 쓰이던 곳 둘: (1)
+`EntityPickerDialog.vue`의 `document` kind(Q&A 근거/칸반 카드
+근거/접근 권한 대상 문서 등 여러 화면이 공유하는 범용 선택기)가
+`GET /projects/:id/documents`(페이지 없는 전체 배열, Meilisearch가
+갖고 있는 본문 포함 전체 필드)를 매번 통째로 받아 클라이언트에서
+문자열 필터만 하고 있었다. (2) `ChangeTrackingView.vue`의 "문서
+버전 이력" 절의 네이티브 `<select>`도 같은 전체 배열로 옵션을
+채웠다. 폴더는 트리 구조라(오프셋 페이지네이션이 자연스럽지 않고,
+프로젝트당 개수도 문서보다 훨씬 작게 유지되는 게 보통이라) 이번
+범위에서 뺐다.
+
+**새 백엔드 라우트/스키마 없이 기존 엔드포인트만 재사용** -
+`EntityPickerDialog.vue`는 검색어가 없으면 `DocumentsView.vue`가
+이미 쓰는 `/documents/page?page=1&pageSize=50`, 검색어가 있으면
+사이드바 검색과 같은 `/search?q=...`(Meilisearch 전문검색, 300ms
+디바운스)를 부른다. 서버가 이미 걸러준 결과라 `document` kind에
+한해 기존 클라이언트 측 라벨 문자열 필터를 건너뛰게 했다 - 안
+그러면 Meilisearch가 본문 내용으로 매치시켜준 문서가 라벨(추적코드
++제목)엔 그 검색어가 없어 클라이언트 필터가 다시 지워버리는
+불일치가 생긴다(실측으로 확인한 실제 위험 - 아래 검증 참고).
+`ChangeTrackingView.vue`는 네이티브 `<select>`+전체 배열 fetch를
+완전히 걷어내고, 이 저장소 전역에서 "문서 참조 고르기"에 이미
+쓰이는 `useEntityPickerStore()`(`QAPanel.vue`의 "근거 추가"와 같은
+패턴)를 재사용 - 선택된 문서의 표시 라벨은 이미 리비전 조회가
+받아오는 `GET /documents/:trackingCode` 응답의 `title`을 그대로
+쓰고(새 호출 불필요), "선택 해제" 버튼으로 기존 빈 옵션과 같은
+기능을 유지했다.
+
+**실측 검증**: 문서 5개(그중 1개는 제목엔 없고 본문에만 있는
+고유 키워드 포함)를 가진 프로젝트로 브라우저 실측. Q&A "근거 추가"
+다이얼로그를 열자 네트워크 탭에 `/documents/page?...pageSize=50`
+(전체 배열 아님)만 찍히는 것 확인 → 그 본문 전용 키워드로 검색하니
+`/search?q=...` 호출로 전환되고, 그 문서가 결과에 정확히 남아있는
+것을 스크린샷으로 확인(클라이언트 재필터로 사라졌다면 여기서
+빠졌을 것). 변경 추적 화면에서 "문서 선택..." 버튼 → 같은
+다이얼로그로 문서를 고르니 버튼이 "문서 바꾸기..."로 바뀌고
+추적코드+제목 라벨과 "선택 해제" 버튼이 나타남 → 리비전 비교가
+정상 동작 → "선택 해제" 클릭 시 원래 상태로 복귀 확인.
+`npx vue-tsc -b`(frontend) 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

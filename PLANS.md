@@ -57,7 +57,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 24 | ⬜ | `#migrate-idempotent` | 가이디드 마이그레이션 재실행이 멱등하지 않음 |
 | 25 | ✅ | `#migrate-status-mapping-preset` | 옛 상태 어휘(active/wip 등) → 표준 코드 자동 제안(`--no-status-preset`으로 끌 수 있음) |
 | 26 | ⬜ | `#responsive-dark-mode` | 반응형/다크 모드 미지원 |
-| 27 | ⬜ | `#large-list-pagination` | 대량 목록 페이지네이션 미확인 |
+| 27 | ✅ | `#large-list-pagination` | 문서 참조 선택기/변경 추적 문서 이력 선택도 검색·페이지네이션 기반으로 전환(폴더는 트리 구조라 범위 밖) |
 | 28 | ✅ | `#private-visibility-default` | 팀/그룹/프로젝트 기본 비공개 가시성(소속 없으면 안 보임, 공개 설정 시 예외) |
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
 | 30 | ⬜ | `#document-write-gate-bypass-search` | 문서 수정/삭제/전이 등의 사전 권한 확인이 검색 엔진을 거쳐 Meilisearch 장애 중엔 아예 막힘(생성만 예외) |
@@ -110,8 +110,4 @@ revisions/source-links/access/folder, 두 bulk 라우트 포함) 전부가
 검증했다. 개인 설치형 도구라 우선순위는 낮을 수 있지만, 실제 필요
 여부는 설계자 판단.
 
-### `#large-list-pagination`
-**문서/폴더 대량 목록에서의 페이지네이션이 안 보인다** - 코드 확인
-필요(목록이 전부 한 번에 로드되는 구조로 보임) - 문서 수가 많아지면
-초기 로드가 느려질 수 있다.
 

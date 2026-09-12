@@ -4,11 +4,13 @@ import { apiCall, apiCallText, ApiError } from "../api/client";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { diffLines } from "diff";
 import { useNicknamesStore } from "../stores/nicknames";
+import { useEntityPickerStore } from "../stores/entityPicker";
 import { parseUnifiedDiff, type FileDiff } from "../utils/diffParse";
 import DiffFileList from "../components/DiffFileList.vue";
 
 const props = defineProps<{ id: string }>();
 const nicknames = useNicknamesStore();
+const entityPicker = useEntityPickerStore();
 
 // ---------------------------------------------------------------- git 커밋 로그
 
@@ -85,12 +87,9 @@ const commitFiles = computed<FileDiff[]>(() => parseUnifiedDiff(diffText.value))
 
 // ---------------------------------------------------------------- 문서 버전 이력
 
-interface DocumentSummary {
-  trackingCode: string;
-  title: string;
-}
 interface DocumentDetail {
   trackingCode: string;
+  title: string;
   body: string;
 }
 interface Revision {
@@ -105,25 +104,32 @@ interface TimelineEntry {
   body: string;
 }
 
-const documents = ref<DocumentSummary[]>([]);
 const selectedDoc = ref("");
+// 선택한 문서의 표시 라벨(추적코드+제목) - 별도 조회 없이 loadRevisions()
+// 가 이미 받아오는 DocumentDetail.title을 그대로 재사용한다.
+const selectedDocTitle = ref("");
 const timeline = ref<TimelineEntry[]>([]);
 const fromId = ref("");
 const toId = ref("");
 const revisionsError = ref("");
 const revisionsLoading = ref(false);
 
-async function loadDocuments() {
-  try {
-    documents.value = await apiCall<DocumentSummary[]>(`/projects/${props.id}/documents`);
-  } catch (err) {
-    revisionsError.value = err instanceof ApiError ? err.message : "문서 목록을 불러오지 못했습니다";
-  }
+// 문서가 많은 프로젝트에서 전체 목록을 한 번에 안 받도록(#large-list-
+// pagination), 여러 화면이 이미 공유하는 검색 기반 선택기(EntityPickerDialog)
+// 를 그대로 재사용한다 - QAPanel.vue의 "근거 추가"와 같은 패턴.
+async function pickDocument() {
+  const result = await entityPicker.pick({ kind: "document", projectId: props.id, multi: false, allowManualEntry: false });
+  if (result && result[0]) selectedDoc.value = result[0];
+}
+
+function clearSelectedDoc() {
+  selectedDoc.value = "";
 }
 
 async function loadRevisions() {
   if (!selectedDoc.value) {
     timeline.value = [];
+    selectedDocTitle.value = "";
     return;
   }
   revisionsLoading.value = true;
@@ -133,6 +139,7 @@ async function loadRevisions() {
       apiCall<Revision[]>(`/documents/${selectedDoc.value}/revisions`),
       apiCall<DocumentDetail>(`/documents/${selectedDoc.value}`),
     ]);
+    selectedDocTitle.value = doc.title;
     await Promise.all(revisions.map((r) => nicknames.ensure(r.editedBy)));
     const entries: TimelineEntry[] = revisions.map((r) => ({
       id: r.id,
@@ -188,7 +195,6 @@ let disconnect: (() => void) | null = null;
 
 onMounted(async () => {
   await checkRepo();
-  await loadDocuments();
   if (hasRepo.value) await loadCommits();
 
   disconnect = await connectProjectRealtime(props.id, {
@@ -257,12 +263,9 @@ onUnmounted(() => disconnect?.());
     <h2>문서 버전 이력</h2>
     <p v-if="revisionsError" class="error">{{ revisionsError }}</p>
     <div class="filter-row">
-      <select v-model="selectedDoc">
-        <option value="">문서 선택</option>
-        <option v-for="d in documents" :key="d.trackingCode" :value="d.trackingCode">
-          {{ d.trackingCode }} · {{ d.title }}
-        </option>
-      </select>
+      <button type="button" @click="pickDocument">{{ selectedDoc ? "문서 바꾸기..." : "문서 선택..." }}</button>
+      <span v-if="selectedDoc" class="selected-doc-label">{{ selectedDoc }} · {{ selectedDocTitle }}</span>
+      <button v-if="selectedDoc" type="button" class="clear-btn" @click="clearSelectedDoc">선택 해제</button>
     </div>
     <p v-if="revisionsLoading">불러오는 중...</p>
     <template v-else-if="selectedDoc">
@@ -364,6 +367,20 @@ section {
   padding: 6px 10px;
   border: 1px solid #d8dae0;
   border-radius: 6px;
+}
+.filter-row button {
+  padding: 6px 10px;
+  border: 1px solid #d8dae0;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+}
+.selected-doc-label {
+  font-size: 13px;
+}
+.clear-btn {
+  color: #d1344b;
+  border-color: #d1344b !important;
 }
 .muted {
   color: #888;

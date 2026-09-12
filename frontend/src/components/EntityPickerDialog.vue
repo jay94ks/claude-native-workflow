@@ -80,6 +80,27 @@ function selectTreeFile(path: string) {
   selected.value = new Set([path]);
 }
 
+interface DocumentPage {
+  items: DocumentSummary[];
+}
+
+// document kind는 프로젝트 문서가 많을 수 있어(#large-list-pagination)
+// 전체 배열을 한 번에 안 받는다 - 검색어가 없으면 최근 문서 페이지
+// (DocumentsView.vue가 이미 쓰는 라우트), 있으면 Meilisearch 전문검색
+// (사이드바 검색과 같은 라우트)로 서버가 직접 추려서 돌려준다.
+async function loadDocuments(): Promise<void> {
+  const options = store.options;
+  if (!options) return;
+  const q = search.value.trim();
+  if (q) {
+    const results = await apiCall<DocumentSummary[]>(`/projects/${options.projectId ?? ""}/search?q=${encodeURIComponent(q)}`);
+    items.value = results.map((d) => ({ key: d.trackingCode, label: `${d.trackingCode} · ${d.title}` }));
+  } else {
+    const page = await apiCall<DocumentPage>(`/projects/${options.projectId ?? ""}/documents/page?page=1&pageSize=50`);
+    items.value = page.items.map((d) => ({ key: d.trackingCode, label: `${d.trackingCode} · ${d.title}` }));
+  }
+}
+
 async function load() {
   const options = store.options;
   if (!options) return;
@@ -87,8 +108,7 @@ async function load() {
   error.value = "";
   try {
     if (options.kind === "document") {
-      const docs = await apiCall<DocumentSummary[]>(`/projects/${options.projectId ?? ""}/documents`);
-      items.value = docs.map((d) => ({ key: d.trackingCode, label: `${d.trackingCode} · ${d.title}` }));
+      await loadDocuments();
     } else if (options.kind === "user") {
       const users = await apiCall<UserListItem[]>(`/users?limit=100`);
       items.value = users.map((u) => ({ key: u.id, label: u.displayLabel }));
@@ -99,6 +119,20 @@ async function load() {
     loading.value = false;
   }
 }
+
+// document kind만 검색어 변경 시 서버에 다시 물어본다(디바운스) -
+// user/sourceFile은 이미 한 번 받은 목록을 클라이언트에서만 거른다.
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+watch(search, () => {
+  if (store.options?.kind !== "document") return;
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    loading.value = true;
+    loadDocuments()
+      .catch((err) => { error.value = err instanceof ApiError ? err.message : "목록을 불러오지 못했습니다"; })
+      .finally(() => { loading.value = false; });
+  }, 300);
+});
 
 watch(
   () => store.open,
@@ -117,7 +151,12 @@ watch(
   },
 );
 
+// document kind는 이미 서버(검색 또는 페이지 조회)가 걸러준 결과라
+// 여기서 다시 라벨 문자열로 필터하면 안 된다 - Meilisearch가 본문
+// 내용으로 매치시켜준 문서는 추적코드+제목 라벨엔 그 검색어가 없을
+// 수 있어, 그대로 필터링하면 방금 서버가 찾아준 결과가 다시 사라진다.
 const filteredItems = computed(() => {
+  if (store.options?.kind === "document") return items.value;
   const q = search.value.trim().toLowerCase();
   if (!q) return items.value;
   return items.value.filter((i) => i.label.toLowerCase().includes(q));

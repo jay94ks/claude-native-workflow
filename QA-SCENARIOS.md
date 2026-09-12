@@ -687,10 +687,18 @@
 - [ ] 반응형(모바일/태블릿 뷰포트)·다크 모드는 한 번도 점검한 적
   없다(디자인 자체가 데스크톱 전제로 쓰였을 가능성 높음 - 아래 개발
   계획 참고).
+- [x] **대량 문서 목록 미페이지네이션 지점 제거(`#large-list-pagination`)** -
+  문서 5개(그중 하나는 본문에만 있는 고유 키워드) 프로젝트로 실측:
+  Q&A "근거 추가" 다이얼로그(EntityPickerDialog, document kind)를
+  열 때 전체 배열이 아니라 `/documents/page?...pageSize=50`만
+  호출되는지, 검색어 입력 시 `/search?q=...`로 전환되고 본문 전용
+  키워드로 매치된 문서도 결과에 남는지(클라이언트 재필터로 안
+  사라지는지) 확인. 변경 추적의 "문서 버전 이력"도 네이티브
+  `<select>` 대신 같은 다이얼로그를 재사용 - 선택/표시/선택 해제
+  왕복 확인. 폴더는 트리 구조라 이번 범위 밖(별도 판단 필요).
 
 ### 추가 개발 계획
-`#responsive-dark-mode` `#large-list-pagination` - 상세는
-[PLANS.md](PLANS.md) 참고.
+`#responsive-dark-mode` - 상세는 [PLANS.md](PLANS.md) 참고.
 
 ---
 
