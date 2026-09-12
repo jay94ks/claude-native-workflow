@@ -567,6 +567,11 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   DB).
 - `docs auth login`으로 저장한 자격증명(`~/.claude-native-workflow/
   credentials.json`)을 CLI와 MCP가 공유.
+- **목록 명령 페이지네이션** - 배열을 반환하는 명령 대부분이
+  `--page`/`--count`(MCP는 `page`/`pageSize`)를 옵션으로 받는다 -
+  생략하면 기존처럼 전체 배열(문서 목록은 최대 1000건), 주면
+  `{items, page, pageSize, total, totalPages}` 응답으로 바뀐다(git
+  로그만 Gitea 제약으로 total 없이 `{items, hasMore}`).
 
 ## 21. 인프라 & 배포
 

@@ -855,6 +855,24 @@
   `key create/list/revoke`, `git my-token`) 적용 후 불일치 0 확인.
   CLI/MCP 각각에 임시 항목을 추가해 스크립트가 정확히 잡아내고
   `exitCode=1`이 되는지 양방향 실측 - 이번 세션에서 실측.
+- [x] **목록 명령 페이지네이션(`#list-pagination-options`)** - 배열을
+  반환하는 CLI/MCP 명령 약 29개 전부에 `--page`/`--count`(MCP는
+  `page`/`pageSize`) 추가. 대표 표본 실측: 문서 55건 프로젝트에서
+  `docs list`(기존 `/documents/page` 재사용, Tier A) 옵션 생략 시
+  기존과 동일한 배열, `--page 2 --count 20` 시 정확히 21~40번째
+  문서(`total=55`), 마지막 페이지(15건)·범위 밖 페이지(빈 배열,
+  에러 아님) 확인 - CLI 바이너리를 직접 실행해 옵션 파싱까지 왕복
+  검증. 칸반 카드(신규 `/kanban/cards/page`, Tier B, DB
+  skip/take)와 push 훅 큐(신규 라우트, 빈 목록에서도 `{items:[],
+  total:0}` 형태)도 같은 패턴으로 확인. 문서 전문검색은 같은
+  `/search` 라우트에 `page`/`pageSize`를 추가로 얹은 특수 케이스 -
+  옵션 유무로 배열↔페이지 객체가 정확히 갈리는지 확인. `git tree`
+  (Gitea Contents API 자체가 페이지를 지원 안 해 서버가 전체를
+  받아온 뒤 자르는 in-memory 방식)와 `git log`(Gitea가 총 개수를
+  안 줘서 `{items,hasMore}` 모양인 예외)도 실제 git 저장소를 연결한
+  프로젝트로 각각 왕복 검증. `npm run audit:cli-mcp`로 CLI 옵션과
+  MCP 파라미터가 전부 쌍으로 맞는지 확인(`key list`/`user list`는
+  기존 설계대로 CLI 전용이라 MCP 쪽 제외) - 이번 세션에서 실측.
 
 ---
 

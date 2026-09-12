@@ -173,7 +173,15 @@ userCmd
 userCmd
   .command("list")
   .description("전체 사용자 목록 조회(관리자 전용)")
-  .action(() => run(async () => printJson(await apiCall("/api/admin/users"))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/admin/users${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 userCmd
   .command("reset-password <userId>")
@@ -233,11 +241,15 @@ keyCmd
   .option("--project <id>")
   .option("--team <id>")
   .option("--mine", "개인 키(전체 프로젝트 접근) 목록")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
   .action((opts) =>
     run(async () => {
-      if (opts.project) { printJson(await apiCall(`/api/projects/${opts.project}/api-keys`)); return; }
-      if (opts.team) { printJson(await apiCall(`/api/teams/${opts.team}/api-keys`)); return; }
-      if (opts.mine) { printJson(await apiCall("/api/api-keys/personal")); return; }
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      if (opts.project) { printJson(await apiCall(`/api/projects/${opts.project}/api-keys${paged ? "/page" : ""}${qs}`)); return; }
+      if (opts.team) { printJson(await apiCall(`/api/teams/${opts.team}/api-keys${paged ? "/page" : ""}${qs}`)); return; }
+      if (opts.mine) { printJson(await apiCall(`/api/api-keys/personal${paged ? "/page" : ""}${qs}`)); return; }
       throw new Error("--project <id> | --team <id> | --mine 중 하나가 필요합니다");
     }),
   );
@@ -266,7 +278,17 @@ credCmd
     }),
   );
 
-credCmd.command("list").action(() => run(async () => printJson(await apiCall("/api/credentials"))));
+credCmd
+  .command("list")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/credentials${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 credCmd
   .command("remove <id>")
@@ -283,7 +305,17 @@ program
     ),
   );
 
-program.command("teams").action(() => run(async () => printJson(await apiCall("/api/teams"))));
+program
+  .command("teams")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/teams${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("team-update <teamId>")
@@ -311,7 +343,15 @@ program
 
 program
   .command("team-members <teamId>")
-  .action((teamId) => run(async () => printJson(await apiCall(`/api/teams/${teamId}/members`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((teamId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/teams/${teamId}/members${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("team-admin-add <teamId> <userId>")
@@ -329,7 +369,15 @@ program
 
 program
   .command("team-admins <teamId>")
-  .action((teamId) => run(async () => printJson(await apiCall(`/api/teams/${teamId}/admins`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((teamId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/teams/${teamId}/admins${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("group-create <name>")
@@ -346,7 +394,17 @@ program
     ),
   );
 
-program.command("groups").action(() => run(async () => printJson(await apiCall("/api/project-groups"))));
+program
+  .command("groups")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/project-groups${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("group-update <groupId>")
@@ -377,7 +435,15 @@ program
 
 program
   .command("group-members <groupId>")
-  .action((groupId) => run(async () => printJson(await apiCall(`/api/project-groups/${groupId}/members`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((groupId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/project-groups/${groupId}/members${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("group-admin-add <groupId> <userId>")
@@ -397,7 +463,15 @@ program
 
 program
   .command("group-admins <groupId>")
-  .action((groupId) => run(async () => printJson(await apiCall(`/api/project-groups/${groupId}/admins`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((groupId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/project-groups/${groupId}/admins${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("project-create <name>")
@@ -414,7 +488,17 @@ program
     ),
   );
 
-program.command("projects").action(() => run(async () => printJson(await apiCall("/api/projects"))));
+program
+  .command("projects")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/projects${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("project <projectId>")
@@ -471,7 +555,15 @@ program
 
 program
   .command("members <projectId>")
-  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/members`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/projects/${projectId}/members${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("member-set-role <projectId> <userId> <role>")
@@ -512,7 +604,15 @@ program
 
 program
   .command("doctypes <projectId>")
-  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/doc-types`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/projects/${projectId}/doc-types${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("doctype-update <projectId> <docTypeId>")
@@ -575,17 +675,33 @@ program
 program
   .command("list <projectId>")
   .option("--type <docTypeId>")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열(최대 1000건)")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
   .action((projectId, opts) =>
     run(async () => {
-      const qs = opts.type ? `?docTypeId=${encodeURIComponent(opts.type)}` : "";
-      printJson(await apiCall(`/api/projects/${projectId}/documents${qs}`));
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = new URLSearchParams({
+        ...(opts.type ? { docTypeId: opts.type } : {}),
+        ...(paged ? { page: opts.page ?? "1", pageSize: opts.count ?? "20" } : {}),
+      });
+      const suffix = paged ? "/page" : "";
+      printJson(await apiCall(`/api/projects/${projectId}/documents${suffix}${qs.toString() ? `?${qs}` : ""}`));
     }),
   );
 
 program
   .command("search <projectId> <query>")
-  .action((projectId, query) =>
-    run(async () => printJson(await apiCall(`/api/projects/${projectId}/search?q=${encodeURIComponent(query)}`))),
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 관련도 상위 50건")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((projectId, query, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = new URLSearchParams({
+        q: query,
+        ...(paged ? { page: opts.page ?? "1", pageSize: opts.count ?? "20" } : {}),
+      });
+      printJson(await apiCall(`/api/projects/${projectId}/search?${qs}`));
+    }),
   );
 
 program
@@ -657,11 +773,27 @@ program
 
 program
   .command("backlinks <trackingCode>")
-  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/backlinks`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((trackingCode, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/documents/${trackingCode}/backlinks${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("revisions <trackingCode>")
-  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/revisions`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((trackingCode, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/documents/${trackingCode}/revisions${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("delete <trackingCode>")
@@ -705,7 +837,15 @@ program
 program
   .command("source-links <trackingCode>")
   .description("이 문서와 연관된 소스코드 파일 경로 목록")
-  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/source-links`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((trackingCode, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/documents/${trackingCode}/source-links${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 // ---------------------------------------------------------------- 세부 접근 권한
 
@@ -743,7 +883,15 @@ program
 
 program
   .command("access-list <projectId>")
-  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/access`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/projects/${projectId}/access${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("access-overview")
@@ -758,7 +906,15 @@ program
 program
   .command("kanban-columns <projectId>")
   .description("이 프로젝트의 칸반 분류 목록(순서/숨김은 이 계정 기준)")
-  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/kanban/columns`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/projects/${projectId}/kanban/columns${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("kanban-card-new <projectId> <columnId> <title>")
@@ -786,10 +942,17 @@ program
   .command("kanban-cards <projectId>")
   .description("칸반 카드 목록(숨긴 카드 제외)")
   .option("--column <columnId>", "특정 분류로 제한")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
   .action((projectId, opts) =>
     run(async () => {
-      const qs = opts.column ? `?columnId=${opts.column}` : "";
-      printJson(await apiCall(`/api/projects/${projectId}/kanban/cards${qs}`));
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = new URLSearchParams({
+        ...(opts.column ? { columnId: opts.column } : {}),
+        ...(paged ? { page: opts.page ?? "1", pageSize: opts.count ?? "20" } : {}),
+      });
+      const suffix = paged ? "/page" : "";
+      printJson(await apiCall(`/api/projects/${projectId}/kanban/cards${suffix}${qs.toString() ? `?${qs}` : ""}`));
     }),
   );
 
@@ -893,14 +1056,34 @@ program
 
 program
   .command("questions <trackingCode>")
-  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/questions?trackingCode=${trackingCode}`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((trackingCode, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      if (paged) {
+        const qs = new URLSearchParams({ trackingCode, page: opts.page ?? "1", pageSize: opts.count ?? "20" });
+        printJson(await apiCall(`/api/questions/page?${qs}`));
+        return;
+      }
+      printJson(await apiCall(`/api/questions?trackingCode=${trackingCode}`));
+    }),
+  );
 
 program
   .command("questions-source <projectId> <path>")
-  .action((projectId, path) =>
-    run(async () =>
-      printJson(await apiCall(`/api/projects/${projectId}/questions/source?path=${encodeURIComponent(path)}`)),
-    ),
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((projectId, path, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      if (paged) {
+        const qs = new URLSearchParams({ path, page: opts.page ?? "1", pageSize: opts.count ?? "20" });
+        printJson(await apiCall(`/api/projects/${projectId}/questions/source/page?${qs}`));
+        return;
+      }
+      printJson(await apiCall(`/api/projects/${projectId}/questions/source?path=${encodeURIComponent(path)}`));
+    }),
   );
 
 program
@@ -928,7 +1111,15 @@ program
 
 program
   .command("pending <projectId>")
-  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/pending`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/projects/${projectId}/pending${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 program
   .command("reply <questionTrackingCode> [answer...]")
@@ -1003,15 +1194,19 @@ templateCmd
   .option("--project <id>", "이 프로젝트 스코프의 override 이력")
   .option("--group <id>", "이 프로젝트 그룹 스코프의 override 이력")
   .option("--team <id>", "이 팀 스코프의 override 이력")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
   .action((filename, opts) =>
     run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
       const qs = new URLSearchParams({
         filename,
         ...(opts.team ? { teamId: opts.team } : {}),
         ...(opts.group ? { projectGroupId: opts.group } : {}),
         ...(opts.project ? { projectId: opts.project } : {}),
+        ...(paged ? { page: opts.page ?? "1", pageSize: opts.count ?? "20" } : {}),
       });
-      printJson(await apiCall(`/api/templates/revisions?${qs}`));
+      printJson(await apiCall(`/api/templates/revisions${paged ? "/page" : ""}?${qs}`));
     }),
   );
 
@@ -1151,9 +1346,16 @@ gitCmd
 gitCmd
   .command("log <projectId>")
   .option("--ref <ref>", "브랜치/커밋 ref(생략하면 기본 브랜치)")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답을 받는다(Gitea 제약으로 total은 없음, hasMore만), 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
   .action((projectId, opts) => {
-    const qs = opts.ref ? `?ref=${encodeURIComponent(opts.ref)}` : "";
-    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/log${qs}`)));
+    const paged = opts.page !== undefined || opts.count !== undefined;
+    const qs = new URLSearchParams({
+      ...(opts.ref ? { ref: opts.ref } : {}),
+      ...(paged ? { page: opts.page ?? "1", pageSize: opts.count ?? "20" } : {}),
+    });
+    const suffix = paged ? "/page" : "";
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/log${suffix}${qs.toString() ? `?${qs}` : ""}`)));
   });
 
 gitCmd
@@ -1176,9 +1378,17 @@ gitCmd
   .command("tree <projectId>")
   .option("--path <path>", "디렉터리 경로(생략하면 루트)", "")
   .option("--ref <ref>")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
   .action((projectId, opts) => {
-    const qs = new URLSearchParams({ path: opts.path, ...(opts.ref ? { ref: opts.ref } : {}) });
-    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/tree?${qs}`)));
+    const paged = opts.page !== undefined || opts.count !== undefined;
+    const qs = new URLSearchParams({
+      path: opts.path,
+      ...(opts.ref ? { ref: opts.ref } : {}),
+      ...(paged ? { page: opts.page ?? "1", pageSize: opts.count ?? "20" } : {}),
+    });
+    const suffix = paged ? "/page" : "";
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/tree${suffix}?${qs}`)));
   });
 
 gitCmd
@@ -1243,7 +1453,15 @@ hookCmd
 
 hookCmd
   .command("list <projectId>")
-  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-prompts`))));
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const paged = opts.page !== undefined || opts.count !== undefined;
+      const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
+      printJson(await apiCall(`/api/projects/${projectId}/push-hook-prompts${paged ? "/page" : ""}${qs}`));
+    }),
+  );
 
 hookCmd
   .command("update <projectId> <id>")
@@ -1270,9 +1488,16 @@ hookCmd
 hookCmd
   .command("queue <projectId>")
   .option("--status <s>", "pending|acknowledged|done|expired(생략하면 전체) - pending으로 30일 넘게 방치된 항목은 자동으로 expired 처리됨")
+  .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
   .action((projectId, opts) => {
-    const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
-    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-queue${qs}`)));
+    const paged = opts.page !== undefined || opts.count !== undefined;
+    const qs = new URLSearchParams({
+      ...(opts.status ? { status: opts.status } : {}),
+      ...(paged ? { page: opts.page ?? "1", pageSize: opts.count ?? "20" } : {}),
+    });
+    const suffix = paged ? "/page" : "";
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/push-hook-queue${suffix}${qs.toString() ? `?${qs}` : ""}`)));
   });
 
 hookCmd
@@ -1291,8 +1516,22 @@ const messageCmd = program.command("message").description("인스턴스 메시�
 messageCmd
   .command("list <projectId>")
   .option("--status <s>", "pending|processing|delivered|all(기본 all)")
+  .option(
+    "--page <n>",
+    "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열. 주의: 페이지네이션 응답에선 deliveredAt 자동 갱신이 안 됨(웹 화면과 공유하는 라우트라 markDelivered 미지원)",
+  )
+  .option("--count <n>", "페이지당 개수(--page와 함께)")
   .description("CLI로 조회해도 상태는 안 바뀐다(읽음은 ack와 별개) - 대기 상태였던 메시지의 deliveredAt만 자동 갱신")
   .action((projectId, opts) => {
+    const paged = opts.page !== undefined || opts.count !== undefined;
+    if (paged) {
+      const qs = new URLSearchParams({
+        ...(opts.status ? { status: opts.status } : {}),
+        page: opts.page ?? "1",
+        pageSize: opts.count ?? "20",
+      });
+      return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages/page?${qs}`)));
+    }
     const qs = new URLSearchParams({ markDelivered: "true", ...(opts.status ? { status: opts.status } : {}) });
     return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages?${qs}`)));
   });

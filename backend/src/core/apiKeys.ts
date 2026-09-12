@@ -3,6 +3,7 @@ import { getDb } from "./db.js";
 import { getMemberRole } from "./members.js";
 import { isTeamAdmin } from "./teamAdmins.js";
 import type { KeyScope } from "./requestScope.js";
+import { paginate, type Page } from "./pagination.js";
 
 // API 키 3종(personal/project/team) - 전부 ownerId가 대행하는 신원이고
 // 스코프만 다르다(설계 원칙: "누구인지"가 아니라 "어디까지"를 제한).
@@ -133,6 +134,24 @@ export async function listProjectKeys(projectId: string, viewerId: string): Prom
   return rows.map(toDetail);
 }
 
+export async function listProjectKeysPaged(
+  projectId: string,
+  viewerId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<ApiKeyDetail>> {
+  const db = getDb();
+  const role = await getMemberRole(projectId, viewerId);
+  const where = role === "owner" ? { projectId, scope: "project" } : { projectId, scope: "project", ownerId: viewerId };
+  const result = await paginate<Parameters<typeof toDetail>[0]>(
+    (args) => db.apiKey.findMany({ where, orderBy: { createdAt: "desc" }, ...args }),
+    () => db.apiKey.count({ where }),
+    page,
+    pageSize,
+  );
+  return { ...result, items: result.items.map(toDetail) };
+}
+
 export async function listTeamKeys(teamId: string, viewerId: string): Promise<ApiKeyDetail[]> {
   if (!(await isTeamAdmin(teamId, viewerId))) {
     throw new ApiKeyError("이 팀의 팀장만 팀 관리 키 목록을 볼 수 있습니다");
@@ -142,6 +161,26 @@ export async function listTeamKeys(teamId: string, viewerId: string): Promise<Ap
   return rows.map(toDetail);
 }
 
+export async function listTeamKeysPaged(
+  teamId: string,
+  viewerId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<ApiKeyDetail>> {
+  if (!(await isTeamAdmin(teamId, viewerId))) {
+    throw new ApiKeyError("이 팀의 팀장만 팀 관리 키 목록을 볼 수 있습니다");
+  }
+  const db = getDb();
+  const where = { teamId, scope: "team" };
+  const result = await paginate<Parameters<typeof toDetail>[0]>(
+    (args) => db.apiKey.findMany({ where, orderBy: { createdAt: "desc" }, ...args }),
+    () => db.apiKey.count({ where }),
+    page,
+    pageSize,
+  );
+  return { ...result, items: result.items.map(toDetail) };
+}
+
 export async function listMyPersonalKeys(viewerId: string): Promise<ApiKeyDetail[]> {
   const db = getDb();
   const rows = await db.apiKey.findMany({
@@ -149,6 +188,18 @@ export async function listMyPersonalKeys(viewerId: string): Promise<ApiKeyDetail
     orderBy: { createdAt: "desc" },
   });
   return rows.map(toDetail);
+}
+
+export async function listMyPersonalKeysPaged(viewerId: string, page: number, pageSize: number): Promise<Page<ApiKeyDetail>> {
+  const db = getDb();
+  const where = { scope: "personal", ownerId: viewerId };
+  const result = await paginate<Parameters<typeof toDetail>[0]>(
+    (args) => db.apiKey.findMany({ where, orderBy: { createdAt: "desc" }, ...args }),
+    () => db.apiKey.count({ where }),
+    page,
+    pageSize,
+  );
+  return { ...result, items: result.items.map(toDetail) };
 }
 
 export async function getApiKeyById(keyId: string): Promise<ApiKeyDetail | null> {

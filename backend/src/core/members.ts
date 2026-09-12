@@ -2,6 +2,7 @@ import { getDb } from "./db.js";
 import { getActiveKeyScope } from "./requestScope.js";
 import { isSuperAdmin } from "./auth.js";
 import * as gitea from "./gitea.js";
+import { paginate, type Page } from "./pagination.js";
 
 const VALID_ROLES = new Set(["owner", "editor", "viewer"]);
 const ROLE_RANK: Record<string, number> = { viewer: 0, editor: 1, owner: 2 };
@@ -52,6 +53,16 @@ export async function listMembers(projectId: string): Promise<Member[]> {
   const db = getDb();
   const rows = await db.member.findMany({ where: { projectId } });
   return rows.map((r: Member) => ({ id: r.id, projectId: r.projectId, userId: r.userId, role: r.role }));
+}
+
+export async function listMembersPaged(projectId: string, page: number, pageSize: number): Promise<Page<Member>> {
+  const db = getDb();
+  return paginate(
+    (args) => db.member.findMany({ where: { projectId }, ...args }),
+    () => db.member.count({ where: { projectId } }),
+    page,
+    pageSize,
+  );
 }
 
 const GITEA_PERMISSION_BY_ROLE: Record<string, "read" | "write" | "admin"> = {

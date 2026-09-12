@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { paginate, type Page } from "./pagination.js";
 
 // 문서 ↔ "연관된 소스코드" 파일 경로 - git 저장소 루트 기준 상대 경로
 // 문자열만 저장한다(Gitea에 그 경로가 실제 존재하는지는 검증하지 않음 -
@@ -44,4 +45,24 @@ export async function listSourceLinks(trackingCode: string): Promise<SourceLinkD
   if (!document) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
   const rows = await db.documentSourceLink.findMany({ where: { documentId: document.id }, orderBy: { createdAt: "asc" } });
   return rows.map((r: SourceLinkDetail) => ({ id: r.id, filePath: r.filePath, createdBy: r.createdBy, createdAt: r.createdAt }));
+}
+
+export async function listSourceLinksPaged(
+  trackingCode: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<SourceLinkDetail>> {
+  const db = getDb();
+  const document = await db.document.findUnique({ where: { trackingCode } });
+  if (!document) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const result = await paginate<SourceLinkDetail>(
+    (args) => db.documentSourceLink.findMany({ where: { documentId: document.id }, orderBy: { createdAt: "asc" }, ...args }),
+    () => db.documentSourceLink.count({ where: { documentId: document.id } }),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: result.items.map((r: SourceLinkDetail) => ({ id: r.id, filePath: r.filePath, createdBy: r.createdBy, createdAt: r.createdAt })),
+  };
 }

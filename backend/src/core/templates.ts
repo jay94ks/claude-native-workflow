@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb } from "./db.js";
+import { paginate, type Page } from "./pagination.js";
 
 // CLAUDE.md/SKILL.md 같은 템플릿 파일을 DocType과 같은 스코프 패턴
 // (teamId?/projectGroupId?/projectId? 중 최대 하나)으로 저장한다.
@@ -158,6 +159,40 @@ export async function listTemplateRevisions(
     editedBy: r.editedBy,
     editedAt: r.editedAt.toISOString(),
   }));
+}
+
+export async function listTemplateRevisionsPaged(
+  filename: string,
+  scope: TemplateScopeInput,
+  page: number,
+  pageSize: number,
+): Promise<Page<TemplateRevisionSummary>> {
+  assertAtMostOneScope(scope);
+  const db = getDb();
+  const templateFile = await db.templateFile.findFirst({
+    where: {
+      teamId: scope.teamId ?? null,
+      projectGroupId: scope.projectGroupId ?? null,
+      projectId: scope.projectId ?? null,
+      filename,
+    },
+  });
+  if (!templateFile) return { items: [], page: Math.max(1, page), pageSize: Math.max(1, pageSize), total: 0, totalPages: 1 };
+  const result = await paginate<{ id: string; content: string; editedBy: string; editedAt: Date }>(
+    (args) => db.templateRevision.findMany({ where: { templateFileId: templateFile.id }, orderBy: { editedAt: "asc" }, ...args }),
+    () => db.templateRevision.count({ where: { templateFileId: templateFile.id } }),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: result.items.map((r: { id: string; content: string; editedBy: string; editedAt: Date }) => ({
+      id: r.id,
+      content: r.content,
+      editedBy: r.editedBy,
+      editedAt: r.editedAt.toISOString(),
+    })),
+  };
 }
 
 const SEED_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "prisma", "seed-templates");

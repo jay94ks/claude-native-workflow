@@ -2,6 +2,7 @@ import { getDb } from "./db.js";
 import { withTrackingCode } from "./tracking.js";
 import { sendMessage } from "./messages.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
+import { paginate, paginateInMemory, type Page } from "./pagination.js";
 
 // 프로젝트별 칸반 보드 - 컬럼(분류)은 프로젝트 공유 자원이고, "그 컬럼을
 // 내가 보는 순서/숨김 여부"만 설계자별로 다르다(KanbanColumnPref).
@@ -73,6 +74,21 @@ export async function listKanbanColumnsForUser(projectId: string, userId: string
   });
   merged.sort((a: KanbanColumnView, b: KanbanColumnView) => a.order - b.order);
   return merged;
+}
+
+// 컬럼별 개인 설정(순서/숨김)을 병합한 뒤 그 병합된 순서로 다시
+// 정렬하므로(원래 DB order와 다를 수 있음), DB 단계에서 skip/take를
+// 걸면 페이지 경계가 최종 순서와 어긋난다 - 병합·정렬까지 끝난 배열을
+// 통째로 받은 뒤 여기서 자른다(컬럼 수는 프로젝트당 소수라 비용 문제
+// 없음).
+export async function listKanbanColumnsForUserPaged(
+  projectId: string,
+  userId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<KanbanColumnView>> {
+  const all = await listKanbanColumnsForUser(projectId, userId);
+  return paginateInMemory(all, page, pageSize);
 }
 
 export async function getKanbanColumnProjectId(columnId: string): Promise<string | null> {
@@ -225,6 +241,32 @@ export async function listKanbanCards(
     orderBy: { order: "asc" },
   });
   return rows.map((r: typeof rows[number]) => toCardDetail({ ...r, columnName: r.column.name }));
+}
+
+export async function listKanbanCardsPaged(
+  projectId: string,
+  columnId: string | undefined,
+  includeHidden: boolean,
+  page: number,
+  pageSize: number,
+): Promise<Page<KanbanCardDetail>> {
+  const db = getDb();
+  const where = {
+    projectId,
+    ...(columnId ? { columnId } : {}),
+    ...(includeHidden ? {} : { hidden: false }),
+  };
+  type RawCard = Omit<Parameters<typeof toCardDetail>[0], "columnName"> & { column: { name: string } };
+  const result = await paginate<RawCard>(
+    (args) => db.kanbanCard.findMany({ where, include: { docRefs: true, column: true }, orderBy: { order: "asc" }, ...args }),
+    () => db.kanbanCard.count({ where }),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: result.items.map((r) => toCardDetail({ ...r, columnName: r.column.name })),
+  };
 }
 
 /** 문서/질문과 같은 "트래킹 코드로 조회" 관례 - 카드 하위 라우트(이동/

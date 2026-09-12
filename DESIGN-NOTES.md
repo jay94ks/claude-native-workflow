@@ -4665,6 +4665,93 @@ audit:cli-mcp` 클린(CLI/MCP 표면 자체는 안 바뀜). 컨테이너는 테�
 내내 재시작 없이 `Up` 상태 유지, 로그에 처리되지 않은 예외
 스택트레이스 없음.
 
+## CLI/MCP 목록 명령 전체에 --page/--count(page/pageSize) 페이지네이션 옵션 추가(`#list-pagination-options`) - 완료 (2026-09-13)
+
+**배경**: `#document-list-silent-cap` 라운드에서 `docs list`(문서
+전체 목록)의 51건째부터 조용히 잘리던 버그를 `limit: 1000`으로만
+막아뒀는데, 설계자가 곧바로 "`docs list`는 페이지와 카운트를 옵션으로
+줄 수 있어야 한다"고 지시했고, 이어서 "CLI나 MCP, SKILL용으로 준비된
+모든 '리스트'를 반환하는 명령들 전부" 페이지/카운트 옵션을 지원해야
+한다고 범위를 명시적으로 넓혔다. 규모가 커서(약 29개 명령) Plan
+Mode로 설계를 먼저 정리하고 승인받은 뒤 진행했다.
+
+**조사**: CLI 122개 리프 명령 중 배열을 반환하는 "목록" 명령을 전부
+추렸다. `documents`/`questions`(문서·칸반 카드/소스 대상)/`messages`/
+`git log` 4개 영역은 이미 웹 UI용으로 `/xxx/page` 페이지네이션
+백엔드가 구현돼 있어(`listDocumentsPaged`/`listQuestionsPaged`/
+`listMessagesPaged`/`listCommitsPaged`) CLI/MCP만 새로 연결하면
+됐다(Tier A, 5개 명령: `list`/`questions`/`questions-source`/
+`message list`/`git log`). 나머지 약 24개는 백엔드 자체에
+페이지네이션이 없어 새로 만들어야 했다(Tier B).
+
+**공용 헬퍼**: 새 `backend/src/core/pagination.ts` - 기존 3개
+Paged 함수에 이미 반복돼 있던 "`Promise.all([findMany({skip,take}),
+count()])` → `{items,page,pageSize,total,totalPages}`" 패턴을
+`paginate()` 함수 하나로 뽑아 Tier B의 새 Paged 함수 약 20개가
+매번 복붙하지 않게 했다. 두 번째 헬퍼 `paginateInMemory()`는 DB
+skip/take를 그대로 못 쓰는 경우(아래) 전용.
+
+**DB 레벨 페이지네이션이 안 통하는 경우들 - in-memory로 처리**:
+조사 중 `listTeams`/`listProjectGroups`/`listProjects`(가시성 필터가
+행을 걸러냄 - skip/take를 먼저 걸면 페이지 경계가 실제 보이는 개수와
+어긋남), `listMembersForTeam`/`listMembersForGroup`(group→project→
+member로 펼친 결과라 단일 테이블 조회가 아님), `listKanbanColumnsForUser`
+(개인 설정을 병합한 뒤 그 병합된 순서로 재정렬하므로 DB 조회 순서와
+최종 순서가 다를 수 있음), `git tree`(Gitea Contents API 자체가
+page/limit 파라미터를 아예 안 받는 단발성 엔드포인트 - `git log`가
+쓰는 `listCommitsPaged`처럼 상류에 페이지를 위임하는 방식을 못 씀)
+6곳은 원래 함수가 만든 전체 배열을 그대로 받은 뒤 `paginateInMemory()`
+로 자른다 - 데이터 규모가 이 설치형 시스템 특성상 크지 않아(개인/팀
+단위) 전체를 한 번 받는 비용은 감내 가능하다고 판단. 반대로
+`listPendingQuestions`/`listKanbanCards`처럼 "필터는 있지만 행을
+떨어뜨리지 않고 매 행에 부가 정보만 얹는" 경우는 DB skip/take를
+먼저 걸고 **잘린 페이지 분량만** 후처리(문서/카드 제목 조회 등)하도록
+했다 - 전체를 다 가져와 후처리하는 낭비를 피함.
+
+**기존 라우트는 그대로 두고 `/page` 접미사로만 확장** - Tier A
+4곳이 이미 쓰던 관례를 그대로 따라, Tier B 24곳도 전부 새 `/xxx/page`
+GET 라우트를 추가하는 방식으로 갔다(기존 라우트의 응답 모양은 전혀
+안 바꿈 - `--page`/`--count`를 안 주면 기존 스크립트/자동화가 100%
+그대로 동작). 예외 둘: `search`(문서 전문검색)는 이미 Meilisearch가
+offset/limit을 지원해 새 라우트 없이 같은 `/search` 경로에
+`page`/`pageSize` 쿼리만 추가로 받게 했고, `git tree`도 위 in-memory
+사유로 새 라우트(`/git/tree/page`)는 추가했지만 실제 페이지 계산은
+서버 쪽 슬라이스로 처리했다.
+
+**CLI(`backend/src/cli/index.ts`)/MCP(`backend/src/mcp/server.ts`)**:
+목록 명령 29개 전부에 동일한 옵션 쌍(`--page`/`--count`, MCP는
+`page`/`pageSize`)을 추가 - 둘 다 안 주면 기존 라우트, 하나라도 주면
+`/page` 라우트로 분기하는 동일한 패턴을 반복했다. `key list`(3
+변형)/`user list`는 원래부터 CLI 전용(MCP엔 없음 - 신원/관리자
+동작이라는 기존 설계 원칙, `#cli-mcp-audit-script`가 이미 "의도적
+예외"로 분류해둔 대상)이라 MCP 쪽은 건드리지 않았다. `npm run
+audit:cli-mcp`가 CLI 옵션 추가와 MCP 파라미터 추가가 항상 쌍으로
+맞는지 자동 확인해줘서, 29개를 한 번에 고치는 이번 라운드에서 특히
+유용했다(하나라도 빠뜨리면 스크립트가 잡아냄).
+
+**`#document-list-silent-cap`과의 연결**: 그 라운드가 남겨둔 "1000건
+넘는 프로젝트는 잔여 한계"가 이번 라운드로 실질적으로 해소됐다 -
+`--page`/`--count`를 쓰면 1000건을 훨씬 넘는 프로젝트도 정확한 범위로
+조회할 수 있다(옵션 없이 호출했을 때의 1000건 상한 자체는 그대로
+남아있음 - 안전망 성격).
+
+**실측 검증**: `npx tsc --noEmit` 클린 → `npm run audit:cli-mcp`
+클린(29개 CLI 옵션 + 27개 MCP 파라미터 - key/user 제외 - 전부 쌍으로
+확인) → `docker compose build backend` → `up -d --force-recreate` →
+실제 HTTP 왕복 스크립트로 대표 표본 검증: 문서 55건짜리 프로젝트에서
+`--page`/`--count` 생략 시 기존과 동일한 배열(55건), 지정 시
+`{items,page,pageSize,total,totalPages}`(2페이지=20건/total=55),
+마지막 페이지(15건)와 범위 밖 페이지(빈 배열, 에러 아님) 확인 - 칸반
+카드 25건/push 훅 큐(빈 목록)도 같은 패턴으로 확인. 문서 전문검색은
+`page`/`pageSize` 유무에 따라 배열↔페이지 객체로 정확히 갈리는지
+확인. **로컬 재빌드한 CLI 바이너리**로 `docs list --page 2 --count
+20`을 직접 실행해 옵션 파싱부터 실제 응답까지 왕복 확인(HTTP 직접
+호출이 아니라 진짜 CLI 프로세스로). git 저장소를 실제로 연결한
+프로젝트에서 `git tree`(in-memory 페이지네이션, 13개 파일 중 5개씩
+페이지)와 `git log`(`{items,hasMore}` 모양, Gitea 자체 페이지네이션)
+도 각각 별도로 왕복 검증. 컨테이너는 전체 테스트 내내 재시작 없이
+`Up` 상태 유지.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

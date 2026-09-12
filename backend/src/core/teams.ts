@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { addTeamAdmin, isTeamAdmin } from "./teamAdmins.js";
+import { paginateInMemory, type Page } from "./pagination.js";
 
 // InstallConfig는 싱글턴 - id를 항상 "singleton"으로 고정해서 upsert.
 const INSTALL_CONFIG_ID = "singleton";
@@ -86,6 +87,14 @@ export async function listTeams(viewerId: string): Promise<TeamWithMyAdmin[]> {
   return out;
 }
 
+// 가시성 필터(canSeeTeam류)가 행을 걸러내므로 DB skip/take를 먼저
+// 걸면 페이지 경계가 어긋난다 - listTeams()가 이미 필터링까지 끝낸
+// 배열을 통째로 받은 뒤 여기서 자른다.
+export async function listTeamsPaged(viewerId: string, page: number, pageSize: number): Promise<Page<TeamWithMyAdmin>> {
+  const all = await listTeams(viewerId);
+  return paginateInMemory(all, page, pageSize);
+}
+
 export async function updateTeam(
   teamId: string,
   input: { name?: string; enabled?: boolean; isPublic?: boolean },
@@ -151,4 +160,11 @@ export async function listMembersForTeam(teamId: string): Promise<TeamMemberRow[
     }
   }
   return rows;
+}
+
+// group→project→member로 펼친 결과라 단일 테이블 skip/take가 안
+// 통한다 - 펼친 배열을 통째로 받은 뒤 여기서 자른다.
+export async function listMembersForTeamPaged(teamId: string, page: number, pageSize: number): Promise<Page<TeamMemberRow>> {
+  const all = await listMembersForTeam(teamId);
+  return paginateInMemory(all, page, pageSize);
 }

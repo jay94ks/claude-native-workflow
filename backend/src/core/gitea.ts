@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getOrCreateGiteaSystemWebhookSecret } from "./installConfig.js";
+import { paginateInMemory, type Page } from "./pagination.js";
 
 interface GiteaConfig {
   apiUrl: string;
@@ -420,6 +421,16 @@ export async function listTree(slug: string, dirPath: string, ref?: string): Pro
     path: e.path,
     type: e.type === "dir" ? "dir" : "file",
   }));
+}
+
+/** Gitea Contents API 자체가 page/limit 파라미터를 안 받는 단발성
+ * 엔드포인트라(listCommitsPaged처럼 상류에 페이지를 위임할 수 없음),
+ * 전체 목록을 한 번에 받아온 뒤 여기서 잘라 반환한다 - 디렉터리
+ * 하나가 실제로 수백~수천 항목까지 가는 경우는 드물어 감내 가능한
+ * 비용이라고 판단. */
+export async function listTreePaged(slug: string, dirPath: string, ref: string | undefined, page: number, pageSize: number): Promise<Page<TreeEntry>> {
+  const all = await listTree(slug, dirPath, ref);
+  return paginateInMemory(all, page, pageSize);
 }
 
 export interface FileContent {

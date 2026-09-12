@@ -106,7 +106,17 @@ async function main() {
     { credentialType: z.enum(["token", "username_password", "ssh_key"]), value: z.string(), hostPattern: z.string().optional() },
     async (a) => call("/api/credentials", { method: "POST", body: JSON.stringify(a) }),
   );
-  tool("credential_list", "git 자격증명 목록", "저장된 자격증명 목록(payload는 제외).", {}, async () => call("/api/credentials"));
+  tool(
+    "credential_list",
+    "git 자격증명 목록",
+    "저장된 자격증명 목록(payload는 제외). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call("/api/credentials");
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/credentials/page?${qs}`);
+    },
+  );
   tool("credential_remove", "git 자격증명 삭제", "id로 자격증명을 삭제한다.", { id: z.string() }, async (a) =>
     call(`/api/credentials/${a.id}`, { method: "DELETE" }),
   );
@@ -120,14 +130,34 @@ async function main() {
     { name: z.string(), isPublic: z.boolean().optional() },
     async (a) => call("/api/teams", { method: "POST", body: JSON.stringify(a) }),
   );
-  tool("team_list", "팀 목록", "전체 팀 목록.", {}, async () => call("/api/teams"));
+  tool(
+    "team_list",
+    "팀 목록",
+    "전체 팀 목록. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call("/api/teams");
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/teams/page?${qs}`);
+    },
+  );
   tool("team_admin_add", "팀장 등록", "그 팀의 팀장으로 사용자를 등록한다(숨겨진 프로젝트를 보고 해제할 수 있게 됨).", { teamId: z.string(), userId: z.string() }, async (a) =>
     call(`/api/teams/${a.teamId}/admins`, { method: "POST", body: JSON.stringify({ userId: a.userId }) }),
   );
   tool("team_admin_remove", "팀장 해제", "그 팀의 팀장에서 사용자를 제외한다.", { teamId: z.string(), userId: z.string() }, async (a) =>
     call(`/api/teams/${a.teamId}/admins/${a.userId}`, { method: "DELETE" }),
   );
-  tool("team_admin_list", "팀장 목록", "그 팀의 팀장 목록.", { teamId: z.string() }, async (a) => call(`/api/teams/${a.teamId}/admins`));
+  tool(
+    "team_admin_list",
+    "팀장 목록",
+    "그 팀의 팀장 목록. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { teamId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/teams/${a.teamId}/admins`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/teams/${a.teamId}/admins/page?${qs}`);
+    },
+  );
   tool(
     "team_update",
     "팀 수정",
@@ -149,9 +179,13 @@ async function main() {
   tool(
     "team_members",
     "팀 멤버 조회",
-    "그 팀 산하 모든 프로젝트 그룹·프로젝트의 멤버를 모아 보여준다 - 그 팀의 관리자만 가능(보안 요구사항).",
-    { teamId: z.string() },
-    async (a) => call(`/api/teams/${a.teamId}/members`),
+    "그 팀 산하 모든 프로젝트 그룹·프로젝트의 멤버를 모아 보여준다 - 그 팀의 관리자만 가능(보안 요구사항). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { teamId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/teams/${a.teamId}/members`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/teams/${a.teamId}/members/page?${qs}`);
+    },
   );
   tool(
     "group_create",
@@ -160,10 +194,21 @@ async function main() {
     { name: z.string(), teamId: z.string().optional(), isPublic: z.boolean().optional() },
     async (a) => call("/api/project-groups", { method: "POST", body: JSON.stringify(a) }),
   );
-  tool("group_list", "프로젝트 그룹 목록", "프로젝트 그룹 목록(teamId로 필터 가능).", { teamId: z.string().optional() }, async (a) => {
-    const qs = a.teamId ? `?teamId=${encodeURIComponent(String(a.teamId))}` : "";
-    return call(`/api/project-groups${qs}`);
-  });
+  tool(
+    "group_list",
+    "프로젝트 그룹 목록",
+    "프로젝트 그룹 목록(teamId로 필터 가능). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { teamId: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      const qs = new URLSearchParams({
+        ...(a.teamId ? { teamId: String(a.teamId) } : {}),
+        ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
+      });
+      const suffix = paged ? "/page" : "";
+      return call(`/api/project-groups${suffix}${qs.toString() ? `?${qs}` : ""}`);
+    },
+  );
   tool(
     "group_update",
     "프로젝트 그룹 수정",
@@ -185,9 +230,13 @@ async function main() {
   tool(
     "group_members",
     "프로젝트 그룹 멤버 조회",
-    "그 그룹 산하 모든 프로젝트의 멤버를 모아 보여준다 - 그 그룹의 관리자만 가능(보안 요구사항).",
-    { groupId: z.string() },
-    async (a) => call(`/api/project-groups/${a.groupId}/members`),
+    "그 그룹 산하 모든 프로젝트의 멤버를 모아 보여준다 - 그 그룹의 관리자만 가능(보안 요구사항). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { groupId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/project-groups/${a.groupId}/members`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/project-groups/${a.groupId}/members/page?${qs}`);
+    },
   );
   tool(
     "group_admin_add",
@@ -203,8 +252,16 @@ async function main() {
     { groupId: z.string(), userId: z.string() },
     async (a) => call(`/api/project-groups/${a.groupId}/admins/${a.userId}`, { method: "DELETE" }),
   );
-  tool("group_admin_list", "그룹 관리자 목록", "그 프로젝트 그룹의 관리자 목록.", { groupId: z.string() }, async (a) =>
-    call(`/api/project-groups/${a.groupId}/admins`),
+  tool(
+    "group_admin_list",
+    "그룹 관리자 목록",
+    "그 프로젝트 그룹의 관리자 목록. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { groupId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/project-groups/${a.groupId}/admins`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/project-groups/${a.groupId}/admins/page?${qs}`);
+    },
   );
   tool(
     "project_create",
@@ -213,10 +270,21 @@ async function main() {
     { name: z.string(), projectGroupId: z.string().optional(), isPublic: z.boolean().optional() },
     async (a) => call("/api/projects", { method: "POST", body: JSON.stringify(a) }),
   );
-  tool("project_list", "프로젝트 목록", "프로젝트 목록(projectGroupId로 필터 가능).", { projectGroupId: z.string().optional() }, async (a) => {
-    const qs = a.projectGroupId ? `?projectGroupId=${encodeURIComponent(String(a.projectGroupId))}` : "";
-    return call(`/api/projects${qs}`);
-  });
+  tool(
+    "project_list",
+    "프로젝트 목록",
+    "프로젝트 목록(projectGroupId로 필터 가능). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectGroupId: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      const qs = new URLSearchParams({
+        ...(a.projectGroupId ? { projectGroupId: String(a.projectGroupId) } : {}),
+        ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
+      });
+      const suffix = paged ? "/page" : "";
+      return call(`/api/projects${suffix}${qs.toString() ? `?${qs}` : ""}`);
+    },
+  );
   tool("project_get", "프로젝트 조회", "id로 프로젝트 1건을 조회한다.", { projectId: z.string() }, async (a) =>
     call(`/api/projects/${a.projectId}`),
   );
@@ -248,8 +316,16 @@ async function main() {
     { projectId: z.string(), userId: z.string(), role: z.enum(["owner", "editor", "viewer"]) },
     async (a) => call(`/api/projects/${a.projectId}/members`, { method: "POST", body: JSON.stringify({ userId: a.userId, role: a.role }) }),
   );
-  tool("member_list", "프로젝트 멤버 목록", "프로젝트 멤버 목록.", { projectId: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/members`),
+  tool(
+    "member_list",
+    "프로젝트 멤버 목록",
+    "프로젝트 멤버 목록. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/projects/${a.projectId}/members`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/projects/${a.projectId}/members/page?${qs}`);
+    },
   );
   tool(
     "member_set_role",
@@ -275,8 +351,16 @@ async function main() {
     { projectId: z.string(), code: z.string(), label: z.string(), guideline: z.string().optional() },
     async (a) => call(`/api/projects/${a.projectId}/doc-types`, { method: "POST", body: JSON.stringify({ code: a.code, label: a.label, guideline: a.guideline }) }),
   );
-  tool("doctype_list", "문서 타입 목록", "그 프로젝트에 정의된 문서 타입 목록(팀/그룹 단위로 획일화해 정하는 기능은 없음 - 항상 프로젝트 자신에게만 정의됨. 각 항목의 isDefault로 기본 시드 타입인지 구분 가능).", { projectId: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/doc-types`),
+  tool(
+    "doctype_list",
+    "문서 타입 목록",
+    "그 프로젝트에 정의된 문서 타입 목록(팀/그룹 단위로 획일화해 정하는 기능은 없음 - 항상 프로젝트 자신에게만 정의됨. 각 항목의 isDefault로 기본 시드 타입인지 구분 가능). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/projects/${a.projectId}/doc-types`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/projects/${a.projectId}/doc-types/page?${qs}`);
+    },
   );
   tool(
     "doctype_update",
@@ -319,12 +403,34 @@ async function main() {
   tool("document_get", "문서 조회", "추적 코드로 문서 1건을 조회한다.", { trackingCode: z.string() }, async (a) =>
     call(`/api/documents/${a.trackingCode}`),
   );
-  tool("document_list", "문서 목록", "프로젝트의 문서 목록(docTypeId로 필터 가능).", { projectId: z.string(), docTypeId: z.string().optional() }, async (a) => {
-    const qs = a.docTypeId ? `?docTypeId=${encodeURIComponent(String(a.docTypeId))}` : "";
-    return call(`/api/projects/${a.projectId}/documents${qs}`);
-  });
-  tool("document_search", "문서 검색", "Meilisearch 기반 전문 검색.", { projectId: z.string(), query: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/search?q=${encodeURIComponent(String(a.query))}`),
+  tool(
+    "document_list",
+    "문서 목록",
+    "프로젝트의 문서 목록(docTypeId로 필터 가능). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열(최대 1000건).",
+    { projectId: z.string(), docTypeId: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      const qs = new URLSearchParams({
+        ...(a.docTypeId ? { docTypeId: String(a.docTypeId) } : {}),
+        ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
+      });
+      const suffix = paged ? "/page" : "";
+      return call(`/api/projects/${a.projectId}/documents${suffix}${qs.toString() ? `?${qs}` : ""}`);
+    },
+  );
+  tool(
+    "document_search",
+    "문서 검색",
+    "Meilisearch 기반 전문 검색. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 관련도 상위 50건.",
+    { projectId: z.string(), query: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      const qs = new URLSearchParams({
+        q: String(a.query),
+        ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
+      });
+      return call(`/api/projects/${a.projectId}/search?${qs}`);
+    },
   );
   tool("document_save", "문서 본문 갱신", "문서 본문을 덮어쓰고 버전 이력을 남긴다.", { trackingCode: z.string(), body: z.string() }, async (a) =>
     call(`/api/documents/${a.trackingCode}`, { method: "PUT", body: JSON.stringify({ body: a.body }) }),
@@ -361,16 +467,28 @@ async function main() {
         body: JSON.stringify({ toTrackingCode: a.toTrackingCode, linkType: a.linkType }),
       }),
   );
-  tool("document_backlinks", "역참조 조회", "이 문서를 링크한 다른 문서 목록.", { trackingCode: z.string() }, async (a) =>
-    call(`/api/documents/${a.trackingCode}/backlinks`),
+  tool(
+    "document_backlinks",
+    "역참조 조회",
+    "이 문서를 링크한 다른 문서 목록. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { trackingCode: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/documents/${a.trackingCode}/backlinks`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/documents/${a.trackingCode}/backlinks/page?${qs}`);
+    },
   );
 
   tool(
     "document_revisions",
     "버전 이력 조회",
-    "문서의 수정 이력(리비전) 목록 - 각 항목은 그 시점까지의 본문 스냅샷.",
-    { trackingCode: z.string() },
-    async (a) => call(`/api/documents/${a.trackingCode}/revisions`),
+    "문서의 수정 이력(리비전) 목록 - 각 항목은 그 시점까지의 본문 스냅샷. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { trackingCode: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/documents/${a.trackingCode}/revisions`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/documents/${a.trackingCode}/revisions/page?${qs}`);
+    },
   );
   tool(
     "document_next_statuses",
@@ -413,9 +531,13 @@ async function main() {
   tool(
     "document_source_links",
     "연관된 소스코드 목록",
-    "이 문서와 연관된 소스코드 파일 경로 목록.",
-    { trackingCode: z.string() },
-    async (a) => call(`/api/documents/${a.trackingCode}/source-links`),
+    "이 문서와 연관된 소스코드 파일 경로 목록. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { trackingCode: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/documents/${a.trackingCode}/source-links`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/documents/${a.trackingCode}/source-links/page?${qs}`);
+    },
   );
 
   // ---------------------------------------------------------------- 세부 접근 권한
@@ -440,8 +562,16 @@ async function main() {
       return call(`/api/projects/${a.projectId}/access`, { method: "PUT", body: JSON.stringify(patch) });
     },
   );
-  tool("access_list", "세부 접근 권한 목록", "프로젝트에 설정된 모든 오버라이드 목록.", { projectId: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/access`),
+  tool(
+    "access_list",
+    "세부 접근 권한 목록",
+    "프로젝트에 설정된 모든 오버라이드 목록. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/projects/${a.projectId}/access`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/projects/${a.projectId}/access/page?${qs}`);
+    },
   );
   tool(
     "access_overview",
@@ -458,9 +588,13 @@ async function main() {
   tool(
     "kanban_columns",
     "칸반 분류 목록",
-    "이 프로젝트의 칸반 분류(컬럼) 목록 - 순서/숨김은 이 신원 기준.",
-    { projectId: z.string() },
-    async (a) => call(`/api/projects/${a.projectId}/kanban/columns`),
+    "이 프로젝트의 칸반 분류(컬럼) 목록 - 순서/숨김은 이 신원 기준. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/projects/${a.projectId}/kanban/columns`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/projects/${a.projectId}/kanban/columns/page?${qs}`);
+    },
   );
   tool(
     "kanban_card_new",
@@ -482,9 +616,17 @@ async function main() {
   tool(
     "kanban_cards",
     "칸반 카드 목록",
-    "칸반 카드 목록(숨긴 카드 제외) - columnId를 주면 그 분류로 제한.",
-    { projectId: z.string(), columnId: z.string().optional() },
-    async (a) => call(`/api/projects/${a.projectId}/kanban/cards${a.columnId ? `?columnId=${a.columnId}` : ""}`),
+    "칸반 카드 목록(숨긴 카드 제외) - columnId를 주면 그 분류로 제한. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectId: z.string(), columnId: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      const qs = new URLSearchParams({
+        ...(a.columnId ? { columnId: String(a.columnId) } : {}),
+        ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
+      });
+      const suffix = paged ? "/page" : "";
+      return call(`/api/projects/${a.projectId}/kanban/cards${suffix}${qs.toString() ? `?${qs}` : ""}`);
+    },
   );
   tool(
     "kanban_card_get",
@@ -560,18 +702,40 @@ async function main() {
         body: JSON.stringify({ path: a.path, kind: a.kind ?? "answer", text: a.text, refs: a.refs, options: a.options }),
       }),
   );
-  tool("question_list", "문서/칸반 카드의 전체 질의/답변 조회", "한 대상의 질의 전체(open+pending+resolved)를 답변과 함께 순서대로 조회한다.", { trackingCode: z.string() }, async (a) =>
-    call(`/api/questions?trackingCode=${a.trackingCode}`),
+  tool(
+    "question_list",
+    "문서/칸반 카드의 전체 질의/답변 조회",
+    "한 대상의 질의 전체(open+pending+resolved)를 답변과 함께 순서대로 조회한다. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { trackingCode: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      if (!paged) return call(`/api/questions?trackingCode=${a.trackingCode}`);
+      const qs = new URLSearchParams({ trackingCode: String(a.trackingCode), page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/questions/page?${qs}`);
+    },
   );
   tool(
     "question_list_source",
     "소스 코드 파일의 전체 질의/답변 조회",
-    "소스 코드 파일에 달린 질의 전체를 조회한다.",
-    { projectId: z.string(), path: z.string() },
-    async (a) => call(`/api/projects/${a.projectId}/questions/source?path=${encodeURIComponent(String(a.path))}`),
+    "소스 코드 파일에 달린 질의 전체를 조회한다. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectId: z.string(), path: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      if (!paged) return call(`/api/projects/${a.projectId}/questions/source?path=${encodeURIComponent(String(a.path))}`);
+      const qs = new URLSearchParams({ path: String(a.path), page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/projects/${a.projectId}/questions/source/page?${qs}`);
+    },
   );
-  tool("pending_list", "미해결 질의 목록", "프로젝트의 미해결(open+pending) 질의 목록 - pending은 설계자가 답변했지만 AI가 아직 확인 안 한 것.", { projectId: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/pending`),
+  tool(
+    "pending_list",
+    "미해결 질의 목록",
+    "프로젝트의 미해결(open+pending) 질의 목록 - pending은 설계자가 답변했지만 AI가 아직 확인 안 한 것. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/projects/${a.projectId}/pending`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/projects/${a.projectId}/pending/page?${qs}`);
+    },
   );
   tool(
     "question_reply",
@@ -641,16 +805,26 @@ async function main() {
   tool(
     "template_revisions",
     "템플릿 변경 이력 조회",
-    "특정 스코프(팀/그룹/프로젝트, 생략하면 전역 기본값)에서 그 템플릿 파일이 덮어써지기 전 과거 내용들을 시간순으로 조회한다 - 실수로 잘못된 내용을 덮어썼을 때 이전 버전을 확인하고 template_set으로 그 content를 다시 넘겨 복원하는 데 쓴다.",
-    { filename: z.string(), teamId: z.string().optional(), projectGroupId: z.string().optional(), projectId: z.string().optional() },
+    "특정 스코프(팀/그룹/프로젝트, 생략하면 전역 기본값)에서 그 템플릿 파일이 덮어써지기 전 과거 내용들을 시간순으로 조회한다 - 실수로 잘못된 내용을 덮어썼을 때 이전 버전을 확인하고 template_set으로 그 content를 다시 넘겨 복원하는 데 쓴다. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    {
+      filename: z.string(),
+      teamId: z.string().optional(),
+      projectGroupId: z.string().optional(),
+      projectId: z.string().optional(),
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+    },
     async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
       const qs = new URLSearchParams({
         filename: String(a.filename),
         ...(a.teamId ? { teamId: String(a.teamId) } : {}),
         ...(a.projectGroupId ? { projectGroupId: String(a.projectGroupId) } : {}),
         ...(a.projectId ? { projectId: String(a.projectId) } : {}),
+        ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
       });
-      return call(`/api/templates/revisions?${qs}`);
+      const suffix = paged ? "/page" : "";
+      return call(`/api/templates/revisions${suffix}?${qs}`);
     },
   );
 
@@ -730,10 +904,21 @@ async function main() {
     { projectId: z.string(), id: z.string() },
     async (a) => call(`/api/projects/${a.projectId}/git/publish-queue/${a.id}/done`, { method: "POST" }),
   );
-  tool("git_log", "git 로그 조회", "자체 호스팅 저장소의 커밋 로그.", { projectId: z.string(), ref: z.string().optional() }, async (a) => {
-    const qs = a.ref ? `?ref=${encodeURIComponent(String(a.ref))}` : "";
-    return call(`/api/projects/${a.projectId}/git/log${qs}`);
-  });
+  tool(
+    "git_log",
+    "git 로그 조회",
+    "자체 호스팅 저장소의 커밋 로그. page/pageSize를 주면 페이지네이션 응답을 받는다(Gitea 제약으로 total은 없음, hasMore만), 생략하면 전체 배열.",
+    { projectId: z.string(), ref: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      const qs = new URLSearchParams({
+        ...(a.ref ? { ref: String(a.ref) } : {}),
+        ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
+      });
+      const suffix = paged ? "/page" : "";
+      return call(`/api/projects/${a.projectId}/git/log${suffix}${qs.toString() ? `?${qs}` : ""}`);
+    },
+  );
   tool("git_blame", "git blame 조회", "파일의 라인별 최종 수정 커밋.", { projectId: z.string(), path: z.string(), ref: z.string().optional() }, async (a) => {
     const qs = new URLSearchParams({ path: String(a.path), ...(a.ref ? { ref: String(a.ref) } : {}) });
     return call(`/api/projects/${a.projectId}/git/blame?${qs}`);
@@ -760,11 +945,23 @@ async function main() {
   tool(
     "git_tree",
     "git 디렉터리 조회",
-    "저장소의 디렉터리 목록을 조회한다(path 생략하면 루트).",
-    { projectId: z.string(), path: z.string().optional(), ref: z.string().optional() },
+    "저장소의 디렉터리 목록을 조회한다(path 생략하면 루트). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    {
+      projectId: z.string(),
+      path: z.string().optional(),
+      ref: z.string().optional(),
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+    },
     async (a) => {
-      const qs = new URLSearchParams({ path: String(a.path ?? ""), ...(a.ref ? { ref: String(a.ref) } : {}) });
-      return call(`/api/projects/${a.projectId}/git/tree?${qs}`);
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      const qs = new URLSearchParams({
+        path: String(a.path ?? ""),
+        ...(a.ref ? { ref: String(a.ref) } : {}),
+        ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
+      });
+      const suffix = paged ? "/page" : "";
+      return call(`/api/projects/${a.projectId}/git/tree${suffix}?${qs}`);
     },
   );
   tool(
@@ -804,8 +1001,16 @@ async function main() {
         body: JSON.stringify({ promptTemplate: a.promptTemplate, triggerBranch: a.triggerBranch }),
       }),
   );
-  tool("hook_list", "push 훅 프롬프트 목록", "프로젝트에 등록된 프롬프트 목록.", { projectId: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/push-hook-prompts`),
+  tool(
+    "hook_list",
+    "push 훅 프롬프트 목록",
+    "프로젝트에 등록된 프롬프트 목록. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      if (a.page === undefined && a.pageSize === undefined) return call(`/api/projects/${a.projectId}/push-hook-prompts`);
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/projects/${a.projectId}/push-hook-prompts/page?${qs}`);
+    },
   );
   tool(
     "hook_update",
@@ -825,11 +1030,16 @@ async function main() {
   tool(
     "hook_queue_list",
     "push 훅 대기열 조회",
-    "이 프로젝트를 열 때 먼저 확인해야 할 대기 중인 push 훅 목록(세션 시작 시 pending으로 확인 권장).",
-    { projectId: z.string(), status: z.string().optional() },
+    "이 프로젝트를 열 때 먼저 확인해야 할 대기 중인 push 훅 목록(세션 시작 시 pending으로 확인 권장). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    { projectId: z.string(), status: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() },
     async (a) => {
-      const qs = a.status ? `?status=${encodeURIComponent(String(a.status))}` : "";
-      return call(`/api/projects/${a.projectId}/push-hook-queue${qs}`);
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      const qs = new URLSearchParams({
+        ...(a.status ? { status: String(a.status) } : {}),
+        ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
+      });
+      const suffix = paged ? "/page" : "";
+      return call(`/api/projects/${a.projectId}/push-hook-queue${suffix}${qs.toString() ? `?${qs}` : ""}`);
     },
   );
   tool("hook_ack", "push 훅 처리 시작", "대기열 항목을 acknowledged로 표시한다(처리를 막 시작했을 때).", { projectId: z.string(), id: z.string() }, async (a) =>
@@ -842,9 +1052,23 @@ async function main() {
   tool(
     "message_list",
     "인스턴스 메시지 목록",
-    "그 프로젝트의 메시지 기록을 조회한다 - 조회 자체는 상태(대기/처리중/기록)를 안 바꾼다(읽음은 message_ack와 별개 축). status로 pending(대기)/processing(처리중)/delivered(기록)/all 필터 가능(기본 all).",
-    { projectId: z.string(), status: z.enum(["pending", "processing", "delivered", "all"]).optional() },
+    "그 프로젝트의 메시지 기록을 조회한다 - 조회 자체는 상태(대기/처리중/기록)를 안 바꾼다(읽음은 message_ack와 별개 축). status로 pending(대기)/processing(처리중)/delivered(기록)/all 필터 가능(기본 all). page/pageSize를 주면 페이지네이션 응답(total 포함)을 받는다 - 단, 이 경우 웹 화면과 공유하는 라우트라 deliveredAt 자동 갱신은 안 됨. 생략하면 기존처럼 전체 배열 + deliveredAt 자동 갱신.",
+    {
+      projectId: z.string(),
+      status: z.enum(["pending", "processing", "delivered", "all"]).optional(),
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+    },
     async (a) => {
+      const paged = a.page !== undefined || a.pageSize !== undefined;
+      if (paged) {
+        const qs = new URLSearchParams({
+          ...(a.status ? { status: String(a.status) } : {}),
+          page: String(a.page ?? 1),
+          pageSize: String(a.pageSize ?? 20),
+        });
+        return call(`/api/projects/${a.projectId}/messages/page?${qs}`);
+      }
       const qs = new URLSearchParams({ markDelivered: "true", ...(a.status ? { status: String(a.status) } : {}) });
       return call(`/api/projects/${a.projectId}/messages?${qs}`);
     },

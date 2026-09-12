@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { paginate, type Page } from "./pagination.js";
 
 // 옛 concept 브랜치는 SP/PL/DC/RV/FX 같은 타입 분류가 코드에 하드코딩돼
 // 있었다("분류 코드가 수동적이고 단순하다"는 설계자 지적) - v2는 타입/
@@ -174,6 +175,20 @@ export async function listDocTypes(projectId: string): Promise<DocType[]> {
   const db = getDb();
   const rows = await db.docType.findMany({ where: { projectId } });
   return rows.map((r: DocType) => ({ id: r.id, code: r.code, label: r.label, guideline: r.guideline, isDefault: r.isDefault }));
+}
+
+export async function listDocTypesPaged(projectId: string, page: number, pageSize: number): Promise<Page<DocType>> {
+  const db = getDb();
+  const result = await paginate<DocType>(
+    (args) => db.docType.findMany({ where: { projectId }, ...args }),
+    () => db.docType.count({ where: { projectId } }),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: result.items.map((r: DocType) => ({ id: r.id, code: r.code, label: r.label, guideline: r.guideline, isDefault: r.isDefault })),
+  };
 }
 
 export async function listDocStatuses(docTypeId: string): Promise<DocStatus[]> {

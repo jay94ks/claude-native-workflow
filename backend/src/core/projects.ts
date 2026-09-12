@@ -5,6 +5,7 @@ import { getMemberRole, isProjectAllowedByActiveScope } from "./members.js";
 import { isTeamAdmin } from "./teamAdmins.js";
 import { isProjectGroupAdmin } from "./projectGroupAdmins.js";
 import { hasProjectMembershipInGroup } from "./projectGroups.js";
+import { paginateInMemory, type Page } from "./pagination.js";
 
 const DEFAULT_GROUP_NAME = "기본";
 
@@ -182,6 +183,18 @@ export async function listProjects(projectGroupId: string | undefined, viewerId:
     });
   }
   return visible;
+}
+
+// listTeamsPaged()와 같은 이유(스코프/가시성 필터가 행을 걸러냄) -
+// 필터링까지 끝낸 배열을 받은 뒤 여기서 자른다.
+export async function listProjectsPaged(
+  projectGroupId: string | undefined,
+  viewerId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<ProjectWithMyPerms>> {
+  const all = await listProjects(projectGroupId, viewerId);
+  return paginateInMemory(all, page, pageSize);
 }
 
 export async function assertProjectExists(projectId: string): Promise<void> {

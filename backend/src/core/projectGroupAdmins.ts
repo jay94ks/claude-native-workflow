@@ -1,6 +1,7 @@
 import { getDb } from "./db.js";
 import { isTeamAdmin } from "./teamAdmins.js";
 import { isSuperAdmin } from "./auth.js";
+import { paginate, type Page } from "./pagination.js";
 
 // core/teamAdmins.ts와 동일한 패턴 - 다만 팀은 그룹의 상위 개념이라
 // 권한도 위에서 아래로 흐른다: 팀 관리자는 자기 팀 산하 모든 그룹에
@@ -35,6 +36,20 @@ export async function listProjectGroupAdmins(projectGroupId: string): Promise<Pr
   const db = getDb();
   const rows = await db.projectGroupAdmin.findMany({ where: { projectGroupId } });
   return rows.map((r: ProjectGroupAdmin) => ({ id: r.id, projectGroupId: r.projectGroupId, userId: r.userId }));
+}
+
+export async function listProjectGroupAdminsPaged(
+  projectGroupId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<ProjectGroupAdmin>> {
+  const db = getDb();
+  return paginate(
+    (args) => db.projectGroupAdmin.findMany({ where: { projectGroupId }, ...args }),
+    () => db.projectGroupAdmin.count({ where: { projectGroupId } }),
+    page,
+    pageSize,
+  );
 }
 
 /** 명시적으로 그 그룹의 ProjectGroupAdmin으로 등록돼 있거나, 그 그룹이

@@ -2,6 +2,7 @@ import { getDb } from "./db.js";
 import { getInstallConfig } from "./teams.js";
 import { isTeamAllowedByActiveScope } from "./teamAdmins.js";
 import { addProjectGroupAdmin, isProjectGroupAdmin } from "./projectGroupAdmins.js";
+import { paginateInMemory, type Page } from "./pagination.js";
 
 export interface ProjectGroup {
   id: string;
@@ -93,6 +94,18 @@ export async function listProjectGroups(teamId: string | undefined, viewerId: st
   return out;
 }
 
+// listTeamsPaged()와 같은 이유(가시성 필터가 행을 걸러냄) - 필터링까지
+// 끝낸 배열을 받은 뒤 여기서 자른다.
+export async function listProjectGroupsPaged(
+  teamId: string | undefined,
+  viewerId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<ProjectGroupWithMyAdmin>> {
+  const all = await listProjectGroups(teamId, viewerId);
+  return paginateInMemory(all, page, pageSize);
+}
+
 export async function getProjectGroupById(groupId: string): Promise<ProjectGroup | null> {
   const db = getDb();
   const row = await db.projectGroup.findUnique({ where: { id: groupId } });
@@ -160,4 +173,11 @@ export async function listMembersForGroup(groupId: string): Promise<GroupMemberR
     }
   }
   return rows;
+}
+
+// listMembersForTeamPaged()와 같은 이유(project→member로 펼친 결과) -
+// 통째로 받은 뒤 여기서 자른다.
+export async function listMembersForGroupPaged(groupId: string, page: number, pageSize: number): Promise<Page<GroupMemberRow>> {
+  const all = await listMembersForGroup(groupId);
+  return paginateInMemory(all, page, pageSize);
 }

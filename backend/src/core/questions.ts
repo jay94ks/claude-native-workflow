@@ -5,6 +5,7 @@ import { resyncDocumentIndex, getDocument } from "./documents.js";
 import { getKanbanCardByTrackingCode } from "./kanban.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 import { isSuperAdmin } from "./auth.js";
+import { paginate, type Page } from "./pagination.js";
 
 const QUESTION_TYPE_CODE = "QU";
 
@@ -281,6 +282,59 @@ export async function listPendingQuestions(projectId: string): Promise<PendingQu
     });
   }
   return results;
+}
+
+export async function listPendingQuestionsPaged(
+  projectId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<PendingQuestion>> {
+  const db = getDb();
+  const where = { status: { in: ["open", "pending"] }, projectId };
+  type RawQuestion = {
+    trackingCode: string;
+    projectId: string;
+    targetType: string;
+    targetKey: string;
+    ordinal: number;
+    kind: string;
+    text: string;
+    askedBy: string;
+    status: string;
+    refs: { trackingCode: string }[];
+  };
+  const result = await paginate<RawQuestion>(
+    (args) => db.question.findMany({ where, include: { refs: true }, orderBy: { createdAt: "asc" }, ...args }),
+    () => db.question.count({ where }),
+    page,
+    pageSize,
+  );
+  const items: PendingQuestion[] = [];
+  for (const r of result.items) {
+    let targetLabel = r.targetKey;
+    if (r.targetType === "document") {
+      const doc = await getDocument(r.targetKey);
+      if (doc) targetLabel = doc.title;
+    } else if (r.targetType === "kanbanCard") {
+      const card = await getKanbanCardByTrackingCode(r.targetKey);
+      if (card) targetLabel = card.title;
+    }
+    items.push({
+      trackingCode: r.trackingCode,
+      projectId: r.projectId,
+      targetType: r.targetType,
+      targetKey: r.targetKey,
+      ordinal: r.ordinal,
+      kind: r.kind,
+      text: r.text,
+      askedBy: r.askedBy,
+      status: r.status,
+      refs: r.refs.map((x: { trackingCode: string }) => x.trackingCode),
+      options: [],
+      targetLabel,
+    });
+  }
+  return { ...result, items };
 }
 
 /** AI가 아직 확인(ack)하지 않은 답변 건수 - notices 배너가 씀. */

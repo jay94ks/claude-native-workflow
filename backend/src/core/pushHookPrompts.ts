@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { paginate, type Page } from "./pagination.js";
 
 // PushHookPrompt(트리거 설정) CRUD + PushHookQueueEntry(실제 트리거된
 // 항목) 조회/상태 전이. 웹훅 수신 → 매칭 → 큐 적재 배관 자체는
@@ -29,6 +30,16 @@ export async function createPushHookPrompt(
 export async function listPushHookPrompts(projectId: string): Promise<PushHookPrompt[]> {
   const db = getDb();
   return db.pushHookPrompt.findMany({ where: { projectId }, orderBy: { createdAt: "desc" } });
+}
+
+export async function listPushHookPromptsPaged(projectId: string, page: number, pageSize: number): Promise<Page<PushHookPrompt>> {
+  const db = getDb();
+  return paginate(
+    (args) => db.pushHookPrompt.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, ...args }),
+    () => db.pushHookPrompt.count({ where: { projectId } }),
+    page,
+    pageSize,
+  );
 }
 
 export async function deletePushHookPrompt(id: string, projectId: string): Promise<void> {
@@ -104,6 +115,41 @@ export async function listQueueEntries(projectId: string, status?: string): Prom
     promptTemplate: r.pushHookPrompt.promptTemplate,
     triggerBranch: r.pushHookPrompt.triggerBranch,
   }));
+}
+
+export async function listQueueEntriesPaged(
+  projectId: string,
+  status: string | undefined,
+  page: number,
+  pageSize: number,
+): Promise<Page<PushHookQueueEntry>> {
+  const db = getDb();
+  const where = { status: status ?? undefined, pushHookPrompt: { projectId } };
+  const result = await paginate(
+    (args) => db.pushHookQueueEntry.findMany({ where, include: { pushHookPrompt: true }, orderBy: { triggeredAt: "desc" }, ...args }),
+    () => db.pushHookQueueEntry.count({ where }),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: (result.items as Array<{
+      id: string;
+      pushHookPromptId: string;
+      commitSha: string;
+      status: string;
+      triggeredAt: Date;
+      pushHookPrompt: { promptTemplate: string; triggerBranch: string | null };
+    }>).map((r) => ({
+      id: r.id,
+      pushHookPromptId: r.pushHookPromptId,
+      commitSha: r.commitSha,
+      status: r.status,
+      triggeredAt: r.triggeredAt,
+      promptTemplate: r.pushHookPrompt.promptTemplate,
+      triggerBranch: r.pushHookPrompt.triggerBranch,
+    })),
+  };
 }
 
 // queue entry는 PushHookPrompt를 통해서만 프로젝트에 연결되고(자기

@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { getDb } from "./db.js";
 import { ensureGiteaAccountForUser } from "./giteaAccounts.js";
 import { assertNotLocked, clearIdentifierAttempts, recordFailedAttempt } from "./loginRateLimit.js";
+import { paginate, type Page } from "./pagination.js";
 
 // ID/PW 계정, argon2id 비밀번호 해시, Access(JWT, 단명) + Refresh(장기,
 // DB에 해시로 저장 - 원문은 저장하지 않는다) 토큰 - concept 브랜치
@@ -425,6 +426,29 @@ export async function listAllUsersForAdmin(): Promise<AdminUserListItem[]> {
       createdAt: u.createdAt.toISOString(),
     }),
   );
+}
+
+export async function listAllUsersForAdminPaged(page: number, pageSize: number): Promise<Page<AdminUserListItem>> {
+  const db = getDb();
+  const result = await paginate<{ id: string; username: string; email: string | null; nickname: string | null; nicknameNumber: number; createdAt: Date }>(
+    (args) => db.user.findMany({ orderBy: { createdAt: "desc" }, ...args }),
+    () => db.user.count(),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: result.items.map(
+      (u: { id: string; username: string; email: string | null; nickname: string | null; nicknameNumber: number; createdAt: Date }) => ({
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        nickname: u.nickname,
+        displayLabel: formatDisplayLabel(u.nickname, u.nicknameNumber),
+        createdAt: u.createdAt.toISOString(),
+      }),
+    ),
+  };
 }
 
 function generateTemporaryPassword(): string {

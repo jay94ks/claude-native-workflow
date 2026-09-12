@@ -1,6 +1,7 @@
 import { getDb } from "./db.js";
 import { getActiveKeyScope } from "./requestScope.js";
 import { isSuperAdmin } from "./auth.js";
+import { paginate, type Page } from "./pagination.js";
 
 export interface TeamAdmin {
   id: string;
@@ -29,6 +30,16 @@ export async function listTeamAdmins(teamId: string): Promise<TeamAdmin[]> {
   const db = getDb();
   const rows = await db.teamAdmin.findMany({ where: { teamId } });
   return rows.map((r: TeamAdmin) => ({ id: r.id, teamId: r.teamId, userId: r.userId }));
+}
+
+export async function listTeamAdminsPaged(teamId: string, page: number, pageSize: number): Promise<Page<TeamAdmin>> {
+  const db = getDb();
+  return paginate(
+    (args) => db.teamAdmin.findMany({ where: { teamId }, ...args }),
+    () => db.teamAdmin.count({ where: { teamId } }),
+    page,
+    pageSize,
+  );
 }
 
 export async function isTeamAdmin(teamId: string | null, userId: string): Promise<boolean> {

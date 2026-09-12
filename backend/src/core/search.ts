@@ -157,6 +157,11 @@ export async function searchDocuments(query: string, opts: SearchOptions = {}): 
   return (await rawSearch(query, opts)).hits;
 }
 
+// searchProjectDocuments()(CLI/MCP `docs search`)의 페이지네이션
+// 변형 - Meilisearch가 이미 limit/offset을 받으므로 새 DB 쿼리 없이
+// rawSearch()를 그대로 연결만 한다.
+export { rawSearch as rawSearchDocuments };
+
 /** query 없이 필터/정렬만으로 목록을 가져올 때 쓴다(get/list/tree류) -
  * 빈 문자열 검색은 Meilisearch에서 "필터만 적용, 관련도 정렬 없음"으로
  * 동작한다. */

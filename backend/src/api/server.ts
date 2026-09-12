@@ -18,38 +18,43 @@ import {
   listUsers,
   isSuperAdmin,
   listAllUsersForAdmin,
+  listAllUsersForAdminPaged,
   resetPasswordAsAdmin,
 } from "../core/auth.js";
 import { LoginRateLimitError } from "../core/loginRateLimit.js";
 import { assertCredentialEncryptionKeyConfigured } from "../core/crypto.js";
-import { addGitCredential, listGitCredentials, removeGitCredential } from "../core/gitCredentials.js";
-import { createTeam, listTeams, updateTeam, deleteTeam, listMembersForTeam } from "../core/teams.js";
+import { addGitCredential, listGitCredentials, listGitCredentialsPaged, removeGitCredential } from "../core/gitCredentials.js";
+import { createTeam, listTeams, listTeamsPaged, updateTeam, deleteTeam, listMembersForTeam, listMembersForTeamPaged } from "../core/teams.js";
 import {
   ensureAllUsersGiteaAccountsConfigured,
   getGiteaAccessToken,
   regenerateGiteaAccessToken,
 } from "../core/giteaAccounts.js";
-import { addTeamAdmin, removeTeamAdmin, listTeamAdmins, isTeamAllowedByActiveScope } from "../core/teamAdmins.js";
+import { addTeamAdmin, removeTeamAdmin, listTeamAdmins, listTeamAdminsPaged, isTeamAllowedByActiveScope } from "../core/teamAdmins.js";
 import { getInstallConfig, getGiteaSystemWebhookSecret } from "../core/installConfig.js";
 import {
   createProjectGroup,
   listProjectGroups,
+  listProjectGroupsPaged,
   isGroupAllowedByActiveScope,
   updateProjectGroup,
   deleteProjectGroup,
   listMembersForGroup,
+  listMembersForGroupPaged,
   getProjectGroupById,
 } from "../core/projectGroups.js";
 import {
   addProjectGroupAdmin,
   removeProjectGroupAdmin,
   listProjectGroupAdmins,
+  listProjectGroupAdminsPaged,
   isProjectGroupAdmin,
 } from "../core/projectGroupAdmins.js";
 import {
   createProject,
   getProject,
   listProjects,
+  listProjectsPaged,
   canSeeProject,
   setProjectHidden,
   setProjectPublic,
@@ -62,6 +67,7 @@ import {
 import {
   addMember,
   listMembers,
+  listMembersPaged,
   getMemberRole,
   roleSatisfies,
   isProjectAllowedByActiveScope,
@@ -74,6 +80,7 @@ import { listUserActivity } from "../core/activity.js";
 import {
   createDocType,
   listDocTypes,
+  listDocTypesPaged,
   listDocStatuses,
   getDocTypeById,
   setDocTypeGuideline,
@@ -89,21 +96,25 @@ import {
   listDocumentsPaged,
   listRecentDocuments,
   searchProjectDocuments,
+  searchProjectDocumentsPaged,
   saveDocumentBody,
   transitionDocumentStatus,
   setDocumentPriority,
   addDocumentLink,
   listBacklinks,
+  listBacklinksPaged,
   listDocumentRevisions,
+  listDocumentRevisionsPaged,
   deleteDocument,
 } from "../core/documents.js";
-import { addSourceLink, removeSourceLink, listSourceLinks } from "../core/documentSourceLinks.js";
+import { addSourceLink, removeSourceLink, listSourceLinks, listSourceLinksPaged } from "../core/documentSourceLinks.js";
 import { createReport } from "../core/report.js";
 import {
   addQuestion,
   addQuestionByTrackingCode,
   resolveTargetByTrackingCode,
   listPendingQuestions,
+  listPendingQuestionsPaged,
   answerQuestion,
   listQuestions,
   listQuestionsPaged,
@@ -120,7 +131,7 @@ import {
   listRecentComments,
   setCommentStatus,
 } from "../core/comments.js";
-import { resolveTemplate, setTemplateOverride, seedDefaultTemplates, listTemplateRevisions } from "../core/templates.js";
+import { resolveTemplate, setTemplateOverride, seedDefaultTemplates, listTemplateRevisions, listTemplateRevisionsPaged } from "../core/templates.js";
 import { MeiliSearchRequestError } from "meilisearch";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
 import { backfillProjectSourceIndex, syncSourceFileOnSave } from "../core/sourceIndex.js";
@@ -129,6 +140,7 @@ import {
   resolveEffectivePermission,
   setAccessOverride,
   listAccessOverrides,
+  listAccessOverridesPaged,
   listAccessOverridesForUser,
 } from "../core/permissions.js";
 import { createFolder, renameFolder, deleteFolder, moveFolder, listFolders, listFolderDocuments, listUnfiledDocuments, moveDocumentToFolder } from "../core/folders.js";
@@ -136,11 +148,13 @@ import type { FolderDetail } from "../core/folders.js";
 import {
   createKanbanColumn,
   listKanbanColumnsForUser,
+  listKanbanColumnsForUserPaged,
   getKanbanColumnProjectId,
   setColumnHiddenForUser,
   reorderColumnsForUser,
   createKanbanCard,
   listKanbanCards,
+  listKanbanCardsPaged,
   getKanbanCardByTrackingCode,
   moveKanbanCard,
   setKanbanCardHidden,
@@ -148,8 +162,11 @@ import {
 import {
   createApiKey,
   listProjectKeys,
+  listProjectKeysPaged,
   listTeamKeys,
+  listTeamKeysPaged,
   listMyPersonalKeys,
+  listMyPersonalKeysPaged,
   getApiKeyById,
   revokeApiKey,
   ApiKeyError,
@@ -181,10 +198,12 @@ import { verifyAndParseWebhook, recordPushEvent, handleGiteaSystemPush } from ".
 import {
   createPushHookPrompt,
   listPushHookPrompts,
+  listPushHookPromptsPaged,
   updatePushHookPrompt,
   deletePushHookPrompt,
   expireStalePushHookQueueEntries,
   listQueueEntries,
+  listQueueEntriesPaged,
   acknowledgeQueueEntry,
   completeQueueEntry,
 } from "../core/pushHookPrompts.js";
@@ -289,6 +308,15 @@ app.get(
   requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
     res.json(await listGitCredentials(req.userId!));
+  }),
+);
+
+app.get(
+  "/api/credentials/page",
+  authenticate,
+  requireUnrestrictedScope,
+  asyncRoute(async (req, res) => {
+    res.json(await listGitCredentialsPaged(req.userId!, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
   }),
 );
 
@@ -407,6 +435,16 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/admin/users/page",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (req, res) => {
+    res.json(await listAllUsersForAdminPaged(Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
+  }),
+);
+
 app.post(
   "/api/admin/users/:userId/reset-password",
   authenticate,
@@ -502,6 +540,14 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/teams/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listTeamsPaged(req.userId!, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
+  }),
+);
+
 app.put(
   "/api/teams/:teamId",
   authenticate,
@@ -551,6 +597,22 @@ app.get(
       return;
     }
     res.json(await listMembersForTeam(req.params.teamId));
+  }),
+);
+
+app.get(
+  "/api/teams/:teamId/members/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isTeamAdmin(req.params.teamId, req.userId!))) {
+      res.status(403).json({ error: "이 팀의 관리자만 멤버 목록을 볼 수 있습니다" });
+      return;
+    }
+    res.json(await listMembersForTeamPaged(req.params.teamId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
   }),
 );
 
@@ -606,6 +668,18 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/teams/:teamId/admins/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!isTeamAllowedByActiveScope(req.params.teamId)) {
+      res.status(403).json({ error: "이 API 키로는 이 팀을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    res.json(await listTeamAdminsPaged(req.params.teamId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
+  }),
+);
+
 // ---------------------------------------------------------------- API 키(신원 위임 인증, 3종)
 // 세 종류 다 "그 키를 만든 설계자의 신원 인증을 대행"하고 스코프만
 // 다르다(core/apiKeys.ts). 키 발급/배제는 위험도가 커서(위 팀장 관리
@@ -650,6 +724,17 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/projects/:projectId/api-keys/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(
+      await listProjectKeysPaged(req.params.projectId, req.userId!, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+    );
+  }),
+);
+
 app.post(
   "/api/teams/:teamId/api-keys",
   authenticate,
@@ -680,6 +765,21 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/teams/:teamId/api-keys/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    try {
+      res.json(
+        await listTeamKeysPaged(req.params.teamId, req.userId!, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+      );
+    } catch (err) {
+      if (err instanceof ApiKeyError) { res.status(403).json({ error: err.message }); return; }
+      throw err;
+    }
+  }),
+);
+
 app.post(
   "/api/api-keys/personal",
   authenticate,
@@ -697,6 +797,14 @@ app.get(
   authenticate,
   asyncRoute(async (req, res) => {
     res.json(await listMyPersonalKeys(req.userId!));
+  }),
+);
+
+app.get(
+  "/api/api-keys/personal/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listMyPersonalKeysPaged(req.userId!, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
   }),
 );
 
@@ -748,6 +856,21 @@ app.get(
   authenticate,
   asyncRoute(async (req, res) => {
     res.json(await listProjectGroups(req.query.teamId as string | undefined, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/project-groups/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(
+      await listProjectGroupsPaged(
+        req.query.teamId as string | undefined,
+        req.userId!,
+        Number(req.query.page ?? 1),
+        Number(req.query.pageSize ?? 20),
+      ),
+    );
   }),
 );
 
@@ -816,6 +939,24 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/project-groups/:groupId/members/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    if (!(await isProjectGroupAdmin(req.params.groupId, req.userId!))) {
+      res.status(403).json({ error: "이 그룹의 관리자만 멤버 목록을 볼 수 있습니다" });
+      return;
+    }
+    res.json(
+      await listMembersForGroupPaged(req.params.groupId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+    );
+  }),
+);
+
 // 그룹 관리자 관리 - 팀장 관리 라우트와 동일한 패턴(스코프 확인 +
 // 실제 관리자인지 확인). isProjectGroupAdmin()이 팀장 상속을 포함하므로
 // 그 그룹이 속한 팀의 팀장도 그룹 관리자를 등록/해제할 수 있다.
@@ -866,6 +1007,20 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/project-groups/:groupId/admins/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    if (!(await isGroupAllowedByActiveScope(req.params.groupId))) {
+      res.status(403).json({ error: "이 API 키로는 이 그룹을 대상으로 작업할 수 없습니다" });
+      return;
+    }
+    res.json(
+      await listProjectGroupAdminsPaged(req.params.groupId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+    );
+  }),
+);
+
 app.post(
   "/api/projects",
   authenticate,
@@ -884,6 +1039,21 @@ app.get(
   authenticate,
   asyncRoute(async (req, res) => {
     res.json(await listProjects(req.query.projectGroupId as string | undefined, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/projects/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(
+      await listProjectsPaged(
+        req.query.projectGroupId as string | undefined,
+        req.userId!,
+        Number(req.query.page ?? 1),
+        Number(req.query.pageSize ?? 20),
+      ),
+    );
   }),
 );
 
@@ -986,6 +1156,15 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/projects/:projectId/members/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listMembersPaged(req.params.projectId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
+  }),
+);
+
 app.put(
   "/api/projects/:projectId/members/:userId",
   authenticate,
@@ -1032,6 +1211,15 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     res.json(await listDocTypes(req.params.projectId));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/doc-types/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listDocTypesPaged(req.params.projectId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
   }),
 );
 
@@ -1157,6 +1345,12 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const q = (req.query.q as string | undefined) ?? "";
+    if (req.query.page !== undefined || req.query.pageSize !== undefined) {
+      res.json(
+        await searchProjectDocumentsPaged(req.params.projectId, q, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+      );
+      return;
+    }
     res.json(await searchProjectDocuments(req.params.projectId, q));
   }),
 );
@@ -1374,6 +1568,18 @@ app.get(
 );
 
 app.get(
+  "/api/documents/:trackingCode/backlinks/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(await listBacklinksPaged(req.params.trackingCode, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
+  }),
+);
+
+app.get(
   "/api/documents/:trackingCode/revisions",
   authenticate,
   asyncRoute(async (req, res) => {
@@ -1382,6 +1588,20 @@ app.get(
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
     res.json(await listDocumentRevisions(req.params.trackingCode));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/revisions/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(
+      await listDocumentRevisionsPaged(req.params.trackingCode, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+    );
   }),
 );
 
@@ -1410,6 +1630,20 @@ app.get(
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
     res.json(await listSourceLinks(req.params.trackingCode));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/source-links/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(
+      await listSourceLinksPaged(req.params.trackingCode, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+    );
   }),
 );
 
@@ -1503,6 +1737,17 @@ app.get(
   requireProjectRole("owner"),
   asyncRoute(async (req, res) => {
     res.json(await listAccessOverrides(req.params.projectId));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/access/page",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    res.json(
+      await listAccessOverridesPaged(req.params.projectId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+    );
   }),
 );
 
@@ -1628,6 +1873,22 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/projects/:projectId/kanban/columns/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(
+      await listKanbanColumnsForUserPaged(
+        req.params.projectId,
+        req.userId!,
+        Number(req.query.page ?? 1),
+        Number(req.query.pageSize ?? 20),
+      ),
+    );
+  }),
+);
+
 app.put(
   "/api/kanban/columns/:id/hidden",
   authenticate,
@@ -1681,6 +1942,25 @@ app.get(
     const columnId = req.query.columnId as string | undefined;
     const includeHidden = req.query.includeHidden === "true";
     res.json(await listKanbanCards(req.params.projectId, columnId, includeHidden));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/kanban/cards/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const columnId = req.query.columnId as string | undefined;
+    const includeHidden = req.query.includeHidden === "true";
+    res.json(
+      await listKanbanCardsPaged(
+        req.params.projectId,
+        columnId,
+        includeHidden,
+        Number(req.query.page ?? 1),
+        Number(req.query.pageSize ?? 20),
+      ),
+    );
   }),
 );
 
@@ -1868,6 +2148,17 @@ app.get(
   asyncRoute(async (req, res) => {
     const notice = await pendingQuestionNotice(req.params.projectId);
     res.json(withNotices({ questions: await listPendingQuestions(req.params.projectId) }, notice));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/pending/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const notice = await pendingQuestionNotice(req.params.projectId);
+    const paged = await listPendingQuestionsPaged(req.params.projectId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20));
+    res.json(withNotices(paged, notice));
   }),
 );
 
@@ -2099,6 +2390,26 @@ app.get(
     const projectGroupId = req.query.projectGroupId as string | undefined;
     const projectId = req.query.projectId as string | undefined;
     res.json(await listTemplateRevisions(filename, { teamId, projectGroupId, projectId }));
+  }),
+);
+
+app.get(
+  "/api/templates/revisions/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const filename = req.query.filename as string | undefined;
+    if (!filename) { res.status(400).json({ error: "filename이 필요합니다" }); return; }
+    const teamId = req.query.teamId as string | undefined;
+    const projectGroupId = req.query.projectGroupId as string | undefined;
+    const projectId = req.query.projectId as string | undefined;
+    res.json(
+      await listTemplateRevisionsPaged(
+        filename,
+        { teamId, projectGroupId, projectId },
+        Number(req.query.page ?? 1),
+        Number(req.query.pageSize ?? 20),
+      ),
+    );
   }),
 );
 
@@ -2406,6 +2717,25 @@ app.get(
 );
 
 app.get(
+  "/api/projects/:projectId/git/tree/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const slug = await requireGiteaWorkingSlug(req.params.projectId);
+    const dirPath = (req.query.path as string | undefined) ?? "";
+    res.json(
+      await gitea.listTreePaged(
+        slug,
+        dirPath,
+        req.query.ref as string | undefined,
+        Number(req.query.page ?? 1),
+        Number(req.query.pageSize ?? 20),
+      ),
+    );
+  }),
+);
+
+app.get(
   "/api/projects/:projectId/git/file",
   authenticate,
   requireProjectRole("viewer"),
@@ -2627,6 +2957,17 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/projects/:projectId/push-hook-prompts/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(
+      await listPushHookPromptsPaged(req.params.projectId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+    );
+  }),
+);
+
 app.put(
   "/api/projects/:projectId/push-hook-prompts/:id",
   authenticate,
@@ -2653,6 +2994,22 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     res.json(await listQueueEntries(req.params.projectId, req.query.status as string | undefined));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/push-hook-queue/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(
+      await listQueueEntriesPaged(
+        req.params.projectId,
+        req.query.status as string | undefined,
+        Number(req.query.page ?? 1),
+        Number(req.query.pageSize ?? 20),
+      ),
+    );
   }),
 );
 

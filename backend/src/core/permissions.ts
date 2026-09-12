@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { getMemberRole, isProjectAllowedByActiveScope } from "./members.js";
+import { paginate, type Page } from "./pagination.js";
 
 export interface EffectivePermission {
   read: boolean;
@@ -152,6 +153,32 @@ export async function listAccessOverrides(projectId: string): Promise<AccessOver
     canWrite: r.canWrite,
     canDelete: r.canDelete,
   }));
+}
+
+export async function listAccessOverridesPaged(
+  projectId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<AccessOverrideRow>> {
+  const db = getDb();
+  const result = await paginate<AccessOverrideRow>(
+    (args) => db.docAccessOverride.findMany({ where: { projectId }, ...args }),
+    () => db.docAccessOverride.count({ where: { projectId } }),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: result.items.map((r: AccessOverrideRow) => ({
+      id: r.id,
+      userId: r.userId,
+      docTypeId: r.docTypeId,
+      documentId: r.documentId,
+      canRead: r.canRead,
+      canWrite: r.canWrite,
+      canDelete: r.canDelete,
+    })),
+  };
 }
 
 export interface CrossProjectAccessOverrideRow {

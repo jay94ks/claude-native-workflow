@@ -1,6 +1,7 @@
 import { getDb } from "./db.js";
 import { encryptSecret } from "./crypto.js";
 import { isSuperAdmin } from "./auth.js";
+import { paginate, type Page } from "./pagination.js";
 
 // 설계자 계정에 연결해 저장하는 외부 git 저장소 자격증명(AES-256-GCM
 // 암호화). 프로젝트 생성/마이그레이션 시 입력한 git 저장소가 인증을
@@ -57,6 +58,25 @@ export async function listGitCredentials(userId: string): Promise<GitCredentialS
     credentialType: r.credentialType,
     createdAt: r.createdAt,
   }));
+}
+
+export async function listGitCredentialsPaged(userId: string, page: number, pageSize: number): Promise<Page<GitCredentialSummary>> {
+  const db = getDb();
+  const result = await paginate<{ id: string; hostPattern: string | null; credentialType: string; createdAt: Date }>(
+    (args) => db.gitCredential.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, ...args }),
+    () => db.gitCredential.count({ where: { userId } }),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: result.items.map((r: { id: string; hostPattern: string | null; credentialType: string; createdAt: Date }) => ({
+      id: r.id,
+      hostPattern: r.hostPattern,
+      credentialType: r.credentialType,
+      createdAt: r.createdAt,
+    })),
+  };
 }
 
 export async function removeGitCredential(userId: string, id: string): Promise<void> {

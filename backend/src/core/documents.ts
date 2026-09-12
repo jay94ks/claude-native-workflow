@@ -2,10 +2,11 @@ import { MeiliSearchRequestError } from "meilisearch";
 import { getDb } from "./db.js";
 import { withTrackingCode } from "./tracking.js";
 import { findDocTypeByCode, findDocStatusByCode, initialStatusFor, allowedNextStatuses } from "./docTypes.js";
-import { indexSyncUpsert, indexSyncDelete, getDocumentFromIndex, listDocumentsFromIndex, listDocumentsFromIndexPaged, searchDocuments } from "./search.js";
+import { indexSyncUpsert, indexSyncDelete, getDocumentFromIndex, listDocumentsFromIndex, listDocumentsFromIndexPaged, searchDocuments, rawSearchDocuments } from "./search.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 import { enqueueSearchSync } from "./searchSyncQueue.js";
 import type { SearchableDocument } from "./search.js";
+import { paginate, type Page } from "./pagination.js";
 
 export interface DocumentDetail {
   trackingCode: string;
@@ -186,6 +187,18 @@ export async function searchProjectDocuments(
   return searchDocuments(query, { projectId });
 }
 
+export async function searchProjectDocumentsPaged(
+  projectId: string,
+  query: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<SearchableDocument>> {
+  const safePage = Math.max(1, Math.trunc(page) || 1);
+  const safeSize = Math.max(1, Math.trunc(pageSize) || 20);
+  const { hits, total } = await rawSearchDocuments(query, { projectId, limit: safeSize, offset: (safePage - 1) * safeSize });
+  return { items: hits, page: safePage, pageSize: safeSize, total, totalPages: Math.max(1, Math.ceil(total / safeSize)) };
+}
+
 export interface DocumentPage {
   items: SearchableDocument[];
   page: number;
@@ -240,6 +253,31 @@ export async function listDocumentRevisions(trackingCode: string): Promise<Docum
     editedBy: r.editedBy,
     editedAt: r.editedAt.toISOString(),
   }));
+}
+
+export async function listDocumentRevisionsPaged(
+  trackingCode: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<DocumentRevisionSummary>> {
+  const db = getDb();
+  const doc = await db.document.findUnique({ where: { trackingCode } });
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const result = await paginate(
+    (args) => db.documentRevision.findMany({ where: { documentId: doc.id }, orderBy: { editedAt: "asc" }, ...args }),
+    () => db.documentRevision.count({ where: { documentId: doc.id } }),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: (result.items as { id: string; body: string; editedBy: string; editedAt: Date }[]).map((r) => ({
+      id: r.id,
+      body: r.body,
+      editedBy: r.editedBy,
+      editedAt: r.editedAt.toISOString(),
+    })),
+  };
 }
 
 export async function saveDocumentBody(
@@ -379,6 +417,28 @@ export async function listBacklinks(trackingCode: string): Promise<{ trackingCod
     trackingCode: l.fromDocument.trackingCode,
     title: l.fromDocument.title,
   }));
+}
+
+export async function listBacklinksPaged(
+  trackingCode: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<{ trackingCode: string; title: string }>> {
+  const db = getDb();
+  const where = { toTrackingCode: trackingCode };
+  const result = await paginate<{ fromDocument: { trackingCode: string; title: string } }>(
+    (args) => db.documentLink.findMany({ where, include: { fromDocument: true }, ...args }),
+    () => db.documentLink.count({ where }),
+    page,
+    pageSize,
+  );
+  return {
+    ...result,
+    items: result.items.map((l: { fromDocument: { trackingCode: string; title: string } }) => ({
+      trackingCode: l.fromDocument.trackingCode,
+      title: l.fromDocument.title,
+    })),
+  };
 }
 
 /** 문서 삭제 - 리비전/링크(양쪽)/질의 참고 태깅까지는 스키마의

@@ -258,6 +258,21 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 `kanban-card-get <trackingCode>`로 내용을 확인하고 실행 계획을 세워
 처리한 뒤 그 진행 상황에 맞게 `kanban-card-move`로 컬럼을 옮긴다.
 
+## 목록 명령의 페이지네이션
+
+목록을 반환하는 명령은 대부분 `--page <n>`/`--count <n>`(MCP는
+`page`/`pageSize` 파라미터)을 옵션으로 받는다 - **둘 다 생략하면
+지금까지와 완전히 동일하게 전체 배열**을 반환하고(기존 스크립트가
+안 깨짐), 하나라도 주면 `{items, page, pageSize, total, totalPages}`
+모양의 페이지네이션 응답으로 바뀐다. `docs list`(문서 목록)처럼
+원래도 조회 결과가 많을 수 있는 목록은 이 옵션 없이 호출해도
+최대 1000건까지는 안전하게 다 나오지만, 그보다 큰 프로젝트나 정확한
+범위 조회가 필요하면 `--page`/`--count`를 쓴다. 예외 둘: `docs git
+log`는 Gitea가 총 커밋 수를 안 줘서 페이지네이션 응답이
+`{items, hasMore}` 모양이다(total 없음). `docs message recent`/`docs
+user activity`는 이미 있는 `--limit <n>`(단순 "최근 N건" 요약 뷰)을
+그대로 쓰고 이 페이지네이션 옵션은 없다.
+
 ## 명령 요약 (CLI `docs` / MCP 도구 이름 병기)
 
 | 목적 | CLI | MCP 도구 |

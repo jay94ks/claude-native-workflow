@@ -73,6 +73,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 40 | ✅ | `#cli-token-refresh` | CLI/MCP가 refresh_token을 저장만 하고 실제로 안 써서 15분마다 재로그인이 필요했던 문제 발견·수정(웹 프론트는 이미 구현돼 있었음) |
 | 41 | ✅ | `#document-list-silent-cap` | CLI/MCP `docs list`(문서 전체 목록)가 Meilisearch 기본 limit(50)에 걸려 51건째부터 경고 없이 안 보이던 문제 발견·수정(대량 문서 프로젝트 실측 중 발견) |
 | 42 | ✅ | `#question-ack-race-fix` | 질의 answer/ack/withdraw 동시 호출 시 상태 충돌(withdraw가 조용히 사라짐, Prisma 원본 예외 노출) 실제 재현·수정 - 조건부 updateMany로 원자적 전이 |
+| 43 | ✅ | `#list-pagination-options` | CLI/MCP 목록 명령 약 29개 전부에 `--page`/`--count`(page/pageSize) 페이지네이션 옵션 추가 - 생략 시 기존과 100% 동일한 배열 응답 유지 |
 
 ---
 
