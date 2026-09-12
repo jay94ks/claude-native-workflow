@@ -53,7 +53,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 20 | ✅ | `#hook-prompt-update` | PushHookPrompt 부분 갱신(update) - 브랜치/프롬프트 내용, CLI/MCP |
 | 21 | ✅ | `#hook-branch-pattern` | 브랜치 조건에 `*` glob 패턴 지원(예: `release/*`, 세그먼트 안에서만) |
 | 22 | ✅ | `#hook-queue-ttl` | pending 30일 방치 시 자동 expired 전이(주기 워커, 삭제 아님) |
-| 23 | ⬜ | `#template-history` | 템플릿 변경 이력(리비전) 없음 |
+| 23 | ✅ | `#template-history` | 템플릿 변경 이력(리비전) - 덮어쓰기 직전 내용을 스냅샷, 복원은 재저장 방식(Document 리비전과 동일 패턴) |
 | 24 | ⬜ | `#migrate-idempotent` | 가이디드 마이그레이션 재실행이 멱등하지 않음 |
 | 25 | ✅ | `#migrate-status-mapping-preset` | 옛 상태 어휘(active/wip 등) → 표준 코드 자동 제안(`--no-status-preset`으로 끌 수 있음) |
 | 26 | ⬜ | `#responsive-dark-mode` | 반응형/다크 모드 미지원 |
@@ -66,13 +66,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 33 | ✅ | `#doctype-status-auto-seed` | DocType 생성 시 표준 상태 6개를 항상 자동으로 심음 - 개별 추가/일괄 적용 CRUD 제거(설계자 지시) |
 
 ---
-
-## 11. 템플릿 관리
-
-### `#template-history`
-**템플릿 변경 이력이 없다** - override를 덮어쓰면 이전 내용이
-사라진다(리비전 개념이 문서(Document)에는 있지만 템플릿에는 없음).
-실수로 잘못된 내용을 배포하면 이전 버전을 복구할 방법이 없다.
 
 ## 12. 가이디드 마이그레이션
 

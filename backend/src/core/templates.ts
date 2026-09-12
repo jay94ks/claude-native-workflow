@@ -24,6 +24,13 @@ export interface TemplateScopeInput {
   projectId?: string;
 }
 
+export interface TemplateRevisionSummary {
+  id: string;
+  content: string;
+  editedBy: string;
+  editedAt: string;
+}
+
 function assertAtMostOneScope(scope: TemplateScopeInput): void {
   const set = [scope.teamId, scope.projectGroupId, scope.projectId].filter(Boolean);
   if (set.length > 1) {
@@ -88,11 +95,16 @@ export async function resolveTemplate(filename: string, projectId?: string): Pro
  * 설정한다. @@unique 제약은 null 스코프에서는 DB가 중복을 못 걸러내므로
  * (Postgres/MySQL/SQLite 전부 unique 인덱스에서 NULL은 서로 다른 값으로
  * 취급) findFirst로 먼저 조회해 update/create를 애플리케이션에서
- * 결정한다. */
+ * 결정한다. 이미 override가 있던 스코프를 덮어쓰는 경우(existing이
+ * 있을 때)만, 덮어쓰기 직전의 내용을 TemplateRevision으로 스냅샷한다
+ * (saveDocumentBody()가 DocumentRevision을 남기는 것과 같은 패턴 -
+ * #template-history) - 스코프에 override가 아예 처음 생기는
+ * create 분기는 스냅샷할 이전 값이 없다. */
 export async function setTemplateOverride(
   filename: string,
   scope: TemplateScopeInput,
   content: string,
+  editedBy: string,
 ): Promise<TemplateFile> {
   assertAtMostOneScope(scope);
   const db = getDb();
@@ -103,10 +115,49 @@ export async function setTemplateOverride(
     filename,
   };
   const existing = await db.templateFile.findFirst({ where });
-  const row = existing
-    ? await db.templateFile.update({ where: { id: existing.id }, data: { content } })
-    : await db.templateFile.create({ data: { ...where, content } });
+  let row;
+  if (existing) {
+    await db.templateRevision.create({
+      data: { templateFileId: existing.id, content: existing.content, editedBy },
+    });
+    row = await db.templateFile.update({ where: { id: existing.id }, data: { content } });
+  } else {
+    row = await db.templateFile.create({ data: { ...where, content } });
+  }
   return toTemplateFile(row);
+}
+
+/** setTemplateOverride()와 정확히 같은 스코프 하나를 찾아, 그 행의
+ * 리비전만 시간순으로 반환한다 - resolveTemplate()처럼 상속 체인을
+ * 타지 않는다(리비전은 특정 스코프의 override 행에 귀속되므로, 체인을
+ * 타면 "어느 스코프의 과거 내용인지" 자체가 모호해진다). 그 스코프에
+ * override가 아예 없으면 빈 배열(조회 대상이 없다는 뜻이지 에러가
+ * 아니다). */
+export async function listTemplateRevisions(
+  filename: string,
+  scope: TemplateScopeInput,
+): Promise<TemplateRevisionSummary[]> {
+  assertAtMostOneScope(scope);
+  const db = getDb();
+  const templateFile = await db.templateFile.findFirst({
+    where: {
+      teamId: scope.teamId ?? null,
+      projectGroupId: scope.projectGroupId ?? null,
+      projectId: scope.projectId ?? null,
+      filename,
+    },
+  });
+  if (!templateFile) return [];
+  const revisions = await db.templateRevision.findMany({
+    where: { templateFileId: templateFile.id },
+    orderBy: { editedAt: "asc" },
+  });
+  return revisions.map((r: { id: string; content: string; editedBy: string; editedAt: Date }) => ({
+    id: r.id,
+    content: r.content,
+    editedBy: r.editedBy,
+    editedAt: r.editedAt.toISOString(),
+  }));
 }
 
 const SEED_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "prisma", "seed-templates");

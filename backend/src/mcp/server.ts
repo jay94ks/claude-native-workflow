@@ -632,6 +632,21 @@ async function main() {
     { projectId: z.string() },
     async (a) => call(`/api/projects/${a.projectId}/templates/deploy`, { method: "POST" }),
   );
+  tool(
+    "template_revisions",
+    "템플릿 변경 이력 조회",
+    "특정 스코프(팀/그룹/프로젝트, 생략하면 전역 기본값)에서 그 템플릿 파일이 덮어써지기 전 과거 내용들을 시간순으로 조회한다 - 실수로 잘못된 내용을 덮어썼을 때 이전 버전을 확인하고 template_set으로 그 content를 다시 넘겨 복원하는 데 쓴다.",
+    { filename: z.string(), teamId: z.string().optional(), projectGroupId: z.string().optional(), projectId: z.string().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({
+        filename: String(a.filename),
+        ...(a.teamId ? { teamId: String(a.teamId) } : {}),
+        ...(a.projectGroupId ? { projectGroupId: String(a.projectGroupId) } : {}),
+        ...(a.projectId ? { projectId: String(a.projectId) } : {}),
+      });
+      return call(`/api/templates/revisions?${qs}`);
+    },
+  );
 
   // ---------------------------------------------------------------- git 저장소 연결 + 이력 조회 (Phase 2)
 

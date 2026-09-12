@@ -3883,6 +3883,60 @@ command"인지 확인. 브라우저로 `DocTypeManager.vue`에서 새 타입을 
 펼쳐보고 "상태 추가"/"표준 상태 흐름 한 번에 적용"이 안 보이면서
 상태 목록엔 이미 6개가 다 떠 있는 것을 확인.
 
+## 템플릿(CLAUDE.md/SKILL.md) 변경 이력(`#template-history`) - 완료 (2026-09-12)
+
+PLANS.md 23번(백로그 항목). `setTemplateOverride()`(`core/templates.ts`)
+는 이미 override가 있는 스코프에 다시 쓰면 그냥 `update({ data: {
+content } })`로 이전 내용을 덮어써 버렸다 - Document는 저장할 때마다
+`DocumentRevision`을 남기는 반면 템플릿엔 그 개념이 아예 없어서,
+실수로 잘못된 CLAUDE.md/SKILL.md를 덮어쓰면 되돌릴 방법이 없었다.
+
+새 개념을 고안하지 않고 `saveDocumentBody()`가 이미 쓰는 "덮어쓰기
+직전에 이전 값을 리비전 테이블에 스냅샷"과 완전히 같은 패턴을 그대로
+가져왔다. 새 `TemplateRevision` 모델(3 provider 스키마 동일 -
+`templateFileId`/`content`/`editedBy`/`editedAt`, `TemplateFile`
+onDelete Cascade)을 추가하고, `setTemplateOverride`에 `editedBy`
+매개변수를 추가해 `existing`이 있을 때(= 실제 덮어쓰기)만 업데이트
+직전에 `db.templateRevision.create(...)`로 스냅샷 - 스코프에
+override가 최초로 생기는 `create` 분기는 스냅샷할 이전 값이 없으므로
+그대로 둔다. 새 `listTemplateRevisions(filename, scope)`는
+`resolveTemplate()`처럼 상속 체인을 타지 않고 정확히 그 스코프의
+`TemplateFile` 행 하나를 찾아 그 리비전만 반환한다(체인을 타면 "어느
+스코프의 과거 내용인지"가 모호해지기 때문).
+
+`setTemplateOverride`의 유일한 외부 호출자는 `server.ts`의 `PUT
+/api/templates` 라우트뿐이라 시그니처 변경(`editedBy` 추가)의 영향이
+`req.userId!`를 넘기는 한 줄로 끝났고, `seedDefaultTemplates()`는
+애초에 이 함수를 거치지 않고 `db.templateFile.create()`를 직접 써서
+변경이 필요 없었다. 새 `GET /api/templates/revisions` 라우트는 기존
+`/api/templates`와 같은 이유(filename에 슬래시 포함 가능)로 쿼리스트링
+기반, 권한 수준도 읽기 전용이라 `GET /api/templates`와 동일(스코프별
+쓰기 제한 없음). CLI `template revisions <filename>`/MCP
+`template_revisions`를 쌍으로 신설(CLI/MCP 완전성 원칙, 대칭성 유지).
+
+**복원 방식**: Document 쪽에도 "리비전 N으로 되돌리기" 전용 API가
+없다(리비전은 스냅샷 목록 조회만, 복원은 그 내용을 다시 저장하는
+방식) - 템플릿도 같은 관례를 따른다. 별도의 "복원" 엔드포인트나 웹
+UI는 만들지 않았다(템플릿 관리 자체가 애초에 웹 UI 없이 CLI/MCP/API
+로만 이뤄짐 - 조사 완료).
+
+SKILL.md 2벌의 명령 표에 `template_revisions` 행을 추가하면서, 조사
+중 발견한 기존 문서화 공백(`template get`/`set`과 그 MCP 짝이 애초에
+표에 한 번도 없었음)도 같은 표를 손대는 김에 같이 채웠다.
+
+**실측 검증**: `npx tsc --noEmit` 클린(`db.templateRevision.findMany`
+결과의 `.map` 콜백에 명시적 타입 주석이 필요했다 - `getDb()`가 `any`를
+반환하는 이 코드베이스의 기존 관례를 그대로 따름). `npm run
+audit:cli-mcp`(119/108 → 120/109, 대칭성 이상 없음). `docker compose
+build backend` → `up -d --force-recreate backend`(스키마에 테이블만
+추가돼 데이터 손실 경고 없이 in sync). HTTP 왕복: 새 파일명에 최초
+override(content A) → 리비전 없음 확인 → 다시 override(content B로
+덮어씀) → 리비전 1건(content A, editedBy=실제 로그인 사용자) 확인 →
+현재 값은 B인지 확인 → 그 리비전의 content(A)를 다시 `PUT`해 복원
+워크플로가 실제로 동작하는지, 그 복원 자체도 새 리비전(B)을 남기는지
+확인. 로컬 재빌드한 CLI로 `docs template revisions`도 동일하게
+재확인.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

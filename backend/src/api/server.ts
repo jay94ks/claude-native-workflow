@@ -120,7 +120,7 @@ import {
   listRecentComments,
   setCommentStatus,
 } from "../core/comments.js";
-import { resolveTemplate, setTemplateOverride, seedDefaultTemplates } from "../core/templates.js";
+import { resolveTemplate, setTemplateOverride, seedDefaultTemplates, listTemplateRevisions } from "../core/templates.js";
 import { MeiliSearchRequestError } from "meilisearch";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
 import { backfillProjectSourceIndex, syncSourceFileOnSave } from "../core/sourceIndex.js";
@@ -2074,7 +2074,20 @@ app.put(
       res.status(403).json({ error: "이 API 키로는 이 스코프의 템플릿을 수정할 수 없습니다" });
       return;
     }
-    res.json(await setTemplateOverride(filename, { teamId, projectGroupId, projectId }, content));
+    res.json(await setTemplateOverride(filename, { teamId, projectGroupId, projectId }, content, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/templates/revisions",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const filename = req.query.filename as string | undefined;
+    if (!filename) { res.status(400).json({ error: "filename이 필요합니다" }); return; }
+    const teamId = req.query.teamId as string | undefined;
+    const projectGroupId = req.query.projectGroupId as string | undefined;
+    const projectId = req.query.projectId as string | undefined;
+    res.json(await listTemplateRevisions(filename, { teamId, projectGroupId, projectId }));
   }),
 );
 

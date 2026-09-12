@@ -94,6 +94,7 @@ model User {
   memberships       Member[]
   documentsCreated  Document[]         @relation("DocumentCreatedBy")
   revisionsEdited   DocumentRevision[] @relation("RevisionEditedBy")
+  templateRevisionsEdited TemplateRevision[] @relation("TemplateRevisionEditedBy")
   questionsAsked    Question[]         @relation("QuestionAskedBy")
   answersGiven      Answer[]           @relation("AnswerAnsweredBy")
   comments          Comment[]          @relation("CommentAuthor")
@@ -557,14 +558,28 @@ model TemplateFile {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  team         Team?         @relation(fields: [teamId], references: [id])
-  projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id])
-  project      Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  team         Team?              @relation(fields: [teamId], references: [id])
+  projectGroup ProjectGroup?      @relation(fields: [projectGroupId], references: [id])
+  project      Project?           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  revisions    TemplateRevision[]
 
   @@unique([teamId, projectGroupId, projectId, filename])
   @@index([teamId])
   @@index([projectGroupId])
   @@index([projectId])
+}
+
+model TemplateRevision {
+  id             String   @id @default(cuid())
+  templateFileId String
+  content        String
+  editedBy       String
+  editedAt       DateTime @default(now())
+
+  templateFile TemplateFile @relation(fields: [templateFileId], references: [id], onDelete: Cascade)
+  editor       User         @relation("TemplateRevisionEditedBy", fields: [editedBy], references: [id])
+
+  @@index([templateFileId])
 }
 
 // ---------------------------------------------------------------- 문서 정리용 폴더 (DB 전용, AI는 모름)

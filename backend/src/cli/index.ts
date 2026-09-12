@@ -995,6 +995,24 @@ templateCmd
     run(async () => printJson(await apiCall(`/api/projects/${projectId}/templates/deploy`, { method: "POST" }))),
   );
 
+templateCmd
+  .command("revisions <filename>")
+  .description("과거에 덮어써진 이전 내용들을 시간순으로 조회 - 실수로 잘못된 내용을 덮어썼을 때 template set으로 되돌리는 데 쓴다")
+  .option("--project <id>", "이 프로젝트 스코프의 override 이력")
+  .option("--group <id>", "이 프로젝트 그룹 스코프의 override 이력")
+  .option("--team <id>", "이 팀 스코프의 override 이력")
+  .action((filename, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({
+        filename,
+        ...(opts.team ? { teamId: opts.team } : {}),
+        ...(opts.group ? { projectGroupId: opts.group } : {}),
+        ...(opts.project ? { projectId: opts.project } : {}),
+      });
+      printJson(await apiCall(`/api/templates/revisions?${qs}`));
+    }),
+  );
+
 // ---------------------------------------------------------------- git 저장소 연결 + 이력 조회 (Phase 2)
 
 const gitCmd = program.command("git").description("git 저장소 연결/이력 조회");
