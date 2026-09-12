@@ -48,7 +48,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 15 | ✅ | `#message-edit-delete` | 메시지 수정/삭제(본인만, CLI/MCP/웹) |
 | 16 | ✅ | `#message-wait-timeout-cap` | 서버 단일 호출 10초 상한 + CLI/MCP 폴링으로 전체 대기 구현 |
 | 17 | ✅ | `#meilisearch-spof` | Meilisearch 장애 시 503+명확한 메시지 응답, 색인 쓰기는 큐+워커로 자동 재처리 |
-| 18 | ⬜ | `#git-unlink` | git 저장소 연결 해제(unlink) 기능 없음 |
+| 18 | ✅ | `#git-unlink` | 외부 연동 해제(자체 호스팅으로 전환) - 자체 호스팅은 프로젝트 삭제 전엔 해제 불가 |
 | 19 | ⬜ | `#git-publish-pr-draft` | PR 초안 자동 생성 중간 단계 없음(의도된 설계) |
 | 20 | ⬜ | `#hook-prompt-update` | PushHookPrompt 수정(update) 라우트 없음 |
 | 21 | ⬜ | `#hook-branch-pattern` | 브랜치 패턴(glob/regex) 매칭 없음 |
@@ -88,15 +88,6 @@ revisions/source-links/access/folder, 두 bulk 라우트 포함) 전부가
 라운드로 남겨둔다.
 
 ## 9. git 저장소 연동
-
-### `#git-unlink`
-**저장소 연결 해제(unlink) 기능이 실제로 없다** - 코드로 확인 완료
-(`server.ts`엔 `GET /api/projects/:projectId/git/repo`뿐, `DELETE`
-라우트 자체가 없음 - `gitRepos.ts`의 `gitea.deleteRepo()` 호출 2곳도
-전부 `migrateRepo()` 인증 실패 시 남은 빈 stub 저장소를 내부적으로
-정리하는 에러 처리 경로일 뿐, 사용자가 부르는 unlink 기능이 아님).
-한 번 연결하면 다른 방식으로 바꾸거나 연결을 끊을 방법이 없다 - 실제
-공백 확인됨, 필요해지면 별도 요청으로 설계.
 
 ### `#git-publish-pr-draft`
 **동기화(발행)이 즉시 반영/AI 대기열 둘 중 하나로만 갈라진다** -

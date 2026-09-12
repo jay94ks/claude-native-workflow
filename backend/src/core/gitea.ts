@@ -100,6 +100,21 @@ export async function createRepo(slug: string): Promise<CreatedRepo> {
   return { cloneUrl: json.clone_url, externalRepoId: String(json.id) };
 }
 
+/** Gitea 저장소 이름을 바꾼다(#git-unlink 전용 - 외부 연동 해제 시
+ * `{slug}-work`이던 작업 저장소를 self_hosted 표준 slug(접미사 없음)
+ * 로 바꿔, requireGiteaWorkingSlug()의 self_hosted 분기가 그대로
+ * 맞아떨어지게 한다 - 그렇지 않으면 DB의 provider만 바뀌고 실제 Gitea
+ * 저장소 이름은 여전히 "-work" 접미사라 이후 모든 git 조회/커밋이
+ * 엉뚱한(존재하지 않는) slug를 찾아 404가 난다). */
+export async function renameRepo(oldSlug: string, newSlug: string): Promise<CreatedRepo> {
+  const res = await giteaFetch(`/api/v1/repos/${orgLogin()}/${oldSlug}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: newSlug }),
+  });
+  const json = (await res.json()) as { clone_url: string; id: number };
+  return { cloneUrl: json.clone_url, externalRepoId: String(json.id) };
+}
+
 /** migrateRepo()가 clone 실패로 던진 뒤(특히 GitAuthRequiredError -
  * 자격증명 입력 후 재시도가 실제 사용 경로) 남은 빈 stub 저장소를
  * 지운다. 실측으로 발견: Gitea의 migrate API는 저장소 레코드를 먼저

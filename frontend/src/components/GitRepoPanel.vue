@@ -78,6 +78,40 @@ function isAuthRequired(err: unknown): err is ApiError {
   return err instanceof ApiError && err.status === 422 && err.message === "git_auth_required";
 }
 
+// ---------------------------------------------------------------- 외부 연동 해제(자체 호스팅으로 전환)
+// Gitea와의 연결(작업 저장소) 자체는 프로젝트를 지우지 않는 한 끊을 수
+// 없다(설계자 확정) - 여기서 끊는 건 "외부를 권위 저장소로 취급하던
+// 관계"뿐이라, 서버가 provider:"self_hosted"로 전환된 최신 상태를
+// 그대로 돌려주면 기존 v-if="gitRepo.provider === 'external_linked'"
+// 조건들이 자연히 동기화/발행 패널을 감춘다(별도 분기 불필요).
+
+const unlinking = ref(false);
+const unlinkError = ref("");
+
+async function unlinkExternal() {
+  if (
+    !window.confirm(
+      "외부 저장소와의 연동을 해제합니다. 미러 저장소는 삭제되고, 지금까지 작업해온 Gitea 저장소는 그대로 이 프로젝트의 자체 호스팅 저장소가 됩니다. 계속할까요?",
+    )
+  ) {
+    return;
+  }
+  unlinking.value = true;
+  unlinkError.value = "";
+  try {
+    gitRepo.value = await apiCall<GitRepo>(`/projects/${props.projectId}/git/repo`, { method: "DELETE" });
+    syncStatus.value = null;
+    syncProposal.value = null;
+    publishQueueEntry.value = null;
+    stopSyncPoll();
+    stopPublishQueuePoll();
+  } catch (err) {
+    unlinkError.value = err instanceof ApiError ? err.message : "연동 해제에 실패했습니다";
+  } finally {
+    unlinking.value = false;
+  }
+}
+
 async function createRepo() {
   importing.value = true;
   importError.value = "";
@@ -365,6 +399,10 @@ onUnmounted(() => {
             동기화 제안 만들기
           </button>
         </div>
+        <button :disabled="unlinking" class="danger" @click="unlinkExternal">
+          {{ unlinking ? "해제 중..." : "외부 연동 해제(자체 호스팅으로 전환)" }}
+        </button>
+        <p v-if="unlinkError" class="error">{{ unlinkError }}</p>
         <p v-if="syncProposalError" class="error">{{ syncProposalError }}</p>
         <div v-if="syncProposal" class="sync-proposal">
           <ul class="files">
@@ -582,6 +620,19 @@ onUnmounted(() => {
 .sync-status {
   margin-top: 10px;
   font-size: 13px;
+}
+.danger {
+  background: #fff;
+  border: 1px solid #d1344b;
+  color: #d1344b;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+  margin-top: 12px;
+}
+.danger:disabled {
+  opacity: 0.6;
 }
 .sync-status p {
   margin: 4px 0;

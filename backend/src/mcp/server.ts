@@ -699,6 +699,13 @@ async function main() {
     call(`/api/projects/${a.projectId}/git/repo`),
   );
   tool(
+    "git_unlink",
+    "외부 연동 해제(자체 호스팅으로 전환)",
+    "외부 연동(git_link_external)의 권위 저장소 관계만 끊는다 - Gitea 작업 저장소는 그대로 남아 self_hosted로 전환된다(자체 호스팅 저장소는 해제할 수 없다 - 프로젝트 삭제만 가능).",
+    { projectId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/repo`, { method: "DELETE" }),
+  );
+  tool(
     "git_sync_status",
     "동기화 상태 확인",
     "외부 연동(git_link_external) 프로젝트의 미러 대비 작업 저장소 변경 현황(added/changed/removedFromWork)을 확인한다 - Gitea의 미러 동기화가 비동기라 요청 후 완료될 때까지 기다렸다가 결과를 반환한다(이미 다른 요청이 진행 중이면 그 결과를 그대로 기다림).",

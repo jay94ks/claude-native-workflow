@@ -167,6 +167,7 @@ import {
 import {
   linkSelfHostedRepo,
   linkExternalAsPrimary,
+  unlinkExternalRepo,
   getProjectGitRepo,
   getWebhookSecret,
   requireGiteaWorkingSlug,
@@ -2330,6 +2331,19 @@ app.get(
     const repo = await getProjectGitRepo(req.params.projectId);
     if (!repo) { res.status(404).json({ error: "연결된 git 저장소가 없습니다" }); return; }
     res.json(repo);
+  }),
+);
+
+// 외부 연동(link-external)의 권위 저장소 관계만 끊는다 - 자체 호스팅
+// 저장소는 프로젝트 삭제 없이는 해제할 수 없다(설계자 확정,
+// #git-unlink). 응답은 전환 후 상태(provider:"self_hosted")를 그대로
+// 돌려줘 프런트가 재조회 없이 화면을 갱신할 수 있게 한다.
+app.delete(
+  "/api/projects/:projectId/git/repo",
+  authenticate,
+  requireProjectRole("owner"),
+  asyncRoute(async (req, res) => {
+    res.json(await unlinkExternalRepo(req.params.projectId));
   }),
 );
 

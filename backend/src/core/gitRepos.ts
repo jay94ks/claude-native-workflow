@@ -244,6 +244,46 @@ export async function getProjectGitRepo(projectId: string): Promise<ProjectGitRe
   return row ? toInfo(row) : null;
 }
 
+/** 외부(GitHub/GitLab)를 권위 저장소로 취급하던 관계만 끊는다(설계자
+ * 확정 - #git-unlink) - Gitea와의 연결 자체는 프로젝트를 삭제하지
+ * 않는 한 끊을 수 없어야 하므로, 저장소를 지우는 게 아니라 이미
+ * linkExternalAsPrimary()가 만들어둔 **작업 저장소**를 그대로
+ * self_hosted로 승격시킨다(git 히스토리·현재 상태 보존). 미러(외부
+ * 저장소의 읽기 전용 캐시)만 이제 의미가 없어져 지운다. self_hosted로
+ * 시작한 프로젝트는 처음부터 "외부"라는 관계가 없어 해제 대상이
+ * 아니다. */
+export async function unlinkExternalRepo(projectId: string): Promise<ProjectGitRepoInfo> {
+  const repo = await getProjectGitRepo(projectId);
+  if (!repo) throw new Error("연결된 git 저장소가 없습니다");
+  if (repo.provider !== "external_linked" && repo.provider !== "github" && repo.provider !== "gitlab") {
+    throw new Error("자체 호스팅 저장소는 연결 해제할 수 없습니다 - 프로젝트를 삭제해야 합니다");
+  }
+  const mirrorSlug = mirrorSlugForProject(projectId);
+  const workSlug = workSlugForProject(projectId);
+  const plainSlug = slugForProject(projectId);
+  await gitea.deleteRepo(mirrorSlug).catch((err) => {
+    console.error(`unlinkExternalRepo(${projectId}) - 미러 저장소 삭제 실패(${mirrorSlug}):`, err);
+  });
+  // requireGiteaWorkingSlug()의 self_hosted 분기는 접미사 없는
+  // slugForProject()를 기대한다 - DB의 provider만 바꾸고 Gitea 저장소
+  // 이름을 그대로 "-work"로 남기면 이후 모든 git 조회/커밋이 존재하지
+  // 않는 slug를 찾아 404가 난다(실측으로 발견) - 실제로 이름을 바꿔야
+  // self_hosted 프로젝트와 완전히 동일하게 동작한다.
+  const workRepo = await gitea.renameRepo(workSlug, plainSlug);
+  const db = getDb();
+  const row = await db.projectGitRepo.update({
+    where: { projectId },
+    data: {
+      provider: "self_hosted",
+      repoUrl: workRepo.cloneUrl,
+      externalRepoId: workRepo.externalRepoId,
+      gitCredentialId: null,
+      webhookSecretEncrypted: null,
+    },
+  });
+  return toInfo(row);
+}
+
 /** 프로젝트 삭제 시 연결된 Gitea 저장소도 함께 지운다(설계자 확인 -
  * 프로젝트를 삭제하면 DB 데이터뿐 아니라 Gitea 저장소도 같이 삭제).
  * self_hosted는 저장소 하나(slugForProject), external_linked는 미러+

@@ -3372,6 +3372,59 @@ DNS 등록은 먼저 사라져 신규 커넥션은 즉시 실패) 쓰기 경로 
 `npm run audit:cli-mcp`, `npm run db:generate`(3개 백엔드 전부)
 클린.
 
+## git 외부 연동 해제(`#git-unlink`) - 완료 (2026-09-12)
+
+PLANS.md 18번(`## 9. git 저장소 연동`). 저장소를 한 번 연결하면
+프로젝트를 통째로 지우지 않는 한 연결 방식을 바꿀 방법이 없었다.
+
+**1차 계획(모든 provider에서 Gitea 저장소까지 통째로 삭제하는
+"완전 해제")은 반려됐다.** 설계자의 정정 지시: (1) 외부와의 연결만
+해제 가능해야 한다(자체 호스팅은 해제 자체가 불가능), (2) Gitea와의
+연결은 프로젝트를 삭제하지 않는 한 끊을 수 없어야 한다. 두 요구를
+합치면 "해제"는 "저장소를 없애는 것"이 아니라 **"외부를 권위
+저장소로 취급하던 관계만 끊고, 이미 있던 Gitea 작업 저장소를
+그대로 self_hosted로 승격시키는 것**"이 된다 - 미러(외부 저장소의
+읽기 전용 사본)만 이제 의미가 없어져 지우고, 작업 저장소(실제
+커밋해온 곳)는 히스토리·현재 상태 그대로 보존한다.
+
+**구현**: `core/gitea.ts`에 `renameRepo(oldSlug, newSlug)` 신설(Gitea
+`PATCH /repos/{owner}/{repo}`로 이름 변경). `core/gitRepos.ts`의
+새 함수 `unlinkExternalRepo(projectId)` - `external_linked`(또는
+레거시 `github`/`gitlab`)가 아니면 즉시 거부, 미러 저장소 삭제(fail
+-soft), **작업 저장소 이름을 `{slug}-work` → `{slug}`(접미사 없는
+표준 self_hosted slug)로 실제로 바꾼 뒤** `ProjectGitRepo` 행을
+`provider:"self_hosted"` + 새 clone URL로 갱신. `DELETE
+/api/projects/:projectId/git/repo`(owner 전용) + CLI `git unlink`
++ MCP `git_unlink` 추가. 프론트(`GitRepoPanel.vue`)는
+`external_linked`일 때만 "외부 연동 해제" 버튼을 보여주고(자체
+호스팅엔 처음부터 안 보임), `window.confirm()`으로 한 번 확인한 뒤
+서버가 돌려준 전환 후 상태로 화면을 즉시 갱신한다 - 별도 분기 없이
+기존 `v-if="gitRepo.provider === 'external_linked'"` 조건들이
+자연히 동기화/발행 패널을 감춘다.
+
+**실측으로 발견한 버그**: 처음엔 Gitea 쪽 이름을 안 바꾸고 DB의
+`provider`만 `self_hosted`로 바꿨는데, `requireGiteaWorkingSlug()`
+(기존 함수)의 self_hosted 분기가 접미사 없는 `slugForProject()`를
+기대하는 반면 실제 Gitea 저장소는 여전히 `-work` 접미사였다 - 그
+결과 전환 직후 모든 git 조회/커밋이 존재하지 않는 slug를 찾아 404가
+났다(실제로 마커 파일을 커밋해두고 해제 후 조회해 재현·확인). Gitea
+저장소 자체의 이름을 바꾸는 `renameRepo()`로 해결 - DB 필드만
+바꾸는 것으로는 안 되고 Gitea 쪽도 실제로 맞춰야 한다는 교훈.
+
+**실측 검증**: docker 스택에서 실제 공개 저장소(`octocat/
+Hello-World`)로 외부 연동 → 작업 저장소에 마커 파일 커밋 → 해제 →
+`provider:"self_hosted"` 확인 → 마커 파일이 그대로 남아있는지 확인
+(핵심 증거) → 해제 후에도 새 커밋이 정상 동작하는지 확인(slug
+전환이 완전한지) → 재해제 시도 시 명확히 거부되는지 확인. 자체
+호스팅 프로젝트에 해제를 시도하면 즉시 거부되고 아무것도 안
+바뀌는지 확인. 연결 안 된 프로젝트도 명확한 에러 확인. CLI(`docs
+git unlink`)/MCP(`git_unlink`) 왕복 확인. 브라우저로 실제 버튼
+클릭까지 확인(confirm 취소 시 DELETE 요청 자체가 안 나가는지 네트워크
+로그로 확인, confirm 승인 시 DELETE 성공 + 화면이 재조회 없이
+self_hosted 화면으로 즉시 바뀌는지, 자체 호스팅 프로젝트엔 버튼
+자체가 안 보이는지). `npx tsc --noEmit`(backend)/`vue-tsc -b`
+(frontend)/`npm run audit:cli-mcp` 전부 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

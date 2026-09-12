@@ -1094,6 +1094,15 @@ gitCmd
   .description("연결된 git 저장소 정보를 조회한다")
   .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/repo`))));
 
+gitCmd
+  .command("unlink <projectId>")
+  .description(
+    "외부 연동(link-external)의 권위 저장소 관계만 끊는다 - Gitea 작업 저장소는 그대로 남아 self_hosted로 전환된다(자체 호스팅 저장소는 해제 불가 - 프로젝트 삭제만 가능)",
+  )
+  .action((projectId) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/repo`, { method: "DELETE" }))),
+  );
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

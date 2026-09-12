@@ -305,6 +305,7 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 저장소 연결(생성/이주) | `docs git link <projectId> [--import-from <url>] [--credential <id>]` | `git_link` |
 | 저장소 연결(외부 연동) | `docs git link-external <projectId> --provider <github\|gitlab> --url <url> [--credential <id>]` | `git_link_external` |
 | 연결 정보 조회 | `docs git repo <projectId>` | `git_repo` |
+| 외부 연동 해제(자체 호스팅으로 전환) | `docs git unlink <projectId>` | `git_unlink` |
 | 동기화 상태 확인 | `docs git sync-status <projectId>` | `git_sync_status` |
 | 동기화 제안 내보내기 | `docs git sync-proposal <projectId> [--out <dir>]` | `git_sync_proposal` |
 | 외부 저장소로 실제 동기화(발행) | `docs git publish <projectId> --credential <id>` | `git_publish` |

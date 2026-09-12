@@ -521,10 +521,16 @@
   같은 경로로 대기열에 올라가는지, `docs git publish-queue-done` 보고
   후 버튼이 재활성화되는지 - 코드/설계 검토는 마쳤지만 아직 이 문서
   형식의 실측 왕복은 안 함(우선 재개 후보).
+- [x] **외부 연동 해제(`git unlink`/`git_unlink`)** - 실제 공개
+  저장소(`octocat/Hello-World`)로 외부 연동 후 작업 저장소에 마커
+  파일 커밋 → 해제 → `self_hosted`로 전환되고 마커 파일이 그대로
+  살아있는지(히스토리 보존), 해제 후 새 커밋도 정상 동작하는지
+  확인. 자체 호스팅 프로젝트는 해제 시도 자체가 명확히 거부되는지,
+  연결 안 된 프로젝트는 명확한 에러가 오는지 확인. 웹 UI 버튼 클릭
+  왕복(confirm 취소/승인 둘 다)까지 실측.
 
 ### 추가 개발 계획
-`#git-unlink` `#git-publish-pr-draft` - 상세는 [PLANS.md](PLANS.md)
-참고.
+`#git-publish-pr-draft` - 상세는 [PLANS.md](PLANS.md) 참고.
 
 ---
 
