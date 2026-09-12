@@ -46,7 +46,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 13 | ✅ | `#question-withdraw` | 질문 철회(open 상태·본인만, CLI/MCP/웹) |
 | 14 | ✅ | `#comment-edit-delete` | 이미 구현돼 있었음 - 문서만 정리(코드 변경 없음) |
 | 15 | ✅ | `#message-edit-delete` | 메시지 수정/삭제(본인만, CLI/MCP/웹) |
-| 16 | ⬜ | `#message-wait-timeout-cap` | `message wait` 최대 타임아웃 상한 미정 |
+| 16 | ✅ | `#message-wait-timeout-cap` | 서버 단일 호출 10초 상한 + CLI/MCP 폴링으로 전체 대기 구현 |
 | 17 | ⬜ | `#meilisearch-spof` | Meilisearch 장애 시 에러 메시지 품질 미점검 |
 | 18 | ⬜ | `#git-unlink` | git 저장소 연결 해제(unlink) 기능 없음 |
 | 19 | ⬜ | `#git-publish-pr-draft` | PR 초안 자동 생성 중간 단계 없음(의도된 설계) |
@@ -62,13 +62,6 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
 
 ---
-
-## 7. 메시징
-
-### `#message-wait-timeout-cap`
-**`message wait`의 최대 타임아웃 상한이 코드/문서 어디에도 명시된
-적이 없다** - 설계자가 과도하게 긴 타임아웃을 걸면 서버 자원을 오래
-묶어둘 수 있는지 점검 필요.
 
 ## 8. 검색/인덱싱
 

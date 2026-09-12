@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
-import { apiCall, apiCallText, saveCredentials, loadCredentials, clearCredentials, credentialsPath } from "./apiclient.js";
+import { apiCall, apiCallText, saveCredentials, loadCredentials, clearCredentials, credentialsPath, waitForMessagePolling } from "./apiclient.js";
 import { scanDirectory, applyManifest } from "./migrate.js";
 
 const program = new Command();
@@ -1309,8 +1309,8 @@ messageCmd.command("send <projectId> <body...>").action((projectId, bodyParts) =
 );
 messageCmd
   .command("wait <projectId>")
-  .option("--timeout <sec>", "타임아웃(초)", "60")
-  .action((projectId, opts) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages/wait?timeout=${opts.timeout}`))));
+  .option("--timeout <sec>", "전체 대기 시간(초) - 내부적으로 10초 단위 폴링으로 구현되어 있어 서버가 커넥션을 오래 붙들지 않음", "60")
+  .action((projectId, opts) => run(async () => printJson(await waitForMessagePolling(projectId, Number(opts.timeout)))));
 messageCmd
   .command("recent <projectId>")
   .option("--limit <n>", "기본 20")

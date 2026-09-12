@@ -169,6 +169,15 @@ export interface WaitResult {
   message: MessageDetail | null;
 }
 
+// 이 값보다 긴 timeoutSec을 요청해도 항상 이 상한으로 잘린다 - HTTP
+// 요청 하나가 오래 블로킹하며 서버 커넥션/MQTT 구독을 길게 붙드는
+// 것을 막기 위한 방어선(누가 이 엔드포인트를 직접 호출하든 항상
+// 적용됨). 사용자가 원하는 "긴 대기"는 이 상한 대신 CLI/MCP가 이
+// 짧은 대기를 반복 호출(폴링)해서 흉내낸다 - cli/apiclient.ts의
+// waitForMessagePolling()/MESSAGE_WAIT_POLL_INTERVAL_SEC(같은 값,
+// CLI/MCP는 core를 직접 import 못 해 별도 선언) 참고.
+export const MESSAGE_WAIT_POLL_MAX_SEC = 10;
+
 /** `project/{projectId}/messages`를 백엔드 자신의 서비스 계정으로 구독해
  * 새 메시지가 오거나 타임아웃될 때까지 기다린다 - CLI/MCP는 이 함수를
  * 감싼 HTTP 롱폴 엔드포인트를 한 번 호출하기만 하면 된다(직접 MQTT를
@@ -176,8 +185,10 @@ export interface WaitResult {
  * 매 호출마다 새로 연결한다(개인/소규모 설치 트래픽에서 커넥션 풀링은
  * 과함). 실제로 메시지를 받은 경우 그 행의 deliveredAt도 갱신(대기 중
  * 오는 새 메시지도 "AI가 즉시 수신"이므로 listMessages의 markDelivered와
- * 동일하게 기록 처리). */
+ * 동일하게 기록 처리). timeoutSec은 항상 MESSAGE_WAIT_POLL_MAX_SEC
+ * 이하로 클램프된다. */
 export async function waitForMessage(projectId: string, timeoutSec: number): Promise<WaitResult> {
+  const clampedTimeoutSec = Math.min(Math.max(Math.trunc(timeoutSec) || 1, 1), MESSAGE_WAIT_POLL_MAX_SEC);
   const { url, username, password } = mqttConfig();
   const topic = projectMessagesTopic(projectId);
 
@@ -193,7 +204,7 @@ export async function waitForMessage(projectId: string, timeoutSec: number): Pro
       resolve(r);
     };
 
-    const timer = setTimeout(() => finish({ timedOut: true, message: null }), timeoutSec * 1000);
+    const timer = setTimeout(() => finish({ timedOut: true, message: null }), clampedTimeoutSec * 1000);
 
     client.on("connect", () => {
       client.subscribe(topic, { qos: 1 }, (err) => {

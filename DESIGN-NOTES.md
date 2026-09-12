@@ -3201,6 +3201,58 @@ edit`/`message delete`, MCP `message_edit`/`message_delete`(이미
 audit:cli-mcp`, `npx tsc --noEmit`(backend), `vue-tsc -b`(frontend)
 전부 클린.
 
+## `message wait` 폴링 전환(`#message-wait-timeout-cap`) - 완료 (2026-09-12)
+
+PLANS.md 16번(`## 7. 메시징` 마지막 항목, 섹션 완전 종료). `message
+wait`의 최대 타임아웃 상한이 코드/문서 어디에도 없어, 설계자가 긴
+값을 걸면 서버가 그만큼 HTTP 연결과 MQTT 구독을 계속 붙들고 있었다.
+
+**1차 계획(단순히 큰 상한값 - 예: 300초 - 으로 서버 쪽 타임아웃을
+클램프)은 설계자가 반려했다**: "message wait은 MQTT를 통하여
+메시지를 대기해야해. HTTP 폴링은 짧은 일정 주기마다 일어나야해."
+- 즉 HTTP 요청 하나가 길게 블로킹하는 구조 자체가 문제이지, 그
+상한을 조금 낮추는 걸로는 해결이 안 된다는 지적. 서버는 한 번의
+HTTP 호출당 짧게만 MQTT로 대기하고, 사용자가 원하는 "전체 대기
+시간"은 **호출하는 쪽이 그 짧은 대기를 반복 호출(폴링)해서
+구현**해야 한다는 방향으로 정정했다.
+
+**서버 쪽**(`core/messages.ts`): 새 상수 `MESSAGE_WAIT_POLL_MAX_SEC
+= 10`. `waitForMessage()`가 받는 `timeoutSec`를 이 값 이하로 항상
+클램프 - 이 라우트를 누가 직접 호출하든(CLI/MCP를 거치지 않고
+직접 HTTP를 때리든) 항상 적용되는 방어선.
+
+**클라이언트 쪽 폴링 루프는 CLI/MCP가 공유해야 해서**
+`cli/apiclient.ts`(둘 다 이미 REST 클라이언트로 의존하는 계층 -
+"CLI/MCP는 core를 직접 안 부르고 REST만 호출하는 순수 클라이언트"
+원칙)에 `waitForMessagePolling(projectId, totalTimeoutSec)`를
+추가했다 - 요청한 전체 시간을 `MESSAGE_WAIT_TOTAL_MAX_SEC`(1시간,
+폴링 루프 자체가 무한정 돌지 않게 하는 바깥쪽 안전장치)로 클램프한
+뒤, 데드라인까지 `MESSAGE_WAIT_POLL_INTERVAL_SEC`(서버 값과 같은
+10초 - core를 직접 import 못 해 별도 선언, 주석으로 상호 참조)
+단위로 `GET .../messages/wait`를 반복 호출한다. 메시지를 받으면
+그 폴 안에서 바로 반환하므로 실시간성은 그대로 유지된다. CLI
+`message wait`/MCP `message_wait` 둘 다 기존 단일 `apiCall`을 이
+헬퍼 호출로 교체 - 명령/도구 이름과 파라미터는 안 바뀌어 사용자
+입장에선 완전히 투명한 교체.
+
+**웹 UI는 무관** - `MessagesView.vue`는 애초에 이 HTTP 엔드포인트가
+아니라 브라우저가 EMQX에 직접 붙는 `connectProjectRealtime()`
+경로를 쓰므로 이번 변경과 별개.
+
+**실측 검증**: docker 재빌드·재기동 후 - `timeout=1` 직접 호출 →
+약 1초 후 정상 타임아웃(회귀 없음) → `timeout=999`(상한 초과) 직접
+호출 → 실제로는 약 10초 만에 응답(999초가 아니라 클램프가 실제로
+먹힘) 확인. CLI `message wait --timeout 25`를 백그라운드로 걸어두고
+그 도중 메시지를 하나 보내 봄 - 처음엔 타이밍 실수(느린 로그 확인
+명령 때문에 메시지 발송이 25초를 넘겨버림)로 `timedOut:true`가
+나와 당황했으나, 타임스탬프를 찍어 재실측한 결과 실제로는 두 번째
+폴(약 10~11초 지점)에서 메시지를 정확히 잡아내는 것을 확인(폴링이
+실제로 ~10초 단위로 일어나고 있다는 직접 증거). MCP `message_wait`
+도 같은 클라이언트에서 0.5초 뒤 `message_send`를 걸어 첫 폴 안에서
+바로 잡히는 것을 확인(elapsed 0.5초). `npx tsc --noEmit`(backend),
+`npm run audit:cli-mcp`(도구/명령 이름 자체는 안 바뀌어 그대로 통과)
+전부 클린. 프론트 변경 없음.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

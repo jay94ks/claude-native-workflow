@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { apiCall, apiCallText, loadCredentials } from "../cli/apiclient.js";
+import { apiCall, apiCallText, loadCredentials, waitForMessagePolling } from "../cli/apiclient.js";
 import { scanDirectory, applyManifest } from "../cli/migrate.js";
 
 // cli/index.ts의 모든 명령을 1:1로 미러링한다("CLI/MCP 명령어 완전성"
@@ -853,9 +853,9 @@ async function main() {
   tool(
     "message_wait",
     "새 메시지 대기",
-    "새 메시지가 오거나 타임아웃될 때까지 블로킹한다(내부적으로 EMQX 구독 - 폴링 아님). 받은 메시지는 자동으로 기록(delivered) 처리된다.",
+    "새 메시지가 오거나 timeoutSec(전체 대기 시간)이 다 될 때까지 기다린다 - 내부적으로 서버가 10초 단위 짧은 폴(EMQX 구독)을 반복해 흉내내므로 커넥션 하나를 오래 붙들지 않으면서도 메시지가 오면 즉시 잡힌다. 받은 메시지는 자동으로 기록(delivered) 처리된다.",
     { projectId: z.string(), timeoutSec: z.number().optional() },
-    async (a) => call(`/api/projects/${a.projectId}/messages/wait?timeout=${a.timeoutSec ?? 60}`),
+    async (a) => waitForMessagePolling(a.projectId as string, (a.timeoutSec as number | undefined) ?? 60),
   );
   tool(
     "message_recent",
