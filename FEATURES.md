@@ -407,7 +407,10 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
 
 - `docs migrate scan <dir>` - `concept`(옛 3단계 구현) 스타일 YAML
   frontmatter + 마크다운 파일을 로컬에서 스캔해 후보 목록을 JSON으로
-  출력(순수 로컬 동작, API 호출 없음).
+  출력(순수 로컬 동작, API 호출 없음). 흔한 옛 상태 어휘(`active`/
+  `wip`/`obsolete` 등)를 표준 코드로 자동 제안한다(`--no-status-preset`
+  으로 끌 수 있음) - 실제로 매핑이 일어난 항목만 `originalStatusCode`
+  에 원본 값을 남겨 매니페스트만 보고도 뭐가 바뀌었는지 알 수 있다.
 - 검토·수정한 매니페스트를 `docs migrate apply <projectId>
   manifest.json`으로 반영(일괄 자동 임포트 아님 - 오탐지된 문서 타입/
   링크를 설계자가 그 자리에서 고칠 기회를 줌).

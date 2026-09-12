@@ -31,9 +31,39 @@ export interface MigrateCandidate {
   title: string;
   docTypeCode: string;
   statusCode: string;
+  /** statusCode가 STATUS_MAPPING_PRESET으로 실제 바뀐 경우에만 채워지는
+   * 원본 값 - 매니페스트만 보고도 무엇이 무엇으로 제안됐는지 바로 알 수
+   * 있게(안 바뀐 항목엔 안 실어 노이즈 방지). */
+  originalStatusCode?: string;
   links: string[];
   skip: boolean;
 }
+
+/** concept 스타일 프로젝트에서 흔히 쓰이던 옛 상태 어휘 → 이 시스템의
+ * 표준 6종 코드(core/docTypes.ts의 seedStandardStatusFlow가 심는
+ * draft/review/pending/approved/deprecated/archived) 매핑 - 매번
+ * 수작업으로 statusCode를 고치는 걸 줄이기 위한 "제안"일 뿐, 확정이
+ * 아니다(#migrate-status-mapping-preset). 여기 없는 값은 지금까지처럼
+ * 원본 그대로 남는다 - 잘못 추측하는 것보다 안전한 실패(그대로 두고
+ * 사용자가 검토)가 낫다는 이 저장소의 일관된 원칙. */
+const STATUS_MAPPING_PRESET: Record<string, string> = {
+  active: "approved",
+  final: "approved",
+  done: "approved",
+  approved: "approved",
+  wip: "draft",
+  "in-progress": "draft",
+  in_progress: "draft",
+  draft: "draft",
+  review: "review",
+  "in-review": "review",
+  pending: "pending",
+  obsolete: "deprecated",
+  deprecated: "deprecated",
+  retired: "archived",
+  archive: "archived",
+  archived: "archived",
+};
 
 interface OldFrontmatter {
   id?: string;
@@ -62,10 +92,17 @@ function walk(dir: string): string[] {
   return out;
 }
 
+export interface ScanOptions {
+  /** 옛 상태 어휘 자동 제안 여부 - 기본 true. false면 프리셋을 아예
+   * 건너뛰고 frontmatter의 status 값을 지금까지처럼 그대로 둔다. */
+  applyStatusPreset?: boolean;
+}
+
 /** sourceDir를 재귀 탐색해 옛 frontmatter 스키마(id+type 필수)를 가진
  * 파일만 후보로 삼는다 - 그 외(README, index.md 등 frontmatter 없는
  * 목차 파일)는 에러 없이 조용히 건너뛴다. */
-export function scanDirectory(sourceDir: string): MigrateCandidate[] {
+export function scanDirectory(sourceDir: string, opts: ScanOptions = {}): MigrateCandidate[] {
+  const applyPreset = opts.applyStatusPreset ?? true;
   const candidates: MigrateCandidate[] = [];
   for (const file of walk(sourceDir)) {
     const content = stripBom(fs.readFileSync(file, "utf-8"));
@@ -78,13 +115,16 @@ export function scanDirectory(sourceDir: string): MigrateCandidate[] {
       continue; // frontmatter가 있지만 YAML로 파싱 안 되면 후보에서 제외
     }
     if (!fm.id || !fm.type) continue;
+    const rawStatus = fm.status ?? "";
+    const mapped = applyPreset ? STATUS_MAPPING_PRESET[rawStatus.trim().toLowerCase()] : undefined;
     candidates.push({
       sourcePath: path.resolve(file),
       oldId: fm.id,
       oldType: fm.type,
       title: fm.title ?? fm.id,
       docTypeCode: fm.type,
-      statusCode: fm.status ?? "",
+      statusCode: mapped && mapped !== rawStatus ? mapped : rawStatus,
+      ...(mapped && mapped !== rawStatus ? { originalStatusCode: rawStatus } : {}),
       links: Array.isArray(fm.links) ? fm.links : [],
       skip: false,
     });

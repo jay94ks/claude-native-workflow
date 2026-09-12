@@ -55,7 +55,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 22 | ✅ | `#hook-queue-ttl` | pending 30일 방치 시 자동 expired 전이(주기 워커, 삭제 아님) |
 | 23 | ⬜ | `#template-history` | 템플릿 변경 이력(리비전) 없음 |
 | 24 | ⬜ | `#migrate-idempotent` | 가이디드 마이그레이션 재실행이 멱등하지 않음 |
-| 25 | ⬜ | `#migrate-status-mapping-preset` | 마이그레이션 상태 매핑 프리셋 없음 |
+| 25 | ✅ | `#migrate-status-mapping-preset` | 옛 상태 어휘(active/wip 등) → 표준 코드 자동 제안(`--no-status-preset`으로 끌 수 있음) |
 | 26 | ⬜ | `#responsive-dark-mode` | 반응형/다크 모드 미지원 |
 | 27 | ⬜ | `#large-list-pagination` | 대량 목록 페이지네이션 미확인 |
 | 28 | ✅ | `#private-visibility-default` | 팀/그룹/프로젝트 기본 비공개 가시성(소속 없으면 안 보임, 공개 설정 시 예외) |
@@ -102,12 +102,6 @@ revisions/source-links/access/folder, 두 bulk 라우트 포함) 전부가
 두 번 반영하면 문서가 중복 생성된다. `oldId` 기준으로 "이미
 반영됐는지" 표시를 매니페스트에 남기는 정도의 가벼운 보강을 검토할
 만하다(완전한 멱등성까지는 아니더라도 실수 방지 차원).
-
-### `#migrate-status-mapping-preset`
-**옛 상태 어휘 → 새 표준 코드 매핑 프리셋이 없다** - 매번 수작업으로
-`docTypeCode`/`statusCode`를 고쳐야 한다. `concept` 스타일 문서가
-흔한 소스라면, "active→approved" 같은 흔한 매핑을 제안해주는 옵션이
-있으면 마이그레이션이 훨씬 수월해진다.
 
 ## 13. 웹 UI 전반
 

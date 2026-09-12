@@ -1375,8 +1375,9 @@ const migrateCmd = program.command("migrate").description("파일 기반(concept
 
 migrateCmd
   .command("scan <sourceDir>")
-  .description("sourceDir를 스캔해 후보 목록을 JSON으로 출력(리다이렉트해 매니페스트로 씀)")
-  .action((sourceDir) => run(async () => printJson(scanDirectory(sourceDir))));
+  .description("sourceDir를 스캔해 후보 목록을 JSON으로 출력(리다이렉트해 매니페스트로 씀) - 흔한 옛 상태 어휘(active/wip 등)를 표준 코드로 자동 제안한다")
+  .option("--no-status-preset", "상태 어휘 자동 제안을 끄고 frontmatter 값을 그대로 둔다")
+  .action((sourceDir, opts) => run(async () => printJson(scanDirectory(sourceDir, { applyStatusPreset: opts.statusPreset }))));
 
 migrateCmd
   .command("apply <projectId> <manifestFile>")

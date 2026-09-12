@@ -653,11 +653,16 @@
   자동 생성 안 함 - 실측.
 - [x] 옛 상태 어휘(`active`/`applied` 등)가 새 표준 6코드와 안 맞아
   상태 전이가 대부분 실패해 경고로 남고 초기 상태(draft) 유지 -
-  의도된 동작으로 재확인.
+  의도된 동작으로 재확인(당시엔 프리셋이 없던 시점의 기록).
+- [x] **상태 매핑 프리셋(`#migrate-status-mapping-preset`)** -
+  `active`/`wip`는 자동으로 `approved`/`draft`로 제안되고
+  `originalStatusCode`에 원본이 남는지, 프리셋에 없는 값은 그대로에
+  그 필드 자체가 없는지 확인. `--no-status-preset`으로 완전
+  옵트아웃되는지, 매핑된 값이 `migrate apply`로 실제 그 상태의
+  문서를 만드는지 실측.
 
 ### 추가 개발 계획
-`#migrate-idempotent` `#migrate-status-mapping-preset` - 상세는
-[PLANS.md](PLANS.md) 참고.
+`#migrate-idempotent` - 상세는 [PLANS.md](PLANS.md) 참고.
 
 ---
 

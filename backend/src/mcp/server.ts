@@ -928,9 +928,9 @@ async function main() {
   tool(
     "migrate_scan",
     "마이그레이션 후보 스캔",
-    "concept 스타일 파일 기반 프로젝트(YAML frontmatter+마크다운)를 로컬 sourceDir에서 스캔해 후보 목록을 반환한다 - 순수 로컬 동작, 이 결과를 검토·수정한 뒤 로컬 매니페스트 파일로 저장해 migrate_apply에 넘긴다.",
-    { sourceDir: z.string() },
-    async (a) => scanDirectory(String(a.sourceDir)),
+    "concept 스타일 파일 기반 프로젝트(YAML frontmatter+마크다운)를 로컬 sourceDir에서 스캔해 후보 목록을 반환한다 - 흔한 옛 상태 어휘(active/wip 등)를 표준 코드로 자동 제안한다(applyStatusPreset:false로 끌 수 있음, 바뀐 항목은 originalStatusCode에 원본이 남음). 순수 로컬 동작, 이 결과를 검토·수정한 뒤 로컬 매니페스트 파일로 저장해 migrate_apply에 넘긴다.",
+    { sourceDir: z.string(), applyStatusPreset: z.boolean().optional() },
+    async (a) => scanDirectory(String(a.sourceDir), { applyStatusPreset: a.applyStatusPreset as boolean | undefined }),
   );
   tool(
     "migrate_apply",

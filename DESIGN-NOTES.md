@@ -3620,6 +3620,40 @@ queue --status <s>`가 이미 임의 문자열을 그대로 필터로 받는 구
 정확히 그 항목만 걸러지는지 확인. `npx tsc --noEmit`, `npm run
 audit:cli-mcp` 클린.
 
+## 가이디드 마이그레이션 상태 매핑 프리셋(`#migrate-status-mapping-preset`) - 완료 (2026-09-12)
+
+PLANS.md 25번(`## 12. 가이디드 마이그레이션`, `#migrate-idempotent`는
+스키마/데이터 정합성 변경이라 자동 진행에서 스킵 대상 - 이 항목만
+처리). `cli/migrate.ts`의 `scanDirectory()`가 옛 frontmatter의
+`status` 값을 그대로 매니페스트에 담아, `concept` 스타일 문서가
+"active"/"wip" 같은 옛 어휘를 쓰면 매번 수작업으로 고쳐야 했다.
+
+`STATUS_MAPPING_PRESET`(대소문자 무시 조회 - active/final/done→
+approved, wip/in-progress→draft, obsolete→deprecated, retired/
+archive→archived 등, 표준 6종 코드 자기 자신도 포함해 이미 표준인
+값은 그대로 통과) 신설. `MigrateCandidate`에 `originalStatusCode?:
+string`을 추가해 **실제로 매핑이 일어난 항목에만** 원본을 남긴다
+(안 바뀐 항목엔 필드 자체가 없어 매니페스트가 불필요하게 안 커짐).
+`scanDirectory(sourceDir, { applyStatusPreset? })` - 기본 `true`,
+`false`면 프리셋을 완전히 건너뛰고 지금까지 동작 그대로(옵트아웃).
+CLI `migrate scan --no-status-preset`, MCP `migrate_scan`의
+`applyStatusPreset` 파라미터로 노출. `applyManifest()`는 매니페스트의
+`statusCode`를 그대로 쓰는 구조라 수정 불필요 - 프리셋이 미리 채운
+값이든 사용자가 직접 고친 값이든 구분 없이 반영된다. 새 라우트/
+스키마 변경 없음(순수 로컬 CLI/MCP 오케스트레이션).
+
+**실측 검증**: `active`/`wip`/`totally-custom-word`(프리셋에 없는
+값) 세 종류의 frontmatter를 가진 테스트 파일로 `docs migrate scan` -
+기본 동작에서 앞 둘은 각각 `approved`/`draft` + `originalStatusCode`
+채워짐, 프리셋에 없는 값은 원본 그대로에 `originalStatusCode` 필드
+자체가 없음을 확인. `--no-status-preset`으로는 셋 다 원본 그대로
+(완전 옵트아웃) 확인. 실제로 `docs migrate apply`까지 반영해 두
+문서가 정확히 매핑된 표준 상태(`approved`/`draft`)로 생성됐는지
+확인(프리셋에 없는 값은 기존 동작과 동일하게 "정의 안 된 전이"
+경고와 함께 초기 상태로 남음 - 회귀 없음). MCP `migrate_scan`도
+`applyStatusPreset:false`로 별도 확인. `npx tsc --noEmit`, `npm run
+audit:cli-mcp` 클린.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
