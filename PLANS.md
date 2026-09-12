@@ -80,6 +80,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 47 | ✅ | `#user-membership-management` | 사용자 관리 화면에 검색/페이지네이션/클릭 시 프로필 이동 추가, "소속 조회" 다이얼로그(그룹/팀/프로젝트 소속 + 강제 방출, 유일한 owner/관리자는 방출 불가) |
 | 48 | ✅ | `#github-oauth-repo-link` | GitHub OAuth 로그인 + 저장소 선택 다이얼로그로 외부 연동, self_hosted↔external 상호 전환, 자격증명 오류 시 알림+자동 강등 |
 | 49 | ✅ | `#repo-management-tab` | 저장소 관리 탭 신설 - PR 생성/머지(머지는 owner만), 브랜치 목록+브랜치별 소스 열람 |
+| 50 | ✅ | `#code-relation-graph` | 코드 관계도 - Claude가 코드 탐색 중 발견한 관계를 스스로 기록하는 설계자별 그래프 DB(다중 부모/순환 허용, vis-network 시각화), CRUD+bulk, CLI/MCP/SKILL.md 전체 반영, 문서 추적코드 다중 연관(`--refs`) |
 
 ---
 

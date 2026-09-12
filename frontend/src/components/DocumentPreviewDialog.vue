@@ -63,6 +63,9 @@ watch(
         <router-link :to="`/projects/${doc.projectId}/documents/${doc.trackingCode}`" class="open-link" @click="dialog.close()">
           전체 화면에서 열기 →
         </router-link>
+        <router-link :to="`/projects/${doc.projectId}/relations?trackingCode=${doc.trackingCode}`" class="open-link" @click="dialog.close()">
+          관계도에서 보기 →
+        </router-link>
       </template>
     </div>
   </div>

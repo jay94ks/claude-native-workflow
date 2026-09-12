@@ -147,6 +147,21 @@ import {
 import { createFolder, renameFolder, deleteFolder, moveFolder, listFolders, listFolderDocuments, listUnfiledDocuments, moveDocumentToFolder } from "../core/folders.js";
 import type { FolderDetail } from "../core/folders.js";
 import {
+  createRelation,
+  updateRelation,
+  deleteRelation,
+  getRelation,
+  listRelations,
+  listParents,
+  listChildren,
+  listDescendants,
+  listAncestors,
+  bulkCreateRelations,
+  bulkUpdateRelations,
+  bulkDeleteRelations,
+} from "../core/codeRelations.js";
+import type { CodeRelationInput, BulkUpdateItem } from "../core/codeRelations.js";
+import {
   createKanbanColumn,
   listKanbanColumnsForUser,
   listKanbanColumnsForUserPaged,
@@ -1963,6 +1978,145 @@ app.put(
     const { folderId } = req.body as { folderId?: string | null };
     await moveDocumentToFolder(req.params.trackingCode, folderId ?? null, req.userId!);
     res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- 코드 관계도 (Code Relation Graph)
+// Claude가 코드 탐색 중 스스로 발견한 관계를 기록하는 자기 기록형
+// 그래프 - folders.ts와 동일 원칙으로 설계자(userId) 개인 소유이고
+// 프로젝트 멤버면(viewer 포함) 누구나 자기 관계를 관리할 수 있다
+// (core/codeRelations.ts가 항상 req.userId로 다시 좁힘). "bulk"류가
+// "/relations/:id"보다 먼저 등록돼야 한다(bulk-folder와 동일 이유).
+
+app.post(
+  "/api/projects/:projectId/relations/bulk",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { items } = req.body as { items?: CodeRelationInput[] };
+    if (!items?.length) { res.status(400).json({ error: "items가 필요합니다" }); return; }
+    res.json(await bulkCreateRelations(req.params.projectId, req.userId!, items));
+  }),
+);
+
+app.put(
+  "/api/projects/:projectId/relations/bulk",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { items } = req.body as { items?: BulkUpdateItem[] };
+    if (!items?.length) { res.status(400).json({ error: "items가 필요합니다" }); return; }
+    res.json(await bulkUpdateRelations(req.params.projectId, req.userId!, items));
+  }),
+);
+
+app.delete(
+  "/api/projects/:projectId/relations/bulk",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { ids } = req.body as { ids?: string[] };
+    if (!ids?.length) { res.status(400).json({ error: "ids가 필요합니다" }); return; }
+    res.json(await bulkDeleteRelations(req.params.projectId, req.userId!, ids));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/relations",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const input = req.body as CodeRelationInput;
+    res.json(await createRelation(req.params.projectId, req.userId!, input));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/relations",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { q, filePath, trackingCode, tag, hasNoParent, page, pageSize } = req.query as Record<string, string | undefined>;
+    res.json(
+      await listRelations(req.params.projectId, req.userId!, {
+        q,
+        filePath,
+        trackingCode,
+        tag,
+        hasNoParent: hasNoParent === "true",
+        page: page !== undefined ? Number(page) : undefined,
+        pageSize: pageSize !== undefined ? Number(pageSize) : undefined,
+      }),
+    );
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/relations/:id",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await getRelation(req.params.id, req.params.projectId, req.userId!));
+  }),
+);
+
+app.put(
+  "/api/projects/:projectId/relations/:id",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const patch = req.body as Partial<CodeRelationInput> & {
+      addParentIds?: string[]; removeParentIds?: string[]; addChildIds?: string[]; removeChildIds?: string[];
+    };
+    res.json(await updateRelation(req.params.id, req.params.projectId, req.userId!, patch));
+  }),
+);
+
+app.delete(
+  "/api/projects/:projectId/relations/:id",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    await deleteRelation(req.params.id, req.params.projectId, req.userId!);
+    res.json({ ok: true });
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/relations/:id/parents",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listParents(req.params.id, req.params.projectId, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/relations/:id/children",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listChildren(req.params.id, req.params.projectId, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/relations/:id/ancestors",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { depth, tag, q } = req.query as Record<string, string | undefined>;
+    res.json(await listAncestors(req.params.id, req.params.projectId, req.userId!, Number(depth ?? 3), { tag, q }));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/relations/:id/descendants",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { depth, tag, q } = req.query as Record<string, string | undefined>;
+    res.json(await listDescendants(req.params.id, req.params.projectId, req.userId!, Number(depth ?? 3), { tag, q }));
   }),
 );
 

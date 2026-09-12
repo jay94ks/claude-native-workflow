@@ -107,6 +107,7 @@ model User {
   foldersCreated    Folder[]
   folderEntries     DocumentFolderEntry[]
   sourceLinksAdded  DocumentSourceLink[]
+  codeRelations     CodeRelation[]
   hiddenProjects    Project[]          @relation("ProjectHiddenBy")
   apiKeysOwned      ApiKey[]           @relation("ApiKeyOwner")
   apiKeysRevoked    ApiKey[]           @relation("ApiKeyRevoker")
@@ -232,6 +233,7 @@ model Project {
   kanbanColumns   KanbanColumn[]
   kanbanCards     KanbanCard[]
   gitSyncQueueEntries GitSyncQueueEntry[]
+  codeRelations   CodeRelation[]
 
   @@index([projectGroupId])
 }
@@ -326,6 +328,7 @@ model Document {
   linksOut           DocumentLink[]       @relation("DocumentLinkSource")
   linksIn            DocumentLink[]       @relation("DocumentLinkTarget")
   questionReferences QuestionReference[]
+  codeRelationRefs   CodeRelationRef[]
   accessOverrides    DocAccessOverride[]
   folderEntries      DocumentFolderEntry[]
   sourceLinks        DocumentSourceLink[]
@@ -646,6 +649,99 @@ model DocumentSourceLink {
 
   @@unique([documentId, filePath])
   @@index([documentId])
+}
+
+// ---------------------------------------------------------------- 코드 관계도(Code Relation Graph)
+// Claude가 코드 탐색 중 스스로 발견한 "무엇을, 어디서, 왜 참조했는지"를
+// 기록해 다음 세션이 재탐색 없이 빠르게 찾아 쓰게 하는 자기 기록형
+// 그래프 - Folder와 동일 원칙으로 프로젝트 내에서 설계자(userId) 개인
+// 소유이고 다른 설계자와 공유되지 않는다(개인화 기능). 상위/하위 관계는
+// 단일 parentId 트리가 아니라 CodeRelationEdge 다대다 조인 테이블로
+// 표현한다 - 노드 하나가 여러 부모/여러 자식을 가질 수 있고, 순환도
+// 허용한다(설계자 지시 - 범용 그래프 엔진).
+model CodeRelation {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  target    String   // 무엇을 참조했는지(심볼명/추적코드/식별자 등 자유 텍스트)
+  referrer  String   // 어디서 참조했는지(참조 주체 - 함수/컴포넌트/문서 등 자유 텍스트)
+  purpose   String   @db.LongText // 무슨 목적으로 참조했는지
+  filePath  String   // 어떤 파일에서 발견했는지(저장소 루트 기준 상대 경로)
+  line      Int?     // 발견 위치(줄) - 모르면 null
+  column    Int?     // 발견 위치(열) - 모르면 null
+  data      String?  @db.LongText // 임의 추가 데이터 - JSON.stringify 텍스트(Json 타입 미사용 - 스키마 전체 관례)
+
+  project Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User              @relation(fields: [userId], references: [id])
+  tags    CodeRelationTag[]
+  // 연관된 문서 추적 코드(여러 개 가능) - QuestionReference와 동일한
+  // 조인 테이블 패턴(AI가 질의에 참고 문서를 구조적으로 태깅하는 것과
+  // 같은 원칙) - 문서 쪽에서 "관계도에서 보기"로 역참조할 때 이걸로
+  // 정확히 필터링한다(target/purpose 자유 텍스트 안의 우연한 일치와
+  // 구분).
+  refs CodeRelationRef[]
+  // 이 관계가 자식인 엣지들(→ 상위 찾기) / 이 관계가 부모인 엣지들(→ 하위 찾기)
+  parentEdges CodeRelationEdge[] @relation("EdgeChild")
+  childEdges  CodeRelationEdge[] @relation("EdgeParent")
+
+  @@index([projectId, userId])
+  @@index([projectId, userId, target])
+  @@index([projectId, userId, filePath])
+}
+
+// 태그(다중 지정 가능) - String[]/Json 미사용, 조인 테이블
+// (DocumentFolderEntry와 동일 관례). 관계 하나에 같은 태그 중복 방지.
+model CodeRelationTag {
+  id         String @id @default(cuid())
+  relationId String
+  tag        String
+
+  relation CodeRelation @relation(fields: [relationId], references: [id], onDelete: Cascade)
+
+  @@unique([relationId, tag])
+  @@index([tag])
+}
+
+// QuestionReference와 동일한 조인 테이블 패턴 + Document.trackingCode로의
+// 실제 FK(그 문서가 삭제되면 이 참조 행도 같이 정리됨) - 관계 하나가
+// 여러 문서를 동시에 연관 지을 수 있다.
+model CodeRelationRef {
+  id           String   @id @default(cuid())
+  relationId   String
+  trackingCode String
+  createdAt    DateTime @default(now())
+
+  relation           CodeRelation @relation(fields: [relationId], references: [id], onDelete: Cascade)
+  referencedDocument Document     @relation(fields: [trackingCode], references: [trackingCode], onDelete: Cascade)
+
+  @@unique([relationId, trackingCode])
+  @@index([trackingCode])
+}
+
+// 다중 부모/다중 자식을 지원하는 범용 그래프 엣지 - fromId(자식/하위) →
+// toId(부모/상위) 방향의 "상위 관계" 링크. Folder류의 단일
+// parentFolderId 트리와 달리 조인 테이블로 다대다를 표현하고 순환도
+// 허용한다(실제 코드 관계는 상호 참조·순환 의존이 흔함 - 생성 시점에
+// 막지 않고, 순회할 때만 방문 집합으로 무한 루프를 방지한다 -
+// core/codeRelations.ts 참고). projectId/userId는 조회 스코프를 조인
+// 없이 바로 필터링하기 위한 중복 저장이자, 설계자 경계를 넘는 엣지
+// 생성 자체를 막는 가드로 쓰인다.
+model CodeRelationEdge {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  fromId    String
+  toId      String
+  createdAt DateTime @default(now())
+
+  from CodeRelation @relation("EdgeChild", fields: [fromId], references: [id], onDelete: Cascade)
+  to   CodeRelation @relation("EdgeParent", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@unique([fromId, toId])
+  @@index([toId])
+  @@index([fromId])
 }
 
 // ---------------------------------------------------------------- 협업자별 세부 접근 권한

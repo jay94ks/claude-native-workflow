@@ -280,6 +280,9 @@ onBeforeUnmount(() => revokeMediaUrl());
             <button type="button" class="secondary" :disabled="downloading" @click="downloadOriginal">
               {{ downloading ? "받는 중..." : "원본 다운로드" }}
             </button>
+            <router-link :to="`/projects/${id}/relations?file=${encodeURIComponent(selectedPath)}`" class="secondary link-btn">
+              관계도
+            </router-link>
             <template v-if="fileKind === 'text' && canEditSource">
               <template v-if="!editMode">
                 <button type="button" @click="startEdit">편집</button>
@@ -443,6 +446,16 @@ onBeforeUnmount(() => revokeMediaUrl());
 }
 .header-actions button:disabled {
   opacity: 0.6;
+}
+.header-actions .link-btn {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 13px;
+  text-decoration: none;
 }
 .content-area {
   flex: 1;

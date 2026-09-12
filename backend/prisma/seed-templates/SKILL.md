@@ -222,7 +222,10 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
   무관). AI는 추적 코드/문서 타입으로 문서를 다루므로 이 개념 자체가
   필요 없다 - CLI/MCP 명령도, `document_list`/`document_get` 같은
   기존 응답의 필드도 폴더 정보를 전혀 담지 않는다. 웹 UI(문서 탭의
-  폴더 트리)에서만 관리한다.
+  폴더 트리)에서만 관리한다. (아래 "코드 관계도"와 정반대 방향의
+  개인 데이터라는 점에 유의 - 폴더는 AI가 아예 모르는 설계자 전용
+  정리 공간이고, 코드 관계도는 AI가 직접 채우는 자기 기록형
+  데이터다.)
 - **API 키 관리(`key create/list/revoke`)** - `auth register/login`과
   같은 급의 신원 관리 동작이라 CLI 전용이고 MCP엔 아예 없다(아래
   "인증" 절 참고) - AI 세션이 스스로 더 넓은/새로운 키를 만들거나
@@ -272,6 +275,56 @@ log`는 Gitea가 총 커밋 수를 안 줘서 페이지네이션 응답이
 `{items, hasMore}` 모양이다(total 없음). `docs message recent`/`docs
 user activity`는 이미 있는 `--limit <n>`(단순 "최근 N건" 요약 뷰)을
 그대로 쓰고 이 페이지네이션 옵션은 없다.
+
+## 코드 관계도 (Code Relation Graph)
+
+코드/문서를 탐색하며 스스로 파악한 "무엇이 어디서 왜 참조되는지"를
+기록해두는 **AI 자기 기록형 인덱스**다 - 다음 세션이 같은 탐색을
+반복하지 않고 `docs relation list`/`docs relation descendants`로
+바로 찾아 쓴다. 프로젝트 내에서 **설계자(로그인 계정)별로 완전히
+독립적**이다
+(위 "CLI/MCP에 의도적으로 없는 기능" 절의 폴더와 같은 개인화 원칙 -
+다른 설계자나 다른 계정으로 로그인한 세션에서는 절대 안 보임).
+
+- **언제 기록할지**(핵심 판단 기준): 여러 파일을 가로지르는 탐색이라
+  다시 파악하려면 비용이 드는 발견일 때만 기록한다 - 사소한 한 줄짜리
+  조회까지 전부 남기는 감사 로그가 아니다. 예: "X 함수가 Y를 거쳐 Z를
+  호출하는 이유를 추적해 알아냈다", "이 버그가 세 파일에 걸쳐 있다는
+  걸 확인했다", "이 추적코드가 구현된 소스 파일들을 찾았다".
+- **탐색 전 검색하는 습관**: 여러 파일을 추적하기 전에 `docs relation
+  list --q <키워드>`나 특정 관계를 기점으로 `docs relation ancestors`/
+  `docs relation descendants`로 이미 기록된 게 있는지 먼저 확인한다 -
+  있으면 재탐색 없이 바로 재사용.
+- **다중 부모 그래프**(단일 트리 아님): 한 관계가 여러 상위 개념의
+  자식으로 동시에 걸릴 수 있다(`add --parents id1,id2` 또는 `update
+  --add-parents id1,id2`) - 예를 들어 하나의 발견을 "인증 흐름"과
+  "이번 버그 추적" 양쪽에 동시에 걸어둘 수 있다. 순환도 허용된다
+  (상호 참조하는 실제 코드 관계를 그대로 표현하기 위함) - 순회
+  (`docs relation ancestors`/`docs relation descendants`)는
+  `--depth`(기본 3, 최대 20)까지만 펼치고 이미 방문한 노드는 다시
+  확장하지 않아 안전하다.
+- **태그 관례**: 자유형 - 관심사별(`auth`, `billing`)과 종류별
+  (`call-graph`, `doc-to-code`, `bugfix-trace`) 조합을 권장하되 고정
+  목록은 아니다.
+- **문서 추적코드 연동(`--refs`, 여러 개 가능)**: 관계 하나가 연관
+  문서를 **복수** 가질 수 있다 - `relation add`/`update`의 `--refs
+  <codes>`(쉼표 구분, MCP는 `trackingCodes` 배열)로 지정한다(질의/
+  칸반 카드의 `--refs`와 동일한 관례 - `QuestionReference`와 같은
+  조인 테이블이라 실제로 존재하는 문서만 지정할 수 있다, 존재하지
+  않는 추적코드면 명확한 에러로 거부됨). 웹 UI("관계도" 탭)에서 각
+  추적코드가 그 문서로 바로 연결되는 링크로 표시된다. `relation
+  list`/`relation_list`의 `--ref <code>`/`trackingCode` 필터로 "이
+  문서와 연관된 관계만" 정확히 조회할 수 있다(target/purpose 자유
+  텍스트 안에 우연히 같은 문자열이 있는 경우와 구분됨).
+- **일괄 등록**: 한 번의 탐색으로 관계가 여러 개 나오면 로컬 JSON
+  파일(항목 배열)을 쓰고 `docs relation add-bulk <projectId> <file>`
+  로 한 번에 등록한다(MCP는 `relation_add_bulk`로 배열을 바로 넘김).
+  각 항목은 `relation_add`와 같은 필드 모양(`target`/`referrer`/
+  `purpose`/`filePath`/`line`/`column`/`data`/`trackingCodes`/`tags`/
+  `parentIds`/`childIds`).
+- **`--parents`/`--children`/`--tags`/`--refs` 등은 쉼표로 구분한
+  문자열 하나**로 받는다(질의/칸반 카드의 `--refs`와 동일한 CLI
+  관례) - MCP는 처음부터 배열.
 
 ## 명령 요약 (CLI `docs` / MCP 도구 이름 병기)
 
@@ -349,6 +402,15 @@ user activity`는 이미 있는 `--limit <n>`(단순 "최근 N건" 요약 뷰)�
 | 칸반 카드 목록 | `docs kanban-cards <projectId> [--column <columnId>]` | `kanban_cards` |
 | 칸반 카드 상세 | `docs kanban-card-get <trackingCode>` | `kanban_card_get` |
 | 칸반 카드 이동 | `docs kanban-card-move <trackingCode> <toColumnId> [--index <n>]` | `kanban_card_move` |
+| 코드 관계 추가 | `docs relation add <projectId> --target <t> --referrer <r> --purpose <p> --file <path> [--line <n>] [--column <n>] [--data <json>] [--refs <codes>] [--tags <t1,t2>] [--parents <id1,id2>] [--children <id1,id2>]` | `relation_add` |
+| 코드 관계 수정 | `docs relation update <projectId> <id> [필드 옵션...] [--refs <codes>] [--add-parents/--remove-parents/--add-children/--remove-children <id1,id2>]` | `relation_update` |
+| 코드 관계 삭제 | `docs relation remove <projectId> <id>` | `relation_remove` |
+| 코드 관계 단건 조회 | `docs relation get <projectId> <id>` | `relation_get` |
+| 코드 관계 목록/검색 | `docs relation list <projectId> [--q <s>] [--file <path>] [--ref <trackingCode>] [--tag <t>] [--root-only] [--page <n>] [--count <n>]` | `relation_list` |
+| 코드 관계 직접 상위/하위 목록 | `docs relation parents/children <projectId> <id>` | `relation_parents`/`relation_children` |
+| 코드 관계 깊이 순회(상위/하위 방향) | `docs relation ancestors/descendants <projectId> <id> [--depth <n>] [--tag <t>] [--q <s>]` | `relation_ancestors`/`relation_descendants` |
+| 코드 관계 일괄 추가/수정(로컬 JSON 파일) | `docs relation add-bulk/update-bulk <projectId> <file.json>` | `relation_add_bulk`/`relation_update_bulk` |
+| 코드 관계 일괄 삭제 | `docs relation remove-bulk <projectId> <id...>` | `relation_remove_bulk` |
 
 ## 가이디드 마이그레이션(옛 파일 기반 프로젝트 옮기기)
 

@@ -5192,8 +5192,120 @@ self_hosted 저장소 연결 후 **Gitea REST API를 직접 호출해 실제
 전용 제약이 서버/프론트 양쪽에서 실제로 일관되게 강제됨을 확인.
 테스트 프로젝트는 검증 후 삭제.
 
+## 코드 관계도(Code Relation Graph) - Claude 자기 기록형 코드 관계 그래프(`#code-relation-graph`) - 완료 (2026-09-13)
+
+**배경**: 설계자 지시 - "클로드가 작업하고, 사람이 승인하거나 지침을
+준다"는 원칙에서, 클로드가 코드를 탐색하며 스스로 파악한 "무엇이
+어디서 왜 참조되는지"를 클로드 자신이 기록해두고 다음 세션이 재탐색
+없이 빠르게 찾아 쓰게 만들라는 요청. 새 프로젝트 탭 "관계도"에서
+문서의 추적코드나 소스 코드 위치로 조회할 수 있어야 하고, CRUD+bulk
+5종, CLI/MCP/SKILL.md 전체 반영, 프로젝트 내 설계자별 완전 독립이
+요구사항이었다.
+
+**설계 과정에서 설계자가 두 번 정정**: (1) "상위 관계"를 최초 설계안
+(Folder류 단일 부모 트리)에서 **"다중 부모(multi-parent) 또는
+범용 그래프 엔진"**으로 전환 - 노드 하나가 여러 부모/여러 자식을
+동시에 가질 수 있어야 한다는 지시. (2) 프론트엔드를 텍스트 목록/
+포커스 UI 대신 **실제 그래프 시각화 라이브러리**로 구현하라는 지시.
+(3) 검증 도중 "연관 문서 추적 코드"가 단수가 아니라 **관계 항목당
+여러 개**여야 한다는 추가 지시. 세 정정 전부 구현 완료 후 곧바로
+반영해 최종 설계에 녹였다.
+
+**데이터 모델(3개 Prisma 스키마 전부)**: `CodeRelation`(노드 -
+target/referrer/purpose/filePath/line/column/data(JSON 텍스트,
+Json 타입 미사용 - 스키마 전체 관례)) + `CodeRelationTag`(태그,
+`DocumentFolderEntry`류 조인 테이블) + `CodeRelationEdge`(**단일
+parentId 트리가 아니라 다대다 조인** - fromId(자식)→toId(부모),
+`@@unique([fromId,toId])`, **순환도 허용**하고 순회 시에만 방문
+집합으로 무한 루프 방지) + `CodeRelationRef`(연관 문서 - 처음엔
+`trackingCode String?` 단일 컬럼으로 잘못 설계했다가, 설계자가 "여러
+개"라고 정정한 뒤 `QuestionReference`와 완전히 동일한 조인 테이블
+패턴 + `Document.trackingCode`로의 실제 FK로 재설계 - 존재하지 않는
+문서를 참조하려 하면 `questions.ts`의 `addQuestion()`과 동일하게
+사전 조회로 명확한 "연관 문서를 찾을 수 없습니다" 에러를 던진다,
+그 문서가 삭제되면 참조 행만 cascade로 정리되고 관계 자체는 안
+지워짐).
+
+**백엔드**: 신규 `core/codeRelations.ts` - `folders.ts`의 소유권
+확인 패턴(`projectId`+`userId` 스코프, 소유자 아니면 "찾을 수
+없거나 소유자가 아님") 재사용하되, 트리 순환 방지 로직은 재사용
+안 함(그래프는 순환 허용이 설계 목표). `listDescendants`/
+`listAncestors`는 MySQL/SQLite/Postgres의 재귀 CTE 문법 차이를
+피하려고(이 코드베이스는 raw SQL을 안 씀) 애플리케이션 레벨 반복
+BFS로 구현 - 레벨마다 배치 쿼리 1~2회, 방문 집합으로 순환 안전.
+엣지 생성 시 두 노드가 서로 다른 (projectId,userId) 소유면 거부해
+설계자 경계를 넘는 연결 자체를 막는다. REST 라우트 전부
+`requireProjectRole("viewer")` - 개인 데이터라 프로젝트 멤버면
+역할 무관하게 본인 관계만 관리 가능(core에서 다시 좁혀짐). Bulk는
+`bulk-folder`/`bulk-transition`과 동일하게 트랜잭션 전체 성공/실패가
+아니라 항목별 부분 성공 결과 배열.
+
+**CLI/MCP**: `relation` 새 커맨드 그룹 12개(add/update/remove/get/
+list/parents/children/ancestors/descendants/add-bulk/update-bulk/
+remove-bulk) - `scripts/audit-cli-mcp.ts` 완전 대칭 확인(새 예외
+없음). 구조화된 객체 배열(bulk-add/update)은 CLI에서 `--file
+<path.json>`로 로컬 JSON 파일을 읽어 보내는 새 패턴 도입(기존
+bulk는 전부 단순 문자열 배열이었어서 variadic 인자로 못 받음).
+연관 문서는 `--refs <codes>`(쉼표 구분) - 질의/칸반 카드의 기존
+`--refs` 관례를 그대로 재사용(처음엔 `--tracking-code` 단수로
+잘못 이름 붙였다가 다중 지원으로 바뀌면서 기존 관례에 맞춰
+개명). SKILL.md(및 `seed-templates/SKILL.md` 동기화)에 새 절
+추가 - 핵심은 "언제 기록할지"(여러 파일을 가로지르는, 다시 파악
+하려면 비용이 드는 발견일 때만 - 사소한 조회까지 전부 남기는
+감사 로그가 아님)와 "탐색 전에 먼저 검색하는 습관".
+
+**프론트엔드**: 그래프/트리 시각화 라이브러리가 이 프론트엔드에
+전혀 없어서(d3/mermaid/cytoscape 등 0건) `vis-network`+`vis-data`를
+새로 도입(설계자 지시) - 다중 부모 DAG를 위한 계층 레이아웃이
+내장돼 있고, 순환 구간은 물리 시뮬레이션으로 자연스럽게 배치되며,
+`vis-data`의 `DataSet`으로 노드/엣지를 점진적으로 추가/삭제할 수
+있어 "depth별로 펼치기"에 잘 맞았다. 새 `components/
+RelationGraphCanvas.vue`(vis-network 명령형 API를 감싼 얇은 래퍼 -
+`props.nodes`/`props.edges`를 `relationCache`에서 diff-sync)+
+`views/RelationsView.vue`(검색바 + 그래프 캔버스 + 사이드 상세
+패널 레이아웃). DB 엣지 방향(fromId(자식)→toId(부모))과 화면 화살표
+방향(부모→자식, "위에서 아래로 파생"이 더 직관적)을 의도적으로
+반대로 렌더링 - DB 스키마는 안 건드림. **실측 중 발견한 버그**:
+펼치기로 새 노드가 추가되면 계층 레이아웃 특성상 화면 밖에 배치될
+수 있어(특히 순환 구간) 눈에 안 보이는 문제를 발견·수정 - 노드/엣지
+갱신마다 `network.fit()`으로 재프레이밍(물리 안정화 완료
+이벤트에서도 한 번 더). 문서 미리보기 다이얼로그에 "관계도에서
+보기" 링크, 소스 브라우저 파일 헤더에 "관계도" 버튼 추가 -
+전자는 `?trackingCode=`(정확 일치, `CodeRelationRef` 기반이라
+가능해짐), 후자는 `?file=`(정확 일치) 쿼리로 필터를 프리필한다.
+
+**실측 검증**: `npm run db:generate`(3 provider 전부) → `npx
+tsc --noEmit`(backend)/`vue-tsc -b`(frontend, npx 캐시가 깨져
+`./node_modules/.bin/vue-tsc`로 우회) 클린 → `npm run audit:cli-mcp`
+클린 → Docker 재빌드+재기동, 스키마 실제 push 확인 → 로컬 빌드한
+CLI로 실제 계정 A가 관계 생성 → 웹 UI(A로 로그인)에서 그래프에
+바로 보이는지 확인 → **다중 부모 핵심 검증**: 관계 하나(R1)에
+서로 다른 두 관계(P1/P2)를 동시에 `--parents`로 걸어
+`relation parents`가 2개를 반환하는지, 웹 UI 그래프에서 R1이
+P1/P2 양쪽에서 오는 엣지를 동시에 받는 게 실제로 그려지는지 확인 →
+**순환 허용 핵심 검증**: P1→R1→P1로 순환 엣지를 만들어(에러 없이
+성공) `relation descendants --depth 10`이 무한 루프 없이 방문
+집합으로 안전하게 끝나고 중복 없이 나오는지, 웹 UI에서 그 순환을
+실제로 펼쳐도 브라우저가 멈추지 않고 vis-network가 정상적으로
+그려내는지(위 fit() 버그 수정 후 모든 노드가 실제로 보이는지)
+확인 → bulk-add(CLI `--file` JSON, 유효 2건+검증 실패 1건)로
+항목별 부분 성공 결과 확인 → 설계자 간 완전 격리(B 계정이 A의
+관계를 `list`/`get` 둘 다로 절대 못 봄, 존재 자체 비노출) +
+설계자 경계를 넘는 엣지 생성 거부 확인 → **연관 문서(다중) 핵심
+검증**: 실제 문서 2건을 만들어 `--refs`로 관계 하나에 동시에
+연결 → `--ref`(단수, 정확 일치) 필터로 조회 확인 → 존재하지 않는
+추적코드로 `--refs` 시도 시 명확한 에러로 거부 확인 → `update
+--refs`로 전체 교체 확인 → **연관 문서 삭제 시 cascade 확인**:
+연관된 문서 하나를 삭제하면 그 참조만 없어지고 관계 자체는
+survive하는 것을 재조회로 확인 → 웹 UI에서 "연관 문서" 필드가
+추적코드 자동 링크로 클릭 가능한지, 문서 미리보기 다이얼로그의
+"관계도에서 보기" 클릭 시 `?trackingCode=`로 정확히 필터링되어
+돌아오는지(왕복) 확인. 테스트 프로젝트/문서/그룹/팀은 검증 후
+전부 삭제.
+
 ## 다음 단계
 
 3단계 확장 설계(Phase A 사용자 관리, Phase B GitHub OAuth, Phase C
-저장소 관리 탭)가 전부 완료됐다. PLANS.md 색인 표에 남은 ⬜ 항목이
-없다 - 다음 라운드는 새 QA 패스나 설계자의 새 요청을 기다린다.
+저장소 관리 탭) + 코드 관계도(`#code-relation-graph`)가 전부
+완료됐다. PLANS.md 색인 표에 남은 ⬜ 항목이 없다 - 다음 라운드는
+새 QA 패스나 설계자의 새 요청을 기다린다.

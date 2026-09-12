@@ -294,6 +294,215 @@ credCmd
   .command("remove <id>")
   .action((id) => run(async () => printJson(await apiCall(`/api/credentials/${id}`, { method: "DELETE" }))));
 
+// ---------------------------------------------------------------- 코드 관계도(Code Relation Graph)
+// Claude가 코드 탐색 중 스스로 발견한 "무엇이 어디서 왜 참조되는지"를
+// 기록해두는 개인 인덱스 - 프로젝트 내 설계자(로그인 계정)별로
+// 완전히 독립적이다(폴더와 동일 원칙). 상위/하위는 단일 부모 트리가
+// 아니라 다대다 그래프(순환 허용) - 한 관계가 여러 부모/여러 자식을
+// 동시에 가질 수 있다. --tags/--parents/--children류는 이 저장소의
+// --refs 관례와 동일하게 쉼표로 구분한 문자열 하나로 받는다.
+
+const relCmd = program.command("relation").description("코드 관계도(관계 그래프) 관리");
+
+function splitCsv(raw?: string): string[] | undefined {
+  if (raw === undefined) return undefined;
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function parseDataOption(raw?: string): unknown {
+  if (raw === undefined) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("--data는 올바른 JSON이어야 합니다");
+  }
+}
+
+relCmd
+  .command("add <projectId>")
+  .requiredOption("--target <t>")
+  .requiredOption("--referrer <r>")
+  .requiredOption("--purpose <p>")
+  .requiredOption("--file <path>")
+  .option("--line <n>")
+  .option("--column <n>")
+  .option("--data <json>")
+  .option("--refs <codes>", "쉼표로 구분된 연관 문서 trackingCode 목록(여러 개 가능)")
+  .option("--tags <t1,t2>", "쉼표로 구분")
+  .option("--parents <id1,id2>", "쉼표로 구분 - 상위 관계 id들")
+  .option("--children <id1,id2>", "쉼표로 구분 - 하위 관계 id들")
+  .action((projectId, opts) =>
+    run(async () => {
+      printJson(
+        await apiCall(`/api/projects/${projectId}/relations`, {
+          method: "POST",
+          body: JSON.stringify({
+            target: opts.target,
+            referrer: opts.referrer,
+            purpose: opts.purpose,
+            filePath: opts.file,
+            line: opts.line !== undefined ? Number(opts.line) : undefined,
+            column: opts.column !== undefined ? Number(opts.column) : undefined,
+            data: parseDataOption(opts.data),
+            trackingCodes: splitCsv(opts.refs),
+            tags: splitCsv(opts.tags),
+            parentIds: splitCsv(opts.parents),
+            childIds: splitCsv(opts.children),
+          }),
+        }),
+      );
+    }),
+  );
+
+relCmd
+  .command("update <projectId> <id>")
+  .option("--target <t>")
+  .option("--referrer <r>")
+  .option("--purpose <p>")
+  .option("--file <path>")
+  .option("--line <n>")
+  .option("--column <n>")
+  .option("--data <json>")
+  .option("--refs <codes>", "쉼표로 구분된 연관 문서 trackingCode 목록 - 전체를 이 목록으로 교체")
+  .option("--tags <t1,t2>", "쉼표로 구분 - 전체를 이 목록으로 교체")
+  .option("--add-parents <id1,id2>", "쉼표로 구분")
+  .option("--remove-parents <id1,id2>", "쉼표로 구분")
+  .option("--add-children <id1,id2>", "쉼표로 구분")
+  .option("--remove-children <id1,id2>", "쉼표로 구분")
+  .action((projectId, id, opts) =>
+    run(async () => {
+      printJson(
+        await apiCall(`/api/projects/${projectId}/relations/${id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            target: opts.target,
+            referrer: opts.referrer,
+            purpose: opts.purpose,
+            filePath: opts.file,
+            line: opts.line !== undefined ? Number(opts.line) : undefined,
+            column: opts.column !== undefined ? Number(opts.column) : undefined,
+            data: parseDataOption(opts.data),
+            trackingCodes: splitCsv(opts.refs),
+            tags: splitCsv(opts.tags),
+            addParentIds: splitCsv(opts.addParents),
+            removeParentIds: splitCsv(opts.removeParents),
+            addChildIds: splitCsv(opts.addChildren),
+            removeChildIds: splitCsv(opts.removeChildren),
+          }),
+        }),
+      );
+    }),
+  );
+
+relCmd
+  .command("remove <projectId> <id>")
+  .action((projectId, id) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/relations/${id}`, { method: "DELETE" }))),
+  );
+
+relCmd
+  .command("get <projectId> <id>")
+  .action((projectId, id) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/relations/${id}`))));
+
+relCmd
+  .command("list <projectId>")
+  .option("--q <query>")
+  .option("--file <path>", "filePath 정확 일치")
+  .option("--ref <trackingCode>", "이 문서를 연관 문서로 갖는 관계만(정확 일치)")
+  .option("--tag <tag>")
+  .option("--root-only", "상위 관계가 없는 최상위만")
+  .option("--page <n>")
+  .option("--count <n>")
+  .action((projectId, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams();
+      if (opts.q) qs.set("q", opts.q);
+      if (opts.file) qs.set("filePath", opts.file);
+      if (opts.ref) qs.set("trackingCode", opts.ref);
+      if (opts.tag) qs.set("tag", opts.tag);
+      if (opts.rootOnly) qs.set("hasNoParent", "true");
+      if (opts.page !== undefined) qs.set("page", opts.page);
+      if (opts.count !== undefined) qs.set("pageSize", opts.count);
+      printJson(await apiCall(`/api/projects/${projectId}/relations?${qs}`));
+    }),
+  );
+
+relCmd
+  .command("parents <projectId> <id>")
+  .action((projectId, id) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/relations/${id}/parents`))),
+  );
+
+relCmd
+  .command("children <projectId> <id>")
+  .action((projectId, id) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/relations/${id}/children`))),
+  );
+
+relCmd
+  .command("ancestors <projectId> <id>")
+  .option("--depth <n>", "기본 3")
+  .option("--tag <tag>")
+  .option("--q <query>")
+  .action((projectId, id, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams();
+      if (opts.depth !== undefined) qs.set("depth", opts.depth);
+      if (opts.tag) qs.set("tag", opts.tag);
+      if (opts.q) qs.set("q", opts.q);
+      printJson(await apiCall(`/api/projects/${projectId}/relations/${id}/ancestors?${qs}`));
+    }),
+  );
+
+relCmd
+  .command("descendants <projectId> <id>")
+  .option("--depth <n>", "기본 3")
+  .option("--tag <tag>")
+  .option("--q <query>")
+  .action((projectId, id, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams();
+      if (opts.depth !== undefined) qs.set("depth", opts.depth);
+      if (opts.tag) qs.set("tag", opts.tag);
+      if (opts.q) qs.set("q", opts.q);
+      printJson(await apiCall(`/api/projects/${projectId}/relations/${id}/descendants?${qs}`));
+    }),
+  );
+
+// 항목이 target/referrer/purpose/file/line/column/data/tags/parentIds/
+// childIds를 가진 완전한 구조체라 단순 variadic 인자로는 못 받는다
+// (기존 bulk 명령들은 전부 문자열 배열 하나뿐이었음) - 로컬 JSON 파일
+// (항목 배열)을 읽어 그대로 보낸다. Claude가 Write 도구로 임시 파일을
+// 만든 뒤 이 명령을 호출하는 흐름을 전제.
+relCmd
+  .command("add-bulk <projectId> <file>")
+  .description("로컬 JSON 파일(항목 배열)로 여러 관계를 한 번에 추가한다")
+  .action((projectId, file) =>
+    run(async () => {
+      const items = JSON.parse(fs.readFileSync(path.resolve(file), "utf-8"));
+      printJson(await apiCall(`/api/projects/${projectId}/relations/bulk`, { method: "POST", body: JSON.stringify({ items }) }));
+    }),
+  );
+
+relCmd
+  .command("update-bulk <projectId> <file>")
+  .description("로컬 JSON 파일(id 포함 항목 배열)로 여러 관계를 한 번에 갱신한다")
+  .action((projectId, file) =>
+    run(async () => {
+      const items = JSON.parse(fs.readFileSync(path.resolve(file), "utf-8"));
+      printJson(await apiCall(`/api/projects/${projectId}/relations/bulk`, { method: "PUT", body: JSON.stringify({ items }) }));
+    }),
+  );
+
+relCmd
+  .command("remove-bulk <projectId> <ids...>")
+  .description("여러 관계를 id로 한 번에 삭제한다")
+  .action((projectId, ids) =>
+    run(async () =>
+      printJson(await apiCall(`/api/projects/${projectId}/relations/bulk`, { method: "DELETE", body: JSON.stringify({ ids }) })),
+    ),
+  );
+
 // ---------------------------------------------------------------- 팀/그룹/프로젝트
 
 program
