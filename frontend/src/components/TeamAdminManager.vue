@@ -83,7 +83,7 @@ onMounted(load);
 
 <style scoped>
 .manager {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 12px;
@@ -98,15 +98,16 @@ onMounted(load);
   align-items: center;
   gap: 10px;
   padding: 6px 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
 }
 .admins li:last-child {
   border-bottom: none;
 }
 .remove-btn {
   margin-left: auto;
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 3px 10px;
   border-radius: 6px;
   font-size: 12px;
@@ -118,21 +119,24 @@ onMounted(load);
 .add-row input {
   flex: 1;
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .pick-btn {
   flex: 1;
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 6px 8px;
   border-radius: 6px;
   font-size: 13px;
   text-align: left;
 }
 .add-row button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 6px 12px;
@@ -141,11 +145,11 @@ onMounted(load);
   font-size: 13px;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

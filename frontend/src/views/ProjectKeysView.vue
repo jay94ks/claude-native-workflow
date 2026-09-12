@@ -22,7 +22,7 @@ h1 {
 }
 .hint {
   font-size: 12px;
-  color: #888;
+  color: var(--color-text-muted);
   margin: 0 0 16px;
 }
 </style>

@@ -187,7 +187,7 @@ onMounted(() => {
 
 <style scoped>
 .manager {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 12px;
@@ -202,29 +202,33 @@ onMounted(() => {
 .form select,
 .form input {
   padding: 6px 8px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .scope-tabs {
   display: flex;
   gap: 4px;
 }
 .scope-tabs button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 5px 10px;
   border-radius: 6px;
   font-size: 12px;
 }
 .scope-tabs button.active {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
-  border-color: #3454d1;
+  border-color: var(--color-primary);
 }
 .pick-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 6px 10px;
   border-radius: 6px;
   font-size: 13px;
@@ -235,7 +239,7 @@ onMounted(() => {
   font-size: 12px;
 }
 .form button[type="submit"] {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 6px 14px;
@@ -253,25 +257,25 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   padding: 6px 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
   font-size: 12px;
 }
 .overrides li:last-child {
   border-bottom: none;
 }
 .scope-label {
-  color: #666;
+  color: var(--color-text-secondary);
 }
 .flags-view {
   margin-left: auto;
-  color: #888;
+  color: var(--color-text-muted);
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

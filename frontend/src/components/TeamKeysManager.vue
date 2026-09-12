@@ -144,32 +144,32 @@ onMounted(load);
 
 <style scoped>
 .manager {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   padding: 12px;
 }
 .hint {
   font-size: 12px;
-  color: #888;
+  color: var(--color-text-muted);
   margin: 0 0 12px;
 }
 .reveal-box {
-  background: #fff8e1;
-  border: 1px solid #f0c14b;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 16px;
 }
 .reveal-warning {
   font-size: 12px;
-  color: #8a6300;
+  color: var(--color-warning-text);
   margin: 0 0 8px;
   font-weight: 600;
 }
 .secret {
   display: block;
-  background: #1a1a2e;
-  color: #d6f8d6;
+  background: var(--color-terminal-bg);
+  color: var(--color-terminal-text);
   padding: 10px 12px;
   border-radius: 6px;
   font-size: 13px;
@@ -181,8 +181,9 @@ onMounted(load);
   gap: 8px;
 }
 .reveal-actions button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 12px;
@@ -198,19 +199,22 @@ onMounted(load);
 .create-row input {
   flex: 1;
   padding: 7px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .create-row select {
   padding: 7px 10px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
-  background: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 .create-row button {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 7px 14px;
@@ -228,7 +232,7 @@ onMounted(load);
   align-items: center;
   gap: 10px;
   padding: 8px 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
   font-size: 12px;
 }
 .list li:last-child {
@@ -238,13 +242,13 @@ onMounted(load);
   opacity: 0.55;
 }
 .prefix {
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 11px;
 }
 .label {
-  color: #555;
+  color: var(--color-text-secondary);
 }
 .status {
   padding: 2px 8px;
@@ -252,33 +256,34 @@ onMounted(load);
   font-size: 11px;
 }
 .status.active {
-  background: #e3f6ec;
-  color: #1f9254;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 .status.revoked,
 .status.expired {
-  background: #f3f0f0;
-  color: #888;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
 }
 .at {
   margin-left: auto;
-  color: #999;
+  color: var(--color-text-faint);
   font-size: 11px;
   white-space: nowrap;
 }
 .revoke-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 11px;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

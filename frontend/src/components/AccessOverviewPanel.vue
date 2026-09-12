@@ -77,28 +77,28 @@ watch(() => props.endpoint, load);
   align-items: center;
   gap: 10px;
   padding: 6px 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
 }
 .overrides li:last-child {
   border-bottom: none;
 }
 .project-name {
   font-weight: 600;
-  color: #333;
+  color: var(--color-text);
 }
 .scope-label {
-  color: #666;
+  color: var(--color-text-secondary);
 }
 .flags-view {
   margin-left: auto;
-  color: #888;
+  color: var(--color-text-muted);
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

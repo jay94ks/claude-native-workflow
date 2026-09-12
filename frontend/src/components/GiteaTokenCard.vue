@@ -68,7 +68,7 @@ function dismiss() {
 
 <style scoped>
 .card {
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   padding: 16px;
@@ -77,26 +77,26 @@ function dismiss() {
 h2 {
   font-size: 14px;
   margin: 0 0 12px;
-  color: #555;
+  color: var(--color-text-secondary);
 }
 .hint {
   font-size: 12px;
-  color: #888;
+  color: var(--color-text-muted);
   margin: 0 0 12px;
 }
 .hint.small {
   margin: 8px 0 0;
 }
 .reveal-box {
-  background: #fff8e1;
-  border: 1px solid #f0c14b;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 12px;
 }
 .reveal-warning {
   font-size: 12px;
-  color: #8a6300;
+  color: var(--color-warning-text);
   margin: 0 0 8px;
   font-weight: 600;
 }
@@ -105,13 +105,13 @@ h2 {
   margin-bottom: 8px;
 }
 .field .label {
-  color: #888;
+  color: var(--color-text-muted);
   margin-right: 6px;
 }
 .secret {
   display: block;
-  background: #1a1a2e;
-  color: #d6f8d6;
+  background: var(--color-terminal-bg);
+  color: var(--color-terminal-text);
   padding: 10px 12px;
   border-radius: 6px;
   font-size: 13px;
@@ -123,8 +123,9 @@ h2 {
   gap: 8px;
 }
 .reveal-actions button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 12px;
@@ -133,7 +134,7 @@ h2 {
   margin-left: auto;
 }
 .regen-btn {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   border: none;
   padding: 7px 14px;
@@ -142,7 +143,7 @@ h2 {
   font-size: 13px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>
