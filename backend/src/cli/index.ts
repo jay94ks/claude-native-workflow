@@ -134,6 +134,7 @@ profileCmd
   .option("--phone <p>")
   .option("--email-visible <bool>", "true|false")
   .option("--phone-visible <bool>", "true|false")
+  .option("--nickname <n>", "7일 쿨다운 - 최근 변경 후엔 값을 안 바꿔야만 재저장 가능, 비우면 공통 라벨 '설계자'로 표시")
   .action((opts) =>
     run(async () =>
       printJson(
@@ -144,6 +145,7 @@ profileCmd
             phone: opts.phone,
             emailVisible: opts.emailVisible !== undefined ? opts.emailVisible === "true" : undefined,
             phoneVisible: opts.phoneVisible !== undefined ? opts.phoneVisible === "true" : undefined,
+            nickname: opts.nickname,
           }),
         }),
       ),

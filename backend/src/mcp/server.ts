@@ -73,8 +73,14 @@ async function main() {
   tool(
     "profile_set",
     "내 프로필 수정",
-    "이메일/전화번호와 타인 공개 여부를 설정한다.",
-    { email: z.string().optional(), phone: z.string().optional(), emailVisible: z.boolean().optional(), phoneVisible: z.boolean().optional() },
+    "이메일/전화번호와 타인 공개 여부, 닉네임을 설정한다. 닉네임은 최근 변경 후 7일간 다시 바꿀 수 없다(값을 안 바꾸면 그대로 재저장 가능), 비우면 공통 라벨 '설계자'로 표시된다.",
+    {
+      email: z.string().optional(),
+      phone: z.string().optional(),
+      emailVisible: z.boolean().optional(),
+      phoneVisible: z.boolean().optional(),
+      nickname: z.string().optional(),
+    },
     async (a) => call("/api/auth/me", { method: "PUT", body: JSON.stringify(a) }),
   );
   tool("user_get", "다른 설계자 프로필 조회", "userId의 공개 프로필을 조회한다(비공개 필드는 가려짐).", { userId: z.string() }, async (a) =>

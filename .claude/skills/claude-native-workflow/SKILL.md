@@ -101,8 +101,10 @@ document next-statuses <trackingCode>`로 확인한다.
 `docs auth whoami`로 본인 프로필(id/username/email/phone 등)을,
 `docs user get <userId>`로 다른 설계자의 공개 프로필(비공개 필드는
 가려짐)을 조회한다. `docs profile set [--email <e>] [--phone <p>]
-[--email-visible <bool>] [--phone-visible <bool>]`로 본인 연락처와
-공개 범위를 설정한다. `docs user activity <userId> [--limit <n>]`로
+[--email-visible <bool>] [--phone-visible <bool>] [--nickname <n>]`로
+본인 연락처/공개 범위/닉네임을 설정한다(닉네임은 최근 변경 후 7일간
+재변경 불가 - 값을 안 바꾸면 재저장은 가능, 비우면 공통 라벨
+"설계자"로 표시). `docs user activity <userId> [--limit <n>]`로
 그 설계자의 최근 작업 이력(문서 작성/질의/답변/메시지 등)을 본다 -
 숨김 프로젝트의 활동은 조회자가 그 프로젝트 멤버이거나 팀장일 때만
 포함된다.
