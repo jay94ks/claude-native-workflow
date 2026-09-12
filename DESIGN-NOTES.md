@@ -4116,6 +4116,117 @@ grep해 남은 하드코딩 hex가 전부 의도된 것(항상 색이 있는 배
 하는 별개 과제라 처음부터 이 두 항목 범위 밖이었음 - 35번 행
 (`#kanban-touch-dnd`)으로 새로 추적.
 
+## 칸반 보드 터치 드래그 지원(`#kanban-touch-dnd`) - 완료 (2026-09-12)
+
+**배경**: `KanbanBoardView.vue`의 분류(컬럼) 재정렬과 카드 이동/
+재정렬이 순수 HTML5 드래그(`draggable`/`dragstart`/`dragover`/
+`drop`)로만 구현돼 있어 터치 기기에서는 드래그 자체가 발동하지
+않았다. 이 저장소엔 지금까지 서드파티 UI 라이브러리가 전혀 없었지만
+(전부 손으로 짠 컴포넌트), 터치/마우스/자동 스크롤을 전부 직접
+구현하는 부담을 고려해 설계자가 **검증된 라이브러리 도입**을
+선택했다(`vuedraggable@^4.1.0`, SortableJS의 Vue 3 래퍼).
+
+**데이터 구조 변경**: 기존엔 `columns`/`cards` 평면 배열에서
+`visibleColumns`(computed)/`cardsFor(columnId)`(순수 함수)로 매번
+필터링해 읽기 전용 뷰를 만들었다. `vuedraggable`은 `v-model`로 직접
+mutate 가능한 배열이 필요하므로, `load()` 성공 시 `rebuildLocalOrder()`
+가 `orderedColumns`/`cardsByColumn`(컬럼별 로컬 배열)을 다시 만든다.
+`hiddenColumns`/`hiddenCardsFor()`는 드래그 대상이 아니라 그대로
+원본을 읽는다.
+
+**드래그 완료 처리**: 기존 `onColumnDragStart`/`onColumnDrop`/
+`onCardDragStart`/`onCardDrop`(HTML5 dragstart/drop 핸들러)을 전부
+제거하고, `vuedraggable`의 `@change` 이벤트 핸들러 `onColumnsChanged`/
+`onCardsChanged`로 대체 - **기존 백엔드 API(`PUT .../columns/order`,
+`PUT /kanban/cards/:code/move`)는 그대로 재사용**(새 라우트 없음).
+두 핸들러 모두 성공/실패 관계없이 `finally`에서 무조건 `load()`를
+호출해 서버 상태로 재동기화한다 - SortableJS는 드롭 즉시 배열을
+물리적으로 mutate하므로(옛 HTML5 방식은 실패 시 아무것도 안 움직인
+상태라 되돌릴 게 없었음), API 실패 시 낙관적 이동을 되돌리는 유일한
+방법이 재조회이기 때문이다.
+
+**`force-fallback: true`를 켠 이유**: 처음엔 네이티브 HTML5 드래그로
+동작을 확인하려 했으나, 이 드래그는 진짜 OS 레벨 포인터 이벤트가
+필요해 브라우저 자동화 도구(Claude Browser pane)의 합성 마우스
+이벤트로는 전혀 트리거되지 않았다(이 세션에서 전에 겪은 "모바일
+햄버거 버튼 클릭이 안 먹힘" 문제와 같은 종류의 자동화 도구 한계).
+SortableJS의 `forceFallback` 모드는 네이티브 드래그 대신 라이브러리
+자체 포인터 이벤트 기반 드래그를 쓰므로, 자동화로도 검증 가능해졌고
+- 부수적으로 - 브라우저마다 다른 네이티브 드래그 고스트 렌더링
+차이 없이 `ghost-class`(`.drag-ghost`) 스타일이 항상 일관되게
+적용되는 이점도 있다(테스트 편의만을 위한 타협이 아니라 그 자체로
+정당한 선택). 검증 중 SortableJS 소스(`node_modules/sortablejs/
+Sortable.js`)를 직접 확인해, fallback 드래그 종료(`_onDrop`)가
+`pointerup`이 아니라 `mouseup`/`touchend`에 바인딩된다는 것도 확인
+- 합성 이벤트로 왕복 검증할 때 이 차이 때문에 처음엔 드래그가 끝나지
+않고 멈춰 있었다.
+
+**추가로 발견/처리한 이슈 2건**(설계자가 실시간 검증 중 지적):
+1. 드래그 중 카드/컬럼 텍스트가 함께 선택되는 현상 - `.board`에
+   `user-select: none`을 걸어 하위(컬럼/카드) 전체에 상속시켜 해결
+   (새 카드 입력폼의 `input`/`textarea`는 `user-select: text`로
+   개별 복원).
+2. 보드의 빈 배경을 드래그해 좌우로 스크롤하는 기능(마우스 전용 -
+   터치는 브라우저 기본 스크롤이 이미 처리) - `.board`를 스크롤
+   컨테이너(래퍼)로, `<draggable>`은 그 안의 순수 flex row
+   (`.board-columns`)로 분리하고, 래퍼에 자체 `pointerdown`/
+   `pointermove`/`pointerup` 핸들러를 달아 `e.target === 래퍼
+   자신`일 때만(컬럼/카드에서 시작된 이벤트는 무시) `scrollLeft`를
+   직접 갱신한다.
+
+**카드 다이얼로그에 분류 변경 드롭다운 추가**(설계자 요청): 좁은
+화면에서 드래그 없이도 카드를 다른 분류로 옮길 수 있도록
+`KanbanCardDialog.vue`에 `<select>`를 추가. 이 다이얼로그는
+`AppLayout.vue`에서 `<main class="content"><slot/></main>`의
+형제로 전역 마운트돼 있어 `ProjectShellView`가 `provide`하는
+`PROJECT_MY_ROLE_KEY`를 inject로 받을 수 없다 - 카드 로드 후
+`GET /projects/:id`(myRole)와 `GET /projects/:id/kanban/columns`를
+별도로 호출해 자체적으로 권한/분류 목록을 구한다. 변경은 기존
+`PUT /kanban/cards/:code/move` 재사용(새 API 없음).
+
+**칸반 보드가 뷰포트 남은 높이를 채우도록 셸 레이아웃 조정**
+(설계자 요청): 이전엔 `.layout`이 `min-height: 100vh`라 콘텐츠가
+길면 브라우저 전체가 세로 스크롤됐고, 칸반 보드의 가로 스크롤바는
+컬럼 내용 바로 아래(화면 중간 어딘가)에 표시됐다. `AppLayout.vue`의
+`.layout`을 `height: 100vh`로, `.content`를 `display:flex;
+flex-direction:column; overflow-y:auto`로 바꿔 셸 자체가 뷰포트
+높이를 고정으로 채우고 `.content`가 자기 영역 안에서 스크롤하도록
+했다. `ProjectShellView.vue`는 `<router-view/>`를 `.tab-content`
+(`flex:1; min-height:0`)로 감싸 탭 콘텐츠 영역이 남은 높이를
+받도록 했고, `KanbanBoardView.vue`는 전체를 `.kanban-view`
+(`flex:1; min-height:0`) 하나로 감싸 `.board`가 `flex:1`로 남은
+높이를 채우게 했다(`.column`은 `max-height:100%` + 내부
+`.card-list`가 `flex:1; overflow-y:auto`로 카드가 많은 컬럼은
+컬럼 자체가 아니라 카드 목록만 세로 스크롤). 다른 탭(문서/메시지
+등)은 `.tab-content`에 `overflow`를 강제하지 않아(그 화면 자체가
+flex:1을 안 쓰면 그냥 자연스럽게 넘쳐 `.content`가 스크롤) 회귀
+없이 동일하게 동작한다 - Kanban만 명시적으로 "남은 높이를 다 쓰고
+그 안에서 스스로 스크롤"하도록 옵트인한 구조.
+
+**실측 검증**: `npx vue-tsc -b` 클린 → `docker compose build backend`
+→ `up -d --force-recreate backend` → 브라우저(Claude_Browser MCP)로
+기존 QA 프로젝트(`migrate-idempotent-verify`)에 테스트 카드 2개
+생성 후: (1) 같은 컬럼 안에서 카드 순서 변경 → 새로고침 후에도 순서
+유지 확인, (2) 카드를 다른 컬럼으로 드래그 이동 → `columnId`가 실제
+바뀌어 저장됨을 API로 확인, (3) 컬럼 자체를 드래그해 순서 변경 →
+새로고침 후에도 유지, (4) 카드 클릭 시 다이얼로그가 정상적으로
+열리는지(드래그 라이브러리가 일반 클릭을 가로채지 않는지), (5) 카드의
+"숨기기" 버튼이 `filter="button"`으로 드래그 시작 대상에서 제외돼
+평범한 클릭으로 여전히 동작하는지, (6) 새 분류 드롭다운으로 카드를
+이동하면 다이얼로그를 닫았을 때 보드에 즉시 반영되는지, (7) 드래그
+중 `window.getSelection().toString()`이 빈 문자열인지(텍스트 선택 안
+됨), (8) 보드 빈 배경을 드래그하면 `scrollLeft`가 실제로 바뀌는지,
+(9) 존재하지 않는 분류로 이동을 직접 호출해 400 오류를 확인(실패
+시 `finally`의 `load()`가 재동기화하는 경로), (10) 모바일 폭
+(375px)에서 햄버거 메뉴/사이드바/탭 바 가로 스크롤/카드 탭-오픈이
+모두 정상 동작하고 칸반 보드 영역이 뷰포트 남은 높이를 채우는지,
+(11) 다크 모드에서 드래그 중 고스트(`.drag-ghost`) placeholder가
+표시되는지 - 전부 스크린샷/API 응답으로 확인.
+
+**PLANS.md 정리**: 35번(`#kanban-touch-dnd`) ✅ 처리 - 본문에는 이
+항목 하나만 있던 절이 없었으므로(색인 표에만 존재) 별도 절 삭제는
+불필요.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

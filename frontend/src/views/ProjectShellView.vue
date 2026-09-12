@@ -51,7 +51,9 @@ watch(() => props.id, load);
       <router-link :to="`/projects/${id}/keys`">키 관리</router-link>
     </nav>
 
-    <router-view />
+    <div class="tab-content">
+      <router-view />
+    </div>
   </template>
 </template>
 
@@ -59,6 +61,7 @@ watch(() => props.id, load);
 h1 {
   font-size: 20px;
   margin-bottom: 16px;
+  flex-shrink: 0;
 }
 .tabs {
   display: flex;
@@ -67,6 +70,13 @@ h1 {
   overflow-x: auto;
   flex-wrap: nowrap;
   padding-bottom: 2px;
+  flex-shrink: 0;
+}
+.tab-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .tabs a {
   background: var(--color-surface);

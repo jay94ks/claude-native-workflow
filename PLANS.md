@@ -65,7 +65,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 32 | ✅ | `#doctype-transition-ai-governed` | DocStatusTransition(설계자 CRUD) 완전 제거 - draft 재진입 금지만 하드 규칙, 나머지 전이는 AI가 판단(설계자 지시) |
 | 33 | ✅ | `#doctype-status-auto-seed` | DocType 생성 시 표준 상태 6개를 항상 자동으로 심음 - 개별 추가/일괄 적용 CRUD 제거(설계자 지시) |
 | 34 | ✅ | `#responsive-dark-mode-phase2` | 나머지 ~40개 뷰/컴포넌트 전부 색상 토큰화 완료(46개 파일 전체가 이제 App.vue 테마 토큰 사용) |
-| 35 | ⬜ | `#kanban-touch-dnd` | 칸반 보드가 순수 HTML5 드래그라 터치 기기에서 카드 이동이 안 됨 - CSS/다크모드와 무관한 별도 DnD 구현 과제 |
+| 35 | ✅ | `#kanban-touch-dnd` | 칸반 보드가 순수 HTML5 드래그라 터치 기기에서 카드 이동이 안 됨 - `vuedraggable`(SortableJS) 도입으로 마우스/터치 통합 드래그 지원 |
 
 ---
 

@@ -86,7 +86,7 @@ function handleLogout() {
 <style scoped>
 .layout {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
 }
 .menu-toggle {
   display: none;
@@ -184,6 +184,9 @@ nav a.router-link-active {
   padding: 32px 40px;
   max-width: 960px;
   background: var(--color-bg);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
 }
 
 @media (max-width: 768px) {
