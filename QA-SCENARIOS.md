@@ -634,6 +634,17 @@
   확인. 자체 호스팅 프로젝트는 해제 시도 자체가 명확히 거부되는지,
   연결 안 된 프로젝트는 명확한 에러가 오는지 확인. 웹 UI 버튼 클릭
   왕복(confirm 취소/승인 둘 다)까지 실측.
+- [x] **로컬/사설 서버 배포 시 외부 웹훅 수동 설정 안내
+  (`#external-webhook-manual-instructions`)** - 백엔드는 이미
+  `link-external`이 웹훅 자동 등록에 실패하면 `manualWebhookInstructions`
+  (URL+secret)를 응답에 실어 보냈지만, `GitRepoPanel.vue`가 그
+  필드를 타입에 아예 선언 안 해서 화면에 조용히 버려지고 있었음을
+  발견·수정 - 이제 자동 등록 실패 시 웹 UI에 Payload URL/Secret/
+  Content-Type/이벤트(push)를 보여주는 안내 박스가 뜨고 "확인함"으로
+  닫을 수 있다. 실제 공개 저장소(`octocat/Hello-World`)를 자격증명
+  없이 연동해(항상 자동 등록 실패 경로를 타는 조건) 브라우저로 실측
+  - 안내 박스 내용이 실제 응답 값과 일치하는지, 닫기 버튼이 정상
+  동작하는지, 콘솔에 새 에러가 없는지 확인.
 
 ---
 

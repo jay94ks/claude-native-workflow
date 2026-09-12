@@ -4813,6 +4813,68 @@ pending)로 갈라지는" 구조였기 때문에 성립했던 것이지, 모든
 `docker compose build/up --force-recreate` 후 실제 HTTP 왕복으로
 전부 재확인.
 
+## 로컬/사설 서버 배포 시 GitHub 연동 조사 + 수동 웹훅 안내 누락 발견·수정(`#external-webhook-manual-instructions`) - 완료 (2026-09-13)
+
+**배경**: 설계자 지시 - "로컬 서버에 설치된 경우에, GitHub와 연동할
+방법을 좀 더 살펴보자." 남은 QA 항목("동기화(발행) - 실제 GitHub/
+GitLab 테스트 저장소로 왕복")이 외부 자격증명 문제로 막혀 있던
+참에, 그보다 앞서 "애초에 로컬/사설 서버에 설치했을 때 GitHub
+연동이 어디까지 되는가"부터 구조적으로 조사했다.
+
+**조사 결과**: 이 시스템이 GitHub/GitLab과 주고받는 통신은 성격이
+완전히 다른 두 갈래다.
+1. **아웃바운드**(로컬 서버 여부와 무관하게 항상 됨) - `git
+   link-external`(저장소 연결), `git publish`(Gitea Push Mirror로
+   실제 push), `git sync-status`/`git sync-proposal`(변경 확인) -
+   전부 이 백엔드(정확히는 내부 Gitea)가 PAT로 먼저 걸어 나가는
+   호출이다. 포트포워딩도 공인 IP도 필요 없다.
+2. **인바운드** - 딱 두 갈래뿐이고 성격이 다르다: (a) 자체 호스팅
+   Gitea의 "시스템 웹훅"(push 훅 자동화 트리거)은 Gitea↔백엔드가
+   같은 docker-compose 네트워크 안에 있어(`PUBLIC_BACKEND_URL` 기본값이
+   그 내부 호스트 이름) 로컬 서버에서도 항상 잘 된다. (b) `git
+   link-external`이 **GitHub/GitLab 저장소 자체에** 웹훅을 자동
+   등록해주는 것(`core/externalGit.ts`)만 진짜 공인 HTTPS 주소가
+   필요하다 - 이게 있어야 이 시스템을 안 거치고 GitHub에 직접
+   push해도 push 훅 자동화가 즉시 반응한다.
+
+이 (b)는 원래부터 fail-soft로 설계돼 있었다(`gitRepos.ts`의
+`linkExternalAsPrimary`) - 자동 등록이 실패해도 연동 자체는 안
+끊기고, 응답에 `manualWebhookInstructions: {url, secret}`을 실어
+보내 설계자가 GitHub 저장소 설정에서 직접 등록할 수 있게 한다.
+
+**발견한 버그**: 그런데 프론트(`GitRepoPanel.vue`)의 `GitRepo`
+타입에 이 필드가 아예 선언돼 있지 않아서, 백엔드가 실제로 이 값을
+보내도 화면에서 조용히 버려지고 있었다 - 설계자는 자동 등록이
+실패했다는 사실도, URL/secret 값도 전혀 볼 수 없었다(연동 자체는
+성공했다고만 뜸). 로컬 서버 배포가 기본적으로 걸리는 바로 그
+경로라 실사용 영향이 크다.
+
+**수정**: `GitRepoPanel.vue`에 `WebhookInstructions` 타입 추가,
+`startLink()`가 `manualWebhookInstructions`를 받아 `webhookInstructions`
+ref에 저장, 연동 성공 직후 Payload URL/Secret/Content-Type/이벤트(push)를
+보여주는 경고색 안내 박스 + "확인함(닫기)" 버튼 추가(기존 `.auth-prompt`/
+`.publish-queued`와 같은 `--color-warning-*` 토큰 재사용이라 다크
+모드도 별도 손질 없이 통함).
+
+**README.md 보강**: "로컬/사설 서버에 설치한 경우 GitHub/GitLab
+연동은 어디까지 되는가" 절 신설 - 위 조사 결과(아웃바운드는 전부
+됨, 자체 호스팅 웹훅도 내부망이라 항상 됨, 외부 저장소 자동 웹훅
+등록만 공인 주소 필요)와 공인 HTTPS 주소를 마련하는 실전 옵션
+(포트포워딩+DDNS+리버스 프록시, 또는 Cloudflare Tunnel/ngrok/
+Tailscale Funnel 같은 역터널 - 이 저장소가 특정 터널을 내장하진
+않음)을 정리했다. **FEATURES.md** §13에도 이 fail-soft 동작과
+수동 안내가 이제 웹 UI에 실제로 뜬다는 것을 한 단락 추가.
+
+**실측 검증**: `npx vue-tsc -b`(frontend) 클린 → 프론트 dev
+서버(Vite, `/api`는 실제 Docker 백엔드로 프록시)를 띄워 실제
+공개 저장소(`octocat/Hello-World`)를 **자격증명 없이**(항상 자동
+등록 실패 경로를 타는 조건) 연동 → 안내 박스에 실제 Payload
+URL(`http://backend:8760/api/webhooks/github/<projectId>`)과
+Secret이 정확히 뜨는 것을 스크린샷으로 확인 → "확인함" 클릭 시
+깔끔히 닫히는 것 확인 → 콘솔에 이 변경으로 인한 새 에러 없음(기존
+404 1건은 "git 저장소 연결 여부 확인"용으로 원래도 있던 것 -
+무관). 테스트 프로젝트는 검증 후 삭제.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

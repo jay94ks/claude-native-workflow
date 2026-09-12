@@ -391,6 +391,14 @@ DESIGN-NOTES.md에, 검증 절차는 QA-SCENARIOS.md에 남긴다.
   협업자 권한이 프로젝트 `Member.role`과 자동 동기화된다.
 - 비공개 저장소 인증 필요 시 그 자리에서 자격증명을 입력받아
   저장(재사용 가능)한 뒤 자동 재시도.
+- **외부 저장소 연동 시 웹훅 자동 등록** - 성공하면(GitHub/GitLab
+  API로 이 백엔드의 `PUBLIC_BACKEND_URL`을 등록) 그 저장소에 직접
+  push해도(이 시스템을 안 거쳐도) push 훅 자동화가 반응한다. 이
+  백엔드가 GitHub/GitLab이 실제로 도달 가능한 공개 주소가 아니면
+  (로컬/사설 서버에 흔함) 자동 등록만 실패하고 다른 기능(연동/동기화
+  확인/발행)은 전혀 안 끊긴다 - 웹 UI에 Payload URL/Secret이 담긴
+  수동 등록 안내가 바로 뜬다(README.md "로컬/사설 서버에 설치한 경우"
+  절 참고).
 - **git log/diff/show/tree/file/blame 등 조회**(자체 호스팅·외부
   연동 둘 다, 작업 저장소 기준) - `git blame`만 Gitea REST API 자체
   한계로 미지원.

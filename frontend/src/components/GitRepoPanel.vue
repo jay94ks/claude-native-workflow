@@ -14,6 +14,10 @@ interface GitRepo {
   provider: string;
   repoUrl: string;
 }
+interface WebhookInstructions {
+  url: string;
+  secret: string;
+}
 interface Credential {
   id: string;
   hostPattern: string | null;
@@ -64,6 +68,12 @@ const linkMigrationHint = ref(false);
 const linking = ref(false);
 const linkError = ref("");
 const linkedWithMigrationHint = ref(false);
+// git/link-external이 외부 저장소에 웹훅 자동 등록을 못 했을 때
+// (이 백엔드가 GitHub/GitLab이 도달 가능한 공개 주소가 아닌 경우 -
+// 로컬/사설 배포에서 흔함) 응답에 실어 보내는 수동 설정 안내 - 예전엔
+// 이 필드를 타입에 아예 선언 안 해서 응답에 실제로 왔어도 화면에
+// 조용히 버려졌다(설계자 지시로 발견해 추가).
+const webhookInstructions = ref<WebhookInstructions | null>(null);
 
 // 자격증명 없이 시도했다가 422 git_auth_required가 오면 그 자리에
 // 자격증명 입력 폼을 띄운다 - 저장 후 같은 동작을 자동 재시도.
@@ -154,12 +164,16 @@ async function startLink() {
   linking.value = true;
   linkError.value = "";
   try {
-    const result = await apiCall<GitRepo>(`/projects/${props.projectId}/git/link-external`, {
-      method: "POST",
-      body: JSON.stringify({ provider: linkProvider.value, repoUrl: linkUrl.value.trim(), gitCredentialId: linkCredentialId.value || undefined }),
-    });
+    const result = await apiCall<GitRepo & { manualWebhookInstructions?: WebhookInstructions }>(
+      `/projects/${props.projectId}/git/link-external`,
+      {
+        method: "POST",
+        body: JSON.stringify({ provider: linkProvider.value, repoUrl: linkUrl.value.trim(), gitCredentialId: linkCredentialId.value || undefined }),
+      },
+    );
     gitRepo.value = result;
     linkedWithMigrationHint.value = linkMigrationHint.value;
+    webhookInstructions.value = result.manualWebhookInstructions ?? null;
     authPromptFor.value = null;
   } catch (err) {
     if (isAuthRequired(err)) {
@@ -377,6 +391,26 @@ onUnmounted(() => {
       <p v-if="linkedWithMigrationHint" class="migration-hint">
         <code>docs migrate scan</code>으로 기존 문서를 가져올 수 있습니다.
       </p>
+
+      <div v-if="webhookInstructions" class="webhook-instructions">
+        <p class="hint">
+          외부 저장소에 웹훅을 자동으로 등록하지 못했습니다 - 이 백엔드가 GitHub/GitLab이 직접 접근할 수 있는 공개
+          주소가 아닌 경우 흔합니다(로컬/사설 서버에 설치한 경우 등). 아래 값으로 저장소 설정(Settings → Webhooks)에서
+          직접 등록하면, 이 시스템을 거치지 않고 그 저장소에 직접 push해도 push 훅 자동화가 그대로 반응합니다 - 등록
+          없이도 "동기화 상태 확인"/"동기화" 버튼으로 직접 확인·반영하는 데는 지장 없습니다.
+        </p>
+        <dl>
+          <dt>Payload URL</dt>
+          <dd><code>{{ webhookInstructions.url }}</code></dd>
+          <dt>Secret</dt>
+          <dd><code>{{ webhookInstructions.secret }}</code></dd>
+          <dt>Content type</dt>
+          <dd><code>application/json</code></dd>
+          <dt>이벤트</dt>
+          <dd><code>push</code>만</dd>
+        </dl>
+        <button @click="webhookInstructions = null">확인함(닫기)</button>
+      </div>
 
       <div v-if="gitRepo.provider === 'external_linked'" class="sync-panel">
         <h3>동기화</h3>
@@ -600,6 +634,35 @@ onUnmounted(() => {
   margin-top: 10px;
   padding: 8px 10px;
   background: var(--color-success-bg);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.webhook-instructions {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.webhook-instructions dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 8px 0;
+}
+.webhook-instructions dt {
+  color: var(--color-text-faint);
+}
+.webhook-instructions dd {
+  margin: 0;
+  word-break: break-all;
+}
+.webhook-instructions button {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 5px 12px;
   border-radius: 6px;
   font-size: 12px;
 }

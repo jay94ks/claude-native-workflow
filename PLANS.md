@@ -75,6 +75,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 42 | ✅ | `#question-ack-race-fix` | 질의 answer/ack/withdraw 동시 호출 시 상태 충돌(withdraw가 조용히 사라짐, Prisma 원본 예외 노출) 실제 재현·수정 - 조건부 updateMany로 원자적 전이 |
 | 43 | ✅ | `#list-pagination-options` | CLI/MCP 목록 명령 약 29개 전부에 `--page`/`--count`(page/pageSize) 페이지네이션 옵션 추가 - 생략 시 기존과 100% 동일한 배열 응답 유지 |
 | 44 | ✅ | `#folder-move-cycle-race` | 폴더를 동시에 맞바꿔 옮기면 트리에 실제 순환(A→B→A)이 생기던 버그 발견·수정 - 설계자 단위 프로세스 내 뮤텍스로 직렬화 |
+| 45 | ✅ | `#external-webhook-manual-instructions` | 로컬/사설 서버 배포 시 GitHub/GitLab 연동 조사 - 외부 웹훅 자동 등록 실패 시 백엔드가 이미 보내던 수동 설정 안내를 웹 UI가 조용히 버리고 있던 것 발견·수정, README에 로컬 배포 가이드 추가 |
 
 ---
 

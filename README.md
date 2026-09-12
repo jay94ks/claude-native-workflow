@@ -163,6 +163,37 @@ git 저장소 연결/이력 조회 기능을 쓰지 않을 거라면 이 절은 
 `GET /api/realtime-config`가 `null`을 반환해 웹 UI가 실시간 갱신만 조용히
 꺼진 상태로 동작한다.
 
+#### 로컬/사설 서버에 설치한 경우 GitHub/GitLab 연동은 어디까지 되는가
+
+**저장소 연결/동기화 자체는 로컬 서버 여부와 무관하게 전부 된다** -
+`git link-external`로 외부(GitHub/GitLab) 저장소를 연결하고, 그 뒤
+`git sync-status`/`git sync-proposal`로 변경 확인, `git publish`로
+실제 반영(push)까지 전부 이 백엔드(정확히는 내부 Gitea)가 GitHub/GitLab
+API·git 프로토콜로 **먼저 걸어 나가는** 호출이다 - 공유기 포트포워딩도,
+공인 IP도 필요 없다. 자체 호스팅(Gitea) push 훅 자동화도 Gitea와
+백엔드가 같은 docker-compose 네트워크 안에 있어서(`PUBLIC_BACKEND_URL`
+기본값이 그 내부 호스트 이름) 로컬 서버에서도 그대로 동작한다.
+
+**단 하나, 공인 HTTPS 주소가 있어야만 되는 게 있다** - `git
+link-external`이 **GitHub/GitLab 저장소 자체에** 웹훅을 자동으로
+등록해주는 것(이게 있어야 이 시스템을 거치지 않고 GitHub에 직접
+push해도 push 훅 자동화가 즉시 반응한다). `PUBLIC_BACKEND_URL`이
+GitHub/GitLab이 실제로 도달 가능한 공개 주소가 아니면 이 자동 등록만
+실패하고, **연동 자체나 다른 기능은 전혀 안 끊긴다** - 실패하면 웹
+UI(프로젝트 "설정" 탭)에 Payload URL/Secret이 담긴 수동 설정 안내가
+바로 뜨니, 그 값 그대로 GitHub 저장소의 Settings → Webhooks에서
+`push` 이벤트로 직접 등록하면 된다(Content type은 `application/json`).
+수동 등록도 귀찮으면 그냥 건너뛰어도 무방하다 - "GitHub 직접 push
+즉시 감지"만 빠질 뿐, `git sync-status`로 직접 확인하는 방식은
+그대로 잘 된다.
+
+이 자동 등록까지 살리고 싶다면 `PUBLIC_BACKEND_URL`을 실제로 밖에서
+닿는 HTTPS 주소로 바꿔야 한다 - 공유기 포트포워딩+DDNS+리버스
+프록시(TLS 처리)로 직접 열거나, Cloudflare Tunnel/ngrok/Tailscale
+Funnel 같은 역터널 서비스를 쓰면 포트포워딩·공인 IP 없이도 가능하다
+(이 저장소는 특정 터널 서비스를 내장하지 않는다 - 필요하면 직접
+붙인다).
+
 ### 호스트에 직접 설치
 
 ```bash
