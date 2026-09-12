@@ -75,6 +75,7 @@ import {
   updateMemberRole,
 } from "../core/members.js";
 import { isTeamAdmin } from "../core/teamAdmins.js";
+import { listUserMemberships } from "../core/userMemberships.js";
 import { getActiveKeyScope } from "../core/requestScope.js";
 import { listUserActivity } from "../core/activity.js";
 import {
@@ -443,7 +444,13 @@ app.get(
   requireUnrestrictedScope,
   requireSuperAdmin,
   asyncRoute(async (req, res) => {
-    res.json(await listAllUsersForAdminPaged(Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
+    res.json(
+      await listAllUsersForAdminPaged(
+        Number(req.query.page ?? 1),
+        Number(req.query.pageSize ?? 20),
+        req.query.search as string | undefined,
+      ),
+    );
   }),
 );
 
@@ -464,6 +471,53 @@ app.get(
   requireSuperAdmin,
   asyncRoute(async (req, res) => {
     res.json(await listAccessOverridesForUser(req.params.userId));
+  }),
+);
+
+// "소속 조회" 다이얼로그 전용 - 위 access-overview(문서별 세부 제한)와는
+// 별개로, 이 사용자가 관리 권한/멤버십을 가진 프로젝트 그룹/팀/프로젝트를
+// 한 번에 모아 보여주고, 각 관계를 강제 방출할 수 있게 한다(단, 마지막
+// owner/관리자는 각 core 함수의 가드가 거부).
+app.get(
+  "/api/admin/users/:userId/memberships",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (req, res) => {
+    res.json(await listUserMemberships(req.params.userId));
+  }),
+);
+
+app.delete(
+  "/api/admin/users/:userId/memberships/projects/:projectId",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (req, res) => {
+    await removeMember(req.params.projectId, req.params.userId);
+    res.json({ ok: true });
+  }),
+);
+
+app.delete(
+  "/api/admin/users/:userId/memberships/teams/:teamId",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (req, res) => {
+    await removeTeamAdmin(req.params.teamId, req.params.userId);
+    res.json({ ok: true });
+  }),
+);
+
+app.delete(
+  "/api/admin/users/:userId/memberships/groups/:groupId",
+  authenticate,
+  requireUnrestrictedScope,
+  requireSuperAdmin,
+  asyncRoute(async (req, res) => {
+    await removeProjectGroupAdmin(req.params.groupId, req.params.userId);
+    res.json({ ok: true });
   }),
 );
 

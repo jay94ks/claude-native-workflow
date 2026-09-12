@@ -12,6 +12,7 @@ import FolderPickerDialog from "./FolderPickerDialog.vue";
 import SidebarSearchBox from "./SidebarSearchBox.vue";
 import SearchScopeDialog from "./SearchScopeDialog.vue";
 import TargetPanelDialog from "./TargetPanelDialog.vue";
+import MembershipsDialog from "./MembershipsDialog.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -77,6 +78,7 @@ function handleLogout() {
       <slot />
     </main>
     <DocumentPreviewDialog />
+    <MembershipsDialog />
     <KanbanCardDialog />
     <EntityPickerDialog />
     <FolderPickerDialog />

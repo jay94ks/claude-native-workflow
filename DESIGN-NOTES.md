@@ -4936,7 +4936,81 @@ webhook-instructions`(owner 전용 - `GET .../git/repo`는 viewer도
 저장소 기능은 원래도 CLI/MCP 표면 밖 - 회귀 확인 차원). 테스트
 프로젝트는 검증 후 삭제.
 
+## 사용자 관리 화면 - 검색/페이지네이션/소속 조회+강제 방출(`#user-membership-management`) - 완료 (2026-09-13)
+
+**배경**: 설계자 지시 - 3갈래 확장 요청(사용자 관리 강화 / GitHub
+OAuth 연동 / 저장소 관리 탭)을 한 번에 설계해달라고 해서 Plan Mode로
+전체를 조사·설계한 뒤 Phase A(이 라운드)→B→C 순서로 나눠 진행하기로
+했다(나머지 두 Phase는 PLANS.md `#github-oauth-repo-link`/
+`#repo-management-tab`에 상세 설계를 남겨둠). 조사 결과 이 시스템의
+멤버십은 2단계뿐임을 확인했다 - `Member`(프로젝트 단위, role)와
+`TeamAdmin`/`ProjectGroupAdmin`(관리자 전용 관계, 일반 "팀원"/"그룹원"
+개념 자체가 없음). 팀 관리자는 자기 팀 산하 모든 그룹에 대해서도
+`isProjectGroupAdmin()`의 상속 판정으로 자동으로 그룹 관리자 권한을
+갖는다(DB에 별도 행 없음) - "소속 조회" 다이얼로그의 `coveredByTeamAdmin`
+필드가 이 상속을 반영한다.
+
+**강제 방출 가드**: `removeMember`/`removeTeamAdmin`/
+`removeProjectGroupAdmin`(각각 `members.ts`/`teamAdmins.ts`/
+`projectGroupAdmins.ts`) 전부에 "마지막 owner/관리자는 방출 불가"
+가드를 추가했다 - `updateMemberRole`의 "본인이 스스로 owner 권한을
+해제할 수 없다"는 가드와는 별개 축(이쪽은 "누가 지우든 마지막
+owner/관리자가 없어지는 상태 자체"를 막는다). `ProjectGroupAdmin`만
+예외 조건이 하나 더 있다 - 그 그룹의 유일한 명시적 관리자여도, 그
+그룹이 속한 팀에 팀 관리자가 한 명이라도 있으면 상속으로 계속
+관리되므로 방출을 허용한다.
+
+**백엔드**: 신규 `core/userMemberships.ts`의 `listUserMemberships(userId)`
+가 프로젝트/팀/그룹 3종을 한 번에 모아 각 행의 `isSoleOwner`/
+`isSoleAdmin`/`coveredByTeamAdmin`을 계산한다(`access-overview`의
+문서별 세부 권한 제한과는 완전히 다른 개념이라 별도 파일로 분리 -
+설계자 확인: 기존 "접근 제한 보기" 버튼은 그대로 두고 "소속 조회"를
+별개 버튼으로 추가). 새 라우트 4개(전부 `requireSuperAdmin`, 기존
+`/admin/users/*`와 같은 보호 수준): `GET .../memberships`,
+`DELETE .../memberships/{projects,teams,groups}/:id`(각각 위 가드가
+걸리면 그 에러 메시지 그대로 전파). `listAllUsersForAdminPaged`
+(`core/auth.ts`)에 `search?: string` 추가 - username/nickname/email에
+`contains` 부분일치(SQLite Prisma 커넥터가 `mode:"insensitive"`를
+지원 안 해서 3 프로바이더 전부 안전하게 도는 대소문자 구분 `contains`
+로 통일).
+
+**프론트**: `AdminUsersView.vue`가 옛 `/admin/users`(전체 배열) 대신
+`/admin/users/page`(검색+페이지네이션)를 쓰도록 전환, 사용자명을
+`router-link`로 바꿔 기존 `UserProfileView.vue`(`/users/:id`)로
+이동(새 화면 불필요 - 이미 프로필+활동+개인 접근 제한 뷰가 있었음).
+신규 `MembershipsDialog.vue` + `membershipsDialog` Pinia 스토어(값을
+반환할 필요 없는 단방향 다이얼로그라 `folderPicker.ts`가 아니라
+`documentDialog.ts`/`DocumentPreviewDialog.vue`와 같은 패턴) -
+`AppLayout.vue`에 전역 마운트. 각 소속 행에 "강제 방출" 버튼,
+`isSoleOwner`/`isSoleAdmin`(그룹은 `coveredByTeamAdmin`도 고려)이면
+비활성 + 이유 툴팁, 클릭 시 `window.confirm` 후 DELETE.
+
+**실측 검증**: `npx tsc --noEmit`(backend)/`npx vue-tsc -b`(frontend)
+클린 → Docker 백엔드 재빌드+재기동 → 실제 브라우저로: 검색창에
+"reparent" 입력 시 디바운스 후 해당 3명만 필터링되는 것 확인 →
+페이지네이션이 1/2페이지를 오가는 것 확인 → 여러 팀/그룹에 걸친
+테스트 사용자(`reparent_dual`)의 "소속 조회" 다이얼로그가 실제 소속
+2개 팀 관리자 관계를 정확히 보여주는 것 확인(`document.querySelector('.dialog').innerText`
+로 다이얼로그 DOM 직접 대조 - 이 세션의 프리뷰 브라우저가 비정상적으로
+작은 뷰포트로 렌더링되는 이슈가 있어 스크린샷 대신 접근성 트리/DOM
+텍스트로 검증) → 유일한 프로젝트 owner(`pri_owner`)는 방출 버튼이
+비활성 + "이 프로젝트의 유일한 owner라 방출할 수 없습니다" 툴팁
+확인 → `reparent_teamA`의 팀 관리자 관계(공동 관리자 있음, 비활성
+아님)를 실제로 강제 방출 → `GET .../memberships`로 서버 상태까지
+재조회해 실제로 제거됐음을 확인(`{"teams":[]}`) → **팀 관리자
+상속 예외 케이스**: 그 결과 `reparent_teamA`가 소속된 그룹
+"ReparentTestGroupRenamed"는 그룹 자체 관리자가 이 사용자 1명뿐(
+`isSoleAdmin:true`)이었지만 그 그룹의 부모 팀에 다른 관리자
+(`reparent_teamB`)가 남아있어 `coveredByTeamAdmin:true` → 방출 버튼이
+비활성화되지 않고 실제로 강제 방출이 에러 없이 성공하는 것까지
+확인(예외 조건이 프론트 비활성화 로직과 백엔드 가드 양쪽에서 일관되게
+동작). 사용자명 클릭 시 `/users/:id`로 실제 이동하는 것 확인.
+`npm run audit:cli-mcp` 클린(이 기능도 기존 사용자 관리 범위와
+동일하게 웹 전용 - CLI/MCP엔 안 넣음).
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를
-고른다.
+고른다. `#user-membership-management` 완료 후 다음은
+`#github-oauth-repo-link`(GitHub OAuth 연동) → `#repo-management-tab`
+(PR/브랜치 관리) 순서(이번에 설계자가 요청한 3단계 확장의 Phase B→C).

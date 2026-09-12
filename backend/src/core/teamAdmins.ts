@@ -21,8 +21,16 @@ export async function addTeamAdmin(teamId: string, userId: string): Promise<Team
   return { id: row.id, teamId: row.teamId, userId: row.userId };
 }
 
+/** 그 팀의 유일한 관리자는 방출할 수 없다(팀장이 0명이 되는 상태를
+ * 막음). */
 export async function removeTeamAdmin(teamId: string, userId: string): Promise<void> {
   const db = getDb();
+  const existing = await db.teamAdmin.findUnique({ where: { teamId_userId: { teamId, userId } } });
+  if (!existing) return; // 원래도 deleteMany라 없으면 조용히 끝났다 - 그대로 유지
+  const adminCount = await db.teamAdmin.count({ where: { teamId } });
+  if (adminCount <= 1) {
+    throw new Error("이 팀의 유일한 관리자는 방출할 수 없습니다 - 먼저 다른 팀장을 지정하세요");
+  }
   await db.teamAdmin.deleteMany({ where: { teamId, userId } });
 }
 

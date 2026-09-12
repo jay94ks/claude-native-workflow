@@ -43,8 +43,20 @@ export async function updateMemberRole(projectId: string, userId: string, role: 
   return { id: row.id, projectId: row.projectId, userId: row.userId, role: row.role };
 }
 
+/** 유일한 owner는 방출할 수 없다(요청자가 본인이든 관리자 대행이든
+ * 동일하게 적용 - updateMemberRole()의 "본인 owner 권한은 스스로
+ * 해제 불가" 가드와는 별개 축: 이쪽은 "누가 지우든 마지막 owner가
+ * 없어지는 상태 자체"를 막는다). */
 export async function removeMember(projectId: string, userId: string): Promise<void> {
   const db = getDb();
+  const existing = await db.member.findUnique({ where: { projectId_userId: { projectId, userId } } });
+  if (!existing) throw new Error(`멤버를 찾을 수 없습니다: ${userId}`);
+  if (existing.role === "owner") {
+    const ownerCount = await db.member.count({ where: { projectId, role: "owner" } });
+    if (ownerCount <= 1) {
+      throw new Error("이 프로젝트의 유일한 owner는 방출할 수 없습니다 - 먼저 다른 설계자를 owner로 지정하세요");
+    }
+  }
   await db.member.delete({ where: { projectId_userId: { projectId, userId } } });
   await syncCollaboratorGrant(projectId, userId, null);
 }

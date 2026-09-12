@@ -27,8 +27,21 @@ export async function addProjectGroupAdmin(projectGroupId: string, userId: strin
   return { id: row.id, projectGroupId: row.projectGroupId, userId: row.userId };
 }
 
+/** 그 그룹의 유일한 명시적 관리자는 방출할 수 없다 - 단, 그 그룹이
+ * 속한 팀에 팀장이 한 명이라도 있으면 예외(팀장이 isProjectGroupAdmin()
+ * 상속으로 계속 그 그룹을 관리하므로 "무관리자"가 되지 않는다). */
 export async function removeProjectGroupAdmin(projectGroupId: string, userId: string): Promise<void> {
   const db = getDb();
+  const existing = await db.projectGroupAdmin.findUnique({ where: { projectGroupId_userId: { projectGroupId, userId } } });
+  if (!existing) return; // 원래도 deleteMany라 없으면 조용히 끝났다 - 그대로 유지
+  const adminCount = await db.projectGroupAdmin.count({ where: { projectGroupId } });
+  if (adminCount <= 1) {
+    const group = await db.projectGroup.findUnique({ where: { id: projectGroupId } });
+    const teamAdminCount = group?.teamId ? await db.teamAdmin.count({ where: { teamId: group.teamId } }) : 0;
+    if (teamAdminCount === 0) {
+      throw new Error("이 그룹의 유일한 관리자는 방출할 수 없습니다 - 먼저 다른 그룹 관리자를 지정하거나 팀장을 등록하세요");
+    }
+  }
   await db.projectGroupAdmin.deleteMany({ where: { projectGroupId, userId } });
 }
 

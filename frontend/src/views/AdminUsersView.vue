@@ -2,7 +2,9 @@
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { useAuthStore } from "../stores/auth";
+import { useMembershipsDialogStore } from "../stores/membershipsDialog";
 import AccessOverviewPanel from "../components/AccessOverviewPanel.vue";
+import Pagination from "../components/Pagination.vue";
 
 interface AdminUserListItem {
   id: string;
@@ -13,7 +15,16 @@ interface AdminUserListItem {
   createdAt: string;
 }
 
+interface AdminUserPageResponse {
+  items: AdminUserListItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 const auth = useAuthStore();
+const membershipsDialog = useMembershipsDialogStore();
 const users = ref<AdminUserListItem[]>([]);
 const loading = ref(true);
 const error = ref("");
@@ -22,6 +33,11 @@ const revealedFor = ref("");
 const revealedPassword = ref("");
 const copied = ref(false);
 const expandedAccessId = ref("");
+const searchQuery = ref("");
+const page = ref(1);
+const totalPages = ref(1);
+const pageSize = 20;
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 function toggleAccess(u: AdminUserListItem) {
   expandedAccessId.value = expandedAccessId.value === u.id ? "" : u.id;
@@ -31,12 +47,32 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    users.value = await apiCall<AdminUserListItem[]>("/admin/users");
+    const qs = new URLSearchParams();
+    qs.set("page", String(page.value));
+    qs.set("pageSize", String(pageSize));
+    if (searchQuery.value.trim()) qs.set("search", searchQuery.value.trim());
+    const result = await apiCall<AdminUserPageResponse>(`/admin/users/page?${qs}`);
+    users.value = result.items;
+    page.value = result.page;
+    totalPages.value = result.totalPages;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "사용자 목록을 불러오지 못했습니다";
   } finally {
     loading.value = false;
   }
+}
+
+function onSearchInput() {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    page.value = 1;
+    load();
+  }, 300);
+}
+
+function goToPage(p: number) {
+  page.value = p;
+  load();
 }
 
 async function resetPassword(u: AdminUserListItem) {
@@ -94,17 +130,26 @@ onMounted(load);
         </div>
       </div>
 
+      <input
+        v-model="searchQuery"
+        type="text"
+        class="search-input"
+        placeholder="사용자명/닉네임/이메일 검색..."
+        @input="onSearchInput"
+      />
+
       <p v-if="loading" class="muted">불러오는 중...</p>
       <ul v-else class="list">
         <li v-for="u in users" :key="u.id">
           <div class="row">
-            <span class="username">{{ u.username }}</span>
+            <router-link :to="`/users/${u.id}`" class="username">{{ u.username }}</router-link>
             <span class="label">{{ u.displayLabel }}</span>
             <span class="email">{{ u.email || "(이메일 없음)" }}</span>
             <span class="at">{{ new Date(u.createdAt).toLocaleString() }}</span>
             <button class="reset-btn" @click="toggleAccess(u)">
               {{ expandedAccessId === u.id ? "접근 제한 닫기" : "접근 제한 보기" }}
             </button>
+            <button class="reset-btn" @click="membershipsDialog.show(u.id, u.username)">소속 조회</button>
             <button class="reset-btn" :disabled="resettingId === u.id" @click="resetPassword(u)">비밀번호 재설정</button>
           </div>
           <div v-if="expandedAccessId === u.id" class="access-panel">
@@ -113,6 +158,7 @@ onMounted(load);
         </li>
         <li v-if="users.length === 0" class="muted">사용자가 없습니다.</li>
       </ul>
+      <Pagination :page="page" :total-pages="totalPages" @update:page="goToPage" />
     </template>
   </section>
 </template>
@@ -200,6 +246,21 @@ h2 {
 .username {
   font-weight: 600;
   color: var(--color-text);
+  text-decoration: none;
+}
+.username:hover {
+  text-decoration: underline;
+}
+.search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  margin-bottom: 12px;
 }
 .label {
   color: var(--color-text-secondary);

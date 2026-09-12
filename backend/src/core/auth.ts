@@ -428,11 +428,26 @@ export async function listAllUsersForAdmin(): Promise<AdminUserListItem[]> {
   );
 }
 
-export async function listAllUsersForAdminPaged(page: number, pageSize: number): Promise<Page<AdminUserListItem>> {
+// SQLite Prisma 커넥터가 QueryMode(대소문자 무시 `contains`)를 지원
+// 안 해서(3개 프로바이더 스키마를 전부 지원해야 하는 이 앱의 제약),
+// `mode: "insensitive"`는 안 쓰고 그냥 `contains`만 쓴다 - Postgres/
+// SQLite는 대소문자 구분, MySQL은 기본 콜레이션상 보통 대소문자
+// 무시로 동작(프로바이더별로 살짝 다르지만 셋 다에서 안전하게 도는
+// 쪽을 우선했다).
+export async function listAllUsersForAdminPaged(page: number, pageSize: number, search?: string): Promise<Page<AdminUserListItem>> {
   const db = getDb();
+  const where = search?.trim()
+    ? {
+        OR: [
+          { username: { contains: search.trim() } },
+          { nickname: { contains: search.trim() } },
+          { email: { contains: search.trim() } },
+        ],
+      }
+    : undefined;
   const result = await paginate<{ id: string; username: string; email: string | null; nickname: string | null; nicknameNumber: number; createdAt: Date }>(
-    (args) => db.user.findMany({ orderBy: { createdAt: "desc" }, ...args }),
-    () => db.user.count(),
+    (args) => db.user.findMany({ where, orderBy: { createdAt: "desc" }, ...args }),
+    () => db.user.count({ where }),
     page,
     pageSize,
   );
