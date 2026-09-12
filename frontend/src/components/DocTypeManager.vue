@@ -26,8 +26,6 @@ interface DocStatus {
   isTerminal: boolean;
 }
 
-const STANDARD_STATUS_CODES = ["draft", "review", "pending", "approved", "deprecated", "archived"];
-
 // 문서 타입은 항상 그 프로젝트 자신에게만 정의된다(팀/그룹 단위로
 // 획일화해 정하는 기능은 없음 - 설계자 확인) - 스코프 분기가 필요
 // 없어졌다.
@@ -123,11 +121,6 @@ const statuses = ref<DocStatus[]>([]);
 const detailError = ref("");
 const detailLoading = ref(false);
 
-const newStatusCode = ref("");
-const statusAddError = ref("");
-const applyingStandardFlow = ref(false);
-const standardFlowError = ref("");
-
 // ---------------------------------------------------------------- 지침(guideline) 보기/수정
 
 const editingGuideline = ref(false);
@@ -179,40 +172,9 @@ async function toggleExpand(docTypeId: string) {
     return;
   }
   expandedId.value = docTypeId;
-  statusAddError.value = "";
   editingGuideline.value = false;
   await loadDetail(docTypeId);
 }
-
-async function addStatus() {
-  if (!expandedId.value || !newStatusCode.value) return;
-  statusAddError.value = "";
-  try {
-    await apiCall(`${basePath.value}/${expandedId.value}/statuses`, {
-      method: "POST",
-      body: JSON.stringify({ code: newStatusCode.value }),
-    });
-    newStatusCode.value = "";
-    await loadDetail(expandedId.value);
-  } catch (err) {
-    statusAddError.value = err instanceof ApiError ? err.message : "상태 추가에 실패했습니다";
-  }
-}
-
-async function applyStandardFlow() {
-  if (!expandedId.value) return;
-  applyingStandardFlow.value = true;
-  standardFlowError.value = "";
-  try {
-    await apiCall(`${basePath.value}/${expandedId.value}/standard-flow`, { method: "POST" });
-    await loadDetail(expandedId.value);
-  } catch (err) {
-    standardFlowError.value = err instanceof ApiError ? err.message : "표준 흐름 적용에 실패했습니다";
-  } finally {
-    applyingStandardFlow.value = false;
-  }
-}
-
 
 onMounted(loadTypes);
 </script>
@@ -286,18 +248,6 @@ onMounted(loadTypes);
               </li>
               <li v-if="statuses.length === 0" class="muted">상태가 없습니다 - 최소 하나는 있어야 문서를 만들 수 있습니다.</li>
             </ul>
-            <form v-if="isOwner" class="add-row" @submit.prevent="addStatus">
-              <select v-model="newStatusCode">
-                <option value="">상태 코드 선택</option>
-                <option v-for="c in STANDARD_STATUS_CODES" :key="c" :value="c">{{ c }}</option>
-              </select>
-              <button type="submit">상태 추가</button>
-              <button type="button" class="standard-flow-btn" :disabled="applyingStandardFlow" @click="applyStandardFlow">
-                표준 상태 흐름 한 번에 적용
-              </button>
-            </form>
-            <p v-if="statusAddError" class="error">{{ statusAddError }}</p>
-            <p v-if="standardFlowError" class="error">{{ standardFlowError }}</p>
           </template>
         </div>
       </li>
@@ -458,37 +408,6 @@ onMounted(loadTypes);
   color: #999;
   font-size: 12px;
   margin-left: 4px;
-}
-.standard-flow-btn {
-  background: #fff;
-  border: 1px solid #d8dae0;
-  color: #333;
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-}
-.add-row {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.add-row input,
-.add-row select {
-  padding: 5px 8px;
-  border: 1px solid #d8dae0;
-  border-radius: 6px;
-  font-size: 12px;
-}
-.add-row button {
-  background: #fff;
-  border: 1px solid #3454d1;
-  color: #3454d1;
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 12px;
 }
 .checkbox {
   font-size: 12px;

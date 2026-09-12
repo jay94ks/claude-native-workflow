@@ -297,24 +297,6 @@ async function main() {
     { projectId: z.string(), docTypeId: z.string(), guideline: z.string() },
     async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/guideline`, { method: "PUT", body: JSON.stringify({ guideline: a.guideline }) }),
   );
-  tool(
-    "doctype_status_add",
-    "문서 타입 상태 추가",
-    "그 문서 타입에 표준 상태 코드 하나를 추가한다(code는 draft/review/pending/approved/deprecated/archived 중 하나 - 라벨/지침/종료 여부는 고정값, 새 타입은 상태가 0개라 이걸로 최소 1개는 만들어야 문서 생성이 가능해진다).",
-    { projectId: z.string(), docTypeId: z.string(), code: z.enum(["draft", "review", "pending", "approved", "deprecated", "archived"]) },
-    async (a) =>
-      call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/statuses`, {
-        method: "POST",
-        body: JSON.stringify({ code: a.code }),
-      }),
-  );
-  tool(
-    "doctype_apply_standard_flow",
-    "표준 상태 흐름 일괄 적용",
-    "표준 상태 6개(draft/review/pending/approved/deprecated/archived)를 한 번에 세팅한다.",
-    { projectId: z.string(), docTypeId: z.string() },
-    async (a) => call(`/api/projects/${a.projectId}/doc-types/${a.docTypeId}/standard-flow`, { method: "POST" }),
-  );
   // ---------------------------------------------------------------- 문서
 
   tool(

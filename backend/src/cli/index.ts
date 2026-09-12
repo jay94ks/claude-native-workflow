@@ -547,29 +547,6 @@ program
     ),
   );
 
-program
-  .command("doctype-status-add <projectId> <docTypeId> <code>")
-  .description("code는 draft/review/pending/approved/deprecated/archived 중 하나(라벨/지침/종료 여부는 표준값 고정)")
-  .action((projectId, docTypeId, code) =>
-    run(async () =>
-      printJson(
-        await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/statuses`, {
-          method: "POST",
-          body: JSON.stringify({ code }),
-        }),
-      ),
-    ),
-  );
-
-program
-  .command("doctype-apply-standard-flow <projectId> <docTypeId>")
-  .description("표준 상태 6개(draft/review/pending/approved/deprecated/archived)를 한 번에 세팅")
-  .action((projectId, docTypeId) =>
-    run(async () =>
-      printJson(await apiCall(`/api/projects/${projectId}/doc-types/${docTypeId}/standard-flow`, { method: "POST" })),
-    ),
-  );
-
 // ---------------------------------------------------------------- 문서
 
 program

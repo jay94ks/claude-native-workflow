@@ -75,9 +75,7 @@ import {
   createDocType,
   listDocTypes,
   listDocStatuses,
-  addDocStatus,
   getDocTypeById,
-  seedStandardStatusFlow,
   setDocTypeGuideline,
   updateDocType,
   deleteDocType,
@@ -1079,21 +1077,6 @@ app.delete(
   }),
 );
 
-app.post(
-  "/api/projects/:projectId/doc-types/:docTypeId/statuses",
-  authenticate,
-  requireProjectRole("owner"),
-  asyncRoute(async (req, res) => {
-    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    const { code } = req.body as { code?: string };
-    if (!code) { res.status(400).json({ error: "code가 필요합니다(draft/review/pending/approved/deprecated/archived 중 하나)" }); return; }
-    res.json(await addDocStatus(req.params.docTypeId, code));
-  }),
-);
-
 app.put(
   "/api/projects/:projectId/doc-types/:docTypeId/guideline",
   authenticate,
@@ -1106,20 +1089,6 @@ app.put(
     const { guideline } = req.body as { guideline?: string };
     if (guideline === undefined) { res.status(400).json({ error: "guideline이 필요합니다" }); return; }
     res.json(await setDocTypeGuideline(req.params.docTypeId, guideline));
-  }),
-);
-
-app.post(
-  "/api/projects/:projectId/doc-types/:docTypeId/standard-flow",
-  authenticate,
-  requireProjectRole("owner"),
-  asyncRoute(async (req, res) => {
-    if (!(await requireOwnedDocType(req.params.projectId, req.params.docTypeId))) {
-      res.status(404).json({ error: "이 프로젝트에 해당 문서 타입이 없습니다" });
-      return;
-    }
-    await seedStandardStatusFlow(req.params.docTypeId);
-    res.json({ ok: true });
   }),
 );
 

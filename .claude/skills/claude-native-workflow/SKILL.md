@@ -82,15 +82,12 @@ draft가 항상 빠지므로, 문서 편집기의 상태 콤보박스에도 애�
 있는지를 설계자가 미리 그래프로 규제하지 않는다 - 실질적인 작업자인
 AI가 그때그때 판단한다(설계자 지시).
 
-새 타입에 표준 상태 6개를 한 번에 심으려면 `docs
-doctype-apply-standard-flow <projectId> <docTypeId>`를 쓴다(문서 타입은
-항상 프로젝트 자신에게만 정의된다 - 그룹/팀 단위로 획일화해 정하는
-기능은 없음). 상태를 하나씩 붙이려면 `docs doctype-status-add
-<projectId> <docTypeId> <code>`(6개 표준 코드 중 하나만 허용 - 라벨/
-지침은 입력받지 않고 고정값이 자동 적용된다). 문서 상태를 바꿀 땐
-`docs transition <trackingCode> <toStatusCode>`, 지금 문서에서 갈 수
-있는 다음 상태 목록(라벨+지침 포함)은 `docs document next-statuses
-<trackingCode>`로 확인한다.
+`docs doctype-create`(또는 `doctype_create`)로 DocType을 만들면 이
+표준 상태 6개가 항상 자동으로 같이 만들어진다 - 개별로 코드를 골라
+붙이거나 별도로 "표준 흐름 적용"을 호출할 필요가 없다(설계자 지시).
+문서 상태를 바꿀 땐 `docs transition <trackingCode> <toStatusCode>`,
+지금 문서에서 갈 수 있는 다음 상태 목록(라벨+지침 포함)은 `docs
+document next-statuses <trackingCode>`로 확인한다.
 
 **문서 우선순위(정수)** - `docs priority-set <trackingCode> <n>`로
 정수 우선순위를 설정/갱신한다. **문서 상태가 `review` 또는 `pending`
@@ -299,8 +296,6 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 | 세부 권한 설정/조회 | `docs access-set ...` / `docs access-list <projectId>` | `access_set` / `access_list` |
 | 문서 타입 이름 수정 | `docs doctype-update <projectId> <docTypeId> [--code <c>] [--label <l>]` | `doctype_update` |
 | 문서 타입 삭제 | `docs doctype-delete <projectId> <docTypeId>` | `doctype_delete` |
-| 표준 상태 흐름 일괄 적용 | `docs doctype-apply-standard-flow <projectId> <docTypeId>` | `doctype_apply_standard_flow` |
-| 상태 코드 추가(표준 6개 중) | `docs doctype-status-add <projectId> <docTypeId> <code>` | `doctype_status_add` |
 | 저장소 연결(생성/이주) | `docs git link <projectId> [--import-from <url>] [--credential <id>]` | `git_link` |
 | 저장소 연결(외부 연동) | `docs git link-external <projectId> --provider <github\|gitlab> --url <url> [--credential <id>]` | `git_link_external` |
 | 연결 정보 조회 | `docs git repo <projectId>` | `git_repo` |

@@ -3818,6 +3818,71 @@ Postgres 컨테이너 로그에 `DocStatusTransition` 테이블 드롭이 찍힘
 한 번에 적용" 버튼은 그대로 동작(재적용 시 200, 콘솔에 전이 관련
 요청 자체가 없음)하는 것을 확인.
 
+## DocType 생성 시 표준 상태 6개 자동 시딩(`#doctype-status-auto-seed`) - 완료 (2026-09-12)
+
+바로 앞 라운드(`#doctype-transition-ai-governed`)의 연장선에 있는
+설계자 직접 지시: "개별로 상태 코드를 관리할 필요가 없어졌어.
+기본적으로 입력된 것만 고정적으로 유지하고, AI가 등록하고 입력하게
+풀어놔." 그 라운드가 "어느 상태에서 어느 상태로 갈 수 있는가"를 설계자
+CRUD에서 뺐다면, 이번엔 "이 DocType이 애초에 어떤 상태들을 갖는가"
+자체를 개별 관리 대상에서 뺐다.
+
+기존엔 새 프로젝트의 기본 6종 DocType만 `seedDefaultDocTypes()`가
+`createDocType()` 호출 뒤 별도로 `seedStandardStatusFlow()`를 불러
+표준 6개 상태를 심어줬고, 설계자가 직접 만드는 커스텀 DocType은 생성
+직후 상태가 0개라 "상태 추가"(코드 하나씩, `doctype-status-add`) 또는
+"표준 상태 흐름 한 번에 적용"(`doctype-apply-standard-flow`)을 별도로
+불러야 문서를 만들 수 있었다 - 표준 6개 코드/라벨/지침 자체는 그대로
+고정(`STANDARD_DOC_STATUSES`)해두고, 그걸 "이 타입에 붙이는" 절차만
+없앴다.
+
+**`core/docTypes.ts`**: 기존 `addDocStatus`(개별 상태 1개 추가)와
+`seedStandardStatusFlow`(표준 6개 idempotent 심기 - 이름을
+`seedStandardStatuses`로 정리, 지난 라운드에서 이미 전이 심기 부분은
+빠진 뒤라 로직 자체는 그대로)를 둘 다 비-export 내부 헬퍼로 전환하고,
+`createDocType()`이 DocType row를 만든 직후 `seedStandardStatuses`를
+자동으로 호출하도록 변경 - 함수 시그니처는 그대로라 호출자(라우트/
+`seedDefaultDocTypes`) 쪽은 건드릴 게 없었다(`seedDefaultDocTypes`는
+오히려 별도 시딩 호출 줄을 지워 더 단순해짐).
+
+**server.ts/cli/index.ts/mcp/server.ts**: 개별 상태 추가 라우트
+(`POST .../statuses`)와 표준 흐름 라우트(`POST .../standard-flow`),
+CLI 2개(`doctype-status-add`/`doctype-apply-standard-flow`), MCP
+2개(`doctype_status_add`/`doctype_apply_standard_flow`)를 쌍으로 동시
+제거 - `GET .../statuses`(목록 조회)는 그대로 유지(이제 항상 6개가
+꽉 찬 채로 반환됨). CLI/MCP 완전성 원칙은 제거에도 적용되므로
+`audit-cli-mcp.ts` 예외 목록은 손댈 게 없었다(121/110 → 119/108,
+대칭성 그대로).
+
+**`DocTypeManager.vue`**: "상태 추가" 폼과 "표준 상태 흐름 한 번에
+적용" 버튼, 관련 상태/에러 ref와 핸들러 전부 제거. 상태 목록(코드/
+라벨/종료 배지/지침)은 순수 읽기 전용으로 유지 - 이제 항상 6개가 다
+채워져 보인다. 이 폼에서만 쓰이던 `.standard-flow-btn`/`.add-row` CSS
+블록도 같이 정리.
+
+**SKILL.md 2벌**: "표준 상태 6개를 한 번에 심으려면.../상태를 하나씩
+붙이려면..." 문단을 "DocType을 만들면 자동으로 같이 만들어진다"로
+재작성, 명령 표에서 두 행 제거.
+
+**소급 적용 안 함**: 이 변경 이전에 만들어진, 아직 상태가 0개거나
+일부만 있는 커스텀 DocType은 이번 변경으로 저절로 고쳐지지 않는다 -
+그걸 고치던 유일한 수단(개별 추가/표준 흐름 적용)이 함께 없어졌기
+때문. 지난 라운드에서 `DocStatusTransition` 데이터 5923건이 스키마
+드롭으로 사라진 걸 그대로 받아들인 것과 같은 판단 - 아직 활발히
+개발 중인 내부 시스템이라 소급 마이그레이션 없이 진행.
+
+**실측 검증**: `npx tsc --noEmit`/`vue-tsc -b`/`npm run
+audit:cli-mcp`(119/108, 대칭성 이상 없음) 클린. `docker compose build
+backend` → `up -d --force-recreate backend` 후, 새 커스텀 DocType을
+생성한 직후(상태 추가/표준흐름 호출 전혀 없이) `GET
+/doc-types/:id/statuses`가 이미 6개 전부 반환하는 것을 확인 → 그
+자리에서 바로 문서 생성이 성공하는 것을 확인(과거엔 상태 0개라
+실패했을 지점) → 제거된 라우트 2개가 404인지 확인. 로컬 재빌드한
+CLI에서 `doctype-status-add`/`doctype-apply-standard-flow`가 "unknown
+command"인지 확인. 브라우저로 `DocTypeManager.vue`에서 새 타입을 만들어
+펼쳐보고 "상태 추가"/"표준 상태 흐름 한 번에 적용"이 안 보이면서
+상태 목록엔 이미 6개가 다 떠 있는 것을 확인.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

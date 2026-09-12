@@ -34,7 +34,10 @@ export interface DocStatus {
 // 항상 제외해 강제). 그 외의 어떤 상태 조합이 실제로 가능한지는
 // 설계자가 미리 규제하지 않는다 - 상태 전이 그래프를 설계자가 CRUD로
 // 입력/제한하는 개념 자체를 두지 않고, 실질적인 작업자인 AI가 그때
-// 그때 판단한다(설계자 지시).
+// 그때 판단한다(설계자 지시). 마찬가지로 "이 DocType이 어떤 상태들을
+// 갖는가"도 설계자가 하나씩 골라 붙이는 개별 관리 대상이 아니다 -
+// createDocType()이 표준 6개를 항상 자동으로 같이 심는다(설계자
+// 지시).
 export const STANDARD_DOC_STATUSES: { code: string; label: string; guideline: string; isTerminal: boolean }[] = [
   { code: "draft", label: "초안", guideline: "아직 작업 중인 단계 - 검토 전 자유롭게 고칠 수 있다.", isTerminal: false },
   { code: "review", label: "검토 중", guideline: "다른 설계자나 AI의 확인을 기다리는 단계.", isTerminal: false },
@@ -51,6 +54,39 @@ export const STANDARD_DOC_STATUSES: { code: string; label: string; guideline: st
 
 function findStandardStatus(code: string): (typeof STANDARD_DOC_STATUSES)[number] | undefined {
   return STANDARD_DOC_STATUSES.find((s) => s.code === code.toLowerCase());
+}
+
+/** code는 STANDARD_DOC_STATUSES 6개 중 하나여야 한다(대소문자 무관) -
+ * 라벨/지침/종료 여부는 입력받지 않고 항상 표준값으로 고정된다("특수
+ * 상태 코드는 정해져 있다" - 설계자 확인). `seedStandardStatuses`
+ * 내부에서만 쓰는 헬퍼 - 개별 상태 추가는 더 이상 외부에 노출된
+ * 동작이 아니다. */
+async function addDocStatus(docTypeId: string, code: string): Promise<DocStatus> {
+  const std = findStandardStatus(code);
+  if (!std) {
+    throw new Error(
+      `상태 코드는 draft/review/pending/approved/deprecated/archived 중 하나여야 합니다: ${code}`,
+    );
+  }
+  const db = getDb();
+  const row = await db.docStatus.create({
+    data: { docTypeId, code: std.code, label: std.label, guideline: std.guideline, isTerminal: std.isTerminal },
+  });
+  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isTerminal: row.isTerminal };
+}
+
+/** 표준 6개 상태를 전부 추가한다(이미 있는 코드는 건너뛰는 idempotent
+ * 루프). `createDocType()`이 생성 직후 항상 자동으로 호출하므로,
+ * 이 함수를 직접 호출할 일은 없다 - 상태 간 전이도 그래프로 미리
+ * 규제하지 않으므로(allowedNextStatuses 참고) 여기서 할 일은 상태
+ * 자체를 심는 것뿐이다. */
+async function seedStandardStatuses(docTypeId: string): Promise<void> {
+  const existing = await listDocStatuses(docTypeId);
+  const existingCodes = new Set(existing.map((s) => s.code));
+  for (const std of STANDARD_DOC_STATUSES) {
+    if (existingCodes.has(std.code)) continue;
+    await addDocStatus(docTypeId, std.code);
+  }
 }
 
 export async function createDocType(
@@ -75,7 +111,9 @@ export async function createDocType(
       isDefault,
     },
   });
-  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isDefault: row.isDefault };
+  const docType = { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isDefault: row.isDefault };
+  await seedStandardStatuses(docType.id);
+  return docType;
 }
 
 /** DocType 생성 후 지침을 새로 쓰거나 수정한다 - 빈 문자열은 "지침
@@ -132,23 +170,6 @@ export async function deleteDocType(docTypeId: string): Promise<void> {
   await db.docType.delete({ where: { id: docTypeId } });
 }
 
-/** code는 STANDARD_DOC_STATUSES 6개 중 하나여야 한다(대소문자 무관) -
- * 라벨/지침/종료 여부는 입력받지 않고 항상 표준값으로 고정된다("특수
- * 상태 코드는 정해져 있다" - 설계자 확인). */
-export async function addDocStatus(docTypeId: string, code: string): Promise<DocStatus> {
-  const std = findStandardStatus(code);
-  if (!std) {
-    throw new Error(
-      `상태 코드는 draft/review/pending/approved/deprecated/archived 중 하나여야 합니다: ${code}`,
-    );
-  }
-  const db = getDb();
-  const row = await db.docStatus.create({
-    data: { docTypeId, code: std.code, label: std.label, guideline: std.guideline, isTerminal: std.isTerminal },
-  });
-  return { id: row.id, code: row.code, label: row.label, guideline: row.guideline, isTerminal: row.isTerminal };
-}
-
 export async function listDocTypes(projectId: string): Promise<DocType[]> {
   const db = getDb();
   const rows = await db.docType.findMany({ where: { projectId } });
@@ -196,9 +217,10 @@ export async function allowedNextStatuses(docTypeId: string, fromStatusId: strin
   return all.filter((s) => s.id !== fromStatusId && s.code !== "draft");
 }
 
-/** 새 문서를 만들 때 쓸 "시작 상태" - draft 상태를 우선으로 찾는다.
- * (표준 흐름을 심은 DocType은 항상 draft가 있다) draft가 없는
- * 예외적인 커스텀 타입이면 첫 번째로 조회된 상태로 폴백. */
+/** 새 문서를 만들 때 쓸 "시작 상태" - draft 상태를 우선으로 찾는다
+ * (createDocType이 항상 자동으로 심으므로 사실상 언제나 존재한다).
+ * draft가 없는 예외적인 옛 데이터(이 자동 시딩 이전에 만들어진
+ * 커스텀 타입 등)면 첫 번째로 조회된 상태로 폴백. */
 export async function initialStatusFor(docTypeId: string): Promise<DocStatus> {
   const draft = await findDocStatusByCode(docTypeId, "draft");
   if (draft) return draft;
@@ -207,18 +229,6 @@ export async function initialStatusFor(docTypeId: string): Promise<DocStatus> {
     throw new Error(`docType(${docTypeId})에 정의된 상태가 없습니다`);
   }
   return statuses[0];
-}
-
-/** 표준 6개 상태를 전부 추가한다 - 상태 간 전이는 그래프로 미리
- * 규제하지 않으므로(allowedNextStatuses 참고) 여기서 할 일은 상태
- * 자체를 심는 것뿐이다. 이미 있는 상태는 건너뛴다(재호출해도 안전). */
-export async function seedStandardStatusFlow(docTypeId: string): Promise<void> {
-  const existing = await listDocStatuses(docTypeId);
-  const existingCodes = new Set(existing.map((s) => s.code));
-  for (const std of STANDARD_DOC_STATUSES) {
-    if (existingCodes.has(std.code)) continue;
-    await addDocStatus(docTypeId, std.code);
-  }
 }
 
 // ---------------------------------------------------------------- 기본값 시딩
@@ -243,13 +253,13 @@ const DEFAULT_TYPES: SeedSpec[] = [
 ];
 
 /** createProject() 직후 호출 - 새 프로젝트가 타입 체계 없이 시작하지
- * 않도록 기본 타입 몇 개를 그 프로젝트 스코프로 심어준다. 관리자는
- * 이후 자유롭게 새 타입을 추가할 수 있지만, 여기서 심어진 타입
- * 자신의 이름(code/label)은 `isDefault: true`라 못 바꾼다(삭제만
- * 가능 - 설계자 확인, updateDocType() 참고). */
+ * 않도록 기본 타입 몇 개를 그 프로젝트 스코프로 심어준다(표준 6개
+ * 상태는 createDocType()이 알아서 같이 심는다). 관리자는 이후
+ * 자유롭게 새 타입을 추가할 수 있지만, 여기서 심어진 타입 자신의
+ * 이름(code/label)은 `isDefault: true`라 못 바꾼다(삭제만 가능 -
+ * 설계자 확인, updateDocType() 참고). */
 export async function seedDefaultDocTypes(projectId: string): Promise<void> {
   for (const spec of DEFAULT_TYPES) {
-    const docType = await createDocType(projectId, spec.code, spec.label, spec.guideline, true);
-    await seedStandardStatusFlow(docType.id);
+    await createDocType(projectId, spec.code, spec.label, spec.guideline, true);
   }
 }

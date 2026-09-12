@@ -40,8 +40,8 @@ export interface MigrateCandidate {
 }
 
 /** concept 스타일 프로젝트에서 흔히 쓰이던 옛 상태 어휘 → 이 시스템의
- * 표준 6종 코드(core/docTypes.ts의 seedStandardStatusFlow가 심는
- * draft/review/pending/approved/deprecated/archived) 매핑 - 매번
+ * 표준 6종 코드(core/docTypes.ts가 DocType 생성 시 항상 자동으로
+ * 심는 draft/review/pending/approved/deprecated/archived) 매핑 - 매번
  * 수작업으로 statusCode를 고치는 걸 줄이기 위한 "제안"일 뿐, 확정이
  * 아니다(#migrate-status-mapping-preset). 여기 없는 값은 지금까지처럼
  * 원본 그대로 남는다 - 잘못 추측하는 것보다 안전한 실패(그대로 두고
