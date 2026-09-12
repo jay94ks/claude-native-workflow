@@ -3991,6 +3991,87 @@ CLI/MCP 표면 자체는 안 바뀌어 그대로) 클린. 실제 frontmatter 마
 남음) → 5차 실행(그 항목이 `errors`로 다시 나타나 자동 재시도되는지
 확인, 나머지는 여전히 `alreadyApplied`).
 
+## 반응형/다크 모드 1단계(`#responsive-dark-mode`) - 완료 (2026-09-12)
+
+PLANS.md 26번, 마지막 남은 백로그. 문서 자체가 "개인 설치형 도구라
+우선순위는 낮을 수 있지만, 실제 필요 여부는 설계자 판단"이라 명시해
+자동 착수 대신 먼저 계획만 정리해 승인을 받았다(설계자: "우선 계획만
+세워봐" → 계획 검토 후 "계속 진행"). Explore 에이전트 2개로 프론트엔드
+전체를 조사한 결과 반응형/다크모드 인프라가 전무했다 - `@media` 쿼리
+0건, CSS 커스텀 프로퍼티 0건, 46개 `.vue` 파일에 하드코딩 hex 724건
+(`#fff` 154회, `#d8dae0` 102회 등 상위 몇 개가 대부분을 차지). 46개
+파일을 한 라운드에 전부 바꾸고 검증하는 건 무리라 판단해 **여러
+단계로 나눴다** - 이번엔 기반(테마 토큰/토글) + 셸 + 대표 화면
+몇 개까지만.
+
+**테마 인프라**: `App.vue`의 전역 스타일에 `:root`(라이트 기본값)와
+`:root[data-theme="dark"]`(다크 재정의) 토큰 선언. 새
+`stores/theme.ts`(Pinia, 이 저장소의 기존 스토어 관례를 그대로 따름
+- composables 디렉터리는 없고 전부 Pinia 스토어) - `mode`
+("light"/"dark"/"system", localStorage에 저장)와 `resolved`(항상
+"light"/"dark" 중 하나로 미리 해석된 값 - `document.documentElement
+.dataset.theme`에 반영)를 분리해서 관리한다: `resolved`를 별도
+reactive state로 두지 않고 getter로 계산했다면 Vue가 캐싱한
+computed가 OS의 `prefers-color-scheme` 변경(matchMedia 이벤트)엔
+반응하지 못했을 것 - 그래서 `applyResolved()` 액션이 명시적으로
+`resolved`를 다시 쓰고 `matchMedia` change 리스너에서도 그 액션을
+재호출하는 구조로 잡았다. "system"은 저장되는 설정값일 뿐 DOM에
+적히는 `data-theme`엔 항상 구체적인 "light"/"dark"만 실리므로,
+CSS 쪽엔 `@media (prefers-color-scheme: dark)`가 필요 없다(JS가
+이미 해석해서 넘겨줌).
+
+**Monaco는 CSS를 안 따라간다**: 캔버스 위젯이라 `monaco.editor.
+setTheme()`을 명시적으로 호출해야 한다 - `MonacoEditor.vue`가
+`theme.resolved`를 직접 구독해(prop으로 안 받고, 이 앱은 한 번에
+에디터 인스턴스가 하나뿐이라 전역 호출로 충분) 마운트 시/변경 시
+`vs`/`vs-dark`를 전환하도록 추가.
+
+**셸(`AppLayout.vue`) 반응형**: `@media (max-width: 768px)`에서
+사이드바를 off-canvas(`transform: translateX(-100%)`)로 바꾸고,
+새 햄버거 토글 버튼 + 반투명 배경 오버레이(클릭 시 닫힘) 추가.
+라우트가 바뀌면(`watch(() => route.fullPath, ...)`) 자동으로
+닫히게 해 모바일에서 링크 클릭 후 매번 손으로 안 닫아도 되게 했다.
+사이드바 하단엔 라이트→다크→시스템 3단 순환 토글 버튼도 신설.
+
+**조사 중 발견**: 계획 단계에서 "6개 모달 다이얼로그가 고정 px
+너비라 반응형 처리가 필요할 것"이라 가정했으나, 실제로 열어보니
+`EntityPickerDialog`/`DocumentPreviewDialog`/`KanbanCardDialog`/
+`QAPanel`/`SearchScopeDialog`/`TargetPanelDialog` 전부 이미
+`width: min(Npx, 90vw)` 패턴을 쓰고 있었다 - 추가 작업 불필요(계획
+문서의 가정이 조사 없이 세운 추측이었다는 걸 구현 단계에서 바로잡은
+사례).
+
+**대표 화면 6개**(+덤으로 `ProjectShellView` 탭 바) 색상 토큰화:
+`ProjectHomeView`/`DocumentsView`/`DocumentEditorView`(가장 배지/
+색상이 많은 화면이라 팔레트 검증에 적합)/`DocumentExplorer`/
+`SidebarSearchBox`/`Pagination`. 사이드바 전용 컴포넌트
+(`DocumentExplorer`/`SidebarSearchBox`)는 사이드바 자체가 라이트/
+다크 구분 없이 원래도 항상 어두웠으므로, 다크 모드에서 값이 안
+바뀌는 `--color-sidebar-*` 토큰으로만 옮겼다(치환 자체는 기계적).
+`DocumentEditorView`는 배지 색(우선순위/공지 배너)이 의미를
+담고 있어 대비를 화면으로 직접 확인하며 옮겼다.
+
+**나머지 ~40개 파일은 의도적으로 이번 범위 밖** - PLANS.md 34번
+행(`#responsive-dark-mode-phase2`)으로 이어감. 칸반 보드는 순수
+HTML5 드래그라 터치 기기에서 애초에 동작하지 않는데, 이건 CSS/
+다크모드로 해결할 문제가 아니라 DnD 구현 자체를 다시 손대야 하는
+별도 과제라 이 백로그와 분리해뒀다.
+
+**실측 검증**: `npx vue-tsc -b` 클린. `docker compose build backend`
+→ `up -d --force-recreate backend`. 브라우저로 라이트→다크 전환 후
+`ProjectHomeView`/`DocumentsView`/`DocumentEditorView`가 실제로
+다크 팔레트로 바뀌는지 확인, "편집" 클릭 시 Monaco가 `vs-dark`로
+렌더링되는지 확인(스크린샷으로 대조). `resize_window`(mobile,
+375px)로 좁혀 셸 사이드바가 접히고 탭 바가 스크롤되는지 확인 -
+햄버거 버튼 클릭이 이 세션의 자동화 도구에서 반복적으로 타임아웃돼
+(앱 버그 아님 - `btn.dispatchEvent(new MouseEvent("click"))`으로
+직접 확인해보니 Vue 핸들러 자체는 정상 동작, `sidebar` 클래스가
+`"sidebar open"`으로 정확히 바뀌었고 스크린샷에도 오프캔버스
+사이드바가 정확히 슬라이드인 되는 게 보였다 - 자동화 도구의 클릭
+디스패치 쪽 문제로 결론) 순수 DOM 이벤트 디스패치로 우회 확인했다.
+아직 안 건드린 화면(예: 프로젝트 목록, 칸반 보드)은 다크 모드에서도
+라이트로 남아있는 것을 회귀가 아니라 "2단계 대기"로 확인.
+
 ## 다음 단계
 
 PLANS.md 색인 표(맨 위 완료✅/⬜ 표시)를 기준으로 다음 우선순위를

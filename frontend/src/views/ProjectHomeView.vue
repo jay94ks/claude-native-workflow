@@ -165,7 +165,7 @@ section {
 }
 .section-header a {
   font-size: 12px;
-  color: #3454d1;
+  color: var(--color-primary);
   text-decoration: none;
 }
 .section-header a:hover {
@@ -174,14 +174,14 @@ section {
 .list {
   list-style: none;
   padding: 0;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .list li {
   padding: 10px 16px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border-light);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -190,13 +190,13 @@ section {
   border-bottom: none;
 }
 .list li a {
-  color: #1a1a2e;
+  color: var(--color-text);
   text-decoration: none;
   font-size: 13px;
 }
 .list li a code {
   font-size: 11px;
-  background: #f0f1f5;
+  background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -206,7 +206,7 @@ section {
 .target-link {
   background: none;
   border: none;
-  color: #1a1a2e;
+  color: var(--color-text);
   font-size: 13px;
   text-align: left;
   padding: 0;
@@ -217,7 +217,7 @@ section {
 }
 .msg-body {
   font-size: 13px;
-  color: #1a1a2e;
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -227,11 +227,11 @@ section {
   margin-left: 12px;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 .muted {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 </style>

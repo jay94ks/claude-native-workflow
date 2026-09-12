@@ -213,9 +213,9 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 5px 6px;
   border-radius: 4px;
-  border: 1px solid #454668;
-  background: #24253f;
-  color: #fff;
+  border: 1px solid var(--color-sidebar-border);
+  background: var(--color-sidebar-input-bg);
+  color: var(--color-sidebar-text);
   font-size: 12px;
 }
 .create-row {
@@ -228,9 +228,9 @@ onBeforeUnmount(() => {
   min-width: 0;
   padding: 4px 6px;
   border-radius: 4px;
-  border: 1px solid #454668;
-  background: #24253f;
-  color: #fff;
+  border: 1px solid var(--color-sidebar-border);
+  background: var(--color-sidebar-input-bg);
+  color: var(--color-sidebar-text);
   font-size: 12px;
 }
 .create-row select {
@@ -238,9 +238,9 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: 4px 4px;
   border-radius: 4px;
-  border: 1px solid #454668;
-  background: #24253f;
-  color: #fff;
+  border: 1px solid var(--color-sidebar-border);
+  background: var(--color-sidebar-input-bg);
+  color: var(--color-sidebar-text);
   font-size: 11px;
 }
 .create-row button {
@@ -248,7 +248,7 @@ onBeforeUnmount(() => {
   padding: 4px 10px;
   border-radius: 4px;
   border: none;
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   flex-shrink: 0;
 }
@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
 }
 .guideline-hint {
   font-size: 11px;
-  color: #8688a8;
+  color: var(--color-sidebar-faint);
   margin: 2px 0 8px;
 }
 .docs {
@@ -269,7 +269,7 @@ onBeforeUnmount(() => {
   display: block;
   padding: 5px 8px;
   border-radius: 6px;
-  color: #c7c9e8;
+  color: var(--color-sidebar-muted);
   text-decoration: none;
   font-size: 13px;
   overflow: hidden;
@@ -277,18 +277,18 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .docs li a:hover {
-  background: #2e2f4d;
-  color: #fff;
+  background: var(--color-sidebar-hover);
+  color: var(--color-sidebar-text);
 }
 .docs li a.active {
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
 }
 .type-chip {
   display: inline-block;
   font-size: 10px;
-  color: #8688a8;
-  background: #24253f;
+  color: var(--color-sidebar-faint);
+  background: var(--color-sidebar-input-bg);
   border-radius: 3px;
   padding: 1px 4px;
   margin-right: 4px;
@@ -297,12 +297,12 @@ onBeforeUnmount(() => {
   height: 1px;
 }
 .muted {
-  color: #8688a8;
+  color: var(--color-sidebar-faint);
   font-size: 12px;
   padding: 2px 8px;
 }
 .error {
-  color: #ff8a9b;
+  color: var(--color-sidebar-error);
   font-size: 12px;
 }
 </style>

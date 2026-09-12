@@ -29,20 +29,20 @@ function submit() {
   min-width: 0;
   padding: 6px 8px;
   border-radius: 6px;
-  border: 1px solid #454668;
-  background: #24253f;
-  color: #fff;
+  border: 1px solid var(--color-sidebar-border);
+  background: var(--color-sidebar-input-bg);
+  color: var(--color-sidebar-text);
   font-size: 12px;
 }
 .search-box input::placeholder {
-  color: #8688a8;
+  color: var(--color-sidebar-faint);
 }
 .search-box button {
   font-size: 11px;
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
-  background: #3454d1;
+  background: var(--color-primary);
   color: #fff;
   flex-shrink: 0;
 }

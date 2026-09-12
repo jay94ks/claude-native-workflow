@@ -64,26 +64,31 @@ h1 {
   display: flex;
   gap: 10px;
   margin-bottom: 24px;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  padding-bottom: 2px;
 }
 .tabs a {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   padding: 8px 14px;
   border-radius: 6px;
   font-size: 13px;
   text-decoration: none;
-  color: #1a1a2e;
+  color: var(--color-text);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .tabs a:hover {
-  background: #eef0f6;
+  background: var(--color-surface-hover);
 }
 .tabs a.router-link-exact-active {
-  background: #3454d1;
-  border-color: #3454d1;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
   color: #fff;
 }
 .error {
-  color: #d1344b;
+  color: var(--color-danger);
   font-size: 13px;
 }
 </style>

@@ -25,8 +25,9 @@ function go(page: number) {
   margin: 16px 0;
 }
 .pagination button {
-  background: #fff;
-  border: 1px solid #d8dae0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 6px 14px;
   border-radius: 6px;
   font-size: 13px;
@@ -36,6 +37,6 @@ function go(page: number) {
 }
 .status {
   font-size: 13px;
-  color: #555;
+  color: var(--color-text-secondary);
 }
 </style>

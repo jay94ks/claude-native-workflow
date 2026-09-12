@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { monaco } from "../monaco-setup";
+import { useThemeStore } from "../stores/theme";
 
 const props = withDefaults(
   defineProps<{
@@ -12,11 +13,23 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 
+const theme = useThemeStore();
+
 const containerRef = ref<HTMLDivElement>();
 const editor = shallowRef<ReturnType<typeof monaco.editor.create>>();
 
+// Monaco는 캔버스에 직접 그리는 위젯이라 페이지의 CSS 다크 모드를
+// 저절로 따라가지 않는다 - JS로 명시적으로 테마를 지정해야 한다
+// (#responsive-dark-mode). monaco.editor.setTheme()은 프로세스 전역
+// 설정이라(인스턴스별 아님) 이 앱처럼 한 번에 에디터 인스턴스가 하나뿐인
+// 구조에선 그대로 전역 호출해도 문제없다.
+function applyMonacoTheme(): void {
+  monaco.editor.setTheme(theme.resolved === "dark" ? "vs-dark" : "vs");
+}
+
 onMounted(() => {
   if (!containerRef.value) return;
+  applyMonacoTheme();
   const instance = monaco.editor.create(containerRef.value, {
     value: props.modelValue,
     language: props.language,
@@ -31,6 +44,8 @@ onMounted(() => {
   });
   editor.value = instance;
 });
+
+watch(() => theme.resolved, applyMonacoTheme);
 
 onBeforeUnmount(() => {
   editor.value?.dispose();
@@ -73,7 +88,7 @@ watch(
   width: 100%;
   height: 100%;
   min-height: 400px;
-  border: 1px solid #d8dae0;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   overflow: hidden;
 }

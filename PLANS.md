@@ -56,7 +56,7 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 23 | ✅ | `#template-history` | 템플릿 변경 이력(리비전) - 덮어쓰기 직전 내용을 스냅샷, 복원은 재저장 방식(Document 리비전과 동일 패턴) |
 | 24 | ✅ | `#migrate-idempotent` | 가이디드 마이그레이션 재실행 안전장치 - 매니페스트에 appliedTrackingCode를 남겨 이미 반영된 항목은 재생성 안 함, 실패 항목만 자동 재시도 |
 | 25 | ✅ | `#migrate-status-mapping-preset` | 옛 상태 어휘(active/wip 등) → 표준 코드 자동 제안(`--no-status-preset`으로 끌 수 있음) |
-| 26 | ⬜ | `#responsive-dark-mode` | 반응형/다크 모드 미지원 |
+| 26 | ⬜ | `#responsive-dark-mode` | 1단계(기반+셸+대표 화면 6개) 완료, 2단계(나머지 화면 색상 토큰화)는 34번 행에서 이어감 - 전체 완료 전까진 ⬜ 유지 |
 | 27 | ✅ | `#large-list-pagination` | 문서 참조 선택기/변경 추적 문서 이력 선택도 검색·페이지네이션 기반으로 전환(폴더는 트리 구조라 범위 밖) |
 | 28 | ✅ | `#private-visibility-default` | 팀/그룹/프로젝트 기본 비공개 가시성(소속 없으면 안 보임, 공개 설정 시 예외) |
 | 29 | ✅ | `#document-priority` | 문서 우선순위(정수, review/pending 상태에서만 유효, CLI/MCP/SKILL 반영) |
@@ -64,14 +64,26 @@ DESIGN-NOTES.md의 해당 라운드 절에 있다 - 요약 칸에 다시 옮겨 
 | 31 | ✅ | `#message-wait-mqtt-direct` | message wait을 백엔드 폴링에서 CLI/MCP 직접 MQTT 구독으로 전환(설계자 지시, HTTP 폴링은 폴백으로 유지) |
 | 32 | ✅ | `#doctype-transition-ai-governed` | DocStatusTransition(설계자 CRUD) 완전 제거 - draft 재진입 금지만 하드 규칙, 나머지 전이는 AI가 판단(설계자 지시) |
 | 33 | ✅ | `#doctype-status-auto-seed` | DocType 생성 시 표준 상태 6개를 항상 자동으로 심음 - 개별 추가/일괄 적용 CRUD 제거(설계자 지시) |
+| 34 | ⬜ | `#responsive-dark-mode-phase2` | 나머지 ~40개 뷰/컴포넌트 색상 토큰화(26번 1단계의 후속) - 칸반 터치 드래그는 별도 판단 필요 |
 
 ---
 
 ## 13. 웹 UI 전반
 
-### `#responsive-dark-mode`
-**반응형/다크 모드 미지원** - 지금까지 전부 데스크톱 뷰포트로만
-검증했다. 개인 설치형 도구라 우선순위는 낮을 수 있지만, 실제 필요
-여부는 설계자 판단.
+### `#responsive-dark-mode` (1단계 완료, 2단계 진행 대기)
+**1단계 완료**(설계자 승인 + 실측 검증 완료, 상세는
+DESIGN-NOTES.md): CSS 커스텀 프로퍼티 기반 테마 토큰(`App.vue`),
+`stores/theme.ts`(라이트/다크/시스템, localStorage 저장), 셸
+(`AppLayout.vue`) 반응형 사이드바 접힘 + 테마 토글, Monaco
+`vs-dark` 연동, 대표 화면 6개(`ProjectHomeView`/`DocumentsView`/
+`DocumentEditorView`/`DocumentExplorer`/`SidebarSearchBox`/
+`Pagination`, 덤으로 `ProjectShellView` 탭 바도 함께) 색상 토큰화.
+
+**2단계(다음 후보, 34번 행)**: 나머지 ~40개 뷰/컴포넌트의 색상을
+같은 토큰으로 전환(카테고리별로 나눠 진행 - 인증 화면/칸반/관리자·
+팀 관리/설정·키 관리/소스 브라우저 등). 칸반 보드의 **터치 드래그
+지원**(모바일에서 카드를 실제로 옮기는 것)은 순수 CSS/다크모드
+문제가 아니라 DnD 구현 자체를 손대야 하는 별도 과제라 이 항목과
+분리해서 판단.
 
 
