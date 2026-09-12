@@ -5676,3 +5676,60 @@ DC-00001→DS-00001/SP-00001/PL-00001)는 정확히 연결되고 배치 밖
 없다 - 유일하게 열려있는 항목은 GitHub/GitLab 실제 발행 왕복
 테스트(외부 자격증명 필요, 설계자 승인/제공 대기)뿐이며, 다음 라운드는
 새 QA 패스나 설계자의 새 요청을 기다린다.
+
+## 실제 신규 설치(C:\CNW) 구성 중 발견한 신규 설치 버그 2건 - 완료
+
+**배경**: 설계자가 실제로 이 컴퓨터에 이 시스템의 "진짜 설치"를 하나
+만들자고 지시했다 - 지금까지 이 저장소의 모든 QA/리허설은 이미
+한참 전에 만들어진 dev 스택(웹 설치 마법사 시절부터 누적된 Gitea
+volume, 오래된 Postgres volume 등)을 계속 재사용해왔는데, 정작
+"처음부터 완전히 새로 설치"하는 경로 자체는 이번이 처음이었다.
+개발용 docker 스택은 중지하고, GitHub origin에서 새로 clone한
+`C:\CNW`를 앞으로 실제 운영 설치로 쓰기로 했다.
+
+**발견 1 - `backend/docker-entrypoint.sh`가 CRLF로 체크아웃돼 컨테이너
+기동 자체가 실패**: 이 저장소에 `.gitattributes`가 없어서
+`core.autocrlf=true`인 이 머신에서 `git clone`하면(dev 체크아웃은 예전에
+다른 설정으로 받아둔 상태라 LF였을 뿐, 새 clone은 기본값을 그대로
+따른다) 셸 스크립트가 CRLF로 체크아웃되고, 리눅스 컨테이너 안에서
+셔뱅 줄의 `\r` 때문에 "exec ./docker-entrypoint.sh: no such file or
+directory"로 backend가 계속 재시작만 반복했다. `.gitattributes`에
+`*.sh text eol=lf`를 추가해 클론하는 머신의 git 설정과 무관하게 항상
+LF로 체크아웃되게 고쳤다.
+
+**발견 2 - 완전히 새 Gitea volume은 CLI 부트스트랩 자체가 막혀 있었음**:
+`#gitea-nginx-lockdown` 라운드에서 "웹 설치 마법사 폐지 + CLI로 관리자
+계정/PAT 발급"으로 바꿨는데, 그 CLI(`gitea admin user create`/
+`generate-access-token`)가 **한 번도 웹 설치를 거치지 않은 진짜 새
+volume**에서는 Gitea가 `INSTALL_LOCK=false` 상태로 부팅되기 때문에
+"Unable to load config file for a installed Gitea instance"로 거부되는
+것을 발견했다 - 이 저장소의 dev 스택 Gitea는 그 기능이 생기기 훨씬
+전에 웹 마법사로 이미 설치를 마친 volume이었으므로, 그동안 이 문제를
+한 번도 실측할 기회가 없었다. `docker-compose.yml`의 `gitea` 서비스에
+`GITEA__security__INSTALL_LOCK: "true"`를 추가해 완전히 새 volume도
+부팅 시점부터 곧바로 CLI만으로 부트스트랩 가능하게 고쳤다(빈 volume을
+지우고 재생성해 재확인).
+
+**발견 3(코드 아님, 배포 topology) - Docker Compose 프로젝트 이름
+충돌로 두 설치가 같은 DB volume을 공유**: `docker compose`는 기본적으로
+"현재 디렉터리 이름"만으로 프로젝트를 식별한다 - 이 저장소는 항상
+`backend/docker`라는 같은 폴더명을 쓰므로, dev 체크아웃과 새 설치가
+경로는 다른데도 똑같이 `docker_postgres-data` 등의 이름으로 볼륨을
+만들어버려 완전히 별개인 두 설치가 같은 DB를 그대로 공유하는 상황이
+실제로 벌어졌다(새 설치의 Postgres가 dev 설치의 옛 비밀번호로 인증
+실패하는 형태로 발견). 코드 문제가 아니라 운영 안내 문제라 README.md
+"실행 방법" 절과 `.env.example`에 `COMPOSE_PROJECT_NAME`으로 분리하라는
+경고를 추가했다.
+
+**검증**: 위 두 코드 수정(.gitattributes, INSTALL_LOCK) 후
+`C:\CNW`에서 처음부터 다시 - 완전히 새 volume으로 스택 기동 → backend
+정상 부팅 → 앱 자체 관리자(`admin`/`12345678`) 로그인 → Gitea 관리자
+계정 생성+PAT 발급 → `.env` 반영 → CLI `auth login`/`project-create`/
+`git link`로 실제 org(`proj-<projectId>`)와 저장소가 생성되는지까지
+전부 왕복 확인. 스모크 테스트로 만든 프로젝트는 확인 후 삭제.
+
+**결론**: 이 라운드는 기존 QA가 전부 "이미 설치돼 있던 스택"을
+전제로 진행돼 놓쳤던, 진짜 최초 설치 경로 자체의 버그 2건(코드)+운영
+안내 공백 1건을 찾아 고쳤다. `C:\CNW`는 이제부터 이 시스템의 실제
+운영 설치로 쓰인다 - 이 저장소(`C:\GitHub\claude-native-workflow`)는
+계속 개발/QA 전용으로 남는다.

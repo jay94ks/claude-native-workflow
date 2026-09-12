@@ -614,6 +614,31 @@
   `empty:true` 확인, 설계자의 첫 push로 `default_branch`가 그 브랜치
   이름으로 정확히 바뀌는지, 그 뒤 `template deploy`+`git pull`이
   fast-forward로 CLAUDE.md/SKILL.md를 정확히 받는지까지 전부 재확인).
+- [x] **이번 세션에서 새로 발견·수정**: "웹 설치 마법사 폐지"
+  (`#gitea-nginx-lockdown`)로 도입한 CLI 기반 Gitea 관리자 부트스트랩
+  (`gitea admin user create`/`generate-access-token`)이, 실제로 **한
+  번도 웹 설치를 거친 적 없는 완전히 새 Gitea volume**에서는
+  `INSTALL_LOCK=false`인 채로 부팅돼 두 CLI 명령 다 "Unable to load
+  config file for a installed Gitea instance"로 거부되는 것을 실제
+  신규 설치(별도 디렉터리, 새 volume)를 구성하며 발견 - 기존 dev
+  스택의 Gitea는 그 기능이 생기기 전에 웹 마법사로 이미 설치돼 있던
+  volume이라 이 문제를 계속 못 보고 넘어갔었다.
+  `docker-compose.yml`의 `gitea` 서비스에
+  `GITEA__security__INSTALL_LOCK: "true"`를 추가해 완전히 새 volume도
+  처음부터 CLI만으로 부트스트랩되도록 수정 - 빈 volume으로 재현 후
+  수정, 재현 절차 그대로 재실행해 `admin user create`→
+  `generate-access-token`→`.env` 반영→`git link`→실제 org/저장소
+  생성까지 왕복 확인.
+- [x] **이번 세션에서 새로 발견·수정(설치 관련, 이 시나리오와 무관하지
+  않음)**: 이 저장소에 `.gitattributes`가 없어, `core.autocrlf=true`인
+  머신에서 새로 `git clone`하면 `backend/docker-entrypoint.sh`가
+  CRLF로 체크아웃돼 backend 컨테이너 기동이 셔뱅 파싱 실패로 막히는
+  것을 발견(실제 신규 설치 클론에서 재현) - `*.sh text eol=lf`를 추가해
+  수정. 같은 신규 설치 과정에서 Docker Compose가 폴더 이름만으로
+  프로젝트를 식별해 서로 다른 경로의 두 설치가 같은 이름의 볼륨(DB
+  등)을 공유해버리는 것도 발견 - `COMPOSE_PROJECT_NAME`으로 분리하도록
+  README.md/`.env.example`에 안내 추가(코드 변경 없음, 배포 topology
+  문제).
 - [x] 옵션 2(외부 저장소 이주) - 실제 커밋 히스토리가 그대로 들어오는지
   Gitea API로 대조.
 - [x] 옵션 3(외부 연동) - 미러+작업 저장소 둘 다 생성, 소스
