@@ -81,11 +81,25 @@ export async function getCachedBlobsBatch(projectId: string, shas: string[]): Pr
  * (별도 크론 없이, 이 코드베이스의 기존 관례). */
 export async function setCachedBlob(projectId: string, sha: string, content: string): Promise<void> {
   const db = getDb();
-  await db.gitBlobCache.upsert({
-    where: { projectId_sha: { projectId, sha } },
-    create: { projectId, sha, content },
-    update: {},
-  });
+  try {
+    await db.gitBlobCache.upsert({
+      where: { projectId_sha: { projectId, sha } },
+      create: { projectId, sha, content },
+      update: {},
+    });
+  } catch (err) {
+    // (projectId, sha) 유니크 충돌은 캐시가 이미 정확한 내용을 갖고
+    // 있다는 뜻일 뿐이다(sha가 내용 자체의 해시라 충돌 = 같은 내용) -
+    // blob sha가 mirror/work 두 저장소에 걸쳐 동시에 캐싱될 수 있어
+    // (커밋 직후 patch와 sync-status 백그라운드 조회가 겹치는 등) 드물게
+    // 진짜 동시 upsert 경합이 벌어질 수 있다(실제로 커밋 자체는 이미
+    // 성공한 뒤 이 캐시 갱신 단계에서만 터져 커밋 응답 전체가 실패로
+    // 보이던 버그로 발견). 캐시 쓰기는 순수 최적화라 실패해도 무시하고
+    // 계속 진행하는 게 맞다 - 절대 실패해선 안 되는 실제 git 커밋을
+    // 이 부수적인 캐시 갱신 실패로 함께 실패한 것처럼 보이게 하면 안 된다.
+    const code = (err as { code?: string }).code;
+    if (code !== "P2002") throw err;
+  }
   const count = await db.gitBlobCache.count({ where: { projectId } });
   if (count > BLOB_CACHE_CAP_PER_PROJECT) {
     const stale = await db.gitBlobCache.findMany({
