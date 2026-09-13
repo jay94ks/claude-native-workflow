@@ -5982,3 +5982,32 @@ diff`로 추가된 줄이 `added:true`로 정확히 잡히는지 확인(테스�
 **결론**: CLAUDE.md의 "관계도 추적"과 마찬가지로, 이 저장소 자신이
 가장 먼저 이 기능의 실사용처가 됐다 - 97개 DN 문서 같은 대형 문서를
 이제 전체 대신 필요한 부분만 골라 보거나 검색할 수 있다.
+
+## 소스 코드 파일 부분 읽기/검색 - 완료
+
+**배경**: 설계자가 이어서 "소스 코드도 grep/부분 읽기 지원되게
+해줘"라고 지시 - 문서에 방금 만든 기능을 소스 코드 파일에도 그대로
+적용. 소스 파일의 버전 비교는 이미 `docs git log/diff/show`(커밋
+단위 unified diff)로 되므로 diff는 다시 안 만듦.
+
+**구현**: 줄 슬라이싱/정규식 검색 로직을 `documents.ts`에서
+`core/textLines.ts`(`sliceLines`/`grepLines`)로 뽑아 문서·소스 파일
+양쪽이 공유하게 했다 - 원본 콘텐츠를 가져오는 방식만 다르고(검색
+엔진 vs Gitea REST `getFileContent()`), 그 뒤 처리는 완전히 동일하기
+때문. `core/gitea.ts`에 `readSourceFileLines`/`grepSourceFile` 신설,
+API `GET /api/projects/:projectId/git/file/{lines,grep}`(기존
+`git/file` 라우트와 동일한 `requireProjectRole("viewer")` 검사).
+CLI `docs git read/grep`, MCP `git_read`/`git_grep` - CLI의 그룹
+접두어 규칙(`git read`→`git_read`)이 이미 `git_cat`/`git_tree`와
+같은 패턴이라 `audit-cli-mcp.ts`의 `KNOWN_RENAMES`에 새로 추가할
+필요 없이 바로 대칭 확인됨.
+
+**검증**: `tsc --noEmit`/`audit:cli-mcp` 클린 확인 후, 이 저장소
+자신이 연동된 실제 프로젝트로 `docs git read README.md`(줄 범위
+정확히 반환)/`docs git grep README.md "도입 시나리오"`(매치 줄 번호
+확인, `--context`로 앞뒤 줄 포함까지)/잘못된 정규식·존재하지 않는
+파일의 에러 메시지까지 실측.
+
+**결론**: 문서(`DN` 등)와 소스 코드 파일 양쪽 다 이제 큰 콘텐츠를
+전체 대신 필요한 범위/키워드로만 다룰 수 있다 - 두 경로가
+`core/textLines.ts` 하나를 공유해 동작이 완전히 일치한다.

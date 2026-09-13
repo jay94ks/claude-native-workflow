@@ -688,6 +688,12 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   id 또는 `current` 두 시점을 줄 단위로 비교, `diff` 라이브러리 사용) -
   셋 다 CLI/MCP(`document_read`/`document_grep`/`document_diff`)
   대칭.
+- **소스 코드 파일 부분 읽기/검색** - 위와 같은 목적으로 소스 코드
+  파일에도 적용. `docs git read <projectId> <path> [--ref][--offset]
+  [--limit]`, `docs git grep <projectId> <path> <pattern> [--ref]
+  [--case-insensitive][--context]` - CLI/MCP(`git_read`/`git_grep`)
+  대칭(버전 비교는 이미 `docs git log/diff/show`로 되므로 따로
+  안 만듦).
 
 ## 21. 인프라 & 배포
 

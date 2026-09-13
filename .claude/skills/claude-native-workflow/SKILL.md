@@ -96,26 +96,34 @@ document next-statuses <trackingCode>`로 확인한다.
 이름만 같을 뿐 완전히 다른 개념이니 혼동하지 않는다. 상태가 바뀌어
 범위를 벗어나도 기존 값은 자동으로 지워지지 않는다.
 
-## 큰 문서 다루기 (부분 읽기/검색/비교)
+## 큰 문서/소스 파일 다루기 (부분 읽기/검색/비교)
 
-`docs get`/`document_get`은 항상 본문 전체를 반환한다 - 라운드 기록처럼
-긴 문서를 그냥 훑어보거나 특정 키워드만 확인하려는 거라면 굳이 전체를
-컨텍스트에 올릴 필요 없이 아래를 먼저 쓴다(파일에 대한 Read/Grep
-도구와 같은 역할을 문서 본문에 대해 한다):
+`docs get`/`document_get`(문서)과 `docs git cat`/`git_cat`(소스 파일)은
+항상 전체 내용을 반환한다 - 라운드 기록이나 큰 소스 파일을 그냥
+훑어보거나 특정 키워드만 확인하려는 거라면 굳이 전체를 컨텍스트에
+올릴 필요 없이 아래를 먼저 쓴다(파일에 대한 Read/Grep 도구와 같은
+역할을 문서 본문/소스 파일 양쪽에 그대로 적용한 것):
 
-- **부분 읽기**: `docs read <trackingCode> [--offset <n>] [--limit <n>]`
-  - 1부터 시작하는 줄 번호로 범위를 지정, 둘 다 생략하면 처음 2000줄.
-  `totalLines`로 전체 줄 수를 알 수 있다.
-- **본문 검색**: `docs grep <trackingCode> <pattern> [--case-insensitive]
+- **부분 읽기**: 문서는 `docs read <trackingCode> [--offset <n>]
+  [--limit <n>]`, 소스 파일은 `docs git read <projectId> <path>
+  [--ref <r>] [--offset <n>] [--limit <n>]` - 1부터 시작하는 줄
+  번호로 범위를 지정, 둘 다 생략하면 처음 2000줄. `totalLines`로
+  전체 줄 수를 알 수 있다.
+- **본문 검색**: 문서는 `docs grep <trackingCode> <pattern>
+  [--case-insensitive] [--context <n>]`, 소스 파일은 `docs git grep
+  <projectId> <path> <pattern> [--ref <r>] [--case-insensitive]
   [--context <n>]` - JS 정규식 문법, 매치된 줄 번호+텍스트 배열을
   반환한다(`--context`로 앞뒤 줄도 같이).
-- **버전 비교**: `docs diff <trackingCode> <from> [<to>]` - `from`/`to`는
-  `docs revisions`가 주는 리비전 id 또는 리터럴 `current`(지금 본문,
-  `to` 생략 시 기본값). `diff` 라이브러리의 줄 단위 결과
-  (`added`/`removed`/`value`)를 그대로 반환한다.
+- **버전 비교(문서 전용)**: `docs diff <trackingCode> <from> [<to>]` -
+  `from`/`to`는 `docs revisions`가 주는 리비전 id 또는 리터럴
+  `current`(지금 본문, `to` 생략 시 기본값). `diff` 라이브러리의 줄
+  단위 결과(`added`/`removed`/`value`)를 그대로 반환한다. 소스 파일의
+  버전 비교는 이미 `docs git log/diff/show`(커밋 단위 unified diff)로
+  되므로 별도 명령을 안 둔다.
 
-셋 다 `docs get`과 마찬가지로 검색 엔진에서 가져온 본문 위에서 동작하는
-순수 읽기 연산이라 문서 상태나 리비전 이력에 아무 영향을 주지 않는다.
+전부 문서는 검색 엔진에서, 소스 파일은 Gitea REST에서 가져온 내용
+위에서 동작하는 순수 읽기 후처리라 문서 상태/리비전 이력이나 git
+저장소에 아무 영향을 주지 않는다.
 
 `docs auth whoami`로 본인 프로필(id/username/email/phone 등)을,
 `docs user get <userId>`로 다른 설계자의 공개 프로필(비공개 필드는
@@ -459,6 +467,8 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | git 로그/diff/show | `docs git log/diff/show <projectId> [<sha>]` | `git_log`/`git_diff`/`git_show` |
 | 디렉터리 목록 | `docs git tree <projectId> [--path <p>] [--ref <r>]` | `git_tree` |
 | 파일 내용 조회 | `docs git cat <projectId> <path> [--ref <r>]` | `git_cat` |
+| 파일 부분 읽기(줄 범위) | `docs git read <projectId> <path> [--ref <r>] [--offset <n>] [--limit <n>]` | `git_read` |
+| 파일 정규식 검색 | `docs git grep <projectId> <path> <pattern> [--ref <r>] [--case-insensitive] [--context <n>]` | `git_grep` |
 | 파일 저장(커밋) | `docs git put <projectId> <path> <localFile> [--message <m>]` | `git_put` |
 | 템플릿 조회(override 체인 적용) | `docs template get <filename> [--project <id>]` | `template_get` |
 | 템플릿 override 설정 | `docs template set <filename> <file> [--project\|--group\|--team <id>]` | `template_set` |
