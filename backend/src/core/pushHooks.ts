@@ -228,7 +228,13 @@ export async function handleGiteaSystemPush(parsed: ParsedPush): Promise<GiteaSy
   // 등으로 이 앱을 거치지 않고 직접 push됐거나 미러가 pull-sync됐을
   // 때는 그 write 경로를 안 타므로 여기가 유일한 무효화 지점(2차
   // 안전망) - 관계도 정리(아래)와는 별개 관심사라 mirror도 예외 없음.
-  await invalidateTree(resolved.projectId, resolved.kind, parsed.branch);
+  // ref는 이 push의 브랜치가 아니라 생략(그 repoKind의 모든 ref 캐시를
+  // 지움)한다 - gitea.ts의 모든 캐시 읽기 경로가 항상 리터럴 "HEAD"를
+  // 키로 쓰므로(ref="main" 등 실제 브랜치명으로는 캐시된 적이 없음),
+  // parsed.branch를 그대로 넘기면 아무 행도 안 지워지는 채로 조용히
+  // 통과해버린다(실제로 겪어 발견 - #git-cache-and-staging 검증 중
+  // "웹훅이 전혀 안 온다"로 오인했던 원인이 사실 이 라인이었음).
+  await invalidateTree(resolved.projectId, resolved.kind);
   if (resolved.kind === "mirror") return { status: "ignored", reason: "미러 저장소 push는 무시함" };
   const queued = await recordPushEvent(resolved.projectId, parsed);
   return { status: "processed", projectId: resolved.projectId, queued };
@@ -248,7 +254,7 @@ export async function handleGiteaSystemDelete(parsed: ParsedDelete): Promise<Git
   if (parsed.refType !== "branch") return { status: "ignored", reason: "브랜치 삭제가 아님(태그)" };
   const resolved = resolveProjectFromOrgAndRepo(parsed.org, parsed.repoName);
   if (!resolved) return { status: "ignored", reason: "관리 대상 저장소가 아님" };
-  await invalidateTree(resolved.projectId, resolved.kind, parsed.branch); // kind 무관 - handleGiteaSystemPush와 동일 원칙
+  await invalidateTree(resolved.projectId, resolved.kind); // ref 생략 이유는 handleGiteaSystemPush 주석 참고, kind 무관은 동일 원칙
   if (resolved.kind === "mirror") return { status: "ignored", reason: "미러 저장소의 브랜치 삭제는 무시함" };
   const deletedRelations = await deleteRelationsForBranch(resolved.projectId, parsed.branch);
   return { status: "processed", projectId: resolved.projectId, deletedRelations };
