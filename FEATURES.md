@@ -500,7 +500,10 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   지원한다. 없는 파일을 삭제하려는 시도는 명확한 에러로 실패하고,
   소스 검색 인덱스도 저장/삭제 양쪽에서 바로 갱신된다. 내부적으로
   Gitea의 "여러 파일을 한 번에 커밋" API(`POST /contents`)를 1개
-  변경으로 호출하는 방식으로 통일돼 있다.
+  변경으로 호출하는 방식으로 통일돼 있다. CLI의 `git put`은 로컬
+  파일을 읽어 그 내용을 그대로 전송하는데, Windows에서 CRLF로
+  체크아웃된 파일을 실제 git commit과 동일하게 LF로 정규화해서
+  보낸다(UTF-8 텍스트 전용 파이프라인 - 바이너리는 대상 아님).
 - **git 조회/편집 캐시**(프로젝트 단위 DB 테이블, `GitTreeCache`/
   `GitBlobCache`) - 트리(`getFullTree`)와 파일 내용(`getFileContent`)
   조회가 매번 Gitea REST를 왕복하는 대신 이 캐시를 먼저 거친다. 이
@@ -516,7 +519,8 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   실패로 보이면 안 된다는 원칙.
 - **스테이징(git add/rm/status/restore/commit)** - 실제 git처럼 여러
   파일 변경을 모았다가 한 번에 커밋할 수 있다. `git add`/`git rm`이
-  스테이징만 하고(아직 Gitea에 반영 안 됨), `git status`가 스테이징된
+  스테이징만 하고(아직 Gitea에 반영 안 됨) - CLI의 `git add`도 `git
+  put`과 같은 CRLF→LF 정규화를 거친다. `git status`가 스테이징된
   각 항목의 현재 HEAD 대비 diff(문서 버전 비교와 같은 형식)와 그 사이
   드리프트 여부를 보여주고, `git restore`가 스테이징을 취소한다.
   `git commit`이 스테이징된 변경을 모아 **한 번에 하나의 Gitea 커밋**
