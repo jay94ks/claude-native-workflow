@@ -172,8 +172,8 @@ export async function getDocumentAccessInfo(trackingCode: string): Promise<Docum
 // 200건 프로젝트로 재현해 발견). 1000은 Meilisearch 기본
 // maxTotalHits와 같은 값 - 이 한도까지도 넘는 프로젝트는 이번
 // 수정 범위 밖(QA-SCENARIOS.md에 잔여 한계로 기록).
-export async function listDocuments(projectId: string, docTypeId?: string): Promise<SearchableDocument[]> {
-  return listDocumentsFromIndex({ projectId, docTypeId, limit: 1000 });
+export async function listDocuments(projectId: string, docTypeId?: string, statusCode?: string): Promise<SearchableDocument[]> {
+  return listDocumentsFromIndex({ projectId, docTypeId, statusCode, limit: 1000 });
 }
 
 /** 홈 대시보드 "최근 변경 문서" + 그 "더보기" 전체 목록 둘 다 이걸
@@ -218,11 +218,13 @@ export async function listDocumentsPaged(
   docTypeId: string | undefined,
   page: number,
   pageSize: number,
+  statusCode?: string,
 ): Promise<DocumentPage> {
   const safePage = Math.max(1, page);
   const { hits, total } = await listDocumentsFromIndexPaged({
     projectId,
     docTypeId,
+    statusCode,
     limit: pageSize,
     offset: (safePage - 1) * pageSize,
     sort: ["createdAt:desc"],

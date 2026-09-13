@@ -1025,6 +1025,7 @@ program
 program
   .command("list <projectId>")
   .option("--type <docTypeId>")
+  .option("--status <code>", "draft/review/pending/approved/deprecated/archived 중 하나로 필터 - 예: 검토 대기 목록은 --status review")
   .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열(최대 1000건)")
   .option("--count <n>", "페이지당 개수(--page와 함께)")
   .action((projectId, opts) =>
@@ -1032,6 +1033,7 @@ program
       const paged = opts.page !== undefined || opts.count !== undefined;
       const qs = new URLSearchParams({
         ...(opts.type ? { docTypeId: opts.type } : {}),
+        ...(opts.status ? { statusCode: opts.status } : {}),
         ...(paged ? { page: opts.page ?? "1", pageSize: opts.count ?? "20" } : {}),
       });
       const suffix = paged ? "/page" : "";

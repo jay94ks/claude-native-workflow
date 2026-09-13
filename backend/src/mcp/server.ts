@@ -654,12 +654,19 @@ async function main() {
   tool(
     "document_list",
     "문서 목록",
-    "프로젝트의 문서 목록(docTypeId로 필터 가능). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열(최대 1000건).",
-    { projectId: z.string(), docTypeId: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() },
+    "프로젝트의 문서 목록(docTypeId/statusCode로 필터 가능 - statusCode는 draft/review/pending/approved/deprecated/archived 중 하나, 예: 검토 대기 목록은 statusCode=review). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열(최대 1000건).",
+    {
+      projectId: z.string(),
+      docTypeId: z.string().optional(),
+      statusCode: z.string().optional(),
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+    },
     async (a) => {
       const paged = a.page !== undefined || a.pageSize !== undefined;
       const qs = new URLSearchParams({
         ...(a.docTypeId ? { docTypeId: String(a.docTypeId) } : {}),
+        ...(a.statusCode ? { statusCode: String(a.statusCode) } : {}),
         ...(paged ? { page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) } : {}),
       });
       const suffix = paged ? "/page" : "";
