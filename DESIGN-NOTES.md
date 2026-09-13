@@ -6664,3 +6664,32 @@ LF인 파일도 이 CLI 경로로 올리면 조용히 CRLF로 오염된 콘텐�
 미스터리는 실제로는 없었다 - sync-status는 처음부터 옳았고, 문제는
 이 CLI의 파일 읽기 경로가 git 자신의 정규화를 우회한 것이었다. 이
 라운드로 그 후속 과제는 종료됐다.
+
+## 커밋 0개 저장소에서 `getFullTree()`가 `tree:null`을 처리 못하던 버그 수정(`#getfulltree-null-tree-fix`)
+
+**배경**: 설계자가 실제로 다른 프로젝트("minicore")를 이 시스템에
+`git link-external`로 연동해보다가 `docs template deploy`가 즉시
+실패하는 것을 발견하고 BR-5E6E7BCC로 재현 경로/원인/실제 로그/제안
+수정까지 상세히 보고했다.
+
+**원인**: `backend/src/core/gitea.ts`의 `getFullTree()`가 Gitea의
+트리 조회 API에서 커밋이 0개인 저장소에 대한 두 가지 서로 다른
+응답 방식 중 한쪽만 처리하고 있었다 - `HTTP 400 + "sha not found"`는
+빈 트리로 처리하지만, 실제로는 `HTTP 200 OK + {"tree": null}`로도
+응답할 수 있다는 걸 놓쳐 `json.tree.filter(...)`에서 `TypeError:
+Cannot read properties of null (reading 'filter')`가 났다. `git
+link-external`로 막 연동한 프로젝트의 작업 저장소는 거의 항상 이
+0커밋 상태를 거치므로, 연동 직후 표준 플로우(`template deploy`,
+소스 색인 백필, sync-status 계산, 첫 파일 저장)가 구조적으로 전부
+막혀 있었다.
+
+**수정**: `getFullTree()`에서 `json.tree`가 `null`이면 빈 배열로
+취급하도록 `(json.tree ?? [])`로 변경 - BR 문서가 제안한 수정
+그대로.
+
+**검증**: `cd backend && npx tsc --noEmit` 클린 확인.
+
+**결론**: 이 버그는 `git link-external` 직후 표준 온보딩 플로우
+자체를 막고 있었다 - 바로 앞 라운드에서 README.md에 추가한 "AI에게
+온보딩을 맡기는 사용법" 예시가 실제로는 이 버그 때문에 새 프로젝트에서
+곧바로 실패할 수 있었다는 뜻이라, 발견·수정 우선순위가 높았다.

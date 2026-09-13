@@ -327,8 +327,10 @@ export async function getFullTree(projectId: string, target: GiteaRepoRef, ref =
     const body = await res.text().catch(() => "");
     throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
   }
-  const json = (await res.json()) as { tree: { path: string; sha: string; type: string; size?: number }[] };
-  const tree = json.tree
+  const json = (await res.json()) as { tree: { path: string; sha: string; type: string; size?: number }[] | null };
+  // 커밋이 0개인 저장소에 대해 이 인스턴스가 400 대신 200 OK + tree:null로
+  // 응답하는 경우도 실측으로 확인됨 - 위 400 케이스와 동일하게 빈 트리로 취급.
+  const tree = (json.tree ?? [])
     .filter((e) => e.type === "blob")
     .map((e) => ({ path: e.path, sha: e.sha, type: "blob" as const, size: e.size }));
   await gitCache.setCachedTree(projectId, repoKindFromRef(target), ref, tree);
