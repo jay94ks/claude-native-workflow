@@ -1360,6 +1360,67 @@ async function main() {
       });
     },
   );
+  tool(
+    "git_cat_batch",
+    "git 파일 여러 개 한번에 조회",
+    "여러 파일을 한 번에 조회한다.",
+    { projectId: z.string(), paths: z.array(z.string()) },
+    async (a) => {
+      const qs = new URLSearchParams({ paths: (a.paths as string[]).join(",") });
+      return call(`/api/projects/${a.projectId}/git/files?${qs}`);
+    },
+  );
+  tool(
+    "git_add",
+    "git 파일 변경 스테이징",
+    "파일 변경을 스테이징한다(git add - 아직 커밋 안 됨).",
+    { projectId: z.string(), path: z.string(), content: z.string() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/staging/add`, {
+        method: "POST",
+        body: JSON.stringify({ path: a.path, content: a.content }),
+      }),
+  );
+  tool(
+    "git_rm",
+    "git 파일 삭제 스테이징",
+    "파일 삭제를 스테이징한다(git rm - 아직 커밋 안 됨).",
+    { projectId: z.string(), path: z.string() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/staging/rm`, {
+        method: "POST",
+        body: JSON.stringify({ path: a.path }),
+      }),
+  );
+  tool(
+    "git_status",
+    "git 스테이징 상태 조회",
+    "스테이징된 변경 목록과 각 항목의 현재 HEAD 대비 diff를 조회한다.",
+    { projectId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/staging/status`),
+  );
+  tool(
+    "git_restore",
+    "git 스테이징 취소",
+    "스테이징을 취소한다(git restore --staged).",
+    { projectId: z.string(), path: z.string() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/staging/restore`, {
+        method: "POST",
+        body: JSON.stringify({ path: a.path }),
+      }),
+  );
+  tool(
+    "git_commit",
+    "git 스테이징 반영(커밋)",
+    "스테이징된 변경을 전부 모아 한 번에 커밋한다(드리프트가 있으면 3-way 자동 병합, 진짜 충돌이 있으면 전체 커밋을 거부한다).",
+    { projectId: z.string(), message: z.string() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/staging/commit`, {
+        method: "POST",
+        body: JSON.stringify({ message: a.message }),
+      }),
+  );
 
   // ---------------------------------------------------------------- git push 훅 프롬프트 자동화 (Phase 3 - 대기열 방식)
 

@@ -1901,6 +1901,80 @@ gitCmd
   );
 
 gitCmd
+  .command("cat-batch <projectId> <paths>")
+  .description("여러 파일을 한 번에 조회한다(쉼표로 구분한 경로 목록)")
+  .action((projectId, paths) =>
+    run(async () => {
+      const qs = new URLSearchParams({ paths });
+      printJson(await apiCall(`/api/projects/${projectId}/git/files?${qs}`));
+    }),
+  );
+
+gitCmd
+  .command("add <projectId> <path> <localFile>")
+  .description("파일 변경을 스테이징한다(git add - 아직 커밋 안 됨)")
+  .action((projectId, path, localFile) =>
+    run(async () => {
+      const fs = await import("node:fs");
+      const content = fs.readFileSync(localFile, "utf-8");
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/staging/add`, {
+          method: "POST",
+          body: JSON.stringify({ path, content }),
+        }),
+      );
+    }),
+  );
+
+gitCmd
+  .command("rm <projectId> <path>")
+  .description("파일 삭제를 스테이징한다(git rm - 아직 커밋 안 됨)")
+  .action((projectId, path) =>
+    run(async () => {
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/staging/rm`, {
+          method: "POST",
+          body: JSON.stringify({ path }),
+        }),
+      );
+    }),
+  );
+
+gitCmd
+  .command("status <projectId>")
+  .description("스테이징된 변경 목록과 각 항목의 현재 HEAD 대비 diff를 조회한다")
+  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/staging/status`))));
+
+gitCmd
+  .command("restore <projectId> <path>")
+  .description("스테이징을 취소한다(git restore --staged)")
+  .action((projectId, path) =>
+    run(async () => {
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/staging/restore`, {
+          method: "POST",
+          body: JSON.stringify({ path }),
+        }),
+      );
+    }),
+  );
+
+gitCmd
+  .command("commit <projectId>")
+  .description("스테이징된 변경을 전부 모아 한 번에 커밋한다(드리프트가 있으면 3-way 자동 병합, 진짜 충돌이 있으면 전체 커밋 거부)")
+  .requiredOption("--message <m>", "커밋 메시지")
+  .action((projectId, opts) =>
+    run(async () => {
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/staging/commit`, {
+          method: "POST",
+          body: JSON.stringify({ message: opts.message }),
+        }),
+      );
+    }),
+  );
+
+gitCmd
   .command("my-token")
   .description("내 Gitea 개인 접근 토큰을 재발급하고 1회 노출한다(외부 git 클라이언트에서 clone/push 시 비밀번호 자리에 쓴다)")
   .action(() =>

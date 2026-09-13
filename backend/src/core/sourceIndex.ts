@@ -62,19 +62,17 @@ export function isIndexableFile(path: string, sizeBytes?: number): boolean {
 export async function backfillProjectSourceIndexRaw(projectId: string): Promise<void> {
   const target = await requireGiteaWorkingRef(projectId);
   await clearSourceFileIndexForProject(projectId);
-  const tree = await gitea.getFullTree(target);
+  const tree = await gitea.getFullTree(projectId, target);
   const candidates = tree.filter((e) => isIndexableFile(e.path, e.size));
 
-  const docs: SearchableSourceFile[] = [];
+  const contentByPath = await gitea.getFileContentsBatch(projectId, target, candidates.map((e) => e.path));
   const now = Date.now();
+  const docs: SearchableSourceFile[] = [];
   for (const entry of candidates) {
-    try {
-      const file = await gitea.getFileContent(target, entry.path);
-      if (Buffer.byteLength(file.content, "utf-8") > MAX_INDEXABLE_BYTES) continue;
-      docs.push({ id: sourceFileId(projectId, entry.path), projectId, path: entry.path, content: file.content, updatedAt: now });
-    } catch (err) {
-      console.error(`소스 파일 백필 실패 - ${projectId}:${entry.path}:`, err);
-    }
+    const file = contentByPath.get(entry.path);
+    if (!file) continue; // 개별 조회 실패(getFileContentsBatch 내부에서 로그 남김) - 이 파일만 건너뜀
+    if (Buffer.byteLength(file.content, "utf-8") > MAX_INDEXABLE_BYTES) continue;
+    docs.push({ id: sourceFileId(projectId, entry.path), projectId, path: entry.path, content: file.content, updatedAt: now });
   }
   await indexSourceFilesBulkUpsert(docs);
 }
@@ -150,22 +148,21 @@ export async function syncSourceFilesForPush(projectId: string, parsed: ParsedPu
 
     const target = await requireGiteaWorkingRef(projectId);
     const toDelete: string[] = [];
-    const toUpsert: SearchableSourceFile[] = [];
     const now = Date.now();
 
+    const upsertPaths = [...finalState.entries()]
+      .filter(([path, action]) => action === "upsert" && isIndexableFile(path))
+      .map(([path]) => path);
     for (const [path, action] of finalState) {
-      if (action === "delete") {
-        toDelete.push(path);
-        continue;
-      }
-      if (!isIndexableFile(path)) continue;
-      try {
-        const file = await gitea.getFileContent(target, path);
-        if (Buffer.byteLength(file.content, "utf-8") > MAX_INDEXABLE_BYTES) continue;
-        toUpsert.push({ id: sourceFileId(projectId, path), projectId, path, content: file.content, updatedAt: now });
-      } catch (err) {
-        console.error(`소스 파일 증분 동기화 실패 - ${projectId}:${path}:`, err);
-      }
+      if (action === "delete") toDelete.push(path);
+    }
+    const contentByPath = await gitea.getFileContentsBatch(projectId, target, upsertPaths);
+    const toUpsert: SearchableSourceFile[] = [];
+    for (const path of upsertPaths) {
+      const file = contentByPath.get(path);
+      if (!file) continue;
+      if (Buffer.byteLength(file.content, "utf-8") > MAX_INDEXABLE_BYTES) continue;
+      toUpsert.push({ id: sourceFileId(projectId, path), projectId, path, content: file.content, updatedAt: now });
     }
 
     await indexSourceFilesBulkDelete(projectId, toDelete);

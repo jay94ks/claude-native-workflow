@@ -4,6 +4,7 @@ import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realti
 import { syncSourceFilesForPush } from "./sourceIndex.js";
 import { resolveProjectFromOrgAndRepo } from "./gitRepos.js";
 import { deleteRelationsForBranch } from "./codeRelations.js";
+import { invalidateTree } from "./gitCache.js";
 
 // 웹훅 수신 인프라(Phase 2 범위) - PushHookPrompt를 만들고 매칭 규칙을
 // 관리하는 CRUD/CLI는 아직 없다(Phase 3 몫). 지금은 이미 존재하는
@@ -221,6 +222,13 @@ export type GiteaSystemPushResult =
 export async function handleGiteaSystemPush(parsed: ParsedPush): Promise<GiteaSystemPushResult> {
   const resolved = resolveProjectFromOrgAndRepo(parsed.org, parsed.repoName);
   if (!resolved) return { status: "ignored", reason: "관리 대상 저장소가 아님" };
+  // 캐시 무효화는 kind 무관하게 항상 - #git-cache-and-staging. 이
+  // 프로세스 자신의 write(put/delete/git commit)는 이미 그 자리에서
+  // 캐시를 직접 patch하지만(1차, 즉시), 이 저장소가 `git my-token`
+  // 등으로 이 앱을 거치지 않고 직접 push됐거나 미러가 pull-sync됐을
+  // 때는 그 write 경로를 안 타므로 여기가 유일한 무효화 지점(2차
+  // 안전망) - 관계도 정리(아래)와는 별개 관심사라 mirror도 예외 없음.
+  await invalidateTree(resolved.projectId, resolved.kind, parsed.branch);
   if (resolved.kind === "mirror") return { status: "ignored", reason: "미러 저장소 push는 무시함" };
   const queued = await recordPushEvent(resolved.projectId, parsed);
   return { status: "processed", projectId: resolved.projectId, queued };
@@ -240,6 +248,7 @@ export async function handleGiteaSystemDelete(parsed: ParsedDelete): Promise<Git
   if (parsed.refType !== "branch") return { status: "ignored", reason: "브랜치 삭제가 아님(태그)" };
   const resolved = resolveProjectFromOrgAndRepo(parsed.org, parsed.repoName);
   if (!resolved) return { status: "ignored", reason: "관리 대상 저장소가 아님" };
+  await invalidateTree(resolved.projectId, resolved.kind, parsed.branch); // kind 무관 - handleGiteaSystemPush와 동일 원칙
   if (resolved.kind === "mirror") return { status: "ignored", reason: "미러 저장소의 브랜치 삭제는 무시함" };
   const deletedRelations = await deleteRelationsForBranch(resolved.projectId, parsed.branch);
   return { status: "processed", projectId: resolved.projectId, deletedRelations };

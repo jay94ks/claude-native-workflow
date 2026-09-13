@@ -234,6 +234,9 @@ model Project {
   gitSyncQueueEntries GitSyncQueueEntry[]
   codeRelations   CodeRelation[]
   pullRequestMetas PullRequestMeta[]
+  gitTreeCaches     GitTreeCache[]
+  gitBlobCaches     GitBlobCache[]
+  gitStagingChanges GitStagingChange[]
 
   @@index([projectGroupId])
 }
@@ -254,6 +257,56 @@ model ProjectGitRepo {
   gitCredential GitCredential? @relation(fields: [gitCredentialId], references: [id])
 
   @@index([gitCredentialId])
+}
+
+// git 조회(트리/블롭) 캐시 + 스테이징 - #git-cache-and-staging.
+// 프로젝트 단위 DB 테이블로 구성(설계자 지시 - 프로세스 내 메모리
+// 캐시는 백엔드 재시작/다중 인스턴스 스케일 시 무효화가 전파 안 됨).
+model GitTreeCache {
+  id        String   @id @default(cuid())
+  projectId String
+  repoKind  String // self_hosted | work | mirror
+  ref       String   @default("HEAD")
+  treeJson  String // JSON.stringify(FullTreeEntry[]) - 이 스키마 전체가 Json 타입 대신 문자열 관례
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, repoKind, ref])
+}
+
+// blob sha가 키 - content-addressed라 재검증(TTL) 없이 영구 캐시 가능,
+// 사이즈 캡(오래된 것부터 정리)만 필요.
+model GitBlobCache {
+  id        String   @id @default(cuid())
+  projectId String
+  sha       String
+  content   String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, sha])
+  @@index([projectId, createdAt])
+}
+
+// git add/rm으로 쌓인, 아직 커밋 안 된 변경 - git commit이 한 번에
+// 하나의 Gitea 커밋으로 묶어 반영한다. baseSha는 스테이징 시점 HEAD의
+// 그 경로 blob sha(3-way 병합의 "base") - 새 파일이면 null.
+model GitStagingChange {
+  id         String   @id @default(cuid())
+  projectId  String
+  repoKind   String // self_hosted | work (mirror는 읽기 전용, 스테이징 대상 아님)
+  path       String
+  changeType String // upsert | delete
+  content    String?
+  baseSha    String?
+  stagedBy   String?
+  stagedAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, repoKind, path])
 }
 
 model Member {

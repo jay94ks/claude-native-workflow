@@ -548,7 +548,10 @@ async function computeSyncStatusInBackground(projectId: string): Promise<void> {
       if (updatedNow !== updatedBefore) break;
     }
 
-    const [mirrorTree, workTree] = await Promise.all([gitea.getFullTree(mirrorTarget), gitea.getFullTree(workTarget)]);
+    const [mirrorTree, workTree] = await Promise.all([
+      gitea.getFullTree(projectId, mirrorTarget),
+      gitea.getFullTree(projectId, workTarget),
+    ]);
     syncStateByProject.set(projectId, { status: "ready", result: diffTrees(mirrorTree, workTree) });
   } catch (err) {
     syncStateByProject.delete(projectId);
@@ -614,12 +617,8 @@ export async function getGitSyncProposal(projectId: string): Promise<{ files: Gi
   }
   const workTarget = workRef(projectId);
   const paths = [...cached.added, ...cached.changed];
-  const files = await Promise.all(
-    paths.map(async (path) => {
-      const file = await gitea.getFileContent(workTarget, path);
-      return { path, content: file.content };
-    }),
-  );
+  const contentByPath = await gitea.getFileContentsBatch(projectId, workTarget, paths);
+  const files = paths.map((path) => ({ path, content: contentByPath.get(path)?.content ?? "" }));
   return { files };
 }
 

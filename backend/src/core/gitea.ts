@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { getOrCreateGiteaSystemWebhookSecret } from "./installConfig.js";
 import { paginateInMemory, type Page } from "./pagination.js";
 import { sliceLines, grepLines, type LinesResult, type GrepMatch, type GrepOptions } from "./textLines.js";
+import * as gitCache from "./gitCache.js";
 
 interface GiteaConfig {
   apiUrl: string;
@@ -296,12 +297,42 @@ export interface FullTreeEntry {
  * 봄)로는 두 저장소 전체를 비교할 수 없어서 필요(동기화 상태 비교용).
  * 기본 브랜치의 최신 커밋(ref 생략 시 Gitea가 기본 브랜치로 해석)
  * 트리를 재귀 조회한다. */
-export async function getFullTree(target: GiteaRepoRef, ref = "HEAD"): Promise<FullTreeEntry[]> {
-  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/git/trees/${ref}?recursive=true`);
+/** self_hosted("repo")/work/mirror 저장소 이름 그대로가 곧 repoKind다
+ * (core/gitRepos.ts의 REPO_SELF_HOSTED/REPO_WORK/REPO_MIRROR와 값이
+ * 동일) - gitea.ts는 더 낮은 계층이라 gitRepos.ts를 import하지 않고
+ * 이 매핑만 그대로 따로 든다(순환 의존 회피). */
+export type RepoKind = "self_hosted" | "work" | "mirror";
+export function repoKindFromRef(target: GiteaRepoRef): RepoKind {
+  if (target.repo === "repo") return "self_hosted";
+  if (target.repo === "work") return "work";
+  return "mirror";
+}
+
+export async function getFullTree(projectId: string, target: GiteaRepoRef, ref = "HEAD"): Promise<FullTreeEntry[]> {
+  const cached = await gitCache.getCachedTree(projectId, repoKindFromRef(target), ref);
+  if (cached) return cached;
+
+  const { apiUrl, token } = config();
+  const res = await fetch(`${apiUrl}/api/v1/repos/${target.org}/${target.repo}/git/trees/${ref}?recursive=true`, {
+    headers: { Authorization: `token ${token}` },
+  });
+  // 커밋이 하나도 없는 새 저장소(HEAD/브랜치 자체가 없음) - put/delete가
+  // 첫 파일을 만들 수 있어야 하므로 에러가 아니라 빈 트리로 취급한다
+  // (실제 Gitea 인스턴스로 확인: 400 "sha not found [HEAD]").
+  if (res.status === 400) {
+    const body = await res.text().catch(() => "");
+    if (body.includes("sha not found")) return [];
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
   const json = (await res.json()) as { tree: { path: string; sha: string; type: string; size?: number }[] };
-  return json.tree
+  const tree = json.tree
     .filter((e) => e.type === "blob")
     .map((e) => ({ path: e.path, sha: e.sha, type: "blob" as const, size: e.size }));
+  await gitCache.setCachedTree(projectId, repoKindFromRef(target), ref, tree);
+  return tree;
 }
 
 export interface SystemWebhook {
@@ -495,13 +526,77 @@ export interface FileContent {
   sha: string;
 }
 
-export async function getFileContent(target: GiteaRepoRef, filePath: string, ref?: string): Promise<FileContent> {
+export async function getFileContent(projectId: string, target: GiteaRepoRef, filePath: string, ref?: string): Promise<FileContent> {
+  const repoKind = repoKindFromRef(target);
+  const cachedSha = await gitCache.lookupShaInCachedTree(projectId, repoKind, filePath, ref ?? "HEAD");
+  if (cachedSha) {
+    const cachedContent = await gitCache.getCachedBlob(projectId, cachedSha);
+    if (cachedContent !== null) return { path: filePath, content: cachedContent, sha: cachedSha };
+  }
+
   const raw = await getContentsRaw(target, filePath, ref);
   if (Array.isArray(raw)) {
     throw new Error(`${filePath}는 파일이 아니라 디렉터리입니다`);
   }
   const file = raw as { path: string; content: string; sha: string };
-  return { path: file.path, content: Buffer.from(file.content, "base64").toString("utf-8"), sha: file.sha };
+  const content = Buffer.from(file.content, "base64").toString("utf-8");
+  await gitCache.setCachedBlob(projectId, file.sha, content);
+  return { path: file.path, content, sha: file.sha };
+}
+
+/** 여러 파일을 한 번에 조회 - #git-cache-and-staging. 트리 캐시(또는
+ * fetch)로 path→sha를 전체 해석한 뒤 블롭 캐시를 배치로 조회, 미스만
+ * 남겨 병렬로 Gitea에서 받아온다(backfillProjectSourceIndexRaw/
+ * syncSourceFilesForPush/getGitSyncProposal의 순차·개별 호출을 대체). */
+export async function getFileContentsBatch(
+  projectId: string,
+  target: GiteaRepoRef,
+  paths: string[],
+  ref?: string,
+): Promise<Map<string, FileContent>> {
+  const result = new Map<string, FileContent>();
+  if (paths.length === 0) return result;
+  const repoKind = repoKindFromRef(target);
+
+  let tree = await gitCache.getCachedTree(projectId, repoKind, ref ?? "HEAD");
+  if (!tree) tree = await getFullTree(projectId, target, ref ?? "HEAD");
+  const shaByPath = new Map(tree.map((e) => [e.path, e.sha]));
+
+  const wantedShas = paths.map((p) => shaByPath.get(p)).filter((s): s is string => !!s);
+  const cachedBlobs = await gitCache.getCachedBlobsBatch(projectId, wantedShas);
+
+  const misses: string[] = [];
+  for (const path of paths) {
+    const sha = shaByPath.get(path);
+    if (!sha) continue; // 트리에 없는 경로 - 호출부가 알아서 무시/에러 처리
+    const cached = cachedBlobs.get(sha);
+    if (cached !== undefined) {
+      result.set(path, { path, content: cached, sha });
+    } else {
+      misses.push(path);
+    }
+  }
+
+  // 파일 하나가 실패해도(권한/일시 오류 등) 나머지는 계속 받아온다 -
+  // 기존 backfillProjectSourceIndexRaw의 개별 try/catch 관용과 동일한
+  // 원칙, Promise.all 전체가 한 파일 실패로 통째로 거부되지 않게.
+  const fetched = await Promise.all(
+    misses.map(async (path) => {
+      try {
+        const raw = await getContentsRaw(target, path, ref);
+        const file = raw as { path: string; content: string; sha: string };
+        return { path, content: Buffer.from(file.content, "base64").toString("utf-8"), sha: file.sha };
+      } catch (err) {
+        console.error(`getFileContentsBatch 개별 파일 조회 실패 - ${path}:`, err);
+        return null;
+      }
+    }),
+  );
+  const ok = fetched.filter((f): f is { path: string; content: string; sha: string } => f !== null);
+  await gitCache.setCachedBlobsBatch(projectId, ok.map((f) => ({ sha: f.sha, content: f.content })));
+  for (const f of ok) result.set(f.path, f);
+
+  return result;
 }
 
 /** 문서(#document-partial-read-grep-diff)와 같은 이유로 소스 코드
@@ -510,24 +605,26 @@ export async function getFileContent(target: GiteaRepoRef, filePath: string, ref
  * 그 뒤 줄 처리는 core/textLines.ts를 그대로 공유한다(diff는 이미
  * git log/diff/show로 커버되므로 여기 추가 안 함). */
 export async function readSourceFileLines(
+  projectId: string,
   target: GiteaRepoRef,
   filePath: string,
   ref?: string,
   offset?: number,
   limit?: number,
 ): Promise<LinesResult> {
-  const file = await getFileContent(target, filePath, ref);
+  const file = await getFileContent(projectId, target, filePath, ref);
   return sliceLines(file.content, offset, limit);
 }
 
 export async function grepSourceFile(
+  projectId: string,
   target: GiteaRepoRef,
   filePath: string,
   pattern: string,
   ref?: string,
   opts: GrepOptions = {},
 ): Promise<GrepMatch[]> {
-  const file = await getFileContent(target, filePath, ref);
+  const file = await getFileContent(projectId, target, filePath, ref);
   return grepLines(file.content, pattern, opts);
 }
 
@@ -583,74 +680,136 @@ export function mimeTypeForPath(filePath: string): string {
   return RAW_MIME_TYPES[ext] ?? "application/octet-stream";
 }
 
+/** blob sha로 직접 내용을 가져온다(경로/ref 무관 - #git-cache-and-staging
+ * 3-way 병합의 "base" 조회용. path+ref로 가져오면 늘 "현재" 내용이라,
+ * 드리프트가 있을 때 원래 베이스 내용을 못 구한다). 블롭 캐시를 먼저
+ * 확인 - content-addressed라 프로젝트가 같으면 캐시 재검증이 필요 없다. */
+export async function getBlobBySha(projectId: string, target: GiteaRepoRef, sha: string): Promise<string> {
+  const cached = await gitCache.getCachedBlob(projectId, sha);
+  if (cached !== null) return cached;
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/git/blobs/${sha}`);
+  const json = (await res.json()) as { content: string; encoding: string };
+  const content = Buffer.from(json.content, (json.encoding as BufferEncoding) ?? "base64").toString("utf-8");
+  await gitCache.setCachedBlob(projectId, sha, content);
+  return content;
+}
+
+export interface FileChangeOp {
+  path: string;
+  changeType: "upsert" | "delete";
+  /** upsert일 때만 필요. */
+  content?: string;
+}
+
+export interface ChangeFilesResult {
+  commitSha: string;
+  /** delete는 sha: null. */
+  files: { path: string; sha: string | null }[];
+}
+
+/** 여러 파일을 한 번에 커밋 - #git-cache-and-staging. 실제 Gitea
+ * 인스턴스(1.27.3)로 검증 완료: GitHub 스타일 git-data API(blob/tree/
+ * commit/ref 개별 생성)는 Gitea에 없고(GET만 지원), 대신
+ * `POST /contents`("여러 파일을 한 번에 생성/수정/삭제")가 있다 -
+ * files 여러 개를 한 번에 넣으면 정말 하나의 커밋으로 남고, 기존
+ * 파일에 넘긴 sha가 현재 값과 다르면 422로 전체가 원자적으로 거부된다
+ * (다른 파일도 반영 안 됨 - 실측 확인, Gitea 자신의 낙관적 잠금).
+ * **주의**: `sha`를 안 넘긴 `upload`는 그 경로가 이미 존재해도 조용히
+ * 덮어쓴다(드리프트 감지 없음, 실측 확인) - 새 파일(sha 모름) 케이스의
+ * create-vs-create 충돌은 호출부가 트리 캐시로 직접 미리 확인해야
+ * 한다(core/gitStaging.ts). 각 change의 현재 sha는 트리 캐시에서 찾아
+ * 넘기고(캐시 미스면 그 자리에서 트리를 한 번 받아옴), 성공하면 응답의
+ * 새 sha/커밋 sha로 트리·블롭 캐시를 그 자리에서 바로 patch한다 -
+ * 무효화 웹훅의 지연을 기다리지 않음(설계자 지시 - write 시 직접
+ * 무효화). */
+export async function changeFiles(
+  projectId: string,
+  target: GiteaRepoRef,
+  changes: FileChangeOp[],
+  message: string,
+  actingToken?: string,
+): Promise<ChangeFilesResult> {
+  const { apiUrl, token: adminToken } = config();
+  const authToken = actingToken || adminToken;
+  const repoKind = repoKindFromRef(target);
+
+  let tree = await gitCache.getCachedTree(projectId, repoKind, "HEAD");
+  if (!tree) tree = await getFullTree(projectId, target, "HEAD");
+  const shaByPath = new Map(tree.map((e) => [e.path, e.sha]));
+
+  for (const c of changes) {
+    if (c.changeType === "delete" && !shaByPath.has(c.path)) {
+      throw new Error(`파일이 없습니다: ${c.path}`);
+    }
+  }
+
+  const filesPayload = changes.map((c) => {
+    const sha = shaByPath.get(c.path);
+    if (c.changeType === "delete") return { operation: "delete", path: c.path, sha };
+    const contentB64 = Buffer.from(c.content ?? "", "utf-8").toString("base64");
+    return sha
+      ? { operation: "update", path: c.path, content: contentB64, sha }
+      : { operation: "upload", path: c.path, content: contentB64 };
+  });
+
+  const res = await fetch(`${apiUrl}/api/v1/repos/${target.org}/${target.repo}/contents`, {
+    method: "POST",
+    headers: { Authorization: `token ${authToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ message, files: filesPayload }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
+  const json = (await res.json()) as { commit: { sha: string }; files: ({ sha: string } | null)[] };
+  const resultFiles = changes.map((c, i) => ({ path: c.path, sha: json.files[i]?.sha ?? null }));
+
+  const patched = new Map(tree.map((e) => [e.path, e]));
+  for (const rf of resultFiles) {
+    if (rf.sha) patched.set(rf.path, { path: rf.path, sha: rf.sha, type: "blob" as const });
+    else patched.delete(rf.path);
+  }
+  await gitCache.setCachedTree(projectId, repoKind, "HEAD", [...patched.values()]);
+  for (const c of changes) {
+    if (c.changeType !== "upsert" || c.content === undefined) continue;
+    const rf = resultFiles.find((r) => r.path === c.path);
+    if (rf?.sha) await gitCache.setCachedBlob(projectId, rf.sha, c.content);
+  }
+
+  return { commitSha: json.commit.sha, files: resultFiles };
+}
+
 /** 파일이 있으면 갱신, 없으면 생성 - 소스 에디터 저장 + CLAUDE.md/
  * SKILL.md 템플릿 배포에서 쓴다. `actingToken`이 있으면 그 값(호출한
  * 설계자 자신의 Gitea PAT - core/giteaAccounts.ts의
  * getGiteaAccessToken())으로 인증해 커밋이 그 설계자 신원으로
  * 귀속되게 한다 - 없으면(그 설계자가 아직 Gitea 토큰이 없는 과도기
  * 상태) 관리자 토큰으로 폴백한다(저장 자체를 막지 않기 위한 방어적
- * 처리 - 호출부가 이 경우 경고를 남긴다). */
+ * 처리 - 호출부가 이 경우 경고를 남긴다). 내부적으로 changeFiles()의
+ * 1개 변경 호출로 통합됨(#git-cache-and-staging). */
 export async function putFileContent(
+  projectId: string,
   target: GiteaRepoRef,
   filepath: string,
   content: string,
   message: string,
   actingToken?: string,
 ): Promise<void> {
-  const { apiUrl, token: adminToken } = config();
-  const authToken = actingToken || adminToken;
-  const encodedPath = filepath.split("/").map(encodeURIComponent).join("/");
-  const contentPath = `/api/v1/repos/${target.org}/${target.repo}/contents/${encodedPath}`;
-
-  let existingSha: string | undefined;
-  const getRes = await fetch(`${apiUrl}${contentPath}`, { headers: { Authorization: `token ${authToken}` } });
-  if (getRes.ok) {
-    const json = (await getRes.json()) as { sha: string };
-    existingSha = json.sha;
-  } else if (getRes.status !== 404) {
-    throw new Error(`Gitea 파일 조회 실패: HTTP ${getRes.status}`);
-  }
-
-  const contentB64 = Buffer.from(content, "utf-8").toString("base64");
-  const res = await fetch(`${apiUrl}${contentPath}`, {
-    method: existingSha ? "PUT" : "POST",
-    headers: { Authorization: `token ${authToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ content: contentB64, message, sha: existingSha }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
-  }
+  await changeFiles(projectId, target, [{ path: filepath, changeType: "upsert", content }], message, actingToken);
 }
 
 /** 저장소에서 파일을 삭제(커밋으로 기록) - putFileContent의 반대.
  * 없는 파일을 지우려는 시도는 put처럼 조용히 넘어가지 않고 명확한
- * 에러로 실패한다(삭제 대상이 없다는 걸 호출부가 놓치지 않도록). */
+ * 에러로 실패한다(changeFiles()가 delete 대상이 트리에 없으면 명확한
+ * 에러로 거부 - #git-cache-and-staging). */
 export async function deleteFileContent(
+  projectId: string,
   target: GiteaRepoRef,
   filepath: string,
   message: string,
   actingToken?: string,
 ): Promise<void> {
-  const { apiUrl, token: adminToken } = config();
-  const authToken = actingToken || adminToken;
-  const encodedPath = filepath.split("/").map(encodeURIComponent).join("/");
-  const contentPath = `/api/v1/repos/${target.org}/${target.repo}/contents/${encodedPath}`;
-
-  const getRes = await fetch(`${apiUrl}${contentPath}`, { headers: { Authorization: `token ${authToken}` } });
-  if (getRes.status === 404) throw new Error(`파일이 없습니다: ${filepath}`);
-  if (!getRes.ok) throw new Error(`Gitea 파일 조회 실패: HTTP ${getRes.status}`);
-  const { sha } = (await getRes.json()) as { sha: string };
-
-  const res = await fetch(`${apiUrl}${contentPath}`, {
-    method: "DELETE",
-    headers: { Authorization: `token ${authToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ sha, message }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
-  }
+  await changeFiles(projectId, target, [{ path: filepath, changeType: "delete" }], message, actingToken);
 }
 
 /** Gitea 사용자 계정 존재 여부 - 사용자 계정 마스터링(core/

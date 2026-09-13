@@ -217,6 +217,7 @@ import {
 } from "../core/gitRepos.js";
 import { isGithubOAuthConfigured, startGithubOAuth, completeGithubOAuth, listGithubRepos } from "../core/githubOAuth.js";
 import * as gitea from "../core/gitea.js";
+import * as gitStaging from "../core/gitStaging.js";
 import {
   verifyAndParseWebhook,
   recordPushEvent,
@@ -3242,7 +3243,7 @@ app.get(
     const target = await requireGiteaWorkingRef(req.params.projectId);
     const filePath = req.query.path as string | undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
-    res.json(await gitea.getFileContent(target, filePath, req.query.ref as string | undefined));
+    res.json(await gitea.getFileContent(req.params.projectId, target, filePath, req.query.ref as string | undefined));
   }),
 );
 
@@ -3258,7 +3259,7 @@ app.get(
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
     const limit = req.query.limit !== undefined ? Number(req.query.limit) : undefined;
-    res.json(await gitea.readSourceFileLines(target, filePath, req.query.ref as string | undefined, offset, limit));
+    res.json(await gitea.readSourceFileLines(req.params.projectId, target, filePath, req.query.ref as string | undefined, offset, limit));
   }),
 );
 
@@ -3272,7 +3273,7 @@ app.get(
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const { q } = req.query as { q?: string };
     if (!q) { res.status(400).json({ error: "q가 필요합니다" }); return; }
-    const matches = await gitea.grepSourceFile(target, filePath, q, req.query.ref as string | undefined, {
+    const matches = await gitea.grepSourceFile(req.params.projectId, target, filePath, q, req.query.ref as string | undefined, {
       caseInsensitive: req.query.caseInsensitive === "true",
       context: req.query.context !== undefined ? Number(req.query.context) : undefined,
     });
@@ -3289,7 +3290,7 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    res.json(await gitea.getFullTree(target));
+    res.json(await gitea.getFullTree(req.params.projectId, target));
   }),
 );
 
@@ -3307,7 +3308,7 @@ app.put(
     // 설계자의 Gitea PAT를 구해 넘긴다 - 아직 없으면(과도기 상태)
     // putFileContent()가 관리자 토큰으로 폴백한다.
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await gitea.putFileContent(target, filePath, content, message || `docs: update ${filePath}`, actingToken);
+    await gitea.putFileContent(req.params.projectId, target, filePath, content, message || `docs: update ${filePath}`, actingToken);
     await syncSourceFileOnSave(req.params.projectId, filePath, content);
     res.json({ ok: true });
   }),
@@ -3325,9 +3326,100 @@ app.delete(
     // put과 같은 원칙 - 커밋이 요청을 보낸 설계자 신원으로 귀속되도록 그
     // 설계자의 Gitea PAT를 구해 넘긴다(없으면 관리자 토큰으로 폴백).
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await gitea.deleteFileContent(target, filePath, message || `docs: delete ${filePath}`, actingToken);
+    await gitea.deleteFileContent(req.params.projectId, target, filePath, message || `docs: delete ${filePath}`, actingToken);
     await syncSourceFileOnDelete(req.params.projectId, filePath);
     res.json({ ok: true });
+  }),
+);
+
+// 여러 파일을 한 번에 조회 - #git-cache-and-staging. path를 쉼표로
+// 구분해 받는다(질의/코드 관계도의 --refs와 같은 CLI 관례).
+app.get(
+  "/api/projects/:projectId/git/files",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    const pathsParam = req.query.paths as string | undefined;
+    if (!pathsParam) { res.status(400).json({ error: "paths 쿼리 파라미터가 필요합니다(쉼표로 구분)" }); return; }
+    const paths = pathsParam.split(",").map((p) => p.trim()).filter(Boolean);
+    const contentByPath = await gitea.getFileContentsBatch(req.params.projectId, target, paths);
+    res.json({
+      files: paths.map((path) => {
+        const found = contentByPath.get(path);
+        return { path, content: found?.content ?? null, sha: found?.sha ?? null };
+      }),
+    });
+  }),
+);
+
+// ---------------------------------------------------------------- git 스테이징(add/status/rm/restore/commit) - #git-cache-and-staging
+
+app.post(
+  "/api/projects/:projectId/git/staging/add",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { path: filePath, content } = req.body as { path?: string; content?: string };
+    if (!filePath) { res.status(400).json({ error: "path가 필요합니다" }); return; }
+    if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
+    res.json(await gitStaging.stageUpsert(req.params.projectId, filePath, content, req.userId));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/staging/rm",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { path: filePath } = req.body as { path?: string };
+    if (!filePath) { res.status(400).json({ error: "path가 필요합니다" }); return; }
+    res.json(await gitStaging.stageDelete(req.params.projectId, filePath, req.userId));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/staging/status",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await gitStaging.getStatus(req.params.projectId));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/staging/restore",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { path: filePath } = req.body as { path?: string };
+    if (!filePath) { res.status(400).json({ error: "path가 필요합니다" }); return; }
+    await gitStaging.restoreStaged(req.params.projectId, filePath);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/staging/commit",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { message } = req.body as { message?: string };
+    if (!message) { res.status(400).json({ error: "message가 필요합니다" }); return; }
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    const result = await gitStaging.commitStaged(req.params.projectId, message, actingToken);
+    if (result.status === "committed" && result.paths.length > 0) {
+      // 커밋 반영분의 검색 인덱스도 최신화(put/delete 라우트와 동일한
+      // write-through) - 한 번에 배치 조회, 트리에 없으면(삭제된 경로) 색인도 삭제.
+      const target = await requireGiteaWorkingRef(req.params.projectId);
+      const contentByPath = await gitea.getFileContentsBatch(req.params.projectId, target, result.paths);
+      for (const path of result.paths) {
+        const file = contentByPath.get(path);
+        if (file) await syncSourceFileOnSave(req.params.projectId, path, file.content);
+        else await syncSourceFileOnDelete(req.params.projectId, path);
+      }
+    }
+    res.json(result);
   }),
 );
 
@@ -3802,13 +3894,13 @@ app.post(
 
     const claudeMd = await resolveTemplate("CLAUDE.md", projectId);
     if (claudeMd) {
-      await gitea.putFileContent(target, "CLAUDE.md", claudeMd.content, "docs: deploy CLAUDE.md template", actingToken);
+      await gitea.putFileContent(projectId, target, "CLAUDE.md", claudeMd.content, "docs: deploy CLAUDE.md template", actingToken);
       deployed.push("CLAUDE.md");
     }
     const skillFilename = ".claude/skills/claude-native-workflow/SKILL.md";
     const skillMd = await resolveTemplate(skillFilename, projectId);
     if (skillMd) {
-      await gitea.putFileContent(target, skillFilename, skillMd.content, "docs: deploy SKILL.md template", actingToken);
+      await gitea.putFileContent(projectId, target, skillFilename, skillMd.content, "docs: deploy SKILL.md template", actingToken);
       deployed.push(skillFilename);
     }
 
