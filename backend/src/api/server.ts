@@ -93,6 +93,7 @@ import {
   getDocumentAccessInfo,
   listDocuments,
   listDocumentsPaged,
+  type DocumentSortKey,
   listRecentDocuments,
   searchProjectDocuments,
   searchProjectDocumentsPaged,
@@ -146,7 +147,18 @@ import {
   listAccessOverridesPaged,
   listAccessOverridesForUser,
 } from "../core/permissions.js";
-import { createFolder, renameFolder, deleteFolder, moveFolder, listFolders, listFolderDocuments, listUnfiledDocuments, moveDocumentToFolder } from "../core/folders.js";
+import {
+  createFolder,
+  renameFolder,
+  deleteFolder,
+  moveFolder,
+  listFolders,
+  listFolderDocuments,
+  listFolderDocumentsPaged,
+  listUnfiledDocuments,
+  listUnfiledDocumentsPaged,
+  moveDocumentToFolder,
+} from "../core/folders.js";
 import type { FolderDetail } from "../core/folders.js";
 import {
   createRelation,
@@ -1522,8 +1534,13 @@ app.get(
   }),
 );
 
-// 웹 문서 목록 화면 전용 페이지네이션(요청 4번) - CLI/MCP가 쓰는 위
-// 배열 응답 라우트는 그대로 둔다.
+const DOCUMENT_SORT_KEYS: DocumentSortKey[] = ["createdAt:desc", "createdAt:asc", "updatedAt:desc"];
+function parseDocumentSort(raw: unknown): DocumentSortKey | undefined {
+  return DOCUMENT_SORT_KEYS.includes(raw as DocumentSortKey) ? (raw as DocumentSortKey) : undefined;
+}
+
+// 웹 문서 목록 화면 전용 페이지네이션(요청 4번, #documents-tab-redesign
+// 라운드에서 sort 추가) - CLI/MCP가 쓰는 위 배열 응답 라우트는 그대로 둔다.
 app.get(
   "/api/projects/:projectId/documents/page",
   authenticate,
@@ -1538,6 +1555,7 @@ app.get(
         page,
         pageSize,
         req.query.statusCode as string | undefined,
+        parseDocumentSort(req.query.sort),
       ),
     );
   }),
@@ -2130,12 +2148,50 @@ app.get(
   }),
 );
 
+// "문서" 탭 "폴더" 서브탭 우측 목록 페이지네이션(#documents-tab-redesign).
+app.get(
+  "/api/folders/:folderId/documents/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    res.json(
+      await listFolderDocumentsPaged(
+        req.params.folderId,
+        req.userId!,
+        page,
+        pageSize,
+        parseDocumentSort(req.query.sort) ?? "createdAt:desc",
+      ),
+    );
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/documents/unfiled",
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     res.json(await listUnfiledDocuments(req.params.projectId, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/documents/unfiled/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    res.json(
+      await listUnfiledDocumentsPaged(
+        req.params.projectId,
+        req.userId!,
+        page,
+        pageSize,
+        parseDocumentSort(req.query.sort) ?? "createdAt:desc",
+      ),
+    );
   }),
 );
 

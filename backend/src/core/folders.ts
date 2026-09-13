@@ -1,6 +1,8 @@
 import { getDb } from "./db.js";
 import { getMemberRole } from "./members.js";
 import { isSuperAdmin } from "./auth.js";
+import { paginate, type Page } from "./pagination.js";
+import type { DocumentSummary, DocumentSortKey } from "./documents.js";
 
 // 문서 정리용 폴더 - 실제 git 파일 트리와 무관하게 DB 안에서만 존재하는
 // 설계자 개인 소유의 정리 편의 기능이다. 폴더는 만든 설계자 한 명의
@@ -285,6 +287,83 @@ export async function listUnfiledDocuments(projectId: string, userId: string): P
     select: { trackingCode: true, title: true, docTypeId: true },
   });
   return docs;
+}
+
+interface DocRowWithStatus {
+  id: string;
+  trackingCode: string;
+  projectId: string;
+  docTypeId: string;
+  title: string;
+  statusId: string;
+  status: { code: string };
+  priority: number | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+function toSummary(row: DocRowWithStatus): DocumentSummary {
+  return {
+    id: row.id,
+    trackingCode: row.trackingCode,
+    projectId: row.projectId,
+    docTypeId: row.docTypeId,
+    title: row.title,
+    statusId: row.statusId,
+    statusCode: row.status.code,
+    priority: row.priority,
+    createdBy: row.createdBy,
+    createdAt: row.createdAt.getTime(),
+    updatedAt: row.updatedAt.getTime(),
+  };
+}
+function orderByForSort(sort: DocumentSortKey) {
+  return sort === "createdAt:asc" ? { createdAt: "asc" as const } : sort === "updatedAt:desc" ? { updatedAt: "desc" as const } : { createdAt: "desc" as const };
+}
+
+/** "폴더" 탭 우측 문서 목록 페이지네이션(#documents-tab-redesign) -
+ * listDocuments()류(Meilisearch 기반)와 같은 DocumentSummary 모양으로
+ * 맞춰서, 프런트가 문서 리스트 렌더링 컴포넌트 하나를 소스 상관없이
+ * 재사용할 수 있게 한다. */
+export async function listFolderDocumentsPaged(
+  folderId: string,
+  userId: string,
+  page: number,
+  pageSize: number,
+  sort: DocumentSortKey = "createdAt:desc",
+): Promise<Page<DocumentSummary>> {
+  await assertOwnsFolder(folderId, userId);
+  const db = getDb();
+  const orderBy = { document: orderByForSort(sort) };
+  const result = await paginate<{ document: DocRowWithStatus }>(
+    (args) => db.documentFolderEntry.findMany({ where: { folderId }, include: { document: { include: { status: true } } }, orderBy, ...args }),
+    () => db.documentFolderEntry.count({ where: { folderId } }),
+    page,
+    pageSize,
+  );
+  return { ...result, items: result.items.map((e) => toSummary(e.document)) };
+}
+
+/** "폴더" 탭에서 폴더를 하나도 선택 안 했을 때 - 미분류 문서만 보여주는
+ * listUnfiledDocuments()와 별개로, 이건 "선택된 폴더 없음 = 전체 문서"
+ * 요구사항(#documents-tab-redesign 1번)을 위한 것이라 documents.ts의
+ * listDocumentsPaged()를 그대로 쓴다(호출부 참고 - 여기 별도 함수 없음). */
+export async function listUnfiledDocumentsPaged(
+  projectId: string,
+  userId: string,
+  page: number,
+  pageSize: number,
+  sort: DocumentSortKey = "createdAt:desc",
+): Promise<Page<DocumentSummary>> {
+  const db = getDb();
+  const where = { projectId, folderEntries: { none: { userId } } };
+  const result = await paginate<DocRowWithStatus>(
+    (args) => db.document.findMany({ where, include: { status: true }, orderBy: orderByForSort(sort), ...args }),
+    () => db.document.count({ where }),
+    page,
+    pageSize,
+  );
+  return { ...result, items: result.items.map(toSummary) };
 }
 
 /** 문서 자신에 대한 읽기 권한은 호출부(server.ts)가 이미

@@ -235,16 +235,22 @@ export interface DocumentPage {
   totalPages: number;
 }
 
-/** 웹 문서 목록 화면 전용(요청 4번 페이지네이션) - createdAt:desc로
- * 안정적인 순서를 보장한다(정렬 없이 페이지를 넘기면 Meilisearch가
- * 페이지마다 다른 순서를 줄 수 있음). CLI/MCP가 쓰는 listDocuments()와
- * 마찬가지로 본문은 뺀 요약만 반환한다. */
+export type DocumentSortKey = "createdAt:desc" | "createdAt:asc" | "updatedAt:desc";
+const DEFAULT_DOCUMENT_SORT: DocumentSortKey = "createdAt:desc";
+
+/** 웹 문서 목록 화면 전용(요청 4번 페이지네이션) - 정렬 없이 페이지를
+ * 넘기면 Meilisearch가 페이지마다 다른 순서를 줄 수 있어 항상 명시
+ * 정렬을 건다(기본 createdAt:desc = "최신순"). "리스트"/"폴더" 탭의
+ * 정렬 콤보박스(최신순/최근 수정순/오래된 순, #documents-tab-redesign)
+ * 가 그대로 이 값을 넘긴다. CLI/MCP가 쓰는 listDocuments()와 마찬가지로
+ * 본문은 뺀 요약만 반환한다. */
 export async function listDocumentsPaged(
   projectId: string,
   docTypeId: string | undefined,
   page: number,
   pageSize: number,
   statusCode?: string,
+  sort: DocumentSortKey = DEFAULT_DOCUMENT_SORT,
 ): Promise<DocumentPage> {
   const safePage = Math.max(1, page);
   const { hits, total } = await listDocumentsFromIndexPaged({
@@ -253,7 +259,7 @@ export async function listDocumentsPaged(
     statusCode,
     limit: pageSize,
     offset: (safePage - 1) * pageSize,
-    sort: ["createdAt:desc"],
+    sort: [sort],
   });
   return {
     items: hits.map(toDocumentSummary),

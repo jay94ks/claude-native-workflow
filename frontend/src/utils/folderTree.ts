@@ -1,6 +1,7 @@
 // 평평한 폴더 목록을 parentFolderId 기준 중첩 트리로 조립하는 순수
-// 함수 - DocumentTree.vue(편집 가능한 트리)와 FolderPickerDialog.vue
-// (읽기 전용 선택 트리) 둘 다 같은 로직을 재사용한다. 깊이 제한 없이
+// 함수 - FolderSelectTree.vue(문서 탭 좌측 선택 트리)와
+// FolderPickerDialog.vue(읽기 전용 선택 트리) 둘 다 같은 로직을
+// 재사용한다. 깊이 제한 없이
 // 전체를 다 조립한다(예전 FolderTree.vue는 템플릿에서 2단계까지만
 // 그려 손자 폴더가 안 보이는 버그가 있었음 - 이 함수 자체는 항상
 // 전체 깊이를 만들어왔고, 문제는 렌더링 쪽에만 있었다). 호출자가
@@ -25,9 +26,9 @@ export function buildFolderTree<T extends { id: string; parentFolderId: string |
   return byParent.get(null) ?? [];
 }
 
-// DocumentTree.vue/FolderNode.vue 전용 - 편집 가능한(드래그/지연 로드
-// 문서 목록을 갖는) 트리 노드 타입. 두 컴포넌트가 서로 재귀 참조하는
-// 관계라 순환 import를 피하려고 타입을 여기 공용 파일에 둔다.
+// FolderSelectTree.vue/FolderSelectNode.vue 전용 - 두 컴포넌트가 서로
+// 재귀 참조하는 관계라 순환 import를 피하려고 타입을 여기 공용 파일에
+// 둔다.
 export interface FolderItem {
   id: string;
   parentFolderId: string | null;
@@ -35,20 +36,19 @@ export interface FolderItem {
   order: number;
   createdBy: string;
 }
-export interface FolderDocumentSummary {
-  trackingCode: string;
-  title: string;
-  docTypeId: string;
-}
-export interface FolderUiState {
+
+// "문서" 탭의 폴더 서브탭은 폴더를 눌러 "선택"만 하고(우측 패널이 그
+// 폴더의 문서 목록을 페이지네이션해서 따로 불러옴), 폴더 자신은 문서
+// 목록을 안 들고 있다(#documents-tab-redesign) - expanded(하위 폴더
+// 펼침 여부)만 있으면 된다.
+export interface SelectableFolderUiState {
   expanded: boolean;
-  // vuedraggable의 v-model 대상이라 항상 배열이어야 한다(null 불가) -
-  // docsLoaded로 "아직 서버에서 안 받아옴"과 "받아왔는데 비어있음"을
-  // 구분한다.
-  documents: FolderDocumentSummary[];
-  docsLoaded: boolean;
-  loadingDocs: boolean;
-  docsError: string;
 }
-export type AugmentedFolder = FolderItem & FolderUiState;
-export type EditableFolderNode = AugmentedFolder & FolderTreeNode<AugmentedFolder>;
+export type SelectableFolder = FolderItem & SelectableFolderUiState;
+export type SelectableFolderNode = SelectableFolder & FolderTreeNode<SelectableFolder>;
+
+// "미분류 문서" 가상 항목의 선택값 - 실제 폴더 id와 절대 안 겹치는
+// 고정 문자열(cuid가 아님). 여기 둔 이유: <script setup> SFC는 named
+// export를 못 하므로, FolderSelectTree.vue/DocumentsView.vue 둘 다
+// 이 순수 유틸 파일에서 가져다 쓴다.
+export const UNFILED_SENTINEL = "__unfiled__";
