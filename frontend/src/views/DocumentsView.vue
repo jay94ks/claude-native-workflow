@@ -6,6 +6,7 @@ import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 import FolderSelectTree from "../components/FolderSelectTree.vue";
 import { UNFILED_SENTINEL } from "../utils/folderTree";
 import DocumentListPanel from "../components/DocumentListPanel.vue";
+import QuestionListPanel from "../components/QuestionListPanel.vue";
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -29,6 +30,22 @@ interface DocType {
 }
 interface DocumentPage {
   items: DocumentSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+interface QuestionSummary {
+  trackingCode: string;
+  targetType: string;
+  targetKey: string;
+  targetLabel: string;
+  kind: string;
+  text: string;
+  status: string;
+}
+interface QuestionPage {
+  items: QuestionSummary[];
   page: number;
   pageSize: number;
   total: number;
@@ -83,9 +100,10 @@ watch(docTypes, (types) => {
 
 const selectedTypeGuideline = computed(() => docTypes.value.find((t) => t.code === newTypeCode.value)?.guideline ?? null);
 
-// ---------------------------------------------------------------- 서브탭(폴더/문서 분류/리스트) - #documents-tab-redesign
+// ---------------------------------------------------------------- 서브탭(폴더/문서 분류/리스트/답변 대기/답변 기록)
+// - #documents-tab-redesign, "답변 대기"/"답변 기록"은 #document-answer-status-subtabs
 
-type SubTab = "folder" | "type" | "list";
+type SubTab = "folder" | "type" | "list" | "pendingAnswers" | "answerHistory";
 const activeTab = ref<SubTab>("folder");
 
 // ---------------------------------------------------------------- "폴더" 서브탭 (요청 1번)
@@ -185,6 +203,57 @@ function onListPageChange(page: number) {
   loadListPage();
 }
 
+// ---------------------------------------------------------------- "답변 대기" 서브탭 (#document-answer-status-subtabs)
+// 기존 /pending/page(open+pending - 미답변 + 설계자 답변완료·AI확인대기)를
+// 그대로 재사용한다 - 새 백엔드 엔드포인트 불필요.
+
+const pendingPage = ref<QuestionPage>({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 1 });
+const pendingLoading = ref(true);
+const pendingError = ref("");
+const pendingPageNum = ref(1);
+
+async function loadPendingPage() {
+  pendingLoading.value = true;
+  pendingError.value = "";
+  try {
+    const qs = new URLSearchParams({ page: String(pendingPageNum.value), pageSize: "20" });
+    pendingPage.value = await apiCall<QuestionPage>(`/projects/${props.id}/pending/page?${qs}`);
+  } catch (err) {
+    pendingError.value = err instanceof ApiError ? err.message : "질의 목록을 불러오지 못했습니다";
+  } finally {
+    pendingLoading.value = false;
+  }
+}
+function onPendingPageChange(page: number) {
+  pendingPageNum.value = page;
+  loadPendingPage();
+}
+
+// ---------------------------------------------------------------- "답변 기록" 서브탭 (#document-answer-status-subtabs)
+// resolved(AI 확인 완료까지 끝난) 질의만 - 신설 엔드포인트.
+
+const historyPage = ref<QuestionPage>({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 1 });
+const historyLoading = ref(true);
+const historyError = ref("");
+const historyPageNum = ref(1);
+
+async function loadHistoryPage() {
+  historyLoading.value = true;
+  historyError.value = "";
+  try {
+    const qs = new URLSearchParams({ page: String(historyPageNum.value), pageSize: "20" });
+    historyPage.value = await apiCall<QuestionPage>(`/projects/${props.id}/questions/resolved/page?${qs}`);
+  } catch (err) {
+    historyError.value = err instanceof ApiError ? err.message : "질의 목록을 불러오지 못했습니다";
+  } finally {
+    historyLoading.value = false;
+  }
+}
+function onHistoryPageChange(page: number) {
+  historyPageNum.value = page;
+  loadHistoryPage();
+}
+
 // 탭을 처음 열 때만 그 탭의 목록을 불러온다(전부 미리 불러올 필요 없음).
 const loadedTabs = new Set<SubTab>();
 function ensureTabLoaded(tab: SubTab) {
@@ -192,7 +261,9 @@ function ensureTabLoaded(tab: SubTab) {
   loadedTabs.add(tab);
   if (tab === "folder") loadFolderPage();
   else if (tab === "type") loadTypePage();
-  else loadListPage();
+  else if (tab === "list") loadListPage();
+  else if (tab === "pendingAnswers") loadPendingPage();
+  else loadHistoryPage();
 }
 watch(activeTab, (tab) => ensureTabLoaded(tab), { immediate: false });
 
@@ -236,6 +307,8 @@ onMounted(async () => {
         <button type="button" :class="{ active: activeTab === 'folder' }" @click="activeTab = 'folder'">폴더</button>
         <button type="button" :class="{ active: activeTab === 'type' }" @click="activeTab = 'type'">문서 분류</button>
         <button type="button" :class="{ active: activeTab === 'list' }" @click="activeTab = 'list'">리스트</button>
+        <button type="button" :class="{ active: activeTab === 'pendingAnswers' }" @click="activeTab = 'pendingAnswers'">답변 대기</button>
+        <button type="button" :class="{ active: activeTab === 'answerHistory' }" @click="activeTab = 'answerHistory'">답변 기록</button>
       </nav>
 
       <!-- 요청 1번: 폴더 좌측 + 선택된 폴더(또는 전체)의 문서 우측 -->
@@ -282,7 +355,7 @@ onMounted(async () => {
       </div>
 
       <!-- 요청 2-1번: 정렬 콤보박스 + 전체 문서 리스트 -->
-      <div v-else class="list-tab">
+      <div v-else-if="activeTab === 'list'" class="list-tab">
         <div class="sort-row">
           <select v-model="sortOption" @change="onSortChange">
             <option value="createdAt:desc">최신순</option>
@@ -300,6 +373,34 @@ onMounted(async () => {
           :loading="listLoading"
           :error="listError"
           @page-change="onListPageChange"
+        />
+      </div>
+
+      <!-- 답변 대기: 미답변(open) + 설계자 답변완료·AI확인대기(pending) -->
+      <div v-else-if="activeTab === 'pendingAnswers'" class="list-tab">
+        <QuestionListPanel
+          :items="pendingPage.items"
+          :page="pendingPage.page"
+          :total-pages="pendingPage.totalPages"
+          :total="pendingPage.total"
+          :loading="pendingLoading"
+          :error="pendingError"
+          empty-text="답변 대기 중인 질의가 없습니다."
+          @page-change="onPendingPageChange"
+        />
+      </div>
+
+      <!-- 답변 기록: AI 확인 완료(resolved)까지 끝난 질의 -->
+      <div v-else class="list-tab">
+        <QuestionListPanel
+          :items="historyPage.items"
+          :page="historyPage.page"
+          :total-pages="historyPage.totalPages"
+          :total="historyPage.total"
+          :loading="historyLoading"
+          :error="historyError"
+          empty-text="답변 기록이 없습니다."
+          @page-change="onHistoryPageChange"
         />
       </div>
     </template>

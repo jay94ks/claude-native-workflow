@@ -6839,3 +6839,39 @@ kanban.ts의 실제 상수를 import하면 순환 참조가 생겨 문자열로 
 **결론**: `QU`/`KB`는 이제 DocType 생성/이름 수정 양쪽에서 대소문자
 무관하게 거부된다. 질의 자신의 추적코드는 이제 어디서 클릭해도
 항상 그 질의/답변 내용을 보여주는 전용 다이얼로그로 열린다.
+
+## 문서 탭에 "답변 대기"/"답변 기록" 서브탭 신설 + 사이드바 너비 확장(`#document-answer-status-subtabs`)
+
+**배경**: 설계자 지시 두 가지 - (1) "문서" 탭의 "리스트" 서브탭
+우측에 "답변 대기"/"답변 기록" 서브탭을 신설, (2) 좌측 사이드바가
+너무 좁아 지금 너비의 약 35% 더 넓게.
+
+**구현**: `DocumentsView.vue`의 기존 서브탭(`folder`/`type`/`list`,
+`#documents-tab-redesign`)에 `pendingAnswers`/`answerHistory` 두
+개를 추가. **답변 대기**는 기존 `GET /projects/:id/pending/page`
+(status `open`+`pending`)를 그대로 재사용(새 백엔드 코드 없음).
+**답변 기록**은 `resolved`(AI 확인 완료까지 끝난) 질의만 보여주는
+게 기존에 없어 신설 - `questions.ts`에 `listResolvedQuestionsPaged()`
+(`listPendingQuestionsPaged()`와 거의 동일, `status:"resolved"`만
+다름) 추가 + `GET /projects/:id/questions/resolved/page` 라우트.
+프런트엔드는 신규 `QuestionListPanel.vue`(`DocumentListPanel.vue`와
+같은 패턴)를 두 서브탭이 공유하고, 각 행의 추적코드는 바로 앞
+라운드(`#reserved-tracking-codes`)의 `QuestionDialog`를 그대로 연다
+(새 인터랙션 로직 없음 - 실제 답변은 그 다이얼로그의 "대상 열기"로
+넘어간 원본 문서/카드에서). 사이드바는 `AppLayout.vue`의 `.sidebar
+{ width: 220px }`를 `300px`로(약 36% 확장) - 모바일 off-canvas
+브레이크포인트(240px)는 별개 관심사라 손대지 않음.
+
+**검증**: `npx tsc --noEmit`/`vue-tsc -b` 클린. 이 저장소와 무관한
+격리된 로컬 환경(스크래치 SQLite + 디스포저블 Meilisearch + 로컬
+`npm run dev` 백엔드/프런트엔드)에서 실제 브라우저로 확인: 테스트
+문서 1개 + 질의 2개(미답변 1개, 실제로 답변→AI확인까지 마쳐
+resolved로 만든 것 1개) → "답변 대기"/"답변 기록" 탭에 정확히
+갈라져 보임 확인 → "답변 기록"의 추적코드 클릭 → `QuestionDialog`가
+실제 답변 내용까지 정확히 표시함 확인. 사이드바가 육안으로도
+확연히 넓어짐 확인. 테스트 프로젝트/컨테이너/로컬 서버는 검증 직후
+정리했다.
+
+**결론**: 프로젝트 전체 질의 현황을 대상 문서·카드를 일일이 열지
+않고도 "문서" 탭에서 한눈에 훑을 수 있게 됐다. 사이드바 너비도
+지시대로 넓어졌다.

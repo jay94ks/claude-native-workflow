@@ -348,6 +348,63 @@ export async function listPendingQuestionsPaged(
   return { ...result, items };
 }
 
+/** "처리 완료"(resolved) 질의 목록 - 프로젝트 전체, 페이지네이션.
+ * listPendingQuestionsPaged와 같은 모양이지만 상태가 반대(답변까지 끝나
+ * AI가 확인 완료로 표시한 것만) - 문서 탭의 "답변 기록" 서브탭이 씀
+ * (#document-answer-status-subtabs). */
+export async function listResolvedQuestionsPaged(
+  projectId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<PendingQuestion>> {
+  const db = getDb();
+  const where = { status: "resolved", projectId };
+  type RawQuestion = {
+    trackingCode: string;
+    projectId: string;
+    targetType: string;
+    targetKey: string;
+    ordinal: number;
+    kind: string;
+    text: string;
+    askedBy: string;
+    status: string;
+    refs: { trackingCode: string }[];
+  };
+  const result = await paginate<RawQuestion>(
+    (args) => db.question.findMany({ where, include: { refs: true }, orderBy: { createdAt: "desc" }, ...args }),
+    () => db.question.count({ where }),
+    page,
+    pageSize,
+  );
+  const items: PendingQuestion[] = [];
+  for (const r of result.items) {
+    let targetLabel = r.targetKey;
+    if (r.targetType === "document") {
+      const doc = await getDocument(r.targetKey);
+      if (doc) targetLabel = doc.title;
+    } else if (r.targetType === "kanbanCard") {
+      const card = await getKanbanCardByTrackingCode(r.targetKey);
+      if (card) targetLabel = card.title;
+    }
+    items.push({
+      trackingCode: r.trackingCode,
+      projectId: r.projectId,
+      targetType: r.targetType,
+      targetKey: r.targetKey,
+      ordinal: r.ordinal,
+      kind: r.kind,
+      text: r.text,
+      askedBy: r.askedBy,
+      status: r.status,
+      refs: r.refs.map((x: { trackingCode: string }) => x.trackingCode),
+      options: [],
+      targetLabel,
+    });
+  }
+  return { ...result, items };
+}
+
 /** AI가 아직 확인(ack)하지 않은 답변 건수 - notices 배너가 씀. */
 export async function countPendingQuestions(projectId: string): Promise<number> {
   const db = getDb();

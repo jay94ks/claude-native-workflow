@@ -119,6 +119,7 @@ import {
   resolveTargetByTrackingCode,
   listPendingQuestions,
   listPendingQuestionsPaged,
+  listResolvedQuestionsPaged,
   answerQuestion,
   listQuestions,
   listQuestionsPaged,
@@ -2684,6 +2685,18 @@ app.get(
     const notice = await pendingQuestionNotice(req.params.projectId);
     const paged = await listPendingQuestionsPaged(req.params.projectId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20));
     res.json(withNotices(paged, notice));
+  }),
+);
+
+// 문서 탭 "답변 기록" 서브탭이 씀(#document-answer-status-subtabs) -
+// "답변 대기"는 기존 /pending/page(open+pending)를 그대로 재사용하고,
+// 이건 그 반대(resolved만) 전용 라우트.
+app.get(
+  "/api/projects/:projectId/questions/resolved/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listResolvedQuestionsPaged(req.params.projectId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
   }),
 );
 

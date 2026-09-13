@@ -107,7 +107,7 @@ function handleLogout() {
   display: none;
 }
 .sidebar {
-  width: 220px;
+  width: 300px;
   flex-shrink: 0;
   background: var(--color-sidebar-bg);
   color: var(--color-sidebar-text);
