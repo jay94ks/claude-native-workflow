@@ -152,6 +152,28 @@ export async function listProjectKeysPaged(
   return { ...result, items: result.items.map(toDetail) };
 }
 
+export interface ApiKeyDetailWithProject extends ApiKeyDetail {
+  projectName: string | null;
+}
+
+/** "내 정보" 화면의 "프로젝트 키" 탭 전용 - 내가 여러 프로젝트에 걸쳐
+ * 만들어둔 프로젝트 키를 한 곳에 모아본다(#profile-api-keys-tabs).
+ * listProjectKeys()는 프로젝트 하나를 골라야 조회할 수 있고, owner가
+ * 아니면 그 프로젝트 안에서도 자기 것만 보이는 것과 별개로 - 이건
+ * "나"를 고정하고 프로젝트를 가로질러 모은다. */
+export async function listMyProjectKeys(viewerId: string): Promise<ApiKeyDetailWithProject[]> {
+  const db = getDb();
+  const rows = await db.apiKey.findMany({
+    where: { scope: "project", ownerId: viewerId },
+    orderBy: { createdAt: "desc" },
+    include: { project: { select: { name: true } } },
+  });
+  return rows.map((row: Parameters<typeof toDetail>[0] & { project: { name: string } | null }) => ({
+    ...toDetail(row),
+    projectName: row.project?.name ?? null,
+  }));
+}
+
 export async function listTeamKeys(teamId: string, viewerId: string): Promise<ApiKeyDetail[]> {
   if (!(await isTeamAdmin(teamId, viewerId))) {
     throw new ApiKeyError("이 팀의 팀장만 팀 관리 키 목록을 볼 수 있습니다");

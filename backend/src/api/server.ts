@@ -186,6 +186,7 @@ import {
   listTeamKeysPaged,
   listMyPersonalKeys,
   listMyPersonalKeysPaged,
+  listMyProjectKeys,
   getApiKeyById,
   revokeApiKey,
   ApiKeyError,
@@ -984,6 +985,16 @@ app.get(
   authenticate,
   asyncRoute(async (req, res) => {
     res.json(await listMyPersonalKeysPaged(req.userId!, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
+  }),
+);
+
+// "내 정보" 화면 "프로젝트 키" 탭 - 내가 여러 프로젝트에 걸쳐 만든
+// 프로젝트 키를 한 곳에 모아본다(#profile-api-keys-tabs).
+app.get(
+  "/api/api-keys/project-mine",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json(await listMyProjectKeys(req.userId!));
   }),
 );
 

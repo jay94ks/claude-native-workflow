@@ -4,7 +4,7 @@ import { apiCall, ApiError } from "../api/client";
 import { useAuthStore } from "../stores/auth";
 import UserRef from "../components/UserRef.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
-import PersonalKeysManager from "../components/PersonalKeysManager.vue";
+import ApiKeysCard from "../components/ApiKeysCard.vue";
 import GiteaTokenCard from "../components/GiteaTokenCard.vue";
 import AccessOverviewPanel from "../components/AccessOverviewPanel.vue";
 
@@ -208,7 +208,7 @@ watch(() => props.id, load);
       </template>
     </section>
 
-    <PersonalKeysManager v-if="isSelf" />
+    <ApiKeysCard v-if="isSelf" />
     <GiteaTokenCard v-if="isSelf" />
 
     <section v-if="isSelf" class="card">

@@ -96,8 +96,7 @@ onMounted(load);
 </script>
 
 <template>
-  <section class="card">
-    <h2>API 키</h2>
+  <div class="manager">
     <p class="hint">이 계정으로 접근 가능한 모든 프로젝트에 접근하는 개인 키 - 로그인과 동등한 권한이므로 신중히 관리한다. 본인만 만들고 배제할 수 있다.</p>
     <p v-if="error" class="error">{{ error }}</p>
 
@@ -136,22 +135,10 @@ onMounted(load);
       </li>
       <li v-if="keys.length === 0" class="muted">아직 개인 키가 없습니다.</li>
     </ul>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.card {
-  background: var(--color-surface);
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-  padding: 16px;
-  margin-bottom: 20px;
-}
-h2 {
-  font-size: 14px;
-  margin: 0 0 4px;
-  color: var(--color-text-secondary);
-}
 .hint {
   font-size: 12px;
   color: var(--color-text-muted);
