@@ -6079,3 +6079,45 @@ grep`(부분)으로 이어서 조회하는 흐름이 완성됐다 - 방금 만�
 **결론**: `docs list`는 이제 "조용히 잘린 목록"을 절대 주지 않는다 -
 1000건 이하면 전부, 넘으면 명확한 에러로 페이지네이션을 쓰라고
 안내한다.
+
+## git 파일 삭제(`git delete`/`git_delete`) 추가 - `put`의 대칭 기능(`#git-file-delete`) - 완료
+
+**배경**: 이 저장소 자신이 연동된 `claude-native-workflow` 프로젝트의
+`docs git sync-status`를 실행해보니, 작업 저장소가 GitHub 대비 15커밋
+뒤처져 있었다(로컬 git clone → GitHub 직접 push만 계속 써왔고, 이
+시스템의 작업 저장소 쪽엔 그 변경이 반영될 방법이 없었기 때문 -
+"미러→작업 저장소" 방향은 애초에 자동화가 없다는 설계상 특징으로
+확인됨). 이 드리프트를 실제로 해소하려고 보니 `sync-proposal`이 주는
+차이 중 `PLANS.md`/`QA-SCENARIOS.md`처럼 **삭제된 파일**은 반영할
+방법이 아예 없었다 - `git put`(`putFileContent`)은 생성/갱신만 하고,
+CLI/API/MCP 어디에도 파일 삭제 기능이 없었던 것.
+
+**수정**: `put`을 그대로 거울처럼 따라가 4개 계층에 `delete`를
+추가했다. `core/gitea.ts`의 `deleteFileContent()`(GET으로 현재 `sha`를
+구한 뒤 `DELETE /contents/{path}`에 `{sha, message}`로 커밋 - 대상이
+없으면 `put`처럼 조용히 넘어가지 않고 "파일이 없습니다" 에러로 실패),
+`api/server.ts`의 `DELETE /api/projects/:projectId/git/file` 라우트
+(`put`과 동일하게 `editor` 권한 + `requireGiteaWorkingRef`),
+`cli/index.ts`의 `git delete <projectId> <path>`, `mcp/server.ts`의
+`git_delete` 도구. 검색 인덱스 정합성을 위해 `core/sourceIndex.ts`에
+`syncSourceFileOnDelete()`도 추가(`syncSourceFileOnSave()`와 같은
+fail-soft 원칙 - Meilisearch가 죽어 있어도 삭제 자체는 실패로 보이지
+않고 재동기화 큐에 남는다).
+
+**검증**: `C:\CNW`(이 시스템의 실제 운영 설치)는 건드리지 않고, 이
+저장소 자신의 격리된 docker compose 스택(별도 `COMPOSE_PROJECT_NAME`,
+별도 호스트 포트)을 새로 띄워 스크래치 프로젝트로 왕복 확인 - CLI
+(`docs git put` → `docs git cat`로 존재 확인 → `docs git delete` →
+다시 `docs git cat`을 호출해 404로 정상 실패 → 이미 없는 파일을 다시
+`delete`해도 명확한 에러로 실패)와 MCP(`git_put`→`git_cat`→
+`git_delete`→`git_cat`, `tools/list`에 `git_delete` 노출까지) 양쪽
+다 확인. Meilisearch 컨테이너에 직접 질의해 삭제 후 색인 문서가 실제로
+사라졌음(404)도 확인. `backend/scripts/audit-cli-mcp.ts`가 별도
+허용목록 수정 없이 `git delete`↔`git_delete`를 자동으로 대칭 인식하는
+것도 확인. 검증용 스크래치 프로젝트/컨테이너/볼륨/임시 `.env`는 모두
+정리했다.
+
+**결론**: git 파일 저장/삭제가 이제 대칭이 됐다. 다만 이 라운드는 새
+기능 추가까지만 다룬다 - 이걸 실제로 쓰려면 별도로 운영 중인 `C:\CNW`
+설치에 이 코드를 배포(`git pull` + 재빌드)하는 절차가 필요하고, 이번에
+발견한 15커밋 드리프트를 실제로 반영하는 것도 별도 라운드로 남겨둔다.

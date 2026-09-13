@@ -470,6 +470,7 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 파일 부분 읽기(줄 범위) | `docs git read <projectId> <path> [--ref <r>] [--offset <n>] [--limit <n>]` | `git_read` |
 | 파일 정규식 검색 | `docs git grep <projectId> <path> <pattern> [--ref <r>] [--case-insensitive] [--context <n>]` | `git_grep` |
 | 파일 저장(커밋) | `docs git put <projectId> <path> <localFile> [--message <m>]` | `git_put` |
+| 파일 삭제(커밋) | `docs git delete <projectId> <path> [--message <m>]` | `git_delete` |
 | 템플릿 조회(override 체인 적용) | `docs template get <filename> [--project <id>]` | `template_get` |
 | 템플릿 override 설정 | `docs template set <filename> <file> [--project\|--group\|--team <id>]` | `template_set` |
 | 템플릿 배포 | `docs template deploy <projectId>` | `template_deploy` |
