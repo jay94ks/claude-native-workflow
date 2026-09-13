@@ -256,6 +256,11 @@ export async function configurePushMirror(
       remote_address: remoteAddress,
       remote_username: username,
       remote_password: token,
+      // interval이 없으면 Gitea가 빈 문자열을 time.ParseDuration에 넘겨
+      // 400으로 거부한다(실측 확인, BR-AD6197A6) - "0"은 Go에서 단위 없이도
+      // 유효한 특수값으로 파싱되고, 이 시스템은 triggerPushMirrorSync()로
+      // 수동 트리거만 쓰므로 주기적 자동 동기화 자체가 필요 없다.
+      interval: "0",
       sync_on_commit: false,
     }),
   });

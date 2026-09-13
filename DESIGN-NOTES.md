@@ -6693,3 +6693,43 @@ link-external`로 막 연동한 프로젝트의 작업 저장소는 거의 항�
 자체를 막고 있었다 - 바로 앞 라운드에서 README.md에 추가한 "AI에게
 온보딩을 맡기는 사용법" 예시가 실제로는 이 버그 때문에 새 프로젝트에서
 곧바로 실패할 수 있었다는 뜻이라, 발견·수정 우선순위가 높았다.
+
+## `configurePushMirror()`가 interval 누락으로 발행이 전면 실패하던 버그 수정(`#push-mirror-interval-fix`)
+
+**배경**: 설계자가 minicore 프로젝트에서 `docs git publish`(외부
+저장소로 최초 발행)를 시도하다가 매번 즉시 실패하는 것을 발견하고
+BR-AD6197A6으로 재현 경로/원인/실제 로그/제안 수정까지 상세히
+보고했다 - 바로 앞 `#getfulltree-null-tree-fix` 라운드로 온보딩 첫
+단계(연동+template deploy)는 풀렸지만, 그 다음 단계인 "실제로
+GitHub에 반영"이 별개의 버그로 막혀 있었다.
+
+**원인**: `backend/src/core/gitea.ts`의 `configurePushMirror()`가
+Gitea의 push mirror 생성 API(`POST /repos/:org/:repo/push_mirrors`)를
+호출할 때 `interval` 필드를 아예 안 보냈다. 이 Gitea 인스턴스
+(1.27.3)의 `CreatePushMirrorOption`은 `interval`을
+`time.ParseDuration()`으로 파싱하는데, 필드가 없으면 빈 문자열이
+되어 `invalid duration ""`으로 400을 반환한다 - `git link-external`로
+연동된 **모든** 프로젝트의 발행이 100% 실패하는 상태였다.
+
+**검증(직접 Gitea REST API로 실측 - 앱을 거치지 않음)**: 디스포저블
+테스트 org/repo를 만들어 세 가지를 직접 확인했다 - (1) `interval`
+없이 호출하면 실제로 `400 invalid duration ""` 재현(버그 그대로),
+(2) `interval: "0"` + 가짜 도메인(`example.invalid`)은 `401
+Permission denied`가 났지만 Gitea 소스(v1.27.3 `routers/api/v1/
+repo/mirror.go`)로 확인해보니 `interval` 통과 후
+`migrations.IsMigrateURLAllowed()`가 허용 목록에 없는 도메인을
+거부한 것뿐(토큰 권한 문제 아님), (3) `interval: "0"` + 실제 공개
+저장소 URL(`github.com/octocat/Hello-World.git`)은 `200 OK`,
+`"interval": "0s"` 확인 - BR 문서가 제안한 수정이 정확히 맞았다.
+테스트에 쓴 디스포저블 org 2개는 실측 후 바로 삭제해 정리했다.
+
+**수정**: `configurePushMirror()`의 요청 바디에 `interval: "0"`을
+추가했다 - 이 시스템은 `sync_on_commit: false`로 두고
+`triggerPushMirrorSync()` 수동/코드 트리거만 쓰므로 주기적 자동
+동기화 자체가 필요 없어 "0"이 정확히 의도한 값이다.
+
+**결론**: `git link-external` 이후 "연동 → 커밋 → 발행"이라는 표준
+플로우의 마지막 단계가 막혀 있었다 - 실제 minicore로 `docs git
+publish`를 다시 실행해 전체 플로우가 뚫렸는지 재확인하는 건 설계자
+소유의 실제 외부 저장소에 영향을 주는 동작이라 별도 승인을 거쳐
+진행한다.
