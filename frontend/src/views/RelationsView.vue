@@ -3,9 +3,10 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import RelationGraphCanvas from "../components/RelationGraphCanvas.vue";
-import TrackingCodeText from "../components/TrackingCodeText.vue";
+import RelationDetailPanel from "../components/RelationDetailPanel.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import type { RelationGraphEdge, RelationGraphNode } from "../utils/relationGraph";
+import { RELATION_VIEW_MODES, DEFAULT_VIEW_MODE_ID } from "../utils/relationViewModes";
 
 const props = defineProps<{ id: string }>();
 const route = useRoute();
@@ -29,6 +30,17 @@ interface CodeRelationDetail {
   childIds: string[];
 }
 
+// "전체 보기" 토글이 page/pageSize를 넘기면 백엔드가 이 모양
+// (Page<CodeRelationDetail>)으로 응답한다 - 평소 필터 검색의 순수
+// 배열 응답과 구분해서 처리해야 한다.
+interface RelationPage {
+  items: CodeRelationDetail[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 // relationCache가 유일한 진실 - nodes/edges는 여기서 파생된다. reactive()
 // 라 새 id를 대입해도(cache[d.id] = d) 반응형으로 잡힌다(Vue 3 - Map과
 // 달리 일반 객체는 새 속성 추가도 추적됨).
@@ -42,6 +54,18 @@ const fileFilter = ref("");
 const trackingCodeFilter = ref("");
 const depth = ref(3);
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+// ---------------------------------------------------------------- 뷰 모드 + 전체 보기
+const viewMode = ref(DEFAULT_VIEW_MODE_ID);
+
+// 필터 없이 프로젝트의 모든 관계를 한 번에 보고 싶을 때 - 무제한 로드는
+// 절대 하지 않고 항상 명시적 pageSize 상한을 걸어서 호출한다(백엔드
+// listRelations는 page/pageSize를 생략하면 전체 배열을 무제한 반환하는
+// 기존 동작이 있음 - 이 토글은 그 경로를 안 탄다).
+const ALL_PAGE_SIZE = 500;
+const showAll = ref(false);
+const allTotal = ref(0);
+const allTotalPages = ref(0);
 
 const selectedId = ref<string | null>(null);
 const selected = computed(() => (selectedId.value ? relationCache[selectedId.value] : null));
@@ -65,6 +89,7 @@ const nodes = computed<RelationGraphNode[]>(() => {
     label: truncate(d.target, 40),
     hasUnexpandedChildren: d.childIds.some((cid) => !ids.has(cid)),
     tagged: matchesActiveFilter(d),
+    primaryTag: d.tags[0],
   }));
 });
 
@@ -89,18 +114,29 @@ function mergeIntoCache(items: CodeRelationDetail[]) {
 async function search() {
   loading.value = true;
   error.value = "";
+  allTotal.value = 0;
+  allTotalPages.value = 0;
   try {
     const qs = new URLSearchParams();
     if (q.value.trim()) qs.set("q", q.value.trim());
     if (tag.value.trim()) qs.set("tag", tag.value.trim());
     if (fileFilter.value.trim()) qs.set("filePath", fileFilter.value.trim());
     if (trackingCodeFilter.value.trim()) qs.set("trackingCode", trackingCodeFilter.value.trim());
-    if (!q.value.trim() && !tag.value.trim() && !fileFilter.value.trim() && !trackingCodeFilter.value.trim()) {
-      qs.set("hasNoParent", "true");
+    const hasFilter = q.value.trim() || tag.value.trim() || fileFilter.value.trim() || trackingCodeFilter.value.trim();
+    if (showAll.value) {
+      qs.set("page", "1");
+      qs.set("pageSize", String(ALL_PAGE_SIZE));
+      const page = await apiCall<RelationPage>(`/projects/${props.id}/relations?${qs}`);
+      clearCache();
+      mergeIntoCache(page.items);
+      allTotal.value = page.total;
+      allTotalPages.value = page.totalPages;
+    } else {
+      if (!hasFilter) qs.set("hasNoParent", "true");
+      const items = await apiCall<CodeRelationDetail[]>(`/projects/${props.id}/relations?${qs}`);
+      clearCache();
+      mergeIntoCache(items);
     }
-    const items = await apiCall<CodeRelationDetail[]>(`/projects/${props.id}/relations?${qs}`);
-    clearCache();
-    mergeIntoCache(items);
     selectedId.value = null;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "관계를 불러오지 못했습니다";
@@ -112,6 +148,11 @@ async function search() {
 function onSearchInput() {
   if (searchDebounce) clearTimeout(searchDebounce);
   searchDebounce = setTimeout(search, 300);
+}
+
+function toggleShowAll() {
+  showAll.value = !showAll.value;
+  search();
 }
 
 async function selectNode(id: string) {
@@ -326,39 +367,35 @@ function removeFormTrackingCode(code: string) {
 }
 
 // ---------------------------------------------------------------- 기존 노드와 연결
-const linkParentInput = ref("");
-const linkChildInput = ref("");
 const linkError = ref("");
 
-async function linkAsParent() {
-  if (!selectedId.value || !linkParentInput.value.trim()) return;
+async function linkAsParent(id: string) {
+  if (!selectedId.value) return;
   linkError.value = "";
   try {
     const updated = await apiCall<CodeRelationDetail>(`/projects/${props.id}/relations/${selectedId.value}`, {
       method: "PUT",
-      body: JSON.stringify({ addParentIds: [linkParentInput.value.trim()] }),
+      body: JSON.stringify({ addParentIds: [id] }),
     });
     relationCache[updated.id] = updated;
-    const parent = await apiCall<CodeRelationDetail>(`/projects/${props.id}/relations/${linkParentInput.value.trim()}`).catch(() => null);
+    const parent = await apiCall<CodeRelationDetail>(`/projects/${props.id}/relations/${id}`).catch(() => null);
     if (parent) relationCache[parent.id] = parent;
-    linkParentInput.value = "";
   } catch (err) {
     linkError.value = err instanceof ApiError ? err.message : "연결에 실패했습니다";
   }
 }
 
-async function linkAsChild() {
-  if (!selectedId.value || !linkChildInput.value.trim()) return;
+async function linkAsChild(id: string) {
+  if (!selectedId.value) return;
   linkError.value = "";
   try {
     const updated = await apiCall<CodeRelationDetail>(`/projects/${props.id}/relations/${selectedId.value}`, {
       method: "PUT",
-      body: JSON.stringify({ addChildIds: [linkChildInput.value.trim()] }),
+      body: JSON.stringify({ addChildIds: [id] }),
     });
     relationCache[updated.id] = updated;
-    const child = await apiCall<CodeRelationDetail>(`/projects/${props.id}/relations/${linkChildInput.value.trim()}`).catch(() => null);
+    const child = await apiCall<CodeRelationDetail>(`/projects/${props.id}/relations/${id}`).catch(() => null);
     if (child) relationCache[child.id] = child;
-    linkChildInput.value = "";
   } catch (err) {
     linkError.value = err instanceof ApiError ? err.message : "연결에 실패했습니다";
   }
@@ -383,11 +420,27 @@ onMounted(() => {
       <input v-model="fileFilter" type="text" class="file-input" placeholder="파일 경로(정확 일치)" @input="onSearchInput" />
       <input v-model="trackingCodeFilter" type="text" class="file-input" placeholder="추적코드(정확 일치)" @input="onSearchInput" />
       <label class="depth-label">depth <input v-model.number="depth" type="number" min="1" max="20" class="depth-input" /></label>
+      <button type="button" class="toggle" :class="{ active: showAll }" @click="toggleShowAll">전체 보기</button>
       <button type="button" class="primary" @click="openCreateForm">새 관계 추가</button>
       <button type="button" class="danger-outline" @click="openResetDialog">관계도 초기화</button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="loading" class="muted">불러오는 중...</p>
+    <p v-if="showAll && allTotalPages > 1" class="muted">
+      표시 한도 {{ ALL_PAGE_SIZE }}건을 초과해 일부만 표시됩니다(전체 {{ allTotal }}건).
+    </p>
+
+    <nav class="subtabs">
+      <button
+        v-for="mode in RELATION_VIEW_MODES"
+        :key="mode.id"
+        type="button"
+        :class="{ active: viewMode === mode.id }"
+        @click="viewMode = mode.id"
+      >
+        {{ mode.label }}
+      </button>
+    </nav>
 
     <div class="layout">
       <RelationGraphCanvas
@@ -395,62 +448,21 @@ onMounted(() => {
         :nodes="nodes"
         :edges="edges"
         :selected-id="selectedId"
+        :view-mode="viewMode"
         @select="selectNode"
         @expand="expandNode"
       />
-      <aside class="sidebar">
-        <template v-if="selected">
-          <h3><TrackingCodeText :text="selected.target" /></h3>
-          <dl>
-            <dt>참조 주체</dt>
-            <dd><TrackingCodeText :text="selected.referrer" /></dd>
-            <dt>목적</dt>
-            <dd><TrackingCodeText :text="selected.purpose" /></dd>
-            <dt>파일</dt>
-            <dd><code>{{ selected.filePath }}{{ selected.line ? `:${selected.line}` : "" }}{{ selected.column ? `:${selected.column}` : "" }}</code></dd>
-            <dt>연관 문서</dt>
-            <dd>
-              <TrackingCodeText v-if="selected.trackingCodes.length" :text="selected.trackingCodes.join(', ')" />
-              <span v-else class="muted">없음</span>
-            </dd>
-            <dt>태그</dt>
-            <dd>
-              <span v-for="t in selected.tags" :key="t" class="tag-chip">{{ t }}</span>
-              <span v-if="selected.tags.length === 0" class="muted">없음</span>
-            </dd>
-            <dt>추가 데이터</dt>
-            <dd><pre v-if="selected.data !== null && selected.data !== undefined" class="data-json">{{ JSON.stringify(selected.data, null, 2) }}</pre><span v-else class="muted">없음</span></dd>
-            <dt>상위 관계</dt>
-            <dd>{{ selected.parentIds.length }}개</dd>
-            <dt>하위 관계</dt>
-            <dd>{{ selected.childIds.length }}개</dd>
-          </dl>
-
-          <div class="button-row">
-            <button type="button" @click="openEditForm(selected)">수정</button>
-            <button type="button" class="danger" @click="removeSelected">삭제</button>
-          </div>
-
-          <div class="expand-row">
-            <button type="button" @click="expandDeep('parents')">상위 펼치기 depth={{ depth }}</button>
-            <button type="button" @click="expandDeep('children')">하위 펼치기 depth={{ depth }}</button>
-          </div>
-
-          <div class="link-section">
-            <p class="hint">이미 있는 다른 관계와 연결(id로 지정)</p>
-            <div class="link-row">
-              <input v-model="linkParentInput" type="text" placeholder="상위로 연결할 관계 id" />
-              <button type="button" @click="linkAsParent">연결</button>
-            </div>
-            <div class="link-row">
-              <input v-model="linkChildInput" type="text" placeholder="하위로 연결할 관계 id" />
-              <button type="button" @click="linkAsChild">연결</button>
-            </div>
-            <p v-if="linkError" class="error">{{ linkError }}</p>
-          </div>
-        </template>
-        <p v-else class="muted">그래프에서 노드를 클릭하면 상세 정보가 여기 표시됩니다. 더블클릭하면 하위 관계가 한 단계 펼쳐집니다.</p>
-      </aside>
+      <RelationDetailPanel
+        :detail="selected"
+        :depth="depth"
+        :link-error="linkError"
+        @edit="openEditForm"
+        @delete="removeSelected"
+        @expand-parents="expandDeep('parents')"
+        @expand-children="expandDeep('children')"
+        @link-as-parent="linkAsParent"
+        @link-as-child="linkAsChild"
+      />
     </div>
 
     <div v-if="showForm" class="overlay" @click.self="showForm = false">
@@ -573,6 +585,42 @@ button.danger-outline {
   font-weight: 600;
   font-size: 12px;
 }
+button.toggle {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+}
+button.toggle.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.subtabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.subtabs button {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.subtabs button:hover {
+  background: var(--color-surface-hover);
+}
+.subtabs button.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
 .layout {
   display: flex;
   gap: 16px;
@@ -583,35 +631,6 @@ button.danger-outline {
   min-width: 0;
   border: 1px solid var(--color-border);
 }
-.sidebar {
-  width: 320px;
-  flex-shrink: 0;
-  background: var(--color-surface);
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-  padding: 14px;
-  overflow-y: auto;
-}
-.sidebar h3 {
-  font-size: 14px;
-  margin: 0 0 10px;
-  word-break: break-word;
-}
-.sidebar dl {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 10px;
-  margin: 0 0 12px;
-}
-.sidebar dt {
-  color: var(--color-text-faint);
-  font-size: 11px;
-}
-.sidebar dd {
-  margin: 0;
-  font-size: 12px;
-  word-break: break-word;
-}
 .tag-chip {
   display: inline-block;
   background: var(--color-surface-hover);
@@ -621,23 +640,12 @@ button.danger-outline {
   font-size: 11px;
   margin: 0 4px 4px 0;
 }
-.data-json {
-  background: var(--color-bg, var(--color-surface-hover));
-  padding: 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.button-row,
-.expand-row {
+.button-row {
   display: flex;
   gap: 8px;
   margin-bottom: 10px;
 }
-.button-row button,
-.expand-row button {
+.button-row button {
   background: var(--color-surface);
   color: var(--color-text);
   border: 1px solid var(--color-border);
@@ -648,32 +656,6 @@ button.danger-outline {
 .button-row button.danger {
   color: var(--color-danger);
   border-color: var(--color-danger);
-}
-.link-section {
-  border-top: 1px solid var(--color-border-light);
-  padding-top: 10px;
-}
-.link-row {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.link-row input {
-  flex: 1;
-  padding: 5px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-size: 12px;
-}
-.link-row button {
-  background: var(--color-surface);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 11px;
 }
 .overlay {
   position: fixed;
