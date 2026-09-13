@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getOrCreateGiteaSystemWebhookSecret } from "./installConfig.js";
 import { paginateInMemory, type Page } from "./pagination.js";
+import { sliceLines, grepLines, type LinesResult, type GrepMatch, type GrepOptions } from "./textLines.js";
 
 interface GiteaConfig {
   apiUrl: string;
@@ -501,6 +502,33 @@ export async function getFileContent(target: GiteaRepoRef, filePath: string, ref
   }
   const file = raw as { path: string; content: string; sha: string };
   return { path: file.path, content: Buffer.from(file.content, "base64").toString("utf-8"), sha: file.sha };
+}
+
+/** 문서(#document-partial-read-grep-diff)와 같은 이유로 소스 코드
+ * 파일에도 부분 읽기/검색을 둔다 - 큰 파일 전체를 매번 컨텍스트에
+ * 올리지 않아도 되게. 파일 내용을 가져오는 방식만 다르고(Gitea REST),
+ * 그 뒤 줄 처리는 core/textLines.ts를 그대로 공유한다(diff는 이미
+ * git log/diff/show로 커버되므로 여기 추가 안 함). */
+export async function readSourceFileLines(
+  target: GiteaRepoRef,
+  filePath: string,
+  ref?: string,
+  offset?: number,
+  limit?: number,
+): Promise<LinesResult> {
+  const file = await getFileContent(target, filePath, ref);
+  return sliceLines(file.content, offset, limit);
+}
+
+export async function grepSourceFile(
+  target: GiteaRepoRef,
+  filePath: string,
+  pattern: string,
+  ref?: string,
+  opts: GrepOptions = {},
+): Promise<GrepMatch[]> {
+  const file = await getFileContent(target, filePath, ref);
+  return grepLines(file.content, pattern, opts);
 }
 
 const RAW_CACHE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".cache", "git-raw");

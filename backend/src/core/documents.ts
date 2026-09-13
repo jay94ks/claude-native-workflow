@@ -1,5 +1,6 @@
 import { MeiliSearchRequestError } from "meilisearch";
 import { diffLines, type Change } from "diff";
+import { sliceLines, grepLines, type LinesResult, type GrepMatch, type GrepOptions } from "./textLines.js";
 import { getDb } from "./db.js";
 import { withTrackingCode } from "./tracking.js";
 import { findDocTypeByCode, findDocStatusByCode, initialStatusFor, allowedNextStatuses } from "./docTypes.js";
@@ -289,41 +290,18 @@ export async function listDocumentRevisionsPaged(
 // 본문 위에서 순수하게 문자열만 다루는 후처리라, 이 원칙을 우회하는
 // 별도 조회 경로가 아니다.
 
-export interface DocumentLinesResult {
-  totalLines: number;
-  offset: number;
-  lines: string[];
-}
+export type DocumentLinesResult = LinesResult;
 
-const DEFAULT_LINES_LIMIT = 2000;
-
-/** offset(1부터)부터 최대 limit줄 - 둘 다 생략하면 처음부터
- * DEFAULT_LINES_LIMIT줄(Read 도구의 offset/limit 관례와 동일). */
+/** offset(1부터)부터 최대 limit줄 - 둘 다 생략하면 처음부터 2000줄
+ * (Read 도구의 offset/limit 관례와 동일). */
 export async function readDocumentLines(trackingCode: string, offset?: number, limit?: number): Promise<DocumentLinesResult> {
   const doc = await getDocumentFromIndex(trackingCode);
   if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
-  const allLines = doc.body.split("\n");
-  const start = Math.max(1, offset ?? 1);
-  const count = limit ?? DEFAULT_LINES_LIMIT;
-  return {
-    totalLines: allLines.length,
-    offset: start,
-    lines: allLines.slice(start - 1, start - 1 + count),
-  };
+  return sliceLines(doc.body, offset, limit);
 }
 
-export interface DocumentGrepMatch {
-  line: number;
-  text: string;
-}
-
-export interface DocumentGrepOptions {
-  caseInsensitive?: boolean;
-  /** 앞뒤로 몇 줄씩 더 붙일지(grep -C와 동일) - 붙은 줄도 matches 배열에
-   * 그대로 섞여 나오고, 실제 매치 여부는 각 항목에 없으므로 호출부가
-   * 굳이 구분할 필요가 없을 때(대부분의 탐색)만 쓴다. */
-  context?: number;
-}
+export type DocumentGrepMatch = GrepMatch;
+export type DocumentGrepOptions = GrepOptions;
 
 /** 정규식(JS 문법) 패턴으로 본문을 줄 단위 검색한다 - Grep 도구의
  * "content" 출력 모드와 같은 모양(줄 번호+텍스트). 잘못된 정규식은
@@ -331,24 +309,7 @@ export interface DocumentGrepOptions {
 export async function grepDocument(trackingCode: string, pattern: string, opts: DocumentGrepOptions = {}): Promise<DocumentGrepMatch[]> {
   const doc = await getDocumentFromIndex(trackingCode);
   if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
-  let re: RegExp;
-  try {
-    re = new RegExp(pattern, opts.caseInsensitive ? "i" : "");
-  } catch (err) {
-    throw new Error(`잘못된 정규식입니다: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  const lines = doc.body.split("\n");
-  const contextSize = Math.max(0, opts.context ?? 0);
-  const matchedLineNumbers = new Set<number>();
-  lines.forEach((line, i) => {
-    if (!re.test(line)) return;
-    for (let n = Math.max(0, i - contextSize); n <= Math.min(lines.length - 1, i + contextSize); n++) {
-      matchedLineNumbers.add(n);
-    }
-  });
-  return [...matchedLineNumbers]
-    .sort((a, b) => a - b)
-    .map((i) => ({ line: i + 1, text: lines[i] }));
+  return grepLines(doc.body, pattern, opts);
 }
 
 export interface DocumentDiffResult {

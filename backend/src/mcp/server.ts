@@ -1295,6 +1295,39 @@ async function main() {
     },
   );
   tool(
+    "git_read",
+    "git 파일 부분 읽기",
+    "소스 코드 파일을 줄 단위로 부분 읽기(큰 파일을 전체로 안 올리고 필요한 범위만) - 둘 다 생략하면 처음 2000줄.",
+    { projectId: z.string(), path: z.string(), ref: z.string().optional(), offset: z.number().int().optional(), limit: z.number().int().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({ path: String(a.path) });
+      if (a.ref) qs.set("ref", String(a.ref));
+      if (a.offset !== undefined) qs.set("offset", String(a.offset));
+      if (a.limit !== undefined) qs.set("limit", String(a.limit));
+      return call(`/api/projects/${a.projectId}/git/file/lines?${qs}`);
+    },
+  );
+  tool(
+    "git_grep",
+    "git 파일 검색",
+    "소스 코드 파일을 정규식(JS 문법)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열.",
+    {
+      projectId: z.string(),
+      path: z.string(),
+      pattern: z.string(),
+      ref: z.string().optional(),
+      caseInsensitive: z.boolean().optional(),
+      context: z.number().int().optional(),
+    },
+    async (a) => {
+      const qs = new URLSearchParams({ path: String(a.path), q: String(a.pattern) });
+      if (a.ref) qs.set("ref", String(a.ref));
+      if (a.caseInsensitive) qs.set("caseInsensitive", "true");
+      if (a.context !== undefined) qs.set("context", String(a.context));
+      return call(`/api/projects/${a.projectId}/git/file/grep?${qs}`);
+    },
+  );
+  tool(
     "git_put",
     "git 파일 저장",
     "저장소에 파일을 커밋한다(있으면 갱신, 없으면 생성).",

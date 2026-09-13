@@ -1833,6 +1833,38 @@ gitCmd
   });
 
 gitCmd
+  .command("read <projectId> <path>")
+  .description("소스 코드 파일을 줄 단위로 부분 읽기(큰 파일을 전체로 안 올리고 필요한 범위만) - 둘 다 생략하면 처음 2000줄")
+  .option("--ref <ref>")
+  .option("--offset <n>", "시작 줄 번호(1부터)")
+  .option("--limit <n>", "최대 줄 수")
+  .action((projectId, path, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({ path });
+      if (opts.ref) qs.set("ref", opts.ref);
+      if (opts.offset !== undefined) qs.set("offset", opts.offset);
+      if (opts.limit !== undefined) qs.set("limit", opts.limit);
+      printJson(await apiCall(`/api/projects/${projectId}/git/file/lines?${qs}`));
+    }),
+  );
+
+gitCmd
+  .command("grep <projectId> <path> <pattern>")
+  .description("소스 코드 파일을 정규식(JS 문법)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열")
+  .option("--ref <ref>")
+  .option("--case-insensitive", "대소문자 구분 안 함")
+  .option("--context <n>", "매치된 줄 앞뒤로 n줄씩 더 포함(grep -C와 동일)")
+  .action((projectId, path, pattern, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({ path, q: pattern });
+      if (opts.ref) qs.set("ref", opts.ref);
+      if (opts.caseInsensitive) qs.set("caseInsensitive", "true");
+      if (opts.context !== undefined) qs.set("context", opts.context);
+      printJson(await apiCall(`/api/projects/${projectId}/git/file/grep?${qs}`));
+    }),
+  );
+
+gitCmd
   .command("put <projectId> <path> <localFile>")
   .option("--message <m>", "커밋 메시지")
   .action((projectId, path, localFile, opts) =>

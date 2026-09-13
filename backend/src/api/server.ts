@@ -3232,6 +3232,40 @@ app.get(
   }),
 );
 
+// 문서와 같은 이유(#document-partial-read-grep-diff)로 소스 코드
+// 파일도 부분 읽기/검색 지원 - 큰 파일을 매번 전체로 안 올려도 됨.
+app.get(
+  "/api/projects/:projectId/git/file/lines",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    const filePath = req.query.path as string | undefined;
+    if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
+    const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
+    const limit = req.query.limit !== undefined ? Number(req.query.limit) : undefined;
+    res.json(await gitea.readSourceFileLines(target, filePath, req.query.ref as string | undefined, offset, limit));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/file/grep",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    const filePath = req.query.path as string | undefined;
+    if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
+    const { q } = req.query as { q?: string };
+    if (!q) { res.status(400).json({ error: "q가 필요합니다" }); return; }
+    const matches = await gitea.grepSourceFile(target, filePath, q, req.query.ref as string | undefined, {
+      caseInsensitive: req.query.caseInsensitive === "true",
+      context: req.query.context !== undefined ? Number(req.query.context) : undefined,
+    });
+    res.json(matches);
+  }),
+);
+
 // 소스 파일 선택기(엔티티 선택기 kind="sourceFile")용 - 재귀 전체 파일
 // 목록(기존 getFullTree()는 지금까지 git 동기화 제안 기능이 내부적으로만
 // 썼다, 새 라우트만 추가).
