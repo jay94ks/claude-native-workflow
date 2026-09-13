@@ -6206,3 +6206,83 @@ log`로 확인), 비충돌 드리프트(다른 줄)가 3-way 자동 병합돼 �
 실제로 쓰려면 별도로 운영 중인 `C:\CNW` 설치에 배포(`git pull` +
 재빌드)하는 절차가 여전히 필요하고, 웹훅 미발송 문제는 별도 과제로
 남는다.
+
+## API 키 카드 탭 분리 + 관계도/칸반 보드 전체폭 + 탭 줄바꿈, 그리고 git 캐시 웹훅 무효화 버그 수정(`#profile-api-keys-tabs` `#relations-kanban-full-width`)
+
+**배경**: 설계자 요청 6가지 - (1)(2) "내 정보" 화면 "API 키" 카드를
+탭으로 분리(개인 키 / 여러 프로젝트에 걸친 프로젝트 키 모아보기,
+실제 키 값 재조회는 대상 아님), (3)(4) "관계도"/"칸반 보드"의 앱 셸
+가로폭 제한(960px)을 풀되 칸반 보드는 화면을 넘지 않게, (5) 프로젝트
+탭 바가 넘칠 때 가로 스크롤 대신 다음 줄로 줄바꿈, (6) 지난 라운드
+(#git-cache-and-staging)에서 "범위 밖"으로 분리해뒀던 "Gitea 시스템
+웹훅이 이 인스턴스에서 발송되지 않는다"는 문제를 직접 조사.
+
+**수정 1 - API 키 카드 탭 분리(`#profile-api-keys-tabs`)**: 기존
+`PersonalKeysManager.vue`가 갖고 있던 카드 껍데기(`.card`+`<h2>`)를
+벗겨내 순수 목록 컴포넌트로 만들고, 새 `ApiKeysCard.vue`가 그 카드
+껍데기 + 탭 버튼 2개(개인 키/프로젝트 키)를 갖는다. "프로젝트 키" 탭은
+새 `MyProjectKeysManager.vue`(조회/배제 전용, 생성 폼 없음 - 새 키는
+여전히 각 프로젝트의 "키 관리" 화면에서 만듦) - 백엔드에
+`listMyProjectKeys()`(`GET /api/api-keys/project-mine`) 신규 추가,
+`ApiKey.project` relation을 그대로 join해 프로젝트 이름을 같이
+반환한다(기존 `listProjectKeys()`는 프로젝트 하나를 골라야 조회
+가능하고 owner가 아니면 그 안에서도 자기 것만 보이는 것과 달리, 이건
+"나"를 고정하고 프로젝트를 가로질러 모은다).
+
+**수정 2 - 레이아웃 폭/탭 줄바꿈(`#relations-kanban-full-width`)**:
+`AppLayout.vue`의 `.content`(모든 화면을 감싸는 앱 셸)가 960px으로
+고정돼 있던 것을, route meta `fullWidth: true`가 있으면
+`max-width: 100%`로 풀어주는 조건부 클래스를 추가. `router/index.ts`의
+`relations`/`kanban` 라우트에 이 meta를 붙였다 - 칸반 보드는 이미
+자체 컬럼 영역에 `overflow-x: auto`가 있어(기존 코드) 화면보다 넓어질
+일이 없다(요청하신 "화면을 가득 채우되 그 이상은 아님" 그대로 충족).
+`ProjectShellView.vue`의 프로젝트 탭 바(`.tabs`)는 `overflow-x: auto;
+flex-wrap: nowrap`(가로 스크롤)이던 걸 `flex-wrap: wrap`으로 바꿔
+넘치면 다음 줄에 표시되게 했다.
+
+**수정 3 - 웹훅 "미발송" 재조사, 실제로는 이 라운드 자신의 버그였음**:
+직접 재현·격리 테스트(별도 단일 Gitea 컨테이너, 디버그 로그 레벨)로
+확인한 결과 **Gitea의 시스템 웹훅 발송 자체는 정상 동작**했다 -
+`hook_task` 테이블에 매 push마다 `is_delivered=1`로 기록되고 있었다.
+그런데도 캐시가 갱신 안 됐던 진짜 원인은 지난 라운드에 내가 작성한
+`handleGiteaSystemPush`/`handleGiteaSystemDelete`의 버그였다:
+`invalidateTree(projectId, repoKind, parsed.branch)`처럼 **push된
+브랜치 이름("main" 등)을 `ref`로 넘겼는데, `gitea.ts`의 모든 캐시
+읽기 경로(`getFullTree`/`lookupShaInCachedTree`)는 항상 리터럴
+문자열 `"HEAD"`를 기본 ref로 써서 캐시 행을 쌓는다** - 그래서
+`invalidateTree`가 `ref: "main"`으로 삭제를 시도해도 실제로 저장된
+`ref: "HEAD"` 행과 매칭이 안 돼 아무것도 안 지워지고 조용히
+통과했다(에러 없음, 캐시도 그대로 - 딱 "웹훅이 안 온 것처럼" 보이는
+증상). 백엔드 라우트에 임시 디버그 로그를 추가해 실제 웹훅 payload가
+정확히 도착하고(`x-gitea-event: push` 등 헤더 정상, 서명 검증 통과)
+`handleGiteaSystemPush`도 `status: "processed"`로 정상 반환되는 것까지
+직접 확인한 뒤에야 이 ref 불일치를 발견했다. **수정**: 두 핸들러 모두
+`invalidateTree(projectId, repoKind)`로 `ref`를 생략(그 repoKind의
+모든 ref 캐시를 지움)하도록 변경.
+
+**검증**: 격리된 docker compose 스택에서 self_hosted 프로젝트에
+`docs git put`으로 파일을 만들어 캐시를 데운 뒤, `git my-token`으로
+받은 개인 토큰으로 **API를 완전히 우회한 직접 `git push`**로 같은
+파일 내용을 바꾸고, 곧바로 `docs git cat`으로 확인 - 수정 전에는
+캐시된 옛 내용이 계속 나왔고(버그 재현), `invalidateTree` 호출에서
+`ref` 인자를 제거한 뒤 다시 테스트하니 직접 push한 새 내용이 바로
+보였다(수정 확인). API 키 탭은 실제 브라우저(Vite dev 서버 + 격리된
+백엔드)로 개인 키/프로젝트 키 탭 전환, 프로젝트 키 생성 후 "내 정보"
+화면에 집계돼 보이는지, 배제 버튼까지 왕복 확인. 레이아웃은 같은
+브라우저에서 관계도/칸반 보드 라우트의 `.content` computed
+`max-width`가 100%로 바뀌는지, 다른 라우트(문서 등)는 여전히 960px
+그대로인지 `getComputedStyle`로 직접 확인. 탭 줄바꿈은 스크린샷으로
+좁은 화면에서 "키 관리" 탭이 다음 줄로 넘어가는 것 확인.
+
+**후속 조치**: 지난 라운드(DN-A013CCD3)와 그 git 공개본에 남아있던
+"Gitea가 웹훅을 발송하지 않는다"는 잘못된 결론을 이번에 FEATURES.md/
+FT-781A8041에서 정정했다 - 실제로는 이 앱 자신의 버그였고 이번
+라운드에서 고쳤으므로, 별도 과제로 분리해뒀던 건(`#gitea-system-
+webhook-not-firing`)도 이걸로 종결한다.
+
+**결론**: "내 정보"의 API 키 카드가 개인/프로젝트 두 탭으로 나뉘고,
+관계도·칸반 보드가 앱 셸의 960px 제한 없이 화면을 채우며, 프로젝트
+탭 바는 더 이상 스크롤되지 않고 줄바꿈된다. 그리고 git 캐시 무효화의
+2차 안전망(시스템 웹훅)이 실제로 의도대로 동작한다 - 지난 라운드에
+남겼던 "웹훅이 안 온다"는 결론은 오진이었고, 원인은 그 라운드 자신의
+`ref` 처리 버그였다.
