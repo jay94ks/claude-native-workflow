@@ -16,8 +16,13 @@ export interface RelationGraphNode {
 
 export interface RelationGraphEdge {
   id: string; // `${fromId}->${toId}`
-  from: string; // DB CodeRelationEdge.fromId(자식/하위)
-  to: string; // DB CodeRelationEdge.toId(부모/상위)
+  from: string; // DB CodeRelationEdge.fromId(자식/하위) - sharedTag는 방향 없음, 둘 중 하나
+  to: string; // DB CodeRelationEdge.toId(부모/상위) - sharedTag는 방향 없음, 둘 중 하나
+  // parentChild(기존, 기본값) - DB의 실제 부모/자식 관계, 화면에서
+  // 부모→자식 화살표 + 실선. sharedTag(신규, #relation-graph-tag-edges) -
+  // 태그를 하나라도 공유하는 노드끼리 점선으로 연결(방향 없음, 화살표
+  // 없음) - 설계자 지시.
+  kind?: "parentChild" | "sharedTag";
 }
 
 // 태그 문자열을 고정 팔레트 색상으로 해싱 - 같은 태그는 항상 같은

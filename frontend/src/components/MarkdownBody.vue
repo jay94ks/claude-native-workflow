@@ -4,10 +4,12 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useDocumentDialogStore } from "../stores/documentDialog";
 import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
+import { useQuestionDialogStore } from "../stores/questionDialog";
 
 const props = defineProps<{ body: string }>();
 const dialog = useDocumentDialogStore();
 const kanbanDialog = useKanbanCardDialogStore();
+const questionDialog = useQuestionDialogStore();
 const container = ref<HTMLElement | null>(null);
 
 const TRACKING_CODE_RE = /\b([A-Z]{2}-[0-9A-F]{8})\b/g;
@@ -29,6 +31,7 @@ function onClick(e: MouseEvent) {
   const code = codeEl?.dataset.code;
   if (!code) return;
   if (code.startsWith("KB-")) kanbanDialog.show(code);
+  else if (code.startsWith("QU-")) questionDialog.show(code);
   else dialog.show(code);
 }
 </script>

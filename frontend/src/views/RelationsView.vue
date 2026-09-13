@@ -93,14 +93,54 @@ const nodes = computed<RelationGraphNode[]>(() => {
   }));
 });
 
+// 태그를 하나라도 공유하는 노드끼리도 점선으로 잇는다(설계자 지시,
+// #relation-graph-tag-edges) - 부모/자식 관계와는 별개 축. 태그→노드ID
+// 역색인으로 만들어 같은 태그를 가진 노드끼리만 짝짓는다(전부 쌍으로
+// 비교하는 것보다 훨씬 적은 비교 - "전체 보기"로 최대 500개 노드가
+// 로드돼도 감당 가능). 이미 부모/자식으로 직접 이어진 쌍은 중복
+// 렌더링(화살표 있는 선 위에 화살표 없는 선이 겹침)을 피하려 건너뛴다.
+const parentChildPairKeys = computed<Set<string>>(() => {
+  const set = new Set<string>();
+  for (const d of Object.values(relationCache)) {
+    for (const parentId of d.parentIds) set.add(d.id < parentId ? `${d.id}|${parentId}` : `${parentId}|${d.id}`);
+  }
+  return set;
+});
+
+const tagEdges = computed<RelationGraphEdge[]>(() => {
+  const byTag = new Map<string, string[]>();
+  for (const d of Object.values(relationCache)) {
+    for (const t of d.tags) {
+      const list = byTag.get(t);
+      if (list) list.push(d.id);
+      else byTag.set(t, [d.id]);
+    }
+  }
+  const seenPairs = new Set<string>();
+  const result: RelationGraphEdge[] = [];
+  for (const ids of byTag.values()) {
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const [a, b] = ids[i] < ids[j] ? [ids[i], ids[j]] : [ids[j], ids[i]];
+        const pairKey = `${a}|${b}`;
+        if (seenPairs.has(pairKey) || parentChildPairKeys.value.has(pairKey)) continue;
+        seenPairs.add(pairKey);
+        result.push({ id: `tag:${pairKey}`, from: a, to: b, kind: "sharedTag" });
+      }
+    }
+  }
+  return result;
+});
+
 const edges = computed<RelationGraphEdge[]>(() => {
   const ids = new Set(Object.keys(relationCache));
   const list: RelationGraphEdge[] = [];
   for (const d of Object.values(relationCache)) {
     for (const parentId of d.parentIds) {
-      if (ids.has(parentId)) list.push({ id: `${d.id}->${parentId}`, from: d.id, to: parentId });
+      if (ids.has(parentId)) list.push({ id: `${d.id}->${parentId}`, from: d.id, to: parentId, kind: "parentChild" });
     }
   }
+  list.push(...tagEdges.value);
   return list;
 });
 

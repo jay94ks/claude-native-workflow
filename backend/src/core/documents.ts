@@ -360,9 +360,10 @@ export async function readDocumentLines(trackingCode: string, offset?: number, l
 export type DocumentGrepMatch = GrepMatch;
 export type DocumentGrepOptions = GrepOptions;
 
-/** 정규식(JS 문법) 패턴으로 본문을 줄 단위 검색한다 - Grep 도구의
- * "content" 출력 모드와 같은 모양(줄 번호+텍스트). 잘못된 정규식은
- * 명확한 에러로 거부(추측해서 고쳐주지 않음). */
+/** 정규식(JS 문법 + POSIX 문자 클래스, 그래도 안 되면 리터럴 문자열)
+ * 패턴으로 본문을 줄 단위 검색한다 - Grep 도구의 "content" 출력
+ * 모드와 같은 모양(줄 번호+텍스트). 패턴 컴파일 자체는 실패하지
+ * 않는다(textLines.ts의 3단계 폴백, #grep-posix-classes). */
 export async function grepDocument(trackingCode: string, pattern: string, opts: DocumentGrepOptions = {}): Promise<DocumentGrepMatch[]> {
   const doc = await getDocumentFromIndex(trackingCode);
   if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);

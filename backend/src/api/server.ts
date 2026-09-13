@@ -120,6 +120,8 @@ import {
   listPendingQuestions,
   listPendingQuestionsPaged,
   listResolvedQuestionsPaged,
+  countMyPendingQuestions,
+  listMyPendingQuestionsPaged,
   answerQuestion,
   listQuestions,
   listQuestionsPaged,
@@ -559,6 +561,26 @@ app.get(
     if (!mqttUrl) { res.json({ mqttUrl: null, username: null, password: null }); return; }
     const cred = await getOrCreateMqttCredential(req.userId!);
     res.json({ mqttUrl, ...cred });
+  }),
+);
+
+// 사이드바 알림 종 배지/목록이 씀(#notification-bell) - 내가 속한
+// 모든 프로젝트를 통틀어 "답변 대기"(open+pending) 질의.
+app.get(
+  "/api/auth/me/pending-questions/count",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    res.json({ count: await countMyPendingQuestions(req.userId!) });
+  }),
+);
+
+app.get(
+  "/api/auth/me/pending-questions/page",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    res.json(await listMyPendingQuestionsPaged(req.userId!, page, pageSize));
   }),
 );
 

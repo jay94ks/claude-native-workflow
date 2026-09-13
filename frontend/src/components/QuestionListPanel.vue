@@ -14,6 +14,9 @@ interface QuestionSummary {
   kind: string;
   text: string;
   status: string;
+  /** 프로젝트 횡단 목록(알림 전체 페이지 등)에서만 채워짐 - 있으면
+   * 프로젝트명 칩을 같이 보여준다. */
+  projectName?: string;
 }
 
 const props = defineProps<{
@@ -42,6 +45,7 @@ const STATUS_LABEL: Record<string, string> = { open: "미답변", pending: "확�
         <li v-for="q in items" :key="q.trackingCode">
           <div class="main">
             <code class="tcode" @click="dialog.show(q.trackingCode)">{{ q.trackingCode }}</code>
+            <span v-if="q.projectName" class="project-chip">{{ q.projectName }}</span>
             <span class="kind">{{ KIND_LABEL[q.kind] ?? q.kind }}</span>
             <span class="text">{{ q.text }}</span>
           </div>
@@ -111,6 +115,14 @@ const STATUS_LABEL: Record<string, string> = { open: "미답변", pending: "확�
   border-radius: 999px;
   background: var(--color-purple-bg);
   color: var(--color-purple-text);
+  flex-shrink: 0;
+}
+.project-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
   flex-shrink: 0;
 }
 .text {

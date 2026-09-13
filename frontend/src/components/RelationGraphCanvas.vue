@@ -89,14 +89,31 @@ function styleForMode(mode: RelationViewMode): StylesheetJsonBlock[] {
       },
     },
     {
-      selector: "edge",
+      // 부모/자식(DB 관계) - 기존 그대로 화살표 있는 실선.
+      selector: "edge[kind = 'parentChild']",
       style: {
         "curve-style": isNetwork ? "bezier" : "taxi",
+        "line-style": "solid",
         width: isNetwork ? 1.5 : 2,
         "line-color": border,
         "target-arrow-color": border,
         "target-arrow-shape": "triangle",
         "arrow-scale": 0.9,
+      },
+    },
+    {
+      // 태그 공유(#relation-graph-tag-edges, 설계자 지시 - 처음엔
+      // 실선으로 지시했다가 점선으로 정정됨) - 방향이 없는 관계라
+      // 화살표는 안 그리고, 부모/자식의 실제 파생 관계(실선)와 시각적
+      // 구분을 위해 점선. 색도 달리한다(진한 테두리색 대신 옅은 중립색).
+      selector: "edge[kind = 'sharedTag']",
+      style: {
+        "curve-style": isNetwork ? "bezier" : "taxi",
+        "line-style": "dashed",
+        width: isNetwork ? 1 : 1.5,
+        "line-color": "#9aa1ac",
+        "target-arrow-shape": "none",
+        opacity: 0.55,
       },
     },
     {
@@ -121,11 +138,17 @@ function toCyNode(n: RelationGraphNode): ElementDefinition {
 }
 
 function toCyEdge(e: RelationGraphEdge): ElementDefinition {
+  const kind = e.kind ?? "parentChild";
+  if (kind === "sharedTag") {
+    // 방향이 없는 관계 - source/target 순서는 의미 없다(화살표 자체를
+    // 안 그림, styleForMode의 edge[kind='sharedTag'] 참고).
+    return { group: "edges", data: { id: e.id, source: e.from, target: e.to, kind } };
+  }
   // DB 방향은 fromId(자식)→toId(부모)지만, 사람이 읽기엔 "위(부모)에서
   // 아래(자식)로 파생"이 더 직관적이라 화면에서만 화살표를 뒤집는다
   // (DB 스키마는 안 바꿈) - vis-network 시절 {from: e.to, to: e.from}과
   // 같은 규칙, Cytoscape에서는 source/target으로 표현.
-  return { group: "edges", data: { id: e.id, source: e.to, target: e.from } };
+  return { group: "edges", data: { id: e.id, source: e.to, target: e.from, kind } };
 }
 
 function syncNodes(list: RelationGraphNode[]) {

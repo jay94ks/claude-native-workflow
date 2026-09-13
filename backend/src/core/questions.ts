@@ -405,6 +405,90 @@ export async function listResolvedQuestionsPaged(
   return { ...result, items };
 }
 
+export interface MyPendingQuestion extends PendingQuestion {
+  projectName: string;
+}
+
+/** 내가 속한(=Member 행이 있는) 모든 프로젝트를 통틀어 "답변 대기"
+ * (open+pending) 질의 개수 - 사이드바 알림 종 배지가 씀(#notification-bell).
+ * isSuperAdmin의 암묵적 owner 승격은 여기선 안 쓴다(getMemberRole과
+ * 달리 "권한이 있는가"가 아니라 "내가 실제로 속한 프로젝트인가"를
+ * 묻는 질문이라 - 슈퍼관리자가 전체 시스템의 모든 질의를 알림으로
+ * 받는 건 오히려 노이즈). */
+export async function countMyPendingQuestions(userId: string): Promise<number> {
+  const db = getDb();
+  const memberships = await db.member.findMany({ where: { userId }, select: { projectId: true } });
+  const projectIds = memberships.map((m: { projectId: string }) => m.projectId);
+  if (projectIds.length === 0) return 0;
+  return db.question.count({ where: { status: { in: ["open", "pending"] }, projectId: { in: projectIds } } });
+}
+
+/** 위와 같은 범위(내가 속한 모든 프로젝트) - 알림 종을 눌렀을 때
+ * 뜨는 실제 목록. 프로젝트 이름도 같이 실어(어느 프로젝트 것인지
+ * 구분해야 함) 페이지네이션. */
+export async function listMyPendingQuestionsPaged(
+  userId: string,
+  page: number,
+  pageSize: number,
+): Promise<Page<MyPendingQuestion>> {
+  const db = getDb();
+  const memberships = await db.member.findMany({ where: { userId }, select: { projectId: true } });
+  const projectIds = memberships.map((m: { projectId: string }) => m.projectId);
+  if (projectIds.length === 0) return { items: [], page, pageSize, total: 0, totalPages: 1 };
+
+  const where = { status: { in: ["open", "pending"] }, projectId: { in: projectIds } };
+  type RawQuestion = {
+    trackingCode: string;
+    projectId: string;
+    targetType: string;
+    targetKey: string;
+    ordinal: number;
+    kind: string;
+    text: string;
+    askedBy: string;
+    status: string;
+    refs: { trackingCode: string }[];
+  };
+  const result = await paginate<RawQuestion>(
+    (args) => db.question.findMany({ where, include: { refs: true }, orderBy: { createdAt: "desc" }, ...args }),
+    () => db.question.count({ where }),
+    page,
+    pageSize,
+  );
+  const projectNameById = new Map<string, string>();
+  const items: MyPendingQuestion[] = [];
+  for (const r of result.items) {
+    let targetLabel = r.targetKey;
+    if (r.targetType === "document") {
+      const doc = await getDocument(r.targetKey);
+      if (doc) targetLabel = doc.title;
+    } else if (r.targetType === "kanbanCard") {
+      const card = await getKanbanCardByTrackingCode(r.targetKey);
+      if (card) targetLabel = card.title;
+    }
+    if (!projectNameById.has(r.projectId)) {
+      const project = await db.project.findUnique({ where: { id: r.projectId }, select: { name: true } });
+      projectNameById.set(r.projectId, project?.name ?? r.projectId);
+    }
+    items.push({
+      trackingCode: r.trackingCode,
+      projectId: r.projectId,
+      targetType: r.targetType,
+      targetKey: r.targetKey,
+      ordinal: r.ordinal,
+      kind: r.kind,
+      text: r.text,
+      askedBy: r.askedBy,
+      status: r.status,
+      refs: r.refs.map((x: { trackingCode: string }) => x.trackingCode),
+      options: [],
+      targetLabel,
+      projectName: projectNameById.get(r.projectId)!,
+    });
+  }
+  return { ...result, items };
+}
+
 /** AI가 아직 확인(ack)하지 않은 답변 건수 - notices 배너가 씀. */
 export async function countPendingQuestions(projectId: string): Promise<number> {
   const db = getDb();
