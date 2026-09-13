@@ -69,9 +69,7 @@ h1 {
   display: flex;
   gap: 10px;
   margin-bottom: 24px;
-  overflow-x: auto;
-  flex-wrap: nowrap;
-  padding-bottom: 2px;
+  flex-wrap: wrap;
   flex-shrink: 0;
 }
 .tab-content {

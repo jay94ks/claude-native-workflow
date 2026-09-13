@@ -30,6 +30,12 @@ const activeProjectId = computed(() =>
 
 const themeModeLabel = computed(() => ({ light: "라이트", dark: "다크", system: "시스템" })[theme.mode]);
 
+// 관계도/칸반 보드처럼 960px 폭이 답답한 화면은 route meta로 표시해
+// 이 레이아웃의 기본 폭 제한을 풀어준다(#relations-kanban-full-width) -
+// 화면을 넘기지는 않는다(max-width: 100%일 뿐, 그 이상은 각 화면 자체의
+// 내부 스크롤로 처리).
+const isFullWidth = computed(() => route.meta.fullWidth === true);
+
 onMounted(async () => {
   try {
     const config = await apiCall<{ teamsEnabled: boolean }>("/install-config");
@@ -74,7 +80,7 @@ function handleLogout() {
       </button>
       <button class="logout" @click="handleLogout">로그아웃</button>
     </aside>
-    <main class="content">
+    <main class="content" :class="{ 'full-width': isFullWidth }">
       <slot />
     </main>
     <DocumentPreviewDialog />
@@ -191,6 +197,9 @@ nav a.router-link-active {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+}
+.content.full-width {
+  max-width: 100%;
 }
 
 @media (max-width: 768px) {
