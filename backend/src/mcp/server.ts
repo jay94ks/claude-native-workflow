@@ -654,7 +654,7 @@ async function main() {
   tool(
     "document_list",
     "문서 목록",
-    "프로젝트의 문서 목록(docTypeId/statusCode로 필터 가능 - statusCode는 draft/review/pending/approved/deprecated/archived 중 하나, 예: 검토 대기 목록은 statusCode=review). page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열(최대 1000건).",
+    "프로젝트의 문서 색인 조회(본문 제외 - trackingCode/title/docTypeId/statusCode 등 요약만, 본문이 필요하면 document_get/document_read/document_grep으로 이어서 조회). docTypeId/statusCode로 필터 가능 - statusCode는 draft/review/pending/approved/deprecated/archived 중 하나, 예: 검토 대기 목록은 statusCode=review. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열(최대 1000건).",
     {
       projectId: z.string(),
       docTypeId: z.string().optional(),

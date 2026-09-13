@@ -165,6 +165,21 @@ export async function getDocumentAccessInfo(trackingCode: string): Promise<Docum
   });
 }
 
+/** `list`류(목차/색인 조회)가 반환하는 가벼운 요약 - `body`가 빠진
+ * `SearchableDocument`. 설계자가 실사용 중 지적 - "이 프로젝트에 어떤
+ * 문서가 있는지 훑어보려는" 목적의 호출인데도 문서마다 본문 전체가
+ * 그대로 실려 있어서(141개 문서 프로젝트로 실측 - 응답이 650KB,
+ * 그중 본문만 316KB), 정작 무엇을 볼지 고르기도 전에 컨텍스트가 죄다
+ * 본문으로 채워졌다. "훑어보고 고른 뒤 `get`/`read`/`grep`으로 필요한
+ * 것만 본다"는 흐름에 맞게, 색인 조회는 처음부터 본문을 안 실어야
+ * 한다(#document-list-lightweight). */
+export type DocumentSummary = Omit<SearchableDocument, "body">;
+
+function toDocumentSummary(doc: SearchableDocument): DocumentSummary {
+  const { body: _body, ...summary } = doc;
+  return summary;
+}
+
 // CLI/MCP가 "이 프로젝트의 전체 문서 목록"으로 쓰는 함수라 limit을
 // 명시적으로 크게 잡아야 한다 - 안 그러면 rawSearch()의 기본값(50)이
 // 조용히 적용돼, 문서가 50건을 넘는 프로젝트에서 뒤쪽 문서가 아무
@@ -172,8 +187,9 @@ export async function getDocumentAccessInfo(trackingCode: string): Promise<Docum
 // 200건 프로젝트로 재현해 발견). 1000은 Meilisearch 기본
 // maxTotalHits와 같은 값 - 이 한도까지도 넘는 프로젝트는 이번
 // 수정 범위 밖(QA-SCENARIOS.md에 잔여 한계로 기록).
-export async function listDocuments(projectId: string, docTypeId?: string, statusCode?: string): Promise<SearchableDocument[]> {
-  return listDocumentsFromIndex({ projectId, docTypeId, statusCode, limit: 1000 });
+export async function listDocuments(projectId: string, docTypeId?: string, statusCode?: string): Promise<DocumentSummary[]> {
+  const hits = await listDocumentsFromIndex({ projectId, docTypeId, statusCode, limit: 1000 });
+  return hits.map(toDocumentSummary);
 }
 
 /** 홈 대시보드 "최근 변경 문서" + 그 "더보기" 전체 목록 둘 다 이걸
@@ -202,7 +218,7 @@ export async function searchProjectDocumentsPaged(
 }
 
 export interface DocumentPage {
-  items: SearchableDocument[];
+  items: DocumentSummary[];
   page: number;
   pageSize: number;
   total: number;
@@ -211,8 +227,8 @@ export interface DocumentPage {
 
 /** 웹 문서 목록 화면 전용(요청 4번 페이지네이션) - createdAt:desc로
  * 안정적인 순서를 보장한다(정렬 없이 페이지를 넘기면 Meilisearch가
- * 페이지마다 다른 순서를 줄 수 있음). CLI/MCP가 쓰는 listDocuments()는
- * 그대로 둔다. */
+ * 페이지마다 다른 순서를 줄 수 있음). CLI/MCP가 쓰는 listDocuments()와
+ * 마찬가지로 본문은 뺀 요약만 반환한다. */
 export async function listDocumentsPaged(
   projectId: string,
   docTypeId: string | undefined,
@@ -229,7 +245,13 @@ export async function listDocumentsPaged(
     offset: (safePage - 1) * pageSize,
     sort: ["createdAt:desc"],
   });
-  return { items: hits, page: safePage, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+  return {
+    items: hits.map(toDocumentSummary),
+    page: safePage,
+    pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  };
 }
 
 export interface DocumentRevisionSummary {

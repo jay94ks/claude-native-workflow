@@ -1024,6 +1024,7 @@ program
 
 program
   .command("list <projectId>")
+  .description("문서 색인 조회(본문 제외 - trackingCode/title/docTypeId/statusCode 등 요약만) - 본문이 필요하면 get/read/grep으로 이어서 조회한다")
   .option("--type <docTypeId>")
   .option("--status <code>", "draft/review/pending/approved/deprecated/archived 중 하나로 필터 - 예: 검토 대기 목록은 --status review")
   .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열(최대 1000건)")
