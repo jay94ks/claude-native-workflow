@@ -694,6 +694,16 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   [--case-insensitive][--context]` - CLI/MCP(`git_read`/`git_grep`)
   대칭(버전 비교는 이미 `docs git log/diff/show`로 되므로 따로
   안 만듦).
+- **문서 색인 조회는 본문을 안 싣는다**(`#document-list-lightweight`)
+  - `docs list`/`document_list`(`--type`/`--status` 필터 가능)는
+  trackingCode/title/docTypeId/statusCode 등 요약 필드만 반환하고
+  본문은 안 준다 - "무엇이 있는지 훑어보고 고른 뒤 필요한 것만
+  get/read/grep으로 본다"는 흐름에 맞춘 것. 본문이 필요하면 이어서
+  `docs get`(전체) 또는 `docs read`/`docs grep`(부분)을 쓴다.
+  `--page`/`--count` 없이 부르는 기본 호출은 문서 1000건까지만 한
+  번에 담을 수 있는데(Meilisearch 기본 한도), 실제로 1000건을 넘는
+  프로젝트면 잘린 목록을 조용히 주지 않고 페이지네이션을 쓰라는
+  명확한 에러로 거부한다(`#document-list-page-required-at-scale`).
 
 ## 21. 인프라 & 배포
 

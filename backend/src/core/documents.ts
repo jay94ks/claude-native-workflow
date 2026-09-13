@@ -185,10 +185,20 @@ function toDocumentSummary(doc: SearchableDocument): DocumentSummary {
 // 조용히 적용돼, 문서가 50건을 넘는 프로젝트에서 뒤쪽 문서가 아무
 // 경고 없이 목록에서 통째로 빠진다(대량 문서 QA 라운드 중 실제
 // 200건 프로젝트로 재현해 발견). 1000은 Meilisearch 기본
-// maxTotalHits와 같은 값 - 이 한도까지도 넘는 프로젝트는 이번
-// 수정 범위 밖(QA-SCENARIOS.md에 잔여 한계로 기록).
+// maxTotalHits와 같은 값 - 그 이상은 애초에 한 번에 못 받아오므로,
+// total로 실제 건수를 확인해 정확히 그 상황이면(1000건보다 많음)
+// 자른 채로 돌려주지 않고 명확한 에러로 거부한다(#document-list-page-required-at-scale
+// - "안전한 실패"가 조용한 데이터 누락보다 낫다는 이 저장소의 일관된
+// 원칙). 정확히 1000건인 흔치 않은 경우는 total도 1000이라 오탐 없이
+// 그대로 전부 반환된다.
 export async function listDocuments(projectId: string, docTypeId?: string, statusCode?: string): Promise<DocumentSummary[]> {
-  const hits = await listDocumentsFromIndex({ projectId, docTypeId, statusCode, limit: 1000 });
+  const { hits, total } = await listDocumentsFromIndexPaged({ projectId, docTypeId, statusCode, limit: 1000, offset: 0 });
+  if (total > 1000) {
+    throw new Error(
+      `이 프로젝트에는 문서가 ${total}건 있어 한 번에 다 조회할 수 없습니다 - ` +
+        `docs list ${projectId} --page 1 --count 100처럼 --page/--count로 나눠 조회하세요.`,
+    );
+  }
   return hits.map(toDocumentSummary);
 }
 
