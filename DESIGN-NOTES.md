@@ -6575,3 +6575,92 @@ diff로 확인). git 캐시 갱신은 이제 진짜 git 커밋의 성공 여부�
 영향을 주지 않는다. `docs git sync-status`가 가끔 stale한 비교
 결과를 보여줄 수 있다는 건 알려진 한계로 남았다 - 실제 데이터를
 신뢰할 땐 `docs git cat`으로 직접 확인하는 게 더 정확하다.
+
+## 코드 관계도 기록 범위를 함수 호출/클래스 참조/설계 원칙까지 명시적으로 확장(`#code-relation-graph`)
+
+**배경**: 설계자 지시("함수간의 호출이나 클래스간 참조 등도 관계도에
+반영되어야해", "설계적 측면의 관계도 작성되어야 해") - 지금까지 코드
+관계도에 기록해온 항목들이 대부분 "문서/파일 단위 설계 통찰"(예: 어떤
+라운드가 어떤 파일들을 왜 바꿨는지) 위주였고, 실제 함수 호출·클래스
+참조 수준의 관계나 특정 코드에 매이지 않는 일반화된 설계 원칙은 거의
+기록돼 있지 않았다.
+
+**확인 및 조치**: SKILL.md의 "코드 관계도" 절을 다시 읽어보니 "언제
+기록할지" 기준 자체는 이미 "X 함수가 Y를 거쳐 Z를 호출하는 이유를
+추적해 알아냈다" 같은 함수 호출 수준 예시를 포함하고 있었다 - 즉
+가이드 자체의 공백은 아니었고, 실제 기록 관행이 파일 단위 요약에
+치우쳐 있던 게 문제였다. 그래도 "설계 원칙"(특정 함수/파일에 매이지
+않는 일반화된 규칙) 수준의 예시는 없어서, 이 부분만 명시적으로
+추가했다(`.claude/skills/claude-native-workflow/SKILL.md` +
+`backend/prisma/seed-templates/SKILL.md` 양쪽 동기화) - "선별적으로
+중요한 것만" 남기는 기존 기준은 그대로 유지, 예시 종류만 넓혔다.
+
+직접 시범: 이 문서 위 라운드(작업 저장소 동기화 + 캐시 버그 수정)를
+소재로 5개 관계를 새로 기록해 새 기준을 실제로 적용해봤다 - 함수
+호출 체인 2개(`commitStaged()`→`changeFiles()`의 정확한 호출 경로 및
+캐시 patch 순서, `commitStaged()`가 3-way 병합 base 조회에
+`getBlobBySha()`를 반드시 써야 하는 이유), 클래스/모듈 참조 관계
+1개(Cytoscape `cytoscape.use()` 전역 레지스트리 등록이 동적 import
+뒤로 미뤄지며 생긴 순서 의존성), 일반화된 설계 원칙 2개(이 프로젝트에서
+"동기화"가 가리킬 수 있는 세 가지 서로 다른 동작 - mirror pull/작업
+저장소 커밋/발행, 그리고 "캐시 쓰기는 그것을 유발한 실제 동작의 성공
+여부에 영향을 주면 안 된다"는 원칙 - 후자는 앞의 함수 호출 관계의
+상위 관계로 연결해뒀다).
+
+**결론**: 코드 관계도가 다루는 범위가 "파일 단위 발견"에서 "함수
+호출/클래스 참조/설계 원칙"까지 명시적으로 넓어졌다 - 가이드 자체보다는
+실제 기록 습관을 교정한 라운드다. 앞으로 라운드를 마무리할 때 파일
+단위 요약뿐 아니라 이 세 가지 관점도 같이 점검하는 걸 기본으로 삼는다.
+
+## sync-status 스테일 오탐 원인 규명 및 수정(`#sync-status-crlf-fix`)
+
+**배경**: 위 `#git-cache-and-staging` 라운드가 "후속 과제로 남긴"
+현상 - 캐시 버그 수정 후에도 `docs git sync-status`가 일부 파일을
+여전히 차이가 있다고 보고했으나 `docs git cat` 직접 diff로는 완전히
+일치해, 원인 불명의 별개 캐싱 문제로 추정하고 범위 밖으로 남겨뒀었다.
+설계자 지시("sync-status 스테일 버그도 조사해서 고쳐줘")로 이번
+라운드에서 실제로 규명했다.
+
+**조사**: 앱 자신의 표시 계층(`docs git cat`, 앱의 diff 로직)을
+신뢰하지 않고 우회해서 실측했다 - `docker compose exec postgres
+psql`로 `GitTreeCache` 테이블의 `treeJson`을 직접 조회해 mirror/work
+트리의 blob sha가 실제로 다른지 확인했고, `docker compose exec
+backend node -e '...'`에서 `fetch()`로 Gitea REST API를 직접 호출(관리자
+토큰 사용)해 앱의 어떤 직렬화 로직도 거치지 않은 blob 원본 크기/내용을
+확인했다. 이 과정에서 `docs git cat`이 13바이트 콘텐츠를 14바이트로
+읽어 돌려주는 자체 표시 계층 버그를 한 차례 재현했으나, 이건 진짜
+원인과 무관한 별개의 소소한 표시 버그로 판단해 이번 라운드에서는 더
+쫓지 않았다.
+
+**발견**: `sync-status`는 원래부터 정확했다 - mirror/work 트리의 blob
+sha가 실제로 달랐다. 원인은 캐시가 아니라 CRLF 오염이었다. 이
+컴퓨터는 `core.autocrlf=true`로 설정돼 있어(`git config --get
+core.autocrlf`로 확인) 로컬 체크아웃 파일은 CRLF로 저장되는데,
+`docs git add`/`docs git put`(`backend/src/cli/index.ts`)은 로컬
+파일을 실제 `git add`/`git commit`으로 올리는 게 아니라 파일을 읽어
+API로 바이트를 그대로 전송하는 경로라, `fs.readFileSync(localFile,
+"utf-8")`로 그대로 읽으면 진짜 git이 커밋 시점에 자동으로 해주는
+CRLF→LF 정규화를 받지 못한다. 결과적으로 저장소 원본(GitHub/mirror)이
+LF인 파일도 이 CLI 경로로 올리면 조용히 CRLF로 오염된 콘텐츠가 work
+저장소에 커밋됐다 - 이게 mirror/work blob sha가 계속 달라 보이던
+진짜 원인이었다.
+
+**수정**: `backend/src/cli/index.ts`의 `git put`/`git add` 두 명령
+모두, 파일을 읽은 뒤 `.replace(/\r\n/g, "\n")`으로 CRLF를 LF로
+정규화하도록 수정했다(이 파이프라인은 처음부터 UTF-8 텍스트 전용이라
+바이너리 파일은 대상이 아니므로 정규화가 안전하다).
+
+**검증**: 최소 재현 파일로 CRLF 콘텐츠를 넣고 `docs git put`으로
+올린 뒤 Gitea REST API를 직접 호출해 커밋된 콘텐츠가 LF인지 확인 -
+통과. 실제로 CRLF에 오염돼 있던 5개 파일(`DESIGN-NOTES.md`,
+`backend/prisma/schema.mysql.prisma`,
+`backend/prisma/schema.postgres.prisma`,
+`backend/prisma/schema.sqlite.prisma`, `backend/src/core/gitea.ts`)을
+수정된 CLI로 다시 스테이징·커밋했고, 최종 `docs git sync-status`
+결과가 완전히 깨끗해졌다(`{"added": [], "changed": [],
+"removedFromWork": []}`).
+
+**결론**: `#git-cache-and-staging`이 "후속 과제로 남긴" 캐싱
+미스터리는 실제로는 없었다 - sync-status는 처음부터 옳았고, 문제는
+이 CLI의 파일 읽기 경로가 git 자신의 정규화를 우회한 것이었다. 이
+라운드로 그 후속 과제는 종료됐다.

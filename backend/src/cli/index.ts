@@ -1877,7 +1877,17 @@ gitCmd
   .action((projectId, path, localFile, opts) =>
     run(async () => {
       const fs = await import("node:fs");
-      const content = fs.readFileSync(localFile, "utf-8");
+      // 이 로컬 파일을 실제 git add/commit으로 올리는 게 아니라 API로
+      // 바이트를 그대로 전송하는 경로라, Windows에서 core.autocrlf=true로
+      // 체크아웃된 파일(CRLF)을 그대로 읽으면 진짜 git이 커밋 시점에
+      // 해주는 CRLF→LF 정규화를 못 받는다 - 저장소 원본(GitHub 등)이
+      // LF인 파일도 이 경로로 올리면 조용히 CRLF로 오염된다(#sync-status-crlf-fix
+      // 라운드에서 실측 확인 - 같은 파일의 mirror/work 블롭 sha가
+      // 계속 달라 보이던 진짜 원인). 이 파이프라인은 처음부터 UTF-8
+      // 텍스트 전용(Buffer.from(content, "utf-8")로 그대로 전송)이라
+      // 바이너리 파일은 애초에 대상이 아니므로, 실제 git과 동일하게
+      // 여기서 CRLF를 LF로 정규화한다.
+      const content = fs.readFileSync(localFile, "utf-8").replace(/\r\n/g, "\n");
       const qs = new URLSearchParams({ path });
       printJson(
         await apiCall(`/api/projects/${projectId}/git/file?${qs}`, {
@@ -1920,7 +1930,8 @@ gitCmd
   .action((projectId, path, localFile) =>
     run(async () => {
       const fs = await import("node:fs");
-      const content = fs.readFileSync(localFile, "utf-8");
+      // git put과 같은 이유로 CRLF→LF 정규화(위 put 명령 주석 참고).
+      const content = fs.readFileSync(localFile, "utf-8").replace(/\r\n/g, "\n");
       printJson(
         await apiCall(`/api/projects/${projectId}/git/staging/add`, {
           method: "POST",
