@@ -116,6 +116,22 @@ export async function syncSourceFileOnSave(projectId: string, path: string, cont
   }
 }
 
+/** 소스 에디터/git delete에서 파일을 삭제한 직후 - syncSourceFileOnSave와
+ * 같은 fail-soft 원칙(Meilisearch가 죽어 있어도 삭제 자체는 이미 끝났으니
+ * 실패로 보이게 하지 않고 재동기화 큐에 남긴다). 색인에 애초에 없었던
+ * 경로(화이트리스트 밖 파일 등)를 지우려 해도 조용히 성공 처리된다. */
+export async function syncSourceFileOnDelete(projectId: string, path: string): Promise<void> {
+  try {
+    await indexSourceFileDelete(projectId, path);
+  } catch (err) {
+    if (err instanceof MeiliSearchRequestError) {
+      await enqueueSearchSync("resyncProjectSourceFiles", { projectId });
+    } else {
+      throw err;
+    }
+  }
+}
+
 /** push 웹훅으로 들어온 커밋들의 added/modified/removed를 순서대로
  * 접어(같은 경로가 여러 번 나오면 마지막 상태만 적용) 최종 upsert/delete
  * 집합을 구한 뒤 반영한다. 이 시스템에서 브라우징 가능한 git 콘텐츠는

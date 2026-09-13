@@ -1885,6 +1885,22 @@ gitCmd
   );
 
 gitCmd
+  .command("delete <projectId> <path>")
+  .description("저장소에서 파일을 삭제한다(커밋으로 기록됨)")
+  .option("--message <m>", "커밋 메시지")
+  .action((projectId, path, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({ path });
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/file?${qs}`, {
+          method: "DELETE",
+          body: JSON.stringify({ message: opts.message }),
+        }),
+      );
+    }),
+  );
+
+gitCmd
   .command("my-token")
   .description("내 Gitea 개인 접근 토큰을 재발급하고 1회 노출한다(외부 git 클라이언트에서 clone/push 시 비밀번호 자리에 쓴다)")
   .action(() =>

@@ -137,7 +137,7 @@ import {
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates, listTemplateRevisions, listTemplateRevisionsPaged } from "../core/templates.js";
 import { MeiliSearchRequestError } from "meilisearch";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
-import { backfillProjectSourceIndex, syncSourceFileOnSave } from "../core/sourceIndex.js";
+import { backfillProjectSourceIndex, syncSourceFileOnSave, syncSourceFileOnDelete } from "../core/sourceIndex.js";
 import { getSearchSyncQueueStatus, drainSearchSyncQueue } from "../core/searchSyncQueue.js";
 import {
   resolveEffectivePermission,
@@ -3309,6 +3309,24 @@ app.put(
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
     await gitea.putFileContent(target, filePath, content, message || `docs: update ${filePath}`, actingToken);
     await syncSourceFileOnSave(req.params.projectId, filePath, content);
+    res.json({ ok: true });
+  }),
+);
+
+app.delete(
+  "/api/projects/:projectId/git/file",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    const filePath = req.query.path as string | undefined;
+    if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
+    const { message } = (req.body ?? {}) as { message?: string };
+    // put과 같은 원칙 - 커밋이 요청을 보낸 설계자 신원으로 귀속되도록 그
+    // 설계자의 Gitea PAT를 구해 넘긴다(없으면 관리자 토큰으로 폴백).
+    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
+    await gitea.deleteFileContent(target, filePath, message || `docs: delete ${filePath}`, actingToken);
+    await syncSourceFileOnDelete(req.params.projectId, filePath);
     res.json({ ok: true });
   }),
 );

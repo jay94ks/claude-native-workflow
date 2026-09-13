@@ -1347,6 +1347,19 @@ async function main() {
       });
     },
   );
+  tool(
+    "git_delete",
+    "git 파일 삭제",
+    "저장소에서 파일을 삭제한다(커밋으로 기록됨).",
+    { projectId: z.string(), path: z.string(), message: z.string().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({ path: String(a.path) });
+      return call(`/api/projects/${a.projectId}/git/file?${qs}`, {
+        method: "DELETE",
+        body: JSON.stringify({ message: a.message }),
+      });
+    },
+  );
 
   // ---------------------------------------------------------------- git push 훅 프롬프트 자동화 (Phase 3 - 대기열 방식)
 

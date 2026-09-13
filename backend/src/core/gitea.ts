@@ -623,6 +623,36 @@ export async function putFileContent(
   }
 }
 
+/** 저장소에서 파일을 삭제(커밋으로 기록) - putFileContent의 반대.
+ * 없는 파일을 지우려는 시도는 put처럼 조용히 넘어가지 않고 명확한
+ * 에러로 실패한다(삭제 대상이 없다는 걸 호출부가 놓치지 않도록). */
+export async function deleteFileContent(
+  target: GiteaRepoRef,
+  filepath: string,
+  message: string,
+  actingToken?: string,
+): Promise<void> {
+  const { apiUrl, token: adminToken } = config();
+  const authToken = actingToken || adminToken;
+  const encodedPath = filepath.split("/").map(encodeURIComponent).join("/");
+  const contentPath = `/api/v1/repos/${target.org}/${target.repo}/contents/${encodedPath}`;
+
+  const getRes = await fetch(`${apiUrl}${contentPath}`, { headers: { Authorization: `token ${authToken}` } });
+  if (getRes.status === 404) throw new Error(`파일이 없습니다: ${filepath}`);
+  if (!getRes.ok) throw new Error(`Gitea 파일 조회 실패: HTTP ${getRes.status}`);
+  const { sha } = (await getRes.json()) as { sha: string };
+
+  const res = await fetch(`${apiUrl}${contentPath}`, {
+    method: "DELETE",
+    headers: { Authorization: `token ${authToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ sha, message }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
+}
+
 /** Gitea 사용자 계정 존재 여부 - 사용자 계정 마스터링(core/
  * giteaAccounts.ts)의 username 충돌 회피용. 실제 인스턴스로 검증해
  * 확정: `GET /users/:username`이 있으면 200, 없으면 404. */
