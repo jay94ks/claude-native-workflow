@@ -680,6 +680,14 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   생략하면 기존처럼 전체 배열(문서 목록은 최대 1000건), 주면
   `{items, page, pageSize, total, totalPages}` 응답으로 바뀐다(git
   로그만 Gitea 제약으로 total 없이 `{items, hasMore}`).
+- **문서 부분 읽기/검색/버전 비교**(`#document-partial-read-grep-diff`)
+  - 파일에 대한 Read/Grep 도구가 하는 일을 문서 본문에 대해 한다.
+  `docs read <trackingCode> [--offset][--limit]`(줄 범위 읽기),
+  `docs grep <trackingCode> <pattern> [--case-insensitive][--context]`
+  (정규식 줄 검색), `docs diff <trackingCode> <from> [<to>]`(리비전
+  id 또는 `current` 두 시점을 줄 단위로 비교, `diff` 라이브러리 사용) -
+  셋 다 CLI/MCP(`document_read`/`document_grep`/`document_diff`)
+  대칭.
 
 ## 21. 인프라 & 배포
 

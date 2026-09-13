@@ -96,7 +96,26 @@ document next-statuses <trackingCode>`로 확인한다.
 이름만 같을 뿐 완전히 다른 개념이니 혼동하지 않는다. 상태가 바뀌어
 범위를 벗어나도 기존 값은 자동으로 지워지지 않는다.
 
-## 설계자 프로필 / 활동 이력
+## 큰 문서 다루기 (부분 읽기/검색/비교)
+
+`docs get`/`document_get`은 항상 본문 전체를 반환한다 - 라운드 기록처럼
+긴 문서를 그냥 훑어보거나 특정 키워드만 확인하려는 거라면 굳이 전체를
+컨텍스트에 올릴 필요 없이 아래를 먼저 쓴다(파일에 대한 Read/Grep
+도구와 같은 역할을 문서 본문에 대해 한다):
+
+- **부분 읽기**: `docs read <trackingCode> [--offset <n>] [--limit <n>]`
+  - 1부터 시작하는 줄 번호로 범위를 지정, 둘 다 생략하면 처음 2000줄.
+  `totalLines`로 전체 줄 수를 알 수 있다.
+- **본문 검색**: `docs grep <trackingCode> <pattern> [--case-insensitive]
+  [--context <n>]` - JS 정규식 문법, 매치된 줄 번호+텍스트 배열을
+  반환한다(`--context`로 앞뒤 줄도 같이).
+- **버전 비교**: `docs diff <trackingCode> <from> [<to>]` - `from`/`to`는
+  `docs revisions`가 주는 리비전 id 또는 리터럴 `current`(지금 본문,
+  `to` 생략 시 기본값). `diff` 라이브러리의 줄 단위 결과
+  (`added`/`removed`/`value`)를 그대로 반환한다.
+
+셋 다 `docs get`과 마찬가지로 검색 엔진에서 가져온 본문 위에서 동작하는
+순수 읽기 연산이라 문서 상태나 리비전 이력에 아무 영향을 주지 않는다.
 
 `docs auth whoami`로 본인 프로필(id/username/email/phone 등)을,
 `docs user get <userId>`로 다른 설계자의 공개 프로필(비공개 필드는
@@ -399,6 +418,9 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 문서 링크 | `docs link <from> <to>` | `document_link` |
 | 역참조 조회 | `docs backlinks <trackingCode>` | `document_backlinks` |
 | 버전 이력 조회 | `docs revisions <trackingCode>` | `document_revisions` |
+| 부분 읽기(줄 범위) | `docs read <trackingCode> [--offset <n>] [--limit <n>]` | `document_read` |
+| 본문 정규식 검색 | `docs grep <trackingCode> <pattern> [--case-insensitive] [--context <n>]` | `document_grep` |
+| 버전 비교 | `docs diff <trackingCode> <from> [<to>]`(from/to는 리비전 id 또는 "current") | `document_diff` |
 | 연관 소스코드 연결 | `docs link-source <trackingCode> <path>` | `document_link_source` |
 | 연관 소스코드 해제 | `docs unlink-source <trackingCode> <linkId>` | `document_unlink_source` |
 | 연관 소스코드 목록 | `docs source-links <trackingCode>` | `document_source_links` |

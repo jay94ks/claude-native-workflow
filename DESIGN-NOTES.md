@@ -5948,3 +5948,37 @@ class="document-editor">`로 한 번 감싸고, 그 클래스에 `flex-shrink:
 프론트엔드 재빌드 후 다시 열어 "연관된 소스 코드"/"연관 브랜치"
 섹션이 본문 아래에 정확히 이어서 렌더링되는지 스크린샷으로 확인.
 `vue-tsc -b` 클린.
+
+## 문서 부분 읽기/검색/버전 비교(`#document-partial-read-grep-diff`) - 완료
+
+**배경**: 설계자가 큰 문서(이 저장소 자신을 이주하며 만든 DN 문서들이
+직접적인 계기)를 다룰 때 CLI/MCP/SKILL에 diff/grep/부분 읽기/줄 읽기
+기능이 있어야 할 것 같다고 지시 - `docs get`은 항상 본문 전체를
+반환해서, 긴 문서에서 키워드 하나만 확인하거나 일부 줄만 보고 싶어도
+전체를 컨텍스트에 올려야 했다.
+
+**구현**: `core/documents.ts`에 세 함수 신설 - `readDocumentLines`
+(1부터 시작하는 줄 번호로 부분 읽기, 둘 다 생략하면 처음 2000줄),
+`grepDocument`(JS 정규식 줄 검색, `--context`로 앞뒤 줄 포함, 잘못된
+정규식은 명확한 에러로 거부), `diffDocument`(리비전 id 또는 리터럴
+`current` 두 시점을 새로 추가한 `diff`(jsdiff) 패키지의 `diffLines`로
+줄 단위 비교). 셋 다 `getDocument()`(검색 엔진 경유)로 이미 가져온
+본문 위에서 동작하는 순수 읽기 후처리라 "모든 조회는 검색 엔진을
+거친다" 원칙을 우회하지 않는다. API
+`GET /api/documents/:trackingCode/{lines,grep,diff}` 신설(기존
+읽기 라우트와 동일한 `resolveEffectivePermission` 읽기 권한 검사).
+CLI `docs read/grep/diff`, MCP `document_read`/`document_grep`/
+`document_diff`(`audit-cli-mcp.ts`의 `KNOWN_RENAMES`에 등록 - `get`→
+`document_get`과 같은 패턴). SKILL.md(이 저장소 사본+배포 템플릿
+둘 다)에 "큰 문서 다루기" 절 신설.
+
+**검증**: `tsc --noEmit`/`audit:cli-mcp` 클린 확인 후 실제 긴 DN
+문서로 `docs read --offset --limit`(줄 범위 정확히 반환), `docs
+grep`(매치 줄 번호 확인), 존재하지 않는 리비전/잘못된 정규식의 에러
+메시지까지 확인. `docs save`로 실제 리비전을 하나 만든 뒤 `docs
+diff`로 추가된 줄이 `added:true`로 정확히 잡히는지 확인(테스트 후
+원상 복구).
+
+**결론**: CLAUDE.md의 "관계도 추적"과 마찬가지로, 이 저장소 자신이
+가장 먼저 이 기능의 실사용처가 됐다 - 97개 DN 문서 같은 대형 문서를
+이제 전체 대신 필요한 부분만 골라 보거나 검색할 수 있다.
