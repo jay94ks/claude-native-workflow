@@ -196,6 +196,21 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
 
 - 문서 생성/조회/본문 저장/상태 전이/삭제(삭제는 리비전·링크·질의/
   답변까지 함께 정리).
+- **생성/저장/전이/우선순위/보고서 생성 응답에는 본문이 없다** -
+  `docs new`/`save`/`transition`/`priority-set`/`report-new`(및 대응
+  MCP 도구 `document_new`/`document_save`/`document_transition`/
+  `document_priority_set`/`report_new`)는 전부 본문(`body`)이 빠진
+  가벼운 결과만 돌려주고, 대신 `updatedAt`(epoch ms, Prisma가 매
+  갱신마다 자동 갱신)을 변경 여부 확인용 캐시키처럼 노출한다 - 호출자가
+  이미 그 본문을 알고 있는 호출(생성/저장/보고서 생성 - 방금 자기가
+  보낸 내용)이거나 본문을 안 건드리는 호출(전이/우선순위 설정)인데도
+  매번 전문을 그대로 돌려주던 낭비를 없앤 것(`#document-list-
+  lightweight`와 같은 문제 - 특히 MCP로 호출하는 AI 세션에서는 상태
+  하나 바꿀 때마다 전체 본문이 도구 응답에 실려 컨텍스트를 잡아먹는
+  실질적 비용이었음). 본문이 필요하면 `get`/`read`/`grep`(MCP도
+  동일)으로 이어서 조회한다. `docs transition-bulk`/
+  `document_transition_bulk`는 원래도 본문이 없던 항목별 결과라 대상
+  아님.
 - **일괄 상태 전이**(웹에는 전용 UI가 없고 CLI/MCP로만 가능) - 여러
   문서를 한 번에 같은 상태로 전이한다. 선택한 문서들이 서로 다른
   프로젝트/타입/권한을 가질 수 있어 전부-성공/전부-실패가 아니라

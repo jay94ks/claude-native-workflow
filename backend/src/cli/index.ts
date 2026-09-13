@@ -1003,6 +1003,7 @@ program
 
 program
   .command("new <projectId> <docTypeCode>")
+  .description("문서를 생성한다 - 응답에 본문은 없음(호출자가 이미 보낸 내용을 그대로 돌려주지 않음), updatedAt으로 생성 시각 확인, 본문이 필요하면 get/read/grep으로 이어서 조회한다")
   .requiredOption("--title <t>")
   .requiredOption("--body <file>", "본문 마크다운 파일 경로(로컬 스크래치 사본 - git 커밋 대상 아님)")
   .action((projectId, docTypeCode, opts) =>
@@ -1059,6 +1060,7 @@ program
 
 program
   .command("save <trackingCode> <file>")
+  .description("문서 본문을 덮어쓰고 버전 이력을 남긴다 - 응답에 본문은 없음(호출자가 이미 보낸 내용), updatedAt으로 저장 여부만 확인, 본문이 필요하면 get/read/grep으로 이어서 조회한다")
   .action((trackingCode, file) =>
     run(async () => {
       const fs = await import("node:fs");
@@ -1069,6 +1071,7 @@ program
 
 program
   .command("transition <trackingCode> <toStatusCode>")
+  .description("정의된 전이 규칙에 따라 문서 상태를 바꾼다 - 응답에 본문은 없음(전이는 본문을 안 건드림), updatedAt으로 변경 여부만 확인, 본문이 필요하면 get/read/grep으로 이어서 조회한다")
   .action((trackingCode, toStatusCode) =>
     run(async () =>
       printJson(
@@ -1096,7 +1099,7 @@ program
 
 program
   .command("priority-set <trackingCode> <n>")
-  .description("문서 우선순위(정수)를 설정/갱신한다 - 문서 상태가 review 또는 pending일 때만 가능")
+  .description("문서 우선순위(정수)를 설정/갱신한다 - 문서 상태가 review 또는 pending일 때만 가능. 응답에 본문은 없음(우선순위 설정은 본문을 안 건드림), updatedAt으로 변경 여부만 확인, 본문이 필요하면 get/read/grep으로 이어서 조회한다")
   .action((trackingCode, n) =>
     run(async () => {
       const priority = Number(n);
@@ -1413,6 +1416,7 @@ program
 
 program
   .command("report-new <projectId>")
+  .description("여러 문서를 링크로 엮는 보고서를 생성한다 - 응답에 본문은 없음(호출자가 이미 보낸 내용), 본문이 필요하면 get/read/grep으로 이어서 조회한다")
   .requiredOption("--title <t>")
   .requiredOption("--body <file>")
   .option("--links <codes>", "쉼표로 구분된 trackingCode 목록")

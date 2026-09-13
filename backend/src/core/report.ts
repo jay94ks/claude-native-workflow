@@ -1,4 +1,4 @@
-import { createDocument, addDocumentLink, type DocumentDetail } from "./documents.js";
+import { createDocument, addDocumentLink, type DocumentMutationSummary } from "./documents.js";
 
 const REPORT_TYPE_CODE = "DN";
 
@@ -13,7 +13,7 @@ export interface CreateReportInput {
   links?: string[]; // 요약 대상이 된 다른 문서들의 trackingCode
 }
 
-export async function createReport(input: CreateReportInput): Promise<DocumentDetail> {
+export async function createReport(input: CreateReportInput): Promise<DocumentMutationSummary> {
   const report = await createDocument({
     projectId: input.projectId,
     docTypeCode: REPORT_TYPE_CODE,

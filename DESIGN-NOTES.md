@@ -6363,3 +6363,75 @@ UNFILED_SENTINEL = "__unfiled__"`를 그대로 뒀다가, `vue-tsc --noEmit`은
 서브탭은 정렬 콤보박스로 순서를 바꿀 수 있다. 문서를 폴더로 드래그해
 옮기는 기능은 이 개편으로 없어졌고, 이제 문서 읽기 페이지의 "폴더"
 다이얼로그가 유일한 이동 경로다.
+
+## 문서 변형(생성/저장/전이/우선순위/보고서) 응답에서 본문 생략 + updatedAt 캐시키 도입(`#document-mutation-lightweight-response`)
+
+**배경**: 설계자 지적 - `docs transition`이 매번 문서 전문을 응답에
+실어 보내는데, 이 호출은 본문을 바꾸지도 않는데 그렇다. 조사해보니
+`save`/`priority-set`은 물론 문서 생성(`new`)/보고서 생성
+(`report-new`)까지 전부 같은 패턴이었다 - 호출자가 이미 알고 있는
+본문(생성/저장 - 방금 자기가 보낸 내용)이거나 본문을 안 건드리는
+호출(전이/우선순위)인데도 매번 전체 본문을 그대로 돌려주고 있었다.
+특히 MCP로 이 도구들을 호출하는 AI 세션 입장에서는 상태 하나 바꾸는
+호출마다 문서 전체 본문이 도구 응답에 실려 컨텍스트를 잡아먹는
+실질적 비용으로 이어진다. 이미 같은 문제를 해결한 선례가 있다 -
+`docs list`가 문서 색인을 훑어보는 용도인데도 본문이 같이 실려 있던
+걸 고친 라운드(`DN-01028FFB`, commit `c3b9f95`)에서 만든
+`DocumentSummary = Omit<SearchableDocument, "body">` 패턴을
+변형(mutation) 계열 응답에도 그대로 적용했다.
+
+**설계 결정**(Plan Mode + AskUserQuestion으로 사전 확정): 적용 대상은
+`save`/`transition`/`priority-set` + 조사 중 발견한 `new`/
+`report-new`까지 포함(같은 낭비 패턴이라는 판단). 캐시키는 새 해시/
+버전 카운터를 만들지 않고 `Document.updatedAt`(Prisma가 매 update마다
+자동 갱신, 이미 DB에 존재)을 그대로 재사용(본문 해시를 새로 계산하는
+건 오히려 연산을 늘려서 원래 취지와 어긋남).
+
+**구현**: `backend/src/core/documents.ts`의 `DocumentDetail`에
+`updatedAt: number`(epoch ms) 필드를 추가하고, 새 타입
+`DocumentMutationSummary = Omit<DocumentDetail, "body">` + 매퍼
+`toMutationSummary()`(`DocumentSummary`/`toDocumentSummary()`와 똑같은
+형태)를 만들었다. `createDocument`/`saveDocumentBody`/
+`transitionDocumentStatus`/`setDocumentPriority`(documents.ts) +
+`createReport`(report.ts) 5개 함수의 반환 타입을 `DocumentDetail` →
+`DocumentMutationSummary`로 바꿨다 - 각 함수 마지막 리턴 객체 리터럴은
+그대로 두고 `updatedAt: row.updatedAt.getTime()`만 추가한 뒤
+`toMutationSummary(...)`로 감싸는 최소 변경. `backend/src/api/
+server.ts`는 코드 변경이 필요 없었다 - 관련 라우트 5개가 전부
+`res.json(await fn(...))` 형태로 결과를 그대로 흘려보내기만 해서
+core 함수의 반환 타입이 바뀌자 응답도 자동으로 가벼워졌다(`POST
+/api/documents/bulk-transition`이 `transitionDocumentStatus`의 결과에서
+`statusCode`만 꺼내 쓰는 것도 확인 - `body`는 원래도 안 썼으니 회귀
+없음). `backend/src/cli/index.ts`/`backend/src/mcp/server.ts`도 코드
+동작은 그대로(둘 다 API 응답을 가공 없이 출력/전달) - `docs list`를
+고쳤을 때와 같은 패턴으로 `new`/`save`/`transition`/`priority-set`/
+`report-new`(CLI)와 `document_new`/`document_save`/
+`document_transition`/`document_priority_set`/`report_new`(MCP) 설명
+문구에 "응답에 본문 없음, updatedAt으로 변경 여부만 확인, 본문 필요
+시 get/read/grep으로 이어서 조회" 취지만 추가했다.
+
+**발견**: `docs transition` 하나만 지적받아 조사를 시작했는데, 같은
+"본문을 불필요하게 되돌려주는" 패턴이 `createDocument`/
+`createReport`에도 있었다 - 즉 문제가 전이 하나가 아니라 "변형 계열
+API 전체"의 공통 패턴이었다(코드 관계로 기록 - 앞으로 이 5개 함수 +
+대응 라우트/CLI/MCP를 한 세트로 봐야 함).
+
+**검증**: `cd backend && npx tsc --noEmit` 클린, `npm run
+audit:cli-mcp` CLI/MCP 대칭성 이상 없음 확인. 격리된 `cnwverify`
+docker-compose 스택(별도 포트, `C:\CNW`와 무관)에서 `docs new`/
+`save`/`transition`/`priority-set`/`report-new` 각각 호출해 응답에
+`body`가 없고 `updatedAt`(매 호출마다 증가)만 있는 것 확인, 그 직후
+`docs get`으로 본문이 여전히 정상 조회되고 그 응답의 `updatedAt`이
+방금 마지막 변형 응답의 `updatedAt`과 정확히 일치하는 것 확인,
+`docs transition-bulk`가 여전히 기존과 동일한 `{trackingCode, ok,
+statusCode}` 모양(회귀 없음)인 것 확인. MCP는 별도로 기동해 호출하지
+않았음 - CLI/API가 같은 `call()`을 거쳐 같은 라우트를 호출하는
+구조라는 걸 코드로 이미 확인했고 `audit:cli-mcp`로 대칭성도 확인했으므로
+구조적으로 동일한 결과가 보장된다.
+
+**결론**: 문서 생성/저장/전이/우선순위 설정/보고서 생성 응답에 더
+이상 본문이 실리지 않고, 대신 `updatedAt`으로 "무언가 바뀌었다"는
+신호만 받는다. 본문이 실제로 필요한 순간에는 `get`/`read`/`grep`
+(MCP도 동일)으로 따로 조회하면 된다. 스키마 변경 없이 이미 있던
+`Document.updatedAt` 필드를 재사용했고, `docs list`를 고쳤던 라운드와
+같은 패턴을 변형 계열 API 전체로 넓힌 것.

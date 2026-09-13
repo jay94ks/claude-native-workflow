@@ -20,6 +20,7 @@ export interface DocumentDetail {
   statusCode: string;
   priority: number | null;
   createdBy: string;
+  updatedAt: number;
 }
 
 function toSearchable(doc: {
@@ -96,7 +97,7 @@ export interface CreateDocumentInput {
   createdBy: string;
 }
 
-export async function createDocument(input: CreateDocumentInput): Promise<DocumentDetail> {
+export async function createDocument(input: CreateDocumentInput): Promise<DocumentMutationSummary> {
   const db = getDb();
   const docType = await findDocTypeByCode(input.projectId, input.docTypeCode);
   if (!docType) {
@@ -122,7 +123,7 @@ export async function createDocument(input: CreateDocumentInput): Promise<Docume
   const searchable = toSearchable(row, status.code);
   await syncAndPublish(searchable, "create");
 
-  return {
+  return toMutationSummary({
     trackingCode: row.trackingCode,
     projectId: row.projectId,
     docTypeId: row.docTypeId,
@@ -132,7 +133,8 @@ export async function createDocument(input: CreateDocumentInput): Promise<Docume
     statusCode: status.code,
     priority: row.priority,
     createdBy: row.createdBy,
-  };
+    updatedAt: row.updatedAt.getTime(),
+  });
 }
 
 /** "조회는 DB가 아니라 Meilisearch를 거친다" 원칙 - get/list/tree/search
@@ -177,6 +179,21 @@ export type DocumentSummary = Omit<SearchableDocument, "body">;
 
 function toDocumentSummary(doc: SearchableDocument): DocumentSummary {
   const { body: _body, ...summary } = doc;
+  return summary;
+}
+
+/** 변형(생성/저장/전이/우선순위) 계열이 반환하는 가벼운 결과 - `body`가
+ * 빠진 `DocumentDetail`. 호출자는 생성/저장이면 이미 그 본문을 알고
+ * 있고, 전이/우선순위는 본문을 건드리지도 않는데도 지금까지 전부 전체
+ * 본문을 그대로 돌려주고 있었다(`#document-list-lightweight`와 같은
+ * 문제, MCP 호출에서는 AI 컨텍스트 낭비로 직결). "본문이 바뀌었을
+ * 수도 있다"는 신호는 `updatedAt`(모든 갱신에 공통으로 존재하는 기존
+ * 필드)으로 충분 - 정확히 본문만 바뀐 건지는 구분 안 하지만, 필요하면
+ * 호출자가 `docs get`/`document_get`으로 이어서 조회하면 된다. */
+export type DocumentMutationSummary = Omit<DocumentDetail, "body">;
+
+function toMutationSummary(detail: DocumentDetail): DocumentMutationSummary {
+  const { body: _body, ...summary } = detail;
   return summary;
 }
 
@@ -384,7 +401,7 @@ export async function saveDocumentBody(
   trackingCode: string,
   newBody: string,
   editedBy: string,
-): Promise<DocumentDetail> {
+): Promise<DocumentMutationSummary> {
   const db = getDb();
   const existing = await db.document.findUnique({ where: { trackingCode } });
   if (!existing) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
@@ -401,7 +418,7 @@ export async function saveDocumentBody(
   const searchable = toSearchable(row, status.code);
   await syncAndPublish(searchable, "update");
 
-  return {
+  return toMutationSummary({
     trackingCode: row.trackingCode,
     projectId: row.projectId,
     docTypeId: row.docTypeId,
@@ -411,10 +428,11 @@ export async function saveDocumentBody(
     statusCode: status.code,
     priority: row.priority,
     createdBy: row.createdBy,
-  };
+    updatedAt: row.updatedAt.getTime(),
+  });
 }
 
-export async function transitionDocumentStatus(trackingCode: string, toStatusCode: string): Promise<DocumentDetail> {
+export async function transitionDocumentStatus(trackingCode: string, toStatusCode: string): Promise<DocumentMutationSummary> {
   const db = getDb();
   const existing = await db.document.findUnique({ where: { trackingCode } });
   if (!existing) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
@@ -432,7 +450,7 @@ export async function transitionDocumentStatus(trackingCode: string, toStatusCod
   const searchable = toSearchable(row, target.code);
   await syncAndPublish(searchable, "update");
 
-  return {
+  return toMutationSummary({
     trackingCode: row.trackingCode,
     projectId: row.projectId,
     docTypeId: row.docTypeId,
@@ -442,14 +460,15 @@ export async function transitionDocumentStatus(trackingCode: string, toStatusCod
     statusCode: target.code,
     priority: row.priority,
     createdBy: row.createdBy,
-  };
+    updatedAt: row.updatedAt.getTime(),
+  });
 }
 
 /** review/pending 상태일 때만 우선순위(정수)를 설정/갱신할 수 있다
  * (설계자 확정) - 그 범위를 벗어나도 기존 값을 자동으로 지우진
  * 않는다(요청 문구엔 "그 범위일 때만 설정 가능"만 있고 자동 초기화는
  * 없음, 필요해지면 별도 요청으로). */
-export async function setDocumentPriority(trackingCode: string, priority: number): Promise<DocumentDetail> {
+export async function setDocumentPriority(trackingCode: string, priority: number): Promise<DocumentMutationSummary> {
   const db = getDb();
   const existing = await db.document.findUnique({ where: { trackingCode } });
   if (!existing) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
@@ -464,7 +483,7 @@ export async function setDocumentPriority(trackingCode: string, priority: number
   const searchable = toSearchable(row, status.code);
   await syncAndPublish(searchable, "update");
 
-  return {
+  return toMutationSummary({
     trackingCode: row.trackingCode,
     projectId: row.projectId,
     docTypeId: row.docTypeId,
@@ -474,7 +493,8 @@ export async function setDocumentPriority(trackingCode: string, priority: number
     statusCode: status.code,
     priority: row.priority,
     createdBy: row.createdBy,
-  };
+    updatedAt: row.updatedAt.getTime(),
+  });
 }
 
 /** DB에서 현재 상태 그대로 다시 읽어 검색 인덱스/실시간 발행을 재동기화

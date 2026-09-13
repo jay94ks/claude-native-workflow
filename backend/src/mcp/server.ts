@@ -640,7 +640,7 @@ async function main() {
   tool(
     "document_new",
     "문서 생성",
-    "새 문서를 만들고 추적 코드를 발급받는다.",
+    "새 문서를 만들고 추적 코드를 발급받는다. 응답에 본문은 없음(호출자가 이미 보낸 내용), updatedAt으로 생성 시각 확인 - 본문이 필요하면 document_get/document_read/document_grep으로 이어서 조회.",
     { projectId: z.string(), docTypeCode: z.string(), title: z.string(), body: z.string() },
     async (a) =>
       call(`/api/projects/${a.projectId}/documents`, {
@@ -687,13 +687,13 @@ async function main() {
       return call(`/api/projects/${a.projectId}/search?${qs}`);
     },
   );
-  tool("document_save", "문서 본문 갱신", "문서 본문을 덮어쓰고 버전 이력을 남긴다.", { trackingCode: z.string(), body: z.string() }, async (a) =>
+  tool("document_save", "문서 본문 갱신", "문서 본문을 덮어쓰고 버전 이력을 남긴다. 응답에 본문은 없음(호출자가 이미 보낸 내용), updatedAt으로 저장 여부만 확인 - 본문이 필요하면 document_get/document_read/document_grep으로 이어서 조회.", { trackingCode: z.string(), body: z.string() }, async (a) =>
     call(`/api/documents/${a.trackingCode}`, { method: "PUT", body: JSON.stringify({ body: a.body }) }),
   );
   tool(
     "document_transition",
     "문서 상태 전이",
-    "정의된 전이 규칙에 따라 문서 상태를 바꾼다.",
+    "정의된 전이 규칙에 따라 문서 상태를 바꾼다. 응답에 본문은 없음(전이는 본문을 안 건드림), updatedAt으로 변경 여부만 확인 - 본문이 필요하면 document_get/document_read/document_grep으로 이어서 조회.",
     { trackingCode: z.string(), toStatusCode: z.string() },
     async (a) => call(`/api/documents/${a.trackingCode}/transition`, { method: "POST", body: JSON.stringify({ toStatusCode: a.toStatusCode }) }),
   );
@@ -707,7 +707,7 @@ async function main() {
   tool(
     "document_priority_set",
     "문서 우선순위 설정",
-    "문서 우선순위(정수)를 설정/갱신한다 - 문서 상태가 review 또는 pending일 때만 가능(Q&A의 별개 pending 개념과는 무관).",
+    "문서 우선순위(정수)를 설정/갱신한다 - 문서 상태가 review 또는 pending일 때만 가능(Q&A의 별개 pending 개념과는 무관). 응답에 본문은 없음(우선순위 설정은 본문을 안 건드림), updatedAt으로 변경 여부만 확인 - 본문이 필요하면 document_get/document_read/document_grep으로 이어서 조회.",
     { trackingCode: z.string(), priority: z.number().int() },
     async (a) => call(`/api/documents/${a.trackingCode}/priority`, { method: "PUT", body: JSON.stringify({ priority: a.priority }) }),
   );
@@ -979,7 +979,7 @@ async function main() {
   tool(
     "report_new",
     "보고서 생성",
-    "여러 문서를 링크로 엮는 보고서를 생성한다.",
+    "여러 문서를 링크로 엮는 보고서를 생성한다. 응답에 본문은 없음(호출자가 이미 보낸 내용) - 본문이 필요하면 document_get/document_read/document_grep으로 이어서 조회.",
     { projectId: z.string(), title: z.string(), body: z.string(), links: z.array(z.string()).optional() },
     async (a) =>
       call(`/api/projects/${a.projectId}/reports`, {
