@@ -469,6 +469,44 @@ export async function getCommit(target: GiteaRepoRef, sha: string): Promise<unkn
   return res.json();
 }
 
+/** ref(기본 HEAD)의 커밋 sha - 커밋이 하나도 없는 저장소는 getFullTree와
+ * 같은 이유로 에러가 아니라 null로 취급한다(publishToExternalRepo의
+ * fast-forward 안전성 확인에 씀 - #push-mirror-force-fix). */
+export async function getHeadCommitSha(target: GiteaRepoRef, ref = "HEAD"): Promise<string | null> {
+  const { apiUrl, token } = config();
+  const res = await fetch(`${apiUrl}/api/v1/repos/${target.org}/${target.repo}/git/commits/${ref}`, {
+    headers: { Authorization: `token ${token}` },
+  });
+  if (res.status === 400) {
+    const body = await res.text().catch(() => "");
+    if (body.includes("sha not found")) return null;
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
+  const json = (await res.json()) as { sha: string };
+  return json.sha;
+}
+
+/** 이 sha 커밋 객체가 target 저장소에 존재하는지(실측: 없으면 404) -
+ * publishToExternalRepo가 force-push 전에 "외부의 현재 HEAD가 work의
+ * 조상인가"를 확인하는 데 쓴다. work는 이 시스템의 commit()이 항상
+ * 같은 브랜치를 앞으로만 진행시키므로(강제 재작성 없음), 존재하면 곧
+ * work의 현재 HEAD의 조상이라는 뜻이다. */
+export async function commitExistsInRepo(target: GiteaRepoRef, sha: string): Promise<boolean> {
+  const { apiUrl, token } = config();
+  const res = await fetch(`${apiUrl}/api/v1/repos/${target.org}/${target.repo}/git/commits/${sha}`, {
+    headers: { Authorization: `token ${token}` },
+  });
+  if (res.status === 404 || res.status === 400) return false;
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
+  }
+  return true;
+}
+
 // /api/v1/repos/{owner}/{repo}/git/commits/{sha}.diff - 실제 Gitea
 // 1.27 인스턴스에 대고 검증해서 확정한 경로("/{owner}/{repo}/commit/
 // {sha}.diff" 웹 라우트는 404 - API 하위 경로가 맞다).

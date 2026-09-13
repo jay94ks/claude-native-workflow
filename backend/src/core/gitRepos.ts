@@ -534,19 +534,26 @@ function diffTrees(mirrorTree: gitea.FullTreeEntry[], workTree: gitea.FullTreeEn
   return { added, changed, removedFromWork };
 }
 
+/** pull 미러를 강제로 새로고침하고, 실제로 갱신될 때까지(최대 20초)
+ * 기다린다 - sync-status 계산과 publishToExternalRepo의 fast-forward
+ * 안전성 확인이 공통으로 쓴다. */
+async function refreshMirrorAndWait(mirrorTarget: GiteaRepoRef): Promise<void> {
+  const updatedBefore = await gitea.getMirrorUpdatedAt(mirrorTarget);
+  await gitea.forceMirrorSync(mirrorTarget);
+
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    await sleep(2000);
+    const updatedNow = await gitea.getMirrorUpdatedAt(mirrorTarget);
+    if (updatedNow !== updatedBefore) break;
+  }
+}
+
 async function computeSyncStatusInBackground(projectId: string): Promise<void> {
   const mirrorTarget = mirrorRef(projectId);
   const workTarget = workRef(projectId);
   try {
-    const updatedBefore = await gitea.getMirrorUpdatedAt(mirrorTarget);
-    await gitea.forceMirrorSync(mirrorTarget);
-
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      await sleep(2000);
-      const updatedNow = await gitea.getMirrorUpdatedAt(mirrorTarget);
-      if (updatedNow !== updatedBefore) break;
-    }
+    await refreshMirrorAndWait(mirrorTarget);
 
     const [mirrorTree, workTree] = await Promise.all([
       gitea.getFullTree(projectId, mirrorTarget),
@@ -678,6 +685,36 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
   if (!token) throw new Error(`자격증명을 찾을 수 없습니다: ${gitCredentialId}`);
 
   const workTarget = workRef(projectId);
+
+  // force-push 전에 외부가 이 시스템이 모르는 사이 독자적으로 앞서가지
+  // 않았는지 확인한다(BR-3CAF6DBC 실측 확인 - Gitea의 push mirror는
+  // "fast-forward 안 되면 그냥 실패한다"는 원래 설계 가정과 달리 항상
+  // 강제 동기화라, 외부에만 있던 커밋이 경고 없이 통째로 사라지는 실제
+  // 데이터 손실이 있었다). mirror를 최신으로 새로고침한 뒤, 그 HEAD가
+  // work의 커밋 객체 DB에도 있는지 확인 - work는 이 시스템의 commit()이
+  // 항상 같은 브랜치를 앞으로만 진행시키므로(강제 재작성 없음), 있으면
+  // work가 외부의 현재 상태를 그대로 포함하는(fast-forward 안전) 상태
+  // 라는 뜻이다. mirror가 아직 커밋이 없으면(막 연동된 빈 저장소) 보호할
+  // 기존 이력이 없으므로 안전하게 통과시킨다.
+  const mirrorTarget = mirrorRef(projectId);
+  await refreshMirrorAndWait(mirrorTarget);
+  const mirrorHeadSha = await gitea.getHeadCommitSha(mirrorTarget);
+  if (mirrorHeadSha && !(await gitea.commitExistsInRepo(workTarget, mirrorHeadSha))) {
+    const db = getDb();
+    const entry = await db.gitSyncQueueEntry.create({
+      data: { projectId, status: "pending", reason: "diverged" },
+    });
+    await sendMessage(
+      projectId,
+      null,
+      `외부 저장소가 이 시스템이 모르는 사이 독자적으로 변경되어(fast-forward 불가) 발행을 건너뛰었습니다 - ` +
+        `강제로 덮어쓰면 그 변경이 사라지므로 안전하게 대기열에 올렸습니다.\n\n` +
+        `"docs git sync-proposal ${projectId} --out <dir>"로 변경 제안을 확인해 직접 반영하거나 충돌을 해소한 뒤, ` +
+        `"docs git publish-queue-done ${projectId} ${entry.id}"로 완료를 보고하세요 - 그래야 "동기화" 버튼이 다시 활성화됩니다.`,
+    );
+    return { status: "queued", queueEntryId: entry.id };
+  }
+
   const existing = await gitea.getPushMirrorStatus(workTarget);
   if (!existing) {
     // push mirror의 "username"은 대부분의 PAT 기반 인증(GitHub/GitLab)에서

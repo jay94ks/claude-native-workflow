@@ -6733,3 +6733,64 @@ repo/mirror.go`)로 확인해보니 `interval` 통과 후
 publish`를 다시 실행해 전체 플로우가 뚫렸는지 재확인하는 건 설계자
 소유의 실제 외부 저장소에 영향을 주는 동작이라 별도 승인을 거쳐
 진행한다.
+
+## `docs git publish`가 fast-forward 불가 시 조용히 force-push해 커밋을 유실시키던 버그 조사·수정(`#push-mirror-force-fix`, 검토 필요)
+
+**배경**: 설계자가 minicore 프로젝트에서 CNW 파이프라인을 거치지 않고
+로컬 clone에서 직접 GitHub main에 커밋(`.mcp.json` 추가, `841f139`)을
+push한 뒤, 그 사실을 모르는 채 Gitea 작업 저장소 쪽에 새 커밋을 만들고
+`docs git publish`를 실행했다가 그 커밋이 **강제 업데이트(force-push)**
+로 GitHub에서 통째로 사라지는 실제 데이터 손실을 겪고 BR-3CAF6DBC로
+재현 경로/실제 로그/제안 조치까지 상세히 보고했다. `publish`의 기존
+설계 주석(`gitRepos.ts` 628-630행)은 "외부가 앞서가 fast-forward가
+안 되면 Gitea의 push가 그대로 실패하고, 그 결과를 대기열로 넘긴다"고
+되어 있었다 - 이 가정이 실제로는 틀렸다는 게 이번에 밝혀졌다.
+
+**원인**: Gitea의 "push mirror"는 이름 그대로 미러다 - 목적지를
+소스와 정확히 맞추는 게 목적이라, 일반 `git push`처럼 fast-forward가
+안 되면 실패하는 게 아니라 항상 강제로 원격을 덮어쓴다. work
+저장소는 `git link-external` 시점에 외부를 그대로 import해서
+만들어지므로 그 이후로는 외부의 그 시점 상태 위에 쌓이는데, 누군가
+CNW를 거치지 않고 외부에 직접 커밋을 추가하면 외부와 work가 같은
+조상에서 각자 다른 자식으로 갈라진다 - 이 상태에서 발행하면 Gitea가
+그냥 외부를 work로 강제 교체해버려 외부에만 있던 커밋이 흔적 없이
+사라진다.
+
+**검증(직접 Gitea REST API로 실측 - 실제 minicore/GitHub는 건드리지
+않음)**: Gitea 소스(v1.27.3 `routers/api/v1/repo/mirror.go`)의
+`AddPushMirror`/`CreatePushMirror`에 fast-forward 거부 로직이 없다는
+걸 확인했다. 디스포저블 Gitea org/repo로 `GET /repos/:owner/:repo/
+git/commits/HEAD`가 존재하는 커밋의 sha를 정상 반환하고 존재하지 않는
+sha에는 `404`를 반환한다는 것도 실측 확인 후 바로 정리했다. minicore의
+실제 현재 상태(읽기 전용 조회만)로 새 검사 로직을 손으로 미리
+계산해봤을 때 통과할 것으로 확인됨(현재는 이미 정상 동기화된 상태).
+
+**수정**: `backend/src/core/gitea.ts`에 `getHeadCommitSha()`(커밋
+없는 저장소는 에러 대신 `null`)와 `commitExistsInRepo()`(404/400이면
+`false`)를 추가. `gitRepos.ts`의 `publishToExternalRepo()`가 push
+mirror를 트리거하기 **전에** mirror를 새로고침하고(`refreshMirrorAndWait` -
+sync-status 계산 로직에서 뽑아낸 공유 헬퍼), 그 HEAD sha가 work의
+커밋 객체 DB에도 있는지 확인한다 - 있으면(work가 외부의 현재 상태를
+포함) 지금처럼 진행하고, 없으면(외부가 독자적으로 갈라짐) push
+mirror를 트리거하지 않고 기존 `push_failed`와 같은 패턴으로 대기열에
+올린다(신규 `reason: "diverged"`). "sha가 work의 객체 DB에 존재한다"
+≈ "work의 현재 HEAD의 조상이다"라는 전제는 이 시스템이 work에 커밋을
+넣는 유일한 경로(`changeFiles()`의 3-way 병합 기반 커밋, 강제
+재작성 없음)에서만 성립한다 - 앞으로 그 경로가 바뀌면 이 전제도 같이
+재검토해야 한다.
+
+**검증 상태 - 실 저장소로 재현·재검증하지 않음(의도적)**: `cd backend
+&& npx tsc --noEmit` 클린, Gitea REST API 동작 자체는 디스포저블
+org로 직접 검증했다. 그러나 `publishToExternalRepo` 전체 흐름을 실제로
+다시 실행해 이 검사가 실전에서 정확히 동작하는지는 검증하지 않았다 -
+이 함수가 바로 이번 데이터 손실을 일으킨 지점이라, 실제 외부
+저장소(GitHub)에 영향을 주는 재현·재검증은 설계자의 검토와 명시적
+승인 없이는 진행하지 않기로 판단했다. BR-3CAF6DBC는 (앞의 두 라운드와
+달리) "approved" 대신 "review"로 남겨뒀다 - 실제 파괴적 동작을 막는
+안전장치라 코드 자체를 설계자가 먼저 읽어보는 게 맞다고 판단했다.
+
+**결론**: `docs git publish`가 "실패하면 대기열로" 넘어간다는
+문서화된 동작은 Gitea push mirror의 실제 동작과 맞지 않았다 - 이제는
+push를 시도하기 전에 명시적으로 안전성을 확인해 발산했으면 애초에
+강제 동기화를 트리거하지 않는다. 코드는 구현·타입체크까지 됐지만
+커밋/배포/실 저장소 재검증은 설계자 검토 후 진행한다.
