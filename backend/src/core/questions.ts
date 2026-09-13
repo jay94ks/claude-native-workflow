@@ -189,6 +189,17 @@ function mapQuestionRow(r: QuestionRow): QuestionWithAnswer {
   };
 }
 
+/** 질문 자신의 추적코드(QU-XXXXXXXX)로 단건 조회 - 문서 뷰어가
+ * TrackingCodeText로 QU 코드를 열었을 때 씀(#reserved-tracking-codes). */
+export async function getQuestionByTrackingCode(trackingCode: string): Promise<QuestionWithAnswer | null> {
+  const db = getDb();
+  const row = await db.question.findUnique({
+    where: { trackingCode },
+    include: { answer: true, refs: true, options: { orderBy: { order: "asc" } } },
+  });
+  return row ? mapQuestionRow(row) : null;
+}
+
 /** 대상 하나의 전체 질문(open+pending+resolved) 스레드. */
 export async function listQuestions(targetType: string, targetKey: string): Promise<QuestionWithAnswer[]> {
   const db = getDb();

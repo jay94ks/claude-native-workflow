@@ -90,6 +90,20 @@ async function seedStandardStatuses(docTypeId: string): Promise<void> {
   }
 }
 
+// 문서가 아닌 다른 엔티티가 이미 이 접두어로 추적코드를 발급한다 -
+// questions.ts의 QUESTION_TYPE_CODE("QU"), kanban.ts의
+// KANBAN_CARD_TYPE_CODE("KB")와 값이 같아야 한다(순환 참조를 피하려고
+// 여기 문자열로 다시 적음 - 저 두 상수를 바꾸면 여기도 같이 고쳐야
+// 한다). DocType이 이 코드를 쓰면 예: "QU-XXXXXXXX"가 문서인지
+// 질의인지 구분이 안 돼 문서 뷰어/TrackingCodeText가 엉뚱한 걸 연다.
+const RESERVED_DOC_TYPE_CODES = ["QU", "KB"];
+
+function assertNotReservedCode(code: string): void {
+  if (RESERVED_DOC_TYPE_CODES.includes(code.toUpperCase())) {
+    throw new Error(`"${code.toUpperCase()}"는 시스템이 예약한 코드라 문서 분류에 쓸 수 없습니다(질의/칸반 카드 추적코드와 겹칩니다)`);
+  }
+}
+
 export async function createDocType(
   projectId: string,
   code: string,
@@ -100,6 +114,7 @@ export async function createDocType(
   if (!/^[A-Za-z]{2}$/.test(code)) {
     throw new Error(`타입 코드는 영문 2글자여야 합니다: ${code}`);
   }
+  assertNotReservedCode(code);
   const db = getDb();
   const project = await db.project.findUnique({ where: { id: projectId } });
   if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${projectId}`);
@@ -144,8 +159,11 @@ export async function updateDocType(docTypeId: string, patch: UpdateDocTypeInput
   if (existing.isDefault) {
     throw new Error("기본으로 생성된 문서 분류는 이름을 바꿀 수 없습니다 - 삭제만 가능합니다");
   }
-  if (patch.code !== undefined && !/^[A-Za-z]{2}$/.test(patch.code)) {
-    throw new Error(`타입 코드는 영문 2글자여야 합니다: ${patch.code}`);
+  if (patch.code !== undefined) {
+    if (!/^[A-Za-z]{2}$/.test(patch.code)) {
+      throw new Error(`타입 코드는 영문 2글자여야 합니다: ${patch.code}`);
+    }
+    assertNotReservedCode(patch.code);
   }
   const row = await db.docType.update({
     where: { id: docTypeId },

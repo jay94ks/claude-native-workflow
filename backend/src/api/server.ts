@@ -122,6 +122,7 @@ import {
   answerQuestion,
   listQuestions,
   listQuestionsPaged,
+  getQuestionByTrackingCode,
   getQuestionProjectId,
   acknowledgeQuestion,
   countPendingQuestions,
@@ -2683,6 +2684,24 @@ app.get(
     const notice = await pendingQuestionNotice(req.params.projectId);
     const paged = await listPendingQuestionsPaged(req.params.projectId, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20));
     res.json(withNotices(paged, notice));
+  }),
+);
+
+// 문서 뷰어의 QU-XXXXXXXX 코드 클릭(TrackingCodeText)이 씀 -
+// #reserved-tracking-codes.
+app.get(
+  "/api/questions/:trackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getQuestionProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "질문을 찾을 수 없습니다" }); return; }
+    if (!(await getMemberRole(projectId, req.userId!))) {
+      res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" });
+      return;
+    }
+    const question = await getQuestionByTrackingCode(req.params.trackingCode);
+    if (!question) { res.status(404).json({ error: "질문을 찾을 수 없습니다" }); return; }
+    res.json(question);
   }),
 );
 

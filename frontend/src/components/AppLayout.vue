@@ -7,6 +7,7 @@ import { apiCall } from "../api/client";
 import DocumentExplorer from "./DocumentExplorer.vue";
 import DocumentPreviewDialog from "./DocumentPreviewDialog.vue";
 import KanbanCardDialog from "./KanbanCardDialog.vue";
+import QuestionDialog from "./QuestionDialog.vue";
 import EntityPickerDialog from "./EntityPickerDialog.vue";
 import FolderPickerDialog from "./FolderPickerDialog.vue";
 import SidebarSearchBox from "./SidebarSearchBox.vue";
@@ -86,6 +87,7 @@ function handleLogout() {
     <DocumentPreviewDialog />
     <MembershipsDialog />
     <KanbanCardDialog />
+    <QuestionDialog />
     <EntityPickerDialog />
     <FolderPickerDialog />
     <SearchScopeDialog />

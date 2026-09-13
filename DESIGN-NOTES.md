@@ -6794,3 +6794,48 @@ org로 직접 검증했다. 그러나 `publishToExternalRepo` 전체 흐름을 �
 push를 시도하기 전에 명시적으로 안전성을 확인해 발산했으면 애초에
 강제 동기화를 트리거하지 않는다. 코드는 구현·타입체크까지 됐지만
 커밋/배포/실 저장소 재검증은 설계자 검토 후 진행한다.
+
+## QU/KB 문서 분류 코드 예약 + 질의 전용 미리보기 다이얼로그 추가(`#reserved-tracking-codes`)
+
+**배경**: 설계자 지시("문서 분류코드에 질의/답변용 코드인 QU와 칸반
+코드 KB를 예약처리해서 덮어쓰지 못하게 하고, 문서 뷰어에서 해당
+코드를 해당 질의/답변을 보여주도록 만들어줘"). 조사해보니 두 가지가
+실제로 비어 있었다: (1) `DocType.code`가 형식(영문 2글자)만 검증하고
+Question/KanbanCard가 이미 쓰는 `QU`/`KB` 접두어와 겹치는 걸 막는
+로직이 전혀 없었고, (2) `TrackingCodeText.vue`(추적코드 자동 링크
+컴포넌트)가 `KB-`만 칸반 카드 다이얼로그로 분기하고 질의 코드
+`QU-`를 포함한 나머지는 전부 문서 미리보기로 보내 404가 났다 -
+질의 코드를 클릭하면 어디서든 조용히 "찾을 수 없음"만 떴다.
+
+**구현**: 백엔드 - `docTypes.ts`에 `RESERVED_DOC_TYPE_CODES = ["QU",
+"KB"]` 추가, `createDocType`/`updateDocType` 둘 다 거부하도록(questions.ts/
+kanban.ts의 실제 상수를 import하면 순환 참조가 생겨 문자열로 다시
+적고 주석으로 동기화 필요성 명시). `questions.ts`에 `getQuestionByTrackingCode()`
+추가, `GET /api/questions/:trackingCode` 신설(viewer 권한). 프런트엔드 -
+`questionDialog.ts`(신규, kanbanCardDialog.ts와 동일한 모양) +
+`QuestionDialog.vue`(신규, KanbanCardDialog.vue의 다이얼로그 셸을
+따르되 종류/상태/본문/참고 문서/제안 선택지/답변을 읽기 전용으로
+표시 - 답변/승인 폼은 QAPanel.vue와 중복 구현하지 않고 "대상 열기"
+버튼으로 그 문서/칸반 카드 다이얼로그로 넘겨 거기서 답변하게 함) +
+`TrackingCodeText.vue`에 `QU-` 분기 추가 + `AppLayout.vue`에 마운트.
+
+**검증**: `npx tsc --noEmit`/`vue-tsc -b` 클린. 이 저장소와 무관한
+완전히 격리된 로컬 환경(스크래치 SQLite + 디스포저블 Meilisearch
+컨테이너 + 로컬 `npm run dev` 백엔드/프런트엔드, C:\CNW/GitHub 어느
+것과도 무관)에서 실제 브라우저로 확인: `code:"QU"`/`code:"kb"`(소문자)
+둘 다 API/실제 설정 화면 양쪽에서 거부되고 에러 메시지가 폼에 그대로
+노출됨, 정상 코드는 그대로 생성됨. 문서에 승인형 질의(선택지 2개)를
+등록하고 그 추적코드를 코멘트에 언급 → 코멘트에서 클릭 → `QuestionDialog`가
+종류/상태/본문/제안 선택지를 정확히 표시함(이전이면 404). 그 질의에
+실제로 승인 답변을 단 뒤 다시 열어 상태·답변 섹션이 새로 반영됨을
+확인. "대상 열기"로 그 문서 미리보기가 위에 정상적으로 뜸을 확인.
+테스트에 쓴 프로젝트/컨테이너/로컬 서버는 검증 직후 정리했다.
+
+**확인했지만 손대지 않은 것**: `createDocType`/`updateDocType`에
+프로젝트 내 DocType 코드 자체의 유일성 검사가 전혀 없다는 것도
+발견했다(같은 프로젝트에 같은 코드의 DocType을 여러 개 만들 수
+있음) - 이번 지시 범위(QU/KB 예약) 밖이라 손대지 않았다.
+
+**결론**: `QU`/`KB`는 이제 DocType 생성/이름 수정 양쪽에서 대소문자
+무관하게 거부된다. 질의 자신의 추적코드는 이제 어디서 클릭해도
+항상 그 질의/답변 내용을 보여주는 전용 다이얼로그로 열린다.
