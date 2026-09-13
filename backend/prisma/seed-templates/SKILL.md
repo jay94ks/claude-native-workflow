@@ -471,6 +471,12 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 파일 정규식 검색 | `docs git grep <projectId> <path> <pattern> [--ref <r>] [--case-insensitive] [--context <n>]` | `git_grep` |
 | 파일 저장(커밋) | `docs git put <projectId> <path> <localFile> [--message <m>]` | `git_put` |
 | 파일 삭제(커밋) | `docs git delete <projectId> <path> [--message <m>]` | `git_delete` |
+| 여러 파일 한번에 조회 | `docs git cat-batch <projectId> <path1,path2,...>` | `git_cat_batch` |
+| 파일 변경 스테이징 | `docs git add <projectId> <path> <localFile>` | `git_add` |
+| 파일 삭제 스테이징 | `docs git rm <projectId> <path>` | `git_rm` |
+| 스테이징 상태 조회(diff+드리프트) | `docs git status <projectId>` | `git_status` |
+| 스테이징 취소 | `docs git restore <projectId> <path>` | `git_restore` |
+| 스테이징 반영(커밋) | `docs git commit <projectId> --message <m>` | `git_commit` |
 | 템플릿 조회(override 체인 적용) | `docs template get <filename> [--project <id>]` | `template_get` |
 | 템플릿 override 설정 | `docs template set <filename> <file> [--project\|--group\|--team <id>]` | `template_set` |
 | 템플릿 배포 | `docs template deploy <projectId>` | `template_deploy` |
@@ -587,6 +593,34 @@ git publish-queue-done <projectId> <id>`로 완료를 보고한다 - 이
 엔드포인트가 없어서(알려진 플랫폼 제한, 임의 추측이 아니라 실제 Gitea
 인스턴스에 대고 확인함) 호출하면 그 사실을 알리는 명확한 에러가 온다 -
 파일의 변경 이력은 `git log`/`git diff`/`git show`로 대신 확인한다.
+
+## 파일 스테이징(add/rm/status/restore/commit)
+
+`git put`/`git delete`는 파일 하나를 즉시 커밋하는 지름길이고, 여러
+파일을 한 커밋으로 묶으려면 실제 git처럼 스테이징한다: `git add
+<projectId> <path> <localFile>`(변경 스테이징)/`git rm <projectId>
+<path>`(삭제 스테이징) → `git status <projectId>`로 확인 → `git commit
+<projectId> --message <m>`으로 한 번에 반영. **`git status`는 각
+항목에 현재 HEAD 대비 diff(`docs diff`/`document_diff`와 같은 줄 단위
+형식)와 `driftDetected`(스테이징 이후 그 파일이 다른 경로로 먼저
+바뀌었는지)를 같이 보여준다** - 커밋을 시도하기 전에 충돌 가능성을
+미리 확인할 수 있다. `git restore <projectId> <path>`로 스테이징을
+취소한다(스테이징된 게 없으면 명확한 에러).
+
+**`git commit`은 항상 원자적이다** - 드리프트가 있어도 겹치지 않는
+변경이면 3-way 자동 병합해 한 커밋에 반영하지만, 같은 줄을 건드리는
+진짜 충돌이 하나라도 있으면 **커밋 전체를 하지 않는다**(부분 반영
+없음) - 응답에 충돌난 경로별로 `base`/`ours`/`theirs`와 충돌 마커
+(`<<<<<<< / ======= / >>>>>>>`)가 담긴 병합 시도 결과가 오니, 그걸 보고
+직접 병합한 내용을 다시 `git add`로 스테이징하거나 `git restore`로
+자기 쪽 변경을 버린 뒤 새 HEAD 기준으로 다시 편집한다. "삭제 대
+수정"(내가 지우려는 파일을 그 사이 누가 고침) 조합은 항상 충돌로
+취급한다(실제 git과 동일 - 자동 해소 대상이 아님).
+
+여러 파일을 한 번에 읽어야 할 때는 `git cat <path>`를 반복 호출하는
+대신 `docs git cat-batch <projectId> <path1,path2,...>`(MCP
+`git_cat_batch`)로 한 번에 조회한다 - 존재하지 않는 경로는 결과에
+`content: null`로 표시될 뿐 에러가 아니다.
 
 ## 인증
 

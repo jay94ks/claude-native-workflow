@@ -6121,3 +6121,88 @@ fail-soft 원칙 - Meilisearch가 죽어 있어도 삭제 자체는 실패로 �
 기능 추가까지만 다룬다 - 이걸 실제로 쓰려면 별도로 운영 중인 `C:\CNW`
 설치에 이 코드를 배포(`git pull` + 재빌드)하는 절차가 필요하고, 이번에
 발견한 15커밋 드리프트를 실제로 반영하는 것도 별도 라운드로 남겨둔다.
+
+## git 조회/편집에 프로젝트 단위 DB 캐시 + 스테이징(add/rm/status/restore/commit) 추가(`#git-cache-and-staging`)
+
+**배경**: git 조회/편집(트리·파일 조회, 저장/삭제)이 전체적으로
+느리다는 지적이 있었다. 실제로는 N+1 호출은 거의 없었지만(트리/파일
+조회 모두 이미 Gitea REST 1회 호출), 캐시가 전혀 없어 매번 왕복하는
+게 근본 원인이었다 - `git put`/`git delete`는 매번 "현재 sha 조회
+(GET) + 실제 쓰기" 총 2회, `docs git sync-status`는 매 호출마다
+mirror+work 전체 트리를 재조회, 검색 인덱스 백필/증분 동기화는 파일
+마다 개별 조회. 여기에 설계자 지시로 세 가지가 추가됐다: (1) 캐시는
+프로세스 내 메모리가 아니라 프로젝트 단위 DB 테이블로, (2) 실제
+git처럼 여러 파일을 스테이징했다가 한 번에 커밋하는 인터페이스
+(`git add`/`status`/`rm`/`restore`/`commit`)가 필요, (3) 캐시 무효화는
+write 시점에 직접 하는 전략으로(웹훅을 기다리지 않음), (4) 여러 파일을
+한 번에 조회하는 배치 API도 포함.
+
+**설계 도중 실측으로 뒤집힌 가정**: 처음엔 GitHub 스타일 git-data API
+(blob/tree/commit/ref 개별 생성 후 조합)로 `git commit`을 구현하려
+했으나, 실제 Gitea 인스턴스(1.27.3, `gitea/gitea:latest`)의 swagger를
+확인해보니 그 API들은 전부 GET만 지원하고 POST가 없다 - Gitea엔 그
+조합 자체가 없다. 대신 `POST /repos/{owner}/{repo}/contents`("여러
+파일을 한 번에 생성/수정/삭제")가 있고, 실제로 여러 파일을 한 번에
+보내 정말 하나의 커밋으로 남는지, sha 불일치 시 전체가 원자적으로
+거부되는지(다른 파일도 반영 안 됨)까지 직접 테스트해 확인했다 - 원래
+계획보다 훨씬 단순하고 이미 원자적인 방법을 찾은 것. 단, `sha`를 생략한
+`upload`는 경로가 이미 존재해도 조용히 덮어쓴다(드리프트 감지 없음)는
+것도 같이 확인해, "새 파일" 스테이징(baseSha 없음)의 create-vs-create
+충돌은 우리가 직접(트리 캐시로) 확인해야 한다는 걸 반영했다.
+
+**수정**: `GitTreeCache`/`GitBlobCache`/`GitStagingChange` 3개 모델을
+3개 DB 드라이버 스키마에 추가(프로젝트 단위, cascade 삭제).
+`core/gitCache.ts`(캐시 접근자), `core/gitStaging.ts`(스테이징 CRUD +
+`git status`의 diff/드리프트 표시 + `git commit`의 3-way(node-diff3)
+자동 병합/충돌 판정). `gitea.ts`의 `getFullTree`/`getFileContent`가
+캐시를 먼저 거치도록 변경, 신규 `getFileContentsBatch`(트리→sha 일괄
+해석 → 블롭 캐시 배치 조회 → 미스만 병렬 fetch)로
+`backfillProjectSourceIndexRaw`/`syncSourceFilesForPush`/
+`getGitSyncProposal`의 순차·개별 호출을 교체. `putFileContent`/
+`deleteFileContent`를 신규 `changeFiles()`(위 배치 API 래퍼, 커밋
+성공 시 캐시를 그 자리에서 즉시 patch) 호출로 통합해 중복 코드를
+없앴다. 무효화는 이 앱 자신의 write에서 즉시 처리하는 게 1차이고,
+`git my-token`으로 이 앱을 거치지 않고 직접 push된 경우를 위해
+Gitea 시스템 웹훅(`handleGiteaSystemPush`/`handleGiteaSystemDelete`)
+에도 `invalidateTree()` 호출을 추가했다(2차 안전망 - 기존에
+mirror push는 무시하던 분기와 별개로, 캐시 무효화는 kind 무관하게
+항상 실행). CLI/MCP에 `git add`/`git rm`/`git status`/`git restore`/
+`git commit`/`git cat-batch`(+`git_add`/`git_rm`/`git_status`/
+`git_restore`/`git_commit`/`git_cat_batch`) 6개 신규 명령 추가.
+
+**검증**: `C:\CNW`는 건드리지 않고 격리된 docker compose 검증
+스택(별도 `COMPOSE_PROJECT_NAME`/포트)에서 실제로 확인 - add→status
+(diff 정확성)→restore→status(취소 확인), 3개 파일(수정/삭제/신규)을
+스테이징 후 commit이 실제로 **하나의 Gitea 커밋**으로 남는지(`git
+log`로 확인), 비충돌 드리프트(다른 줄)가 3-way 자동 병합돼 한 커밋에
+반영되는지, 진짜 충돌(같은 줄)이 **전체 원자적으로 거부**되고
+스테이징이 그대로 남는지(base/ours/theirs/충돌 마커 정확성 포함),
+삭제-대-수정 조합이 항상 충돌 처리되는지, `cat-batch`의 존재/부재
+경로 혼합 조회, 프로젝트 삭제 시 3개 신규 테이블이 cascade 삭제되는지.
+이 과정에서 완전히 빈 저장소(커밋 0개)에 첫 `git put`을 시도하면
+`getFullTree`가 "HEAD 없음"으로 죽는 회귀를 발견해 그 자리에서
+고쳤고(빈 트리로 취급), 충돌 응답의 `base` 필드가 실수로 "현재" 내용을
+반환하던 버그(경로+ref 조회는 항상 현재 상태를 주므로 드리프트가 있을
+때 원래 base가 아님 - `getBlobBySha`로 blob sha 직접 조회하도록 수정)
+도 실측 중 발견해 고쳤다.
+
+**추가로 발견한, 이번 라운드 범위 밖의 문제**: 2차 안전망(웹훅 기반
+무효화)을 `git my-token` 직접 push로 실제 테스트했더니, 등록된 시스템
+웹훅이 네트워크·설정 전부 정상인데도 **Gitea가 실제로는 웹훅을 전혀
+발송하지 않았다**(Gitea 자체 로그에도 발송 시도 흔적이 없음, API 경유
+커밋에서도 동일 증상). 이 웹훅 메커니즘은 이번에 새로 만든 게 아니라
+기존 기능(push 훅 자동화, 브랜치 삭제 시 코드 관계도 정리)이 이미
+의존하던 것이라, 이번 라운드가 새로 깨뜨린 게 아니라 기존 결함을
+처음 실측으로 발견한 것으로 보인다(`#gitea-system-webhook-not-firing`
+로 별도 과제 분리). 1차 무효화 전략(이 앱 자신의 write는 즉시 patch)은
+정상 동작해 CLI/MCP를 통한 실무 사용에는 지장이 없다 - 이 웹훅에 의존하는
+건 `git my-token`으로 이 앱을 완전히 거치지 않고 직접 push하는 예외
+경로뿐이다.
+
+**결론**: git 조회는 이제 DB 캐시를 거치고, 저장/삭제/스테이징 커밋
+모두 그 자리에서 캐시를 즉시 최신화한다(1차 무효화). 실제 git처럼
+여러 파일을 모았다가 한 번에 커밋할 수 있고, 그 사이 드리프트가
+생겨도 안전하게(자동 병합 또는 원자적 거부) 처리한다. 다만 이 코드를
+실제로 쓰려면 별도로 운영 중인 `C:\CNW` 설치에 배포(`git pull` +
+재빌드)하는 절차가 여전히 필요하고, 웹훅 미발송 문제는 별도 과제로
+남는다.
