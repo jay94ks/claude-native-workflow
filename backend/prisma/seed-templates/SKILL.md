@@ -298,6 +298,28 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 가벼운 응답에는 만들지 않는다 - 실제로 코드나 문서가 바뀐 라운드
 단위로 판단한다.
 
+## 계획 (별도 계획 체크리스트)
+
+Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립
+엔티티 - 작업 중 "이건 지금 당장이 아니라 나중에 따로 계획을 잡아야
+한다"고 판단한 항목을 즉시 트래킹 코드(`PN-XXXXXXXX`)로 남겨두는
+체크리스트다. 상태는 5개로 고정(`계획됨`/`승인대기`/`검토중`/
+`예정`/`거부`, `plan statuses`로 조회) - DocStatus처럼 프로젝트마다
+커스터마이즈되지 않고, 전이도 그래프로 제약되지 않아 언제든 5개 중
+아무 값으로나 바꿀 수 있다.
+
+**작업 중 스스로 판단해 기록한다** - 코드 관계도/칸반 카드와 같은
+원칙: 설계자가 시켜서가 아니라, 지금 처리할 일이 아니라고 판단되면
+(범위 밖 발견, 후속 확인 필요, 설계자 결정이 필요한 더 큰 작업 등)
+`plan new`로 제목/본문(Markdown)과 관련 문서(`--refs`)를 남겨둔다 -
+사소한 메모까지 전부 남기는 감사 로그가 아니라, 나중에 실제로 다시
+챙겨야 할 항목만 기록한다.
+
+웹 UI에는 "계획" 탭이 있어 설계자가 상태를 검토/승인 처리할 수 있다
+- 관련 문서는 항상 검색 기반 선택기로 고르고, `PN-XXXXXXXX` 코드는
+메시지/코멘트/문서 본문 어디서든 클릭하면 미리보기가 뜬다(질의/칸반
+카드 코드와 같은 방식).
+
 ## 목록 명령의 페이지네이션
 
 목록을 반환하는 명령은 대부분 `--page <n>`/`--count <n>`(MCP는
@@ -541,6 +563,15 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 칸반 카드 목록 | `docs kanban-cards <projectId> [--column <columnId>]` | `kanban_cards` |
 | 칸반 카드 상세 | `docs kanban-card-get <trackingCode>` | `kanban_card_get` |
 | 칸반 카드 이동 | `docs kanban-card-move <trackingCode> <toColumnId> [--index <n>]` | `kanban_card_move` |
+| 계획 생성(+관련 문서) | `docs plan new <projectId> <title> --body <file> [--status <code>] [--refs <codes>]` | `plan_new` |
+| 계획 목록 | `docs plan list <projectId> [--status <code>] [--q <text>] [--page <n>] [--count <n>]` | `plan_list` |
+| 계획 상태 코드 목록(고정값) | `docs plan statuses` | `plan_statuses` |
+| 계획 상세 | `docs plan get <trackingCode>` | `plan_get` |
+| 계획 제목/본문 수정 | `docs plan set <trackingCode> [--title <t>] [--body <file>]` | `plan_set` |
+| 계획 상태 변경 | `docs plan status <trackingCode> <status>` | `plan_status` |
+| 계획 삭제 | `docs plan delete <trackingCode>` | `plan_delete` |
+| 계획에 관련 문서 추가 | `docs plan link <trackingCode> <docTrackingCode>` | `plan_link` |
+| 계획에서 관련 문서 제거 | `docs plan unlink <trackingCode> <docTrackingCode>` | `plan_unlink` |
 | 코드 관계 추가 | `docs relation add <projectId> --target <t> --referrer <r> --purpose <p> --file <path> [--line <n>] [--column <n>] [--data <json>] [--refs <codes>] [--tags <t1,t2>] [--parents <id1,id2>] [--children <id1,id2>] [--branch <name>]` | `relation_add` |
 | 코드 관계 수정 | `docs relation update <projectId> <id> [필드 옵션...] [--refs <codes>] [--add-parents/--remove-parents/--add-children/--remove-children <id1,id2>] [--branch <name>]` | `relation_update` |
 | 코드 관계 삭제 | `docs relation remove <projectId> <id>` | `relation_remove` |
