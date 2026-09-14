@@ -164,6 +164,7 @@ import {
   moveDocumentToFolder,
 } from "../core/folders.js";
 import type { FolderDetail } from "../core/folders.js";
+import { isDocumentFavorited, setDocumentFavorite, listFavoriteDocumentsPaged } from "../core/documentFavorites.js";
 import {
   createRelation,
   updateRelation,
@@ -2219,6 +2220,27 @@ app.get(
   }),
 );
 
+// 프로젝트 홈 "즐겨찾기한 문서" 섹션 + "더보기" 전용 페이지가 공유
+// (#document-favorites).
+app.get(
+  "/api/projects/:projectId/documents/favorites/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    res.json(
+      await listFavoriteDocumentsPaged(
+        req.params.projectId,
+        req.userId!,
+        page,
+        pageSize,
+        parseDocumentSort(req.query.sort) ?? "createdAt:desc",
+      ),
+    );
+  }),
+);
+
 app.put(
   "/api/documents/:trackingCode/folder",
   authenticate,
@@ -2231,6 +2253,34 @@ app.put(
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
     const { folderId } = req.body as { folderId?: string | null };
     await moveDocumentToFolder(req.params.trackingCode, folderId ?? null, req.userId!);
+    res.json({ ok: true });
+  }),
+);
+
+// 문서 즐겨찾기(#document-favorites) - 폴더 라우트와 같은 권한 원칙
+// (개인 메타데이터라 read 권한이면 충분, write 요구 안 함).
+app.get(
+  "/api/documents/:trackingCode/favorite",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json({ favorited: await isDocumentFavorited(req.params.trackingCode, req.userId!) });
+  }),
+);
+
+app.put(
+  "/api/documents/:trackingCode/favorite",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    const { favorited } = req.body as { favorited: boolean };
+    await setDocumentFavorite(req.params.trackingCode, req.userId!, !!favorited);
     res.json({ ok: true });
   }),
 );

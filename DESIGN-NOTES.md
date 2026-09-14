@@ -7007,3 +7007,41 @@ grep으로 정확히 이 두 곳만 있는 걸 확인하고 `MarkdownBody.vue`�
 **결론**: 관계도에서 상위/하위(파생) 관계뿐 아니라 태그로 묶이는
 느슨한 연관성도 한눈에 볼 수 있게 됐다 - 두 관계 축이 실선/점선으로
 시각적으로 명확히 구분된다.
+
+## 문서 즐겨찾기(★) 기능 추가 - 프로젝트 홈 섹션 + 전용 페이지(`#document-favorites`)
+
+**배경**: 설계자 지시 - "각 문서 페이지의 '폴더' 버튼 좌측에 star
+버튼이 있어서 그걸 누르면 '설계자 문서 즐겨찾기' 목록에 등록이 되고,
+프로젝트의 홈에서 '즐겨찾기한 문서' 섹션에 보이게 만들어. 이것 역시도
+'더보기' 버튼이 있고, 그걸 누르면 별도 페이지에서 리스트를 보여준다."
+
+**설계**: "각 설계자 개인 소유, AI 비가시, 문서별 토글"이라는 점에서
+기존 "문서 정리 폴더"(`folders.ts`/`DocumentFolderEntry`)와 정확히
+같은 소유권 패턴이라 그 구현을 템플릿 삼았다 - 다만 폴더는 계층
+구조가 있고 즐겨찾기는 단순 on/off라 별도의 얇은 모듈로 분리.
+
+**구현**: 3개 드라이버 스키마 모두에 `DocumentFavorite`(`documentId`,
+`userId`, `@@unique([documentId, userId])`, `DocumentFolderEntry`와
+동일한 모양) 추가. 신규 `backend/src/core/documentFavorites.ts` -
+`isDocumentFavorited`/`setDocumentFavorite`/`listFavoriteDocumentsPaged`
+(`folders.ts`의 `listFolderDocumentsPaged`와 같은 `DocumentSummary`
+페이지네이션 모양 - `DocumentListPanel.vue` 재사용). 라우트 3개 -
+`GET`/`PUT /api/documents/:trackingCode/favorite`(폴더 라우트와 같은
+권한 원칙, read면 충분), `GET /api/projects/:projectId/documents/
+favorites/page`. 프런트 - `DocumentEditorView.vue`의 "폴더" 버튼
+왼쪽에 별(☆/★) 토글 버튼, `ProjectHomeView.vue`에 "즐겨찾기한 문서"
+섹션("최근 변경 문서"와 같은 자리 패턴), `DocumentsView.vue`에
+`?favorites=1` 모드 신설(기존 `?recent=1`과 같은 자리지만 실제
+페이지네이션 있음).
+
+**검증**: `tsc --noEmit`/`vue-tsc -b` 클린. 격리된 로컬 환경(스크래치
+SQLite에 새 스키마 push+클라이언트 재생성 확인 포함)에서 실제
+브라우저로 확인 - API 직접 호출로 토글/조회/목록 정확성 확인, 브라우저
+에서 별 클릭 시 즉시 상태·title 변경 확인, 프로젝트 홈 섹션과
+"더보기" 전용 페이지 둘 다 정확한 목록 렌더링 확인, 새로고침해도
+상태 유지 확인.
+
+**결론**: 설계자가 자주 보는 문서를 개인적으로 표시해두고 프로젝트
+홈에서 바로 접근하거나, 더 많이 쌓이면 전용 페이지에서 페이지네이션
+으로 훑어볼 수 있게 됐다 - 폴더 기능과 나란히 쓸 수 있는 가벼운
+개인화 도구.

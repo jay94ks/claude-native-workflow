@@ -19,6 +19,13 @@ interface RecentDocument {
   trackingCode: string;
   title: string;
 }
+interface FavoriteDocument {
+  trackingCode: string;
+  title: string;
+}
+interface FavoriteDocumentPage {
+  items: FavoriteDocument[];
+}
 interface RecentComment {
   id: string;
   targetType: string;
@@ -37,6 +44,7 @@ const pending = ref<PendingQuestion[]>([]);
 const recentDocuments = ref<RecentDocument[]>([]);
 const recentComments = ref<RecentComment[]>([]);
 const recentMessages = ref<RecentMessage[]>([]);
+const favoriteDocuments = ref<FavoriteDocument[]>([]);
 const loading = ref(true);
 const error = ref("");
 
@@ -44,11 +52,12 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [pendingResult, docs, comments, messages] = await Promise.all([
+    const [pendingResult, docs, comments, messages, favorites] = await Promise.all([
       apiCall<{ questions: PendingQuestion[] }>(`/projects/${props.id}/pending`).catch(() => ({ questions: [] })),
       apiCall<RecentDocument[]>(`/projects/${props.id}/documents/recent?limit=5`).catch(() => []),
       apiCall<RecentComment[]>(`/projects/${props.id}/comments/recent?limit=5`).catch(() => []),
       apiCall<RecentMessage[]>(`/projects/${props.id}/messages/recent?limit=5`).catch(() => []),
+      apiCall<FavoriteDocumentPage>(`/projects/${props.id}/documents/favorites/page?page=1&pageSize=5`).catch(() => ({ items: [] })),
     ]);
     // "pending"(설계자 답변 완료, AI 확인 대기)은 AI가 처리할 몫이라
     // 설계자 화면엔 노이즈로 안 얹는다 - "open"(설계자가 지금 답해야
@@ -57,6 +66,7 @@ async function load() {
     recentDocuments.value = docs;
     recentComments.value = comments;
     recentMessages.value = messages;
+    favoriteDocuments.value = favorites.items;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "정보를 불러오지 못했습니다";
   } finally {
@@ -95,6 +105,21 @@ onMounted(load);
     </ul>
   </section>
   <p v-else-if="!loading" class="muted">답변 대기 중인 질문이 없습니다.</p>
+
+  <section v-if="!loading">
+    <div class="section-header">
+      <h2>즐겨찾기한 문서</h2>
+      <router-link :to="`/projects/${id}/documents?favorites=1`">더보기</router-link>
+    </div>
+    <ul v-if="favoriteDocuments.length > 0" class="list">
+      <li v-for="d in favoriteDocuments" :key="d.trackingCode">
+        <router-link :to="`/projects/${id}/documents/${d.trackingCode}`">
+          <code>{{ d.trackingCode }}</code> {{ d.title }}
+        </router-link>
+      </li>
+    </ul>
+    <p v-else class="muted">즐겨찾기한 문서가 없습니다.</p>
+  </section>
 
   <section v-if="!loading">
     <div class="section-header">

@@ -207,11 +207,42 @@ async function load() {
     body.value = doc.value.body;
     priorityInput.value = doc.value.priority === null ? "" : String(doc.value.priority);
     mode.value = "read";
-    await Promise.all([loadNextStatuses(), loadSourceLinks(), loadBranchLinks()]);
+    await Promise.all([loadNextStatuses(), loadSourceLinks(), loadBranchLinks(), loadFavorite()]);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "문서를 불러오지 못했습니다";
   } finally {
     loading.value = false;
+  }
+}
+
+// ---------------------------------------------------------------- 즐겨찾기(#document-favorites)
+
+const favorited = ref(false);
+const favoriteToggling = ref(false);
+
+async function loadFavorite() {
+  try {
+    const result = await apiCall<{ favorited: boolean }>(`/documents/${props.trackingCode}/favorite`);
+    favorited.value = result.favorited;
+  } catch {
+    favorited.value = false;
+  }
+}
+
+async function toggleFavorite() {
+  if (favoriteToggling.value) return;
+  const next = !favorited.value;
+  favoriteToggling.value = true;
+  try {
+    await apiCall(`/documents/${props.trackingCode}/favorite`, {
+      method: "PUT",
+      body: JSON.stringify({ favorited: next }),
+    });
+    favorited.value = next;
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "즐겨찾기 변경에 실패했습니다";
+  } finally {
+    favoriteToggling.value = false;
   }
 }
 
@@ -411,6 +442,16 @@ onMounted(load);
         <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
         <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
         <span class="spacer"></span>
+        <button
+          type="button"
+          class="star-btn"
+          :class="{ active: favorited }"
+          :disabled="favoriteToggling"
+          :title="favorited ? '즐겨찾기 해제' : '즐겨찾기 추가'"
+          @click="toggleFavorite"
+        >
+          {{ favorited ? "★" : "☆" }}
+        </button>
         <button class="secondary" @click="onPickFolder">폴더</button>
         <button
           class="secondary"
@@ -609,6 +650,20 @@ h1 {
   background: var(--color-primary);
   color: #fff;
   border-color: var(--color-primary);
+}
+.star-btn {
+  padding: 6px 10px !important;
+  font-size: 16px !important;
+  line-height: 1;
+  color: var(--color-text-muted);
+}
+.star-btn.active {
+  color: #e0a82e;
+  border-color: #e0a82e !important;
+  background: var(--color-warning-bg) !important;
+}
+.star-btn:disabled {
+  opacity: 0.6;
 }
 .toolbar {
   display: flex;

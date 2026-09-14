@@ -12,6 +12,7 @@ const props = defineProps<{ id: string }>();
 const router = useRouter();
 const route = useRoute();
 const isRecentMode = computed(() => route.query.recent === "1");
+const isFavoritesMode = computed(() => route.query.favorites === "1");
 
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
 const canCreateDocument = computed(() => roleSatisfies(myRole.value, "editor"));
@@ -75,6 +76,32 @@ async function loadRecent() {
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "문서 목록을 불러오지 못했습니다";
   }
+}
+
+// ---------------------------------------------------------------- "즐겨찾기" 전용 페이지(#document-favorites)
+// 홈 화면 "즐겨찾기한 문서" 섹션의 "더보기"가 여기로 온다(recent 모드와
+// 같은 쿼리 파라미터 패턴) - recent와 달리 페이지네이션 있음.
+
+const favoritesPage = ref<DocumentPage>({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 1 });
+const favoritesLoading = ref(true);
+const favoritesError = ref("");
+const favoritesPageNum = ref(1);
+
+async function loadFavoritesPage() {
+  favoritesLoading.value = true;
+  favoritesError.value = "";
+  try {
+    const qs = new URLSearchParams({ page: String(favoritesPageNum.value), pageSize: "20" });
+    favoritesPage.value = await apiCall<DocumentPage>(`/projects/${props.id}/documents/favorites/page?${qs}`);
+  } catch (err) {
+    favoritesError.value = err instanceof ApiError ? err.message : "문서 목록을 불러오지 못했습니다";
+  } finally {
+    favoritesLoading.value = false;
+  }
+}
+function onFavoritesPageChange(page: number) {
+  favoritesPageNum.value = page;
+  loadFavoritesPage();
 }
 
 const newTitle = ref("");
@@ -271,6 +298,8 @@ onMounted(async () => {
   await loadDocTypes();
   if (isRecentMode.value) {
     await loadRecent();
+  } else if (isFavoritesMode.value) {
+    await loadFavoritesPage();
   } else {
     ensureTabLoaded(activeTab.value);
   }
@@ -280,6 +309,7 @@ onMounted(async () => {
 <template>
   <div class="layout">
     <h2 v-if="isRecentMode" class="recent-heading">최근 변경된 문서(변경 순)</h2>
+    <h2 v-else-if="isFavoritesMode" class="recent-heading">즐겨찾기한 문서</h2>
     <ul v-if="isRecentMode" class="recent-list">
       <li v-for="doc in recentDocuments" :key="doc.trackingCode">
         <router-link :to="`/projects/${id}/documents/${doc.trackingCode}`">
@@ -291,6 +321,19 @@ onMounted(async () => {
       </li>
       <li v-if="recentDocuments.length === 0" class="muted">문서가 없습니다.</li>
     </ul>
+
+    <DocumentListPanel
+      v-else-if="isFavoritesMode"
+      :project-id="id"
+      :items="favoritesPage.items"
+      :doc-types="docTypes"
+      :page="favoritesPage.page"
+      :total-pages="favoritesPage.totalPages"
+      :total="favoritesPage.total"
+      :loading="favoritesLoading"
+      :error="favoritesError"
+      @page-change="onFavoritesPageChange"
+    />
 
     <template v-else>
       <form v-if="canCreateDocument" class="create-row" @submit.prevent="create">

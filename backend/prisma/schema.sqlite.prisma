@@ -104,6 +104,7 @@ model User {
   accessOverrides   DocAccessOverride[]
   foldersCreated    Folder[]
   folderEntries     DocumentFolderEntry[]
+  favoriteDocuments DocumentFavorite[]
   sourceLinksAdded  DocumentSourceLink[]
   branchLinksAdded  DocumentBranchLink[]
   codeRelations     CodeRelation[]
@@ -384,6 +385,7 @@ model Document {
   codeRelationRefs   CodeRelationRef[]
   accessOverrides    DocAccessOverride[]
   folderEntries      DocumentFolderEntry[]
+  favorites          DocumentFavorite[]
   sourceLinks        DocumentSourceLink[]
   branchLinks        DocumentBranchLink[]
   kanbanCardRefs     KanbanCardDocumentRef[]
@@ -685,6 +687,23 @@ model DocumentFolderEntry {
 
   @@unique([documentId, userId])
   @@index([folderId])
+  @@index([userId])
+}
+
+// 문서 하나를 각 설계자가 개별적으로 "즐겨찾기"할 수 있다(다른 설계자의
+// 즐겨찾기 여부와 무관 - 폴더/DocumentFolderEntry와 같은 개인 소유
+// 패턴, (document, user)당 최대 한 행). AI(CLI/MCP)는 이 개념을 모른다 -
+// 웹 전용(#document-favorites).
+model DocumentFavorite {
+  id         String   @id @default(cuid())
+  documentId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([documentId, userId])
   @@index([userId])
 }
 
