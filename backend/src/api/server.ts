@@ -1741,7 +1741,21 @@ app.get(
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
-    res.json(withNotices({ ...doc, perm: { read: perm.read, write: perm.write, delete: perm.delete } }, perm.notice));
+    // 문서 단건 조회 응답에 연관 문서(DocumentLink 양방향) 추적코드를
+    // 명시한다(#document-detail-related-codes, 설계자 지시) - 본문만
+    // 보고는 다른 문서를 언급/참조하는지 알 수 없어, CLI/MCP로 문서를
+    // 훑는 세션이 매번 doc-graph/links-out/backlinks를 따로 조회하지
+    // 않아도 되게 한다.
+    const [linksOut, backlinks] = await Promise.all([
+      listDocumentLinksOut(req.params.trackingCode),
+      listBacklinks(req.params.trackingCode),
+    ]);
+    res.json(
+      withNotices(
+        { ...doc, linksOut, backlinks, perm: { read: perm.read, write: perm.write, delete: perm.delete } },
+        perm.notice,
+      ),
+    );
   }),
 );
 

@@ -320,6 +320,8 @@ function truncateLabel(s: string, n: number): string {
 async function loadDocGraph() {
   docGraphLoading.value = true;
   docGraphError.value = "";
+  docGraphSelectedCode.value = null;
+  docGraphDetail.value = null;
   try {
     const graph = await apiCall<DocumentLinkGraph>(`/projects/${props.id}/document-graph`);
     docGraphNodes.value = graph.nodes.map((n) => ({
@@ -345,8 +347,51 @@ async function loadDocGraph() {
   }
 }
 
-function openDocGraphNode(trackingCode: string) {
-  router.push(`/projects/${props.id}/documents/${trackingCode}`);
+// ---------------------------------------------------------------- 우측 상세 정보 패널(#document-link-graph-detail-panel)
+// 관계도("관계") 화면의 RelationDetailPanel과 달리 편집/삭제 기능이
+// 없는 순수 조회 패널이라(문서 자체 편집은 에디터 화면 몫) 공용
+// 컴포넌트를 새로 만들지 않고 이 화면 안에 인라인으로 둔다. 클릭한
+// 노드는 더 이상 즉시 에디터로 이동하지 않고(#document-link-graph의
+// 기존 동작) 이 패널에 정보를 띄운다 - 전체 화면 이동은 패널의 "전체
+// 화면에서 열기" 링크로만.
+
+interface DocGraphDetail {
+  trackingCode: string;
+  projectId: string;
+  docTypeId: string;
+  title: string;
+  statusCode: string;
+  priority: number | null;
+  updatedAt: number;
+  linksOut: { trackingCode: string; title: string; linkType: string | null; order: number }[];
+  backlinks: { trackingCode: string; title: string }[];
+}
+
+const docGraphSelectedCode = ref<string | null>(null);
+const docGraphDetail = ref<DocGraphDetail | null>(null);
+const docGraphDetailLoading = ref(false);
+const docGraphDetailError = ref("");
+
+async function selectDocGraphNode(trackingCode: string) {
+  docGraphSelectedCode.value = trackingCode;
+  docGraphDetail.value = null;
+  docGraphDetailError.value = "";
+  docGraphDetailLoading.value = true;
+  try {
+    // 문서 단건 조회는 본문도 함께 오지만(#document-detail-related-codes로
+    // linksOut/backlinks가 이미 같은 응답에 포함됨) 이 패널은 "본문 제외"
+    // 요구사항대로 body 필드를 그냥 바인딩하지 않는다.
+    docGraphDetail.value = await apiCall<DocGraphDetail>(`/documents/${trackingCode}`);
+  } catch (err) {
+    docGraphDetailError.value = err instanceof ApiError ? err.message : "문서 정보를 불러오지 못했습니다";
+  } finally {
+    docGraphDetailLoading.value = false;
+  }
+}
+
+function openDocGraphDetailInEditor() {
+  if (!docGraphDetail.value) return;
+  router.push(`/projects/${docGraphDetail.value.projectId}/documents/${docGraphDetail.value.trackingCode}`);
 }
 
 // 탭을 처음 열 때만 그 탭의 목록을 불러온다(전부 미리 불러올 필요 없음).
@@ -535,14 +580,59 @@ onMounted(async () => {
         <template v-else-if="docGraphNodes.length === 0">
           <p class="muted graph-empty">아직 문서 간 링크가 없습니다 - <code>docs link</code>/<code>document_link</code>로 문서끼리 연결하면 여기 그래프로 보입니다.</p>
         </template>
-        <RelationGraphCanvas
-          v-else
-          class="graph-canvas"
-          :nodes="docGraphNodes"
-          :edges="docGraphEdges"
-          :view-mode="docGraphViewMode"
-          @select="openDocGraphNode"
-        />
+        <div v-else class="graph-layout">
+          <RelationGraphCanvas
+            class="graph-canvas"
+            :nodes="docGraphNodes"
+            :edges="docGraphEdges"
+            :selected-id="docGraphSelectedCode"
+            :view-mode="docGraphViewMode"
+            @select="selectDocGraphNode"
+          />
+          <aside class="graph-detail-panel">
+            <p v-if="!docGraphSelectedCode" class="muted">노드를 클릭하면 문서 정보가 여기 표시됩니다.</p>
+            <p v-else-if="docGraphDetailLoading" class="muted">불러오는 중...</p>
+            <p v-else-if="docGraphDetailError" class="error">{{ docGraphDetailError }}</p>
+            <template v-else-if="docGraphDetail">
+              <div class="detail-header">
+                <code>{{ docGraphDetail.trackingCode }}</code>
+                <span class="status">{{ docGraphDetail.statusCode }}</span>
+              </div>
+              <h3>{{ docGraphDetail.title }}</h3>
+              <dl class="detail-fields">
+                <dt>분류</dt>
+                <dd>{{ docTypeLabel(docGraphDetail.docTypeId) }}</dd>
+                <template v-if="docGraphDetail.priority !== null">
+                  <dt>우선순위</dt>
+                  <dd>{{ docGraphDetail.priority }}</dd>
+                </template>
+                <dt>수정 시각</dt>
+                <dd>{{ new Date(docGraphDetail.updatedAt).toLocaleString() }}</dd>
+              </dl>
+
+              <div class="detail-links">
+                <h4>이 문서가 링크한 문서 ({{ docGraphDetail.linksOut.length }})</h4>
+                <ul v-if="docGraphDetail.linksOut.length > 0" class="chip-list">
+                  <li v-for="l in docGraphDetail.linksOut" :key="l.trackingCode">
+                    <button type="button" class="chip" @click="selectDocGraphNode(l.trackingCode)">{{ l.trackingCode }}</button>
+                  </li>
+                </ul>
+                <p v-else class="muted small">없음</p>
+              </div>
+              <div class="detail-links">
+                <h4>이 문서를 링크한 문서 ({{ docGraphDetail.backlinks.length }})</h4>
+                <ul v-if="docGraphDetail.backlinks.length > 0" class="chip-list">
+                  <li v-for="l in docGraphDetail.backlinks" :key="l.trackingCode">
+                    <button type="button" class="chip" @click="selectDocGraphNode(l.trackingCode)">{{ l.trackingCode }}</button>
+                  </li>
+                </ul>
+                <p v-else class="muted small">없음</p>
+              </div>
+
+              <button type="button" class="open-editor-btn" @click="openDocGraphDetailInEditor">전체 화면에서 열기 →</button>
+            </template>
+          </aside>
+        </div>
       </div>
     </template>
   </div>
@@ -686,17 +776,113 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: 65vh;
-  min-height: 420px;
+  height: 75vh;
+  min-height: 480px;
+}
+.graph-layout {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
 }
 .graph-canvas {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   border: 1px solid var(--color-border);
   border-radius: 8px;
 }
 .graph-empty {
   white-space: normal;
+}
+.graph-detail-panel {
+  width: 320px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+.graph-detail-panel .muted {
+  white-space: normal;
+}
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.detail-header code {
+  font-size: 12px;
+  background: var(--color-surface-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.detail-header .status {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-hover);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.graph-detail-panel h3 {
+  font-size: 15px;
+  margin: 0 0 12px;
+}
+.detail-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0 0 16px;
+}
+.detail-fields dt {
+  color: var(--color-text-muted);
+}
+.detail-fields dd {
+  margin: 0;
+}
+.detail-links {
+  margin-bottom: 16px;
+}
+.detail-links h4 {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+.chip-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+}
+.chip {
+  background: var(--color-surface-hover);
+  color: var(--color-primary);
+  border: 1px solid var(--color-border);
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+.chip:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
+.small {
+  font-size: 12px;
+}
+.open-editor-btn {
+  display: inline-block;
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 13px;
+  padding: 0;
+  cursor: pointer;
 }
 .muted {
   color: var(--color-text-muted);

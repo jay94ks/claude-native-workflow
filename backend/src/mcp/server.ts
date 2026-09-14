@@ -648,8 +648,12 @@ async function main() {
         body: JSON.stringify({ docTypeCode: a.docTypeCode, title: a.title, body: a.body }),
       }),
   );
-  tool("document_get", "문서 조회", "추적 코드로 문서 1건을 조회한다.", { trackingCode: z.string() }, async (a) =>
-    call(`/api/documents/${a.trackingCode}`),
+  tool(
+    "document_get",
+    "문서 조회",
+    "추적 코드로 문서 1건을 조회한다. 응답에 linksOut(이 문서가 링크한 문서, order 포함)/backlinks(이 문서를 링크한 문서) 배열로 연관 문서 추적코드가 함께 온다 - 별도로 document_links_out/document_backlinks를 호출하지 않아도 됨.",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/documents/${a.trackingCode}`),
   );
   tool(
     "document_list",

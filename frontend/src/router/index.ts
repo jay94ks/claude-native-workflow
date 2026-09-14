@@ -24,7 +24,17 @@ const router = createRouter({
         { path: "comments", name: "project-comments", component: () => import("../views/RecentCommentsView.vue"), props: true },
         { path: "activity", name: "project-activity", component: () => import("../views/ProjectActivityView.vue"), props: true },
         { path: "search", name: "project-search", component: () => import("../views/SearchResultsView.vue"), props: true },
-        { path: "documents", name: "documents", component: () => import("../views/DocumentsView.vue"), props: true },
+        {
+          path: "documents",
+          name: "documents",
+          component: () => import("../views/DocumentsView.vue"),
+          props: true,
+          // "문서간 관계" 그래프 서브탭(#document-link-graph)이 관계도/칸반과
+          // 같은 이유로 960px 폭 제한이 답답해 라우트 전체를 풀어준다
+          // (#relations-kanban-full-width와 같은 방식) - 다른 서브탭(폴더/
+          // 리스트 등)은 더 넓어질 뿐 레이아웃이 깨지지 않는다.
+          meta: { fullWidth: true },
+        },
         {
           path: "documents/:trackingCode",
           name: "document-editor",

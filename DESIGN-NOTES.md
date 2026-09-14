@@ -7868,3 +7868,139 @@ doc-graph <projectId>`, MCP `document_graph` 대칭 추가(이 참에
 이제 CLI/MCP뿐 아니라 웹에서 그래프로 한눈에 보고 클릭 탐색도 할 수
 있다. 기존 "관계도" 화면의 그래프 인프라를 완전히 재사용해 새 UI
 컴포넌트를 만들지 않고 처리했다.
+
+## CNW에 설치된 모든 프로젝트의 문서 관계 링크 일괄 갱신(`#document-link-auto-scan`)
+
+**배경**: 설계자 지시 - "CNW에 설치된 모든 프로젝트의 문서 관계 링크
+갱신해줘." `#document-link-graph` 라운드에서 "문서간 관계" 그래프
+서브탭을 추가했지만, 기존 문서 본문 안에 다른 문서의 추적 코드를
+언급해놓고도 실제 `DocumentLink` 레코드는 만들어두지 않은 경우가
+많아 그래프가 실제 연결 관계를 온전히 보여주지 못하는 상태였다.
+AskUserQuestion으로 범위를 확인한 결과 "문서 본문 안 추적코드 언급을
+분석해 DocumentLink 자동 생성/보완"으로 확정.
+
+**설계**: 별도 REST/CLI/MCP 기능이 아니라 이번 한 번만 실행하는
+스크래치 스크립트(`docs` CLI를 서브프로세스로 호출 - 이미 인증된
+전역 CLI 세션을 그대로 재사용, 자격증명 파일을 직접 읽지 않음)로
+처리했다. 프로젝트별로: (1) `docs list <projectId> --count 1000`으로
+문서 목록(및 유효 trackingCode 집합) 확보, (2) `docs doc-graph
+<projectId>`로 기존 `DocumentLink` 전체를 한 번에 가져와 문서별
+기존 링크 집합을 미리 구성(문서마다 `links-out`을 따로 호출하지
+않도록), (3) 문서마다 `docs get`으로 본문을 가져와
+`TrackingCodeText.vue`와 같은 정규식(`/\b[A-Z]{2}-[0-9A-F]{8}\b/g`)
+으로 언급된 추적 코드를 스캔, (4) 자기 자신 제외 + 같은 프로젝트의
+실제 문서(Document 테이블)인 코드만 후보로 남김(`docs list`가 Document
+행만 돌려주므로 `QU-`/`KB-`/`PN-` 등은 자연히 걸러짐 - 별도 접두사
+하드코딩 없이 집합 멤버십 검사만으로 충분), (5) 기존 링크와 겹치지
+않는 것만 `docs link`로 생성. `DocumentLink`에 `(fromDocumentId,
+toTrackingCode)` 유니크 제약이 없어 중복 생성 위험이 있었으므로 (2)의
+사전 조회가 필수였다.
+
+먼저 dry-run(생성 없이 예정 목록만 출력)으로 전체 결과를 확인한 뒤,
+추가 전용(기존 링크를 건드리지 않음)이고 `docs unlink`로 되돌릴 수
+있는 작업임을 확인하고 `--apply`로 실제 적용했다.
+
+**실행 결과**: `minicore`(36개 문서) 150건, `claude-native-workflow`
+(184개 문서) 22건, 총 172건의 `DocumentLink`를 새로 생성. 실행 후
+`docs doc-graph`로 재조회해 `minicore`는 36개 문서 전부가 그래프에
+참여(178 edges, 이전부터 있던 28건 포함)하는 것을 확인했고, 임의로
+고른 문서(`SP-04EE2A18`) 하나의 `docs links-out` 결과가 스크립트가
+예고한 8건과 정확히 일치하는 것도 확인했다.
+
+**결론**: 두 프로덕션 프로젝트의 "문서간 관계" 그래프(`#document-link-
+graph`)가 이제 실제 본문 언급 관계를 훨씬 더 온전히 반영한다. 이 작업은
+코드 변경이 아니라 실제 설치 데이터에 대한 1회성 마이그레이션 성격의
+데이터 보정 작업이라 커밋/배포 대상이 없다 - 스크립트 자체도 스크래치
+디렉터리에만 남기고 저장소에 커밋하지 않는다(CLAUDE.md 규칙 2). 앞으로
+새로 작성되는 문서가 다른 문서를 언급할 때 링크를 빠뜨리는 경우가
+쌓이면, 이번 스크립트를 다시 돌리거나(멱등 - 기존 링크는 건드리지
+않고 새 언급만 추가) 정식 CLI 명령으로 승격하는 걸 고려할 수 있다.
+
+## 문서간 관계 그래프 가로 확장 + 우측 상세 패널, 문서 조회 응답에 연관 문서 코드 명시(`#document-link-graph-detail-panel`, `#document-detail-related-codes`)
+
+**배경**: `#document-link-graph`에서 만든 "문서간 관계" 그래프 서브탭을
+쓰던 중 설계자가 이어서 두 가지를 요청 - (1) "그래프도 가로로
+가득차게, 그리고 우측에 상세 정보 패널을 만들고 노드를 눌렀을 때
+거기에 '본문'을 제외하고 문서의 정보들을 보여주게 만들어줘", (2)
+"조회 API와 CLI, MCP 등에 문서 정보 응답에 연관 문서 코드들을
+명시해줘." 기존 그래프는 노드를 클릭하면 곧장 문서 에디터로 이동하는
+방식이었고(`openDocGraphNode`), 폭도 이 화면(`documents` 라우트)이
+`AppLayout.vue`의 기본 960px 제한을 그대로 쓰고 있었다.
+
+**조사**: 960px 제한은 `AppLayout.vue`의 `.content` 클래스가 기본으로
+걸어두고, 라우트 meta `fullWidth: true`가 있으면
+`.content.full-width { max-width: 100% }`로 풀리는 기존 메커니즘
+(`#relations-kanban-full-width`)이 관계도/칸반 라우트에 이미 적용돼
+있었다 - "문서" 라우트(`documents`)에는 없었다. 우측 상세 패널은
+"관계도" 화면의 `RelationDetailPanel.vue`가 선례지만, 그건 편집/삭제/
+부모-자식 연결 등 CodeRelation 전용 액션이 잔뜩 붙어있어 그대로
+재사용하기엔 과하다 - 문서 그래프 쪽은 순수 조회(문서 자체 편집은
+에디터 화면 몫)라 화면 안에 인라인으로 가볍게 새로 만드는 쪽을
+택했다. "연관 문서 코드 명시" 요청은 이미 있는
+`listDocumentLinksOut`/`listBacklinks` 함수를 문서 단건 GET 라우트
+(`/api/documents/:trackingCode`)에서 호출해 응답에 얹기만 하면
+충분했다(핵심 로직은 이미 `#document-link-ordering`에서 만들어짐) -
+새 core 함수는 필요 없었다. 이 라우트는 검색 엔진 경유 조회
+(`getDocument()`→Meilisearch)라 `linksOut`/`backlinks`는 검색
+인덱스가 아니라 DB에서 별도로 병합해야 한다는 점만 유의(기존
+`perm` 필드를 병합하는 방식과 동일 패턴).
+
+**설계**: (1) `documents` 라우트에 `meta: { fullWidth: true }` 추가 -
+다른 서브탭(폴더/분류/리스트 등)도 같이 넓어지지만 flex 기반
+레이아웃이라 깨지지 않고 오히려 여유가 생길 뿐이라 라우트 전체에
+건다(서브탭별로 분기하려면 라우트를 쪼개야 해서 과설계). (2) 그래프
+탭 내부를 `RelationsView.vue`의 `.layout`(캔버스 flex:1 + 고정폭
+패널)과 같은 구조의 `.graph-layout`로 감싸 캔버스는 남는 폭을 다
+채우고(`flex:1`) 패널은 320px 고정. (3) 노드 클릭
+(`@select`)이 더 이상 즉시 에디터로 이동하지 않고
+`selectDocGraphNode(trackingCode)`를 호출해 `GET /documents/
+:trackingCode`(이번에 linksOut/backlinks가 추가된 바로 그 응답)를
+그대로 불러 패널에 표시 - `body` 필드는 응답에 포함돼 오지만
+템플릿에서 그냥 바인딩하지 않는 방식으로 "본문 제외"를 지킨다.
+패널은 추적코드/상태/제목/분류(`docTypeLabel` 재사용)/우선순위(있을
+때만)/수정 시각과, `linksOut`/`backlinks`를 칩 목록으로 보여주고 각
+칩을 클릭하면(그 대상도 항상 같은 프로젝트의 그래프 노드이므로)
+`selectDocGraphNode`를 다시 호출해 그래프 안에서 계속 탐색할 수
+있게 했다(`DocumentPreviewDialog.vue`의 "전체 화면에서 열기" 관례를
+그대로 패널 하단 버튼으로 유지 - 실제 에디터로 넘어가고 싶을 때만
+그 버튼을 쓴다).
+
+**구현**: `backend/src/api/server.ts`의 `GET /api/documents/
+:trackingCode` 라우트에서 `listDocumentLinksOut`/`listBacklinks`를
+병렬로 호출해 응답에 `linksOut`/`backlinks`로 병합(기존 `perm` 병합과
+같은 자리). MCP `document_get`/CLI `get <trackingCode>` 설명 문구에
+이 필드가 함께 온다는 안내를 추가(별도 툴/커맨드 신설 없음 - 이미
+얇은 REST 패스스루라 자동으로 반영됨). 프런트는
+`frontend/src/router/index.ts`의 `documents` 라우트에 `fullWidth`
+meta 추가, `frontend/src/views/DocumentsView.vue`에 `DocGraphDetail`
+인터페이스 + `docGraphSelectedCode`/`docGraphDetail`/
+`docGraphDetailLoading`/`docGraphDetailError` 상태와
+`selectDocGraphNode()`/`openDocGraphDetailInEditor()` 추가, 템플릿에
+`.graph-layout`(캔버스+`.graph-detail-panel`) 구조로 교체(그래프가
+비어있을 때의 기존 안내 문구는 그대로 유지). `RelationGraphCanvas`에
+`:selected-id="docGraphSelectedCode"`를 넘겨 선택 노드가 캔버스에서도
+테두리로 강조되게 했다(이미 있는 prop 재사용, 컴포넌트 수정 없음).
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc -b`(frontend) 클린. 격리된
+로컬 환경(스크래치 SQLite+디스포저블 Meilisearch+로컬 backend+
+`frontend-dev` 프리뷰)에서 문서 3개(Report A → Chapter B, Chapter C)를
+만들어: REST로 `GET /documents/SP-...`가 `linksOut`/`backlinks`를
+정확히 포함하는지 먼저 확인(curl). 브라우저로 1600×900 데스크톱
+폭에서 "문서간 관계" 탭을 열어 `.content` 폭이 1300px(라우트
+`fullWidth` 적용 확인, 960px 제한이 풀림), `.graph-canvas`가
+868.8px(남는 폭을 다 채움), `.graph-detail-panel`이 정확히 320px로
+렌더링되는 것을 `getBoundingClientRect()`로 실측. "Report A" 노드
+클릭 → 패널에 추적코드/상태/제목/분류/수정시각 + "이 문서가 링크한
+문서(2)" 칩 2개 + "이 문서를 링크한 문서(0)" "없음"이 뜨고 본문은
+어디에도 안 보이는 것을 확인. 칩(`SP-A5937912`) 클릭 → 패널이
+Chapter B 정보로 갱신되고(이 문서를 링크한 문서에 `SP-983750AF`가
+역참조로 뜸) 그래프 노드 선택도 같이 옮겨가는 것을 확인.
+
+**결론**: "문서간 관계" 그래프가 관계도/칸반과 같은 수준의 화면
+활용도를 갖췄고(가로 폭 낭비 없음), 노드를 눌러도 컨텍스트를 잃지
+않고 패널→칩→패널로 그래프 안에서 계속 탐색할 수 있게 됐다. 문서
+단건 조회 API(및 그걸 그대로 감싸는 CLI/MCP)가 이제 본문만으로는
+알 수 없던 "이 문서가 다른 문서와 어떻게 연결돼 있는지"를 별도 호출
+없이 한 번에 준다 - CNW 설치 전체의 `DocumentLink` 자동 보완
+(`#document-link-auto-scan`) 직후라 이 정보의 활용도가 특히 높아진
+시점이다.

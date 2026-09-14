@@ -102,7 +102,12 @@ document next-statuses <trackingCode>`로 확인한다.
 항상 전체 내용을 반환한다 - 라운드 기록이나 큰 소스 파일을 그냥
 훑어보거나 특정 키워드만 확인하려는 거라면 굳이 전체를 컨텍스트에
 올릴 필요 없이 아래를 먼저 쓴다(파일에 대한 Read/Grep 도구와 같은
-역할을 문서 본문/소스 파일 양쪽에 그대로 적용한 것):
+역할을 문서 본문/소스 파일 양쪽에 그대로 적용한 것). `docs get`/
+`document_get` 응답에는 본문과 함께 `linksOut`(이 문서가 링크한
+문서)/`backlinks`(이 문서를 링크한 문서)도 실려 온다
+(`#document-detail-related-codes`) - 문서 하나를 조회했을 때 그
+문서가 다른 어떤 문서와 연결돼 있는지 별도로 `docs links-out`/
+`docs backlinks`를 또 호출하지 않아도 바로 알 수 있다:
 
 - **부분 읽기**: 문서는 `docs read <trackingCode> [--offset <n>]
   [--limit <n>]`, 소스 파일은 `docs git read <projectId> <path>
@@ -508,7 +513,7 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 목적 | CLI | MCP 도구 |
 |---|---|---|
 | 문서 생성 | `docs new <projectId> <typeCode> --title <t> --body <file>` | `document_new` |
-| 문서 조회 | `docs get <trackingCode>` | `document_get` |
+| 문서 조회(본문+linksOut/backlinks) | `docs get <trackingCode>` | `document_get` |
 | 문서 목록 | `docs list <projectId>` | `document_list` |
 | 검색 | `docs search <projectId> <query> [--page <n>] [--count <n>] [--lines <n>] [--codes-only]` | `document_search` |
 | 본문 갱신 | `docs save <trackingCode> <file>` | `document_save` |

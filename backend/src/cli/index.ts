@@ -1021,6 +1021,7 @@ program
 
 program
   .command("get <trackingCode>")
+  .description("문서 1건 조회(본문 포함) - 응답에 linksOut(이 문서가 링크한 문서)/backlinks(이 문서를 링크한 문서)로 연관 문서 추적코드도 함께 온다")
   .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}`))));
 
 program
