@@ -1231,7 +1231,7 @@ program
 
 program
   .command("grep <trackingCode> <pattern>")
-  .description("문서 본문을 정규식(JS 문법)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열")
+  .description("문서 본문을 정규식(POSIX ERE)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열, 패턴이 잘못되면 에러")
   .option("--case-insensitive", "대소문자 구분 안 함")
   .option("--context <n>", "매치된 줄 앞뒤로 n줄씩 더 포함(grep -C와 동일)")
   .action((trackingCode, pattern, opts) =>
@@ -2191,7 +2191,7 @@ gitCmd
 
 gitCmd
   .command("grep <projectId> <path> <pattern>")
-  .description("소스 코드 파일을 정규식(JS 문법)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열")
+  .description("소스 코드 파일을 정규식(POSIX ERE)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열, 패턴이 잘못되면 에러")
   .option("--ref <ref>")
   .option("--case-insensitive", "대소문자 구분 안 함")
   .option("--context <n>", "매치된 줄 앞뒤로 n줄씩 더 포함(grep -C와 동일)")
@@ -2287,6 +2287,44 @@ gitCmd
         }),
       );
     }),
+  );
+
+// 파일마다 add를 한 건씩 반복 호출하면 여러 파일을 다뤄야 할 때 느리게
+// 체감된다(CLI 프로세스 기동+HTTP 왕복이 파일 수만큼 누적) - 로컬 JSON
+// 매니페스트({path, localFile} 항목 배열, docs relation add-bulk와 같은
+// "로컬 파일 참조 배열" 관례)로 여러 파일을 한 번에 스테이징한다.
+gitCmd
+  .command("add-bulk <projectId> <manifestFile>")
+  .description("로컬 JSON 매니페스트([{path, localFile}, ...])로 여러 파일 변경을 한 번에 스테이징한다(git add 여러 개, 아직 커밋 안 됨)")
+  .action((projectId, manifestFile) =>
+    run(async () => {
+      const manifest = JSON.parse(fs.readFileSync(path.resolve(manifestFile), "utf-8")) as { path: string; localFile: string }[];
+      const items = manifest.map((m) => ({
+        path: m.path,
+        // git put/add와 같은 이유로 CRLF→LF 정규화.
+        content: fs.readFileSync(m.localFile, "utf-8").replace(/\r\n/g, "\n"),
+      }));
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/staging/add-bulk`, {
+          method: "POST",
+          body: JSON.stringify({ items }),
+        }),
+      );
+    }),
+  );
+
+gitCmd
+  .command("rm-bulk <projectId> <paths...>")
+  .description("여러 파일 삭제를 한 번에 스테이징한다(git rm 여러 개, 아직 커밋 안 됨)")
+  .action((projectId, paths) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/staging/rm-bulk`, {
+          method: "POST",
+          body: JSON.stringify({ paths }),
+        }),
+      ),
+    ),
   );
 
 gitCmd

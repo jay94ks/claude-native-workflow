@@ -8049,3 +8049,85 @@ Chapter B 편집 화면으로 이동한 뒤, 그 문서의 "연관 문서"에는
 그 문서가 다른 어떤 문서와 연결돼 있는지 보고 클릭 이동까지 할 수
 있게 됐다 - 새 API 호출이나 백엔드 변경 없이, 이미 있던 응답 필드를
 화면에 노출하기만 한 가벼운 변경이다.
+
+## `docs grep`/`docs git grep` 정규식 규격을 POSIX ERE로 고정 + 실제 파서로 교체(`#posix-regex-parser`)
+
+**배경**: `docs git add`가 느려졌다는 조사(직전 라운드) 중 별개로,
+설계자가 `docs grep`/`docs git grep` 같은 정규식 수용 명령들의 "규격을
+POSIX로 고정하고, 야매(임시 땜질)들을 진짜 정규식 파싱 함수를 만들어
+처리하자"고 지시. 기존 구현(`core/textLines.ts`의 `compilePattern`,
+`#grep-posix-classes` 라운드)은 (1) 패턴을 있는 그대로 JS 정규식으로
+시도 → (2) 실패하면 `[:alpha:]` 같은 POSIX 문자 클래스만 문자열
+치환으로 바꿔 재시도 → (3) 그래도 안 되면 리터럴 문자열 검색으로 조용히
+폴백하는 3단계 임시 처리였다 - "POSIX 규격"이 아니라 "JS 정규식 +
+문자 클래스 패치 + 조용한 폴백"이었고, `\d`/`\w`/`\s` 같은 JS 전용
+확장이 의도치 않게 그대로 통과되거나 진짜 잘못된 패턴이 경고 없이
+리터럴로 둔갑하는 문제가 있었다.
+
+**조사**: 정규식을 받는 명령은 딱 두 자리 - `docs grep`(문서 본문,
+`core/documents.ts`의 `grepDocument`)과 `docs git grep`(소스 파일,
+`core/gitea.ts`의 `grepFile`) - 이 둘 다 내부적으로 완전히 같은 함수
+(`core/textLines.ts`의 `grepLines`)를 호출하는 걸 확인해, 그 함수
+하나만 고치면 두 명령 모두에 반영된다.
+
+**설계**: JS 문법으로 "일단 시도"해보는 방식을 버리고, POSIX
+ERE(Extended Regular Expression, IEEE Std 1003.1) 패턴을 실제로
+문자 단위로 파싱해 동등한 JS RegExp 소스로 번역하는 전용 모듈
+(`core/posixRegex.ts`, `translatePosixEreToJs`/`compilePosixEre`)을
+새로 만들었다. 전체 정규식 엔진을 새로 구현하진 않는다 - POSIX와 JS가
+실제로 다른 지점만 정확히 옮기고, 나머지(괄호 그룹, `{m,n}` 구간
+수량자, `|` 교대 등 POSIX ERE와 JS가 같은 뜻으로 공유하는 메타문자)는
+그대로 통과시켜 그 형태가 최종적으로 유효한 정규식을 이루는지는 JS
+엔진 자신의 파서가 검증하게 맡긴다:
+
+- **대괄호 표현식(`[...]`)은 별도 처리** - POSIX에서 `\`는 대괄호
+  안에서 특수 의미가 전혀 없다(리터럴 백슬래시) - JS와 다른 지점이라
+  반드시 이스케이프해서 옮긴다. 여는 `[`(또는 그 바로 뒤 `^`) 다음
+  첫 `]`는 표현식을 닫지 않고 리터럴 `]`라는 POSIX 규칙도 그대로
+  구현. `[:alpha:]` 등 POSIX 문자 클래스는 알려진 12종을 JS 문자
+  범위로 치환하고, 모르는 클래스명은 에러. `[.x.]`/`[=x=]`(collating
+  symbol/equivalence class)는 문자 하나만 감싼 형태만 지원(다국어
+  정렬 순서 등 고급 기능은 범위 밖으로 명시적으로 한정).
+- **대괄호 밖에서 `\`+보통 문자는 항상 그 문자 리터럴** - POSIX
+  규격상 정의되지 않은 조합이지만 실제 POSIX 기반 도구들의 관행과
+  같다. 이 규칙 덕에 `\d`/`\w`/`\s`/`\b` 같은 JS 전용 단축 클래스가
+  절대 살아남지 않는다("규격을 POSIX로 고정한다"는 요구의 핵심 -
+  `\d`는 이제 숫자가 아니라 그냥 문자 "d").
+- **문법이 실제로 깨졌으면 조용히 다른 걸로 둔갑하지 않고 에러** -
+  대괄호 미종료, 알 수 없는 POSIX 클래스, 괄호 미종료, 패턴이
+  `\`로 끝나는 경우 등은 `PosixRegexError`를 던진다(실제 `grep -E`도
+  잘못된 정규식엔 에러를 낸다는 원칙 - 이전의 "절대 에러를 안 던진다"
+  설계를 설계자 지시로 폐기).
+
+**구현**: `core/posixRegex.ts`(신규) - `POSIX_CLASSES`(12종),
+`translateBracketExpression`(대괄호 표현식 전용 파서),
+`translatePosixEreToJs`(전체 패턴 번역), `compilePosixEre`(번역 +
+컴파일, 실패 시 `PosixRegexError`), `PosixRegexError` 클래스.
+`core/textLines.ts`의 `grepLines`가 옛 3단계 로직 대신
+`compilePosixEre`를 직접 호출하도록 교체(POSIX_CLASSES/
+translatePosixClasses/escapeForLiteralSearch/compilePattern 전부
+제거). `core/documents.ts`의 `grepDocument` 주석과 CLI(`docs grep`/
+`docs git grep`)/MCP(`document_grep`/`git_grep`) 설명 문구를 "정규식
+(JS 문법)"에서 "정규식(POSIX ERE)"로 갱신.
+
+**검증**: `tsc --noEmit` 클린. 핵심 로직(`grepLines`/
+`compilePosixEre`)을 직접 겨냥한 24개 케이스로 실측 검증(스크래치
+스크립트, 커밋 대상 아님) - POSIX 문자 클래스 매칭(`[:alpha:]`/
+`[:digit:]`/`[:upper:]`), 대괄호 표현식(부정 `[^abc]`, 첫 글자 `]`
+리터럴 `[]a]`, 범위 `[a-z]`), 앵커/교대/그룹/구간 수량자(`^$`, `|`,
+`(ab)+`, `{2,3}`), 대소문자 무시 옵션, **JS 전용 확장이 이제 리터럴로
+동작함**(`\d`가 숫자가 아니라 문자 "d", `\w`/`\s`/`\b`도 마찬가지),
+**진짜 잘못된 패턴은 에러**(대괄호/괄호 미종료, 알 수 없는 POSIX
+클래스, `\`로 끝남, `{3,1}` 구간 순서 오류) - 24건 전부 통과.
+REST/CLI/MCP 배선 자체는 이번에 안 바뀌었고(둘 다 기존 `grepLines`
+호출 그대로) 내부 컴파일 로직만 교체됐으므로, 그 함수를 직접 겨냥한
+검증으로 충분하다고 판단해 별도 왕복(격리 환경/프로덕션) 검증은
+생략했다.
+
+**결론**: `docs grep`/`docs git grep`(및 대응 MCP 도구)의 정규식
+규격이 이제 명확히 POSIX ERE 하나로 고정됐다 - "JS 정규식이 어쩌다
+보니 통하는 경우도 있고, 안 되면 조용히 리터럴 검색으로 둔갑하는"
+예측 불가능한 동작 대신, `grep -E`에 익숙한 호출부가 기대하는 그대로
+동작하고 진짜 잘못된 패턴은 명확한 에러로 알려준다. SKILL.md(양쪽
+사본)에도 이 차이(특히 `\d` 등이 더 이상 숫자 클래스가 아니라는 점)를
+명시했다.

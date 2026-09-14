@@ -832,7 +832,7 @@ async function main() {
   tool(
     "document_grep",
     "문서 본문 검색",
-    "문서 본문을 정규식(JS 문법)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열.",
+    "문서 본문을 정규식(POSIX ERE)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열, 패턴이 잘못되면 에러.",
     {
       trackingCode: z.string(),
       pattern: z.string(),
@@ -1611,7 +1611,7 @@ async function main() {
   tool(
     "git_grep",
     "git 파일 검색",
-    "소스 코드 파일을 정규식(JS 문법)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열.",
+    "소스 코드 파일을 정규식(POSIX ERE)으로 줄 단위 검색 - 매치된 줄 번호+텍스트 배열, 패턴이 잘못되면 에러.",
     {
       projectId: z.string(),
       path: z.string(),
@@ -1684,6 +1684,28 @@ async function main() {
       call(`/api/projects/${a.projectId}/git/staging/rm`, {
         method: "POST",
         body: JSON.stringify({ path: a.path }),
+      }),
+  );
+  tool(
+    "git_add_bulk",
+    "git 파일 변경 일괄 스테이징",
+    "여러 (path, content) 항목을 한 번에 스테이징한다(git add 여러 개, 아직 커밋 안 됨) - 파일마다 git_add를 반복 호출하는 것보다 빠르다(항목 수만큼 왕복하지 않음). 항목별 결과({path, ok, error?}) 반환, 일부만 실패해도 나머지는 계속 진행.",
+    { projectId: z.string(), items: z.array(z.object({ path: z.string(), content: z.string() })) },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/staging/add-bulk`, {
+        method: "POST",
+        body: JSON.stringify({ items: a.items }),
+      }),
+  );
+  tool(
+    "git_rm_bulk",
+    "git 파일 삭제 일괄 스테이징",
+    "여러 파일 삭제를 한 번에 스테이징한다(git rm 여러 개, 아직 커밋 안 됨) - 항목별 결과({path, ok, error?}) 반환.",
+    { projectId: z.string(), paths: z.array(z.string()) },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/staging/rm-bulk`, {
+        method: "POST",
+        body: JSON.stringify({ paths: a.paths }),
       }),
   );
   tool(

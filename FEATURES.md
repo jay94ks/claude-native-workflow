@@ -215,6 +215,17 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   동일)으로 이어서 조회한다. `docs transition-bulk`/
   `document_transition_bulk`는 원래도 본문이 없던 항목별 결과라 대상
   아님.
+- **본문 정규식 검색**(`docs grep <trackingCode> <pattern>`/
+  `document_grep`, `#posix-regex-parser`) - 정규식 규격은 **POSIX
+  ERE**로 고정돼 있다(`grep -E`/`egrep`과 같은 문법, `core/
+  posixRegex.ts`가 실제로 패턴을 문자 단위로 파싱해 동등한 JS
+  RegExp로 번역). `[[:alpha:]]` 같은 POSIX 문자 클래스는 지원되고,
+  반대로 `\d`/`\w`/`\s`/`\b` 같은 JS 전용 단축 클래스는 POSIX 문법이
+  아니라서 그 알파벳 리터럴로 취급된다. 대괄호 미종료·알 수 없는
+  POSIX 클래스처럼 패턴 자체가 잘못됐으면 조용히 다른 걸로 둔갑하지
+  않고 명확한 에러를 반환한다(예전엔 JS 정규식 시도 실패 시 리터럴
+  문자열 검색으로 조용히 폴백했음 - 폐기). 소스 코드 파일 검색
+  (`docs git grep`, §13)도 같은 파서를 공유해 규격이 동일하다.
 - **일괄 상태 전이**(웹에는 전용 UI가 없고 CLI/MCP로만 가능) - 여러
   문서를 한 번에 같은 상태로 전이한다. 선택한 문서들이 서로 다른
   프로젝트/타입/권한을 가질 수 있어 전부-성공/전부-실패가 아니라
@@ -641,6 +652,13 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   파일을 읽어 그 내용을 그대로 전송하는데, Windows에서 CRLF로
   체크아웃된 파일을 실제 git commit과 동일하게 LF로 정규화해서
   보낸다(UTF-8 텍스트 전용 파이프라인 - 바이너리는 대상 아님).
+- **소스 코드 정규식 검색**(`docs git grep <projectId> <path>
+  <pattern>`/`git_grep`, `#posix-regex-parser`) - `docs grep`(문서
+  본문)과 같은 파서(`core/posixRegex.ts`)를 공유해 정규식 규격이
+  동일하게 **POSIX ERE**로 고정돼 있다(`grep -E`와 같은 문법,
+  `[[:alpha:]]` 같은 POSIX 문자 클래스 지원, `\d`/`\w`/`\s` 같은 JS
+  전용 단축 클래스는 그 알파벳 리터럴로 취급). 패턴 자체가 잘못됐으면
+  에러를 반환한다(자세한 내용은 §6 참고).
 - **git 조회/편집 캐시**(프로젝트 단위 DB 테이블, `GitTreeCache`/
   `GitBlobCache`) - 트리(`getFullTree`)와 파일 내용(`getFileContent`)
   조회가 매번 Gitea REST를 왕복하는 대신 이 캐시를 먼저 거친다. 이

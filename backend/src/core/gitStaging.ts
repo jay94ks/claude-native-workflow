@@ -34,28 +34,82 @@ export interface StagedChangeInfo {
   stagedAt: string;
 }
 
-export async function stageUpsert(projectId: string, path: string, content: string, stagedBy?: string): Promise<StagedChangeInfo> {
-  const { target, repoKind } = await resolveWorkTarget(projectId);
-  const baseSha = await currentShaForPath(projectId, repoKind, target, path);
+async function writeStagingRow(
+  projectId: string,
+  repoKind: gitea.RepoKind,
+  path: string,
+  changeType: "upsert" | "delete",
+  content: string | null,
+  baseSha: string | null,
+  stagedBy?: string,
+): Promise<StagedChangeInfo> {
   const db = getDb();
   const row = await db.gitStagingChange.upsert({
     where: { projectId_repoKind_path: { projectId, repoKind, path } },
-    create: { projectId, repoKind, path, changeType: "upsert", content, baseSha, stagedBy },
-    update: { changeType: "upsert", content, baseSha, stagedBy, stagedAt: new Date() },
+    create: { projectId, repoKind, path, changeType, content, baseSha, stagedBy },
+    update: { changeType, content, baseSha, stagedBy, stagedAt: new Date() },
   });
   return toInfo(row);
+}
+
+export async function stageUpsert(projectId: string, path: string, content: string, stagedBy?: string): Promise<StagedChangeInfo> {
+  const { target, repoKind } = await resolveWorkTarget(projectId);
+  const baseSha = await currentShaForPath(projectId, repoKind, target, path);
+  return writeStagingRow(projectId, repoKind, path, "upsert", content, baseSha, stagedBy);
 }
 
 export async function stageDelete(projectId: string, path: string, stagedBy?: string): Promise<StagedChangeInfo> {
   const { target, repoKind } = await resolveWorkTarget(projectId);
   const baseSha = await currentShaForPath(projectId, repoKind, target, path);
-  const db = getDb();
-  const row = await db.gitStagingChange.upsert({
-    where: { projectId_repoKind_path: { projectId, repoKind, path } },
-    create: { projectId, repoKind, path, changeType: "delete", content: null, baseSha, stagedBy },
-    update: { changeType: "delete", content: null, baseSha, stagedBy, stagedAt: new Date() },
-  });
-  return toInfo(row);
+  return writeStagingRow(projectId, repoKind, path, "delete", null, baseSha, stagedBy);
+}
+
+export interface BulkStageResult {
+  path: string;
+  ok: boolean;
+  error?: string;
+}
+
+/** add/rm을 파일마다 한 건씩 반복 호출하면(각자 CLI 프로세스 기동+HTTP
+ * 왕복) 여러 파일을 다뤄야 할 때 느리다고 체감될 만큼 누적된다(설계자
+ * 지적) - 트리를 요청당 한 번만 받아와(캐시 히트면 즉시, 미스면 이
+ * 요청의 모든 항목이 그 한 번의 결과를 공유) 항목마다 캐시를 다시
+ * 조회하지 않는다. 한 항목이 실패해도 나머지는 계속 진행(항목별
+ * 결과 반환 - #relation-add-bulk/#document-patch-batch와 같은 관례). */
+export async function bulkStageUpsert(
+  projectId: string,
+  items: { path: string; content: string }[],
+  stagedBy?: string,
+): Promise<BulkStageResult[]> {
+  const { target, repoKind } = await resolveWorkTarget(projectId);
+  const tree = await gitea.getFullTree(projectId, target);
+  const shaByPath = new Map(tree.map((e) => [e.path, e.sha]));
+  return Promise.all(
+    items.map(async ({ path, content }) => {
+      try {
+        await writeStagingRow(projectId, repoKind, path, "upsert", content, shaByPath.get(path) ?? null, stagedBy);
+        return { path, ok: true };
+      } catch (err) {
+        return { path, ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }),
+  );
+}
+
+export async function bulkStageDelete(projectId: string, paths: string[], stagedBy?: string): Promise<BulkStageResult[]> {
+  const { target, repoKind } = await resolveWorkTarget(projectId);
+  const tree = await gitea.getFullTree(projectId, target);
+  const shaByPath = new Map(tree.map((e) => [e.path, e.sha]));
+  return Promise.all(
+    paths.map(async (path) => {
+      try {
+        await writeStagingRow(projectId, repoKind, path, "delete", null, shaByPath.get(path) ?? null, stagedBy);
+        return { path, ok: true };
+      } catch (err) {
+        return { path, ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }),
+  );
 }
 
 export async function restoreStaged(projectId: string, path: string): Promise<void> {

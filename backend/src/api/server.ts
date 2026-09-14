@@ -4098,6 +4098,36 @@ app.post(
   }),
 );
 
+// 파일마다 add/rm을 한 건씩 반복 호출하면(설계자 지적 - "docs git add가
+// 갑자기 느려졌다"의 실제 원인은 파일 수만큼 CLI 프로세스+HTTP 왕복이
+// 누적된 것) 여러 파일을 한 번에 스테이징한다 - #git-staging-bulk.
+app.post(
+  "/api/projects/:projectId/git/staging/add-bulk",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { items } = req.body as { items?: { path?: string; content?: string }[] };
+    if (!items?.length) { res.status(400).json({ error: "items가 필요합니다" }); return; }
+    for (const item of items) {
+      if (!item.path) { res.status(400).json({ error: "items의 각 항목에 path가 필요합니다" }); return; }
+      if (item.content === undefined) { res.status(400).json({ error: "items의 각 항목에 content가 필요합니다" }); return; }
+      item.path = normalizeGitPath(item.path);
+    }
+    res.json(await gitStaging.bulkStageUpsert(req.params.projectId, items as { path: string; content: string }[], req.userId));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/staging/rm-bulk",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { paths } = req.body as { paths?: string[] };
+    if (!paths?.length) { res.status(400).json({ error: "paths가 필요합니다" }); return; }
+    res.json(await gitStaging.bulkStageDelete(req.params.projectId, paths.map(normalizeGitPath), req.userId));
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/git/staging/status",
   authenticate,
