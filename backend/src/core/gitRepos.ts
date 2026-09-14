@@ -721,13 +721,28 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
     // 실질적으로 무시된다 - 토큰을 그대로 재사용한다.
     await gitea.configurePushMirror(workTarget, repo.repoUrl, token, token);
   }
-  await gitea.triggerPushMirrorSync(workTarget);
+  try {
+    await gitea.triggerPushMirrorSync(workTarget);
+  } catch (err) {
+    // 원래는 "트리거는 항상 성공하고, 실제 push 실패는 lastError로
+    // 비동기 확인된다"고 가정했었는데(설계 주석 그대로), 인증 실패처럼
+    // 빠르게 드러나는 오류는 트리거 호출 자체가 동기적으로 예외를
+    // 던지는 걸 실측으로 확인(#push-mirror-sync-trigger-error - 422
+    // "error occurred when syncing push mirrors"). 이것도 같은 대기열
+    // 경로로 우아하게 처리한다 - 원본 raw 예외를 호출부에 그대로
+    // 흘려보내지 않음.
+    return queuePublishFailure(projectId, err instanceof Error ? err.message : String(err));
+  }
   const result = await waitForPushMirrorOutcome(workTarget, existing?.lastUpdate ?? null);
 
   if (!result?.lastError) {
     return { status: "synced" };
   }
 
+  return queuePublishFailure(projectId, result.lastError);
+}
+
+async function queuePublishFailure(projectId: string, errorMessage: string): Promise<PublishResult> {
   const db = getDb();
   const entry = await db.gitSyncQueueEntry.create({
     data: { projectId, status: "pending", reason: "push_failed" },
@@ -735,7 +750,7 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
   await sendMessage(
     projectId,
     null,
-    `외부 저장소 동기화(발행)에 실패했습니다: ${result.lastError}\n\n` +
+    `외부 저장소 동기화(발행)에 실패했습니다: ${errorMessage}\n\n` +
       `"docs git sync-proposal ${projectId} --out <dir>"로 변경 제안을 확인해 직접 반영하거나 충돌을 해소한 뒤, ` +
       `"docs git publish-queue-done ${projectId} ${entry.id}"로 완료를 보고하세요 - 그래야 "동기화" 버튼이 다시 활성화됩니다.`,
   );

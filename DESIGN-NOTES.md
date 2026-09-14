@@ -7045,3 +7045,60 @@ SQLite에 새 스키마 push+클라이언트 재생성 확인 포함)에서 실�
 홈에서 바로 접근하거나, 더 많이 쌓이면 전용 페이지에서 페이지네이션
 으로 훑어볼 수 있게 됐다 - 폴더 기능과 나란히 쓸 수 있는 가벼운
 개인화 도구.
+
+## triggerPushMirrorSync()의 동기적 실패를 처리 못해 raw Gitea 예외가 그대로 새던 버그 수정(`#push-mirror-sync-trigger-error`)
+
+**배경**: 설계자가 실제로 겪은 에러를 보고 - `Gitea API 오류: HTTP 422
+{"message":"error occurred when syncing push mirrors:
+remote_mirror_VYCZJRgJUX","url":"http://localhost:8763/api/swagger"}`.
+
+**조사**: 이 remote_mirror 이름을 Gitea REST API로 직접 조회해(minicore
+프로젝트) 실제 push mirror 상태를 확인했다 - `last_error`에 "push
+failed: remote: Invalid username or token. Password authentication is
+not supported for Git operations."가 찍혀 있었다. 이 자격증명으로
+`validateExternalCredential()`을 직접 호출해보니 `false` - 토큰이
+실제로 만료/폐기된 상태였다. **그런데** 지금 `docs git publish`를
+실제로 실행해보면, 이 무효한 자격증명을 정상적으로 감지해 "자격증명이
+더 이상 유효하지 않아 외부 연동이 자동으로 해제되고 자체 호스팅으로
+전환되었습니다"라는 깔끔한 메시지로 처리되고 프로젝트가 실제로
+`self_hosted`로 자동 전환된다 - `publishToExternalRepo()`의 자격증명
+사전 검증 자체는 정상 동작한다는 뜻이다. `triggerPushMirrorSync()`
+(실제 push를 트리거하는 호출)는 이 검증 **다음**에만 실행되므로,
+설계자가 겪은 raw 422는 자격증명이 아직 유효했던 **그 이전 시점**에
+발생한 것이었다.
+
+**원인**: `gitRepos.ts`의 기존 설계 주석은 "트리거는 항상 성공하고,
+실제 push 실패는 `lastError`로 비동기 확인된다"고 가정했다
+(`waitForPushMirrorOutcome`이 폴링하는 그 필드). 하지만 인증 실패처럼
+빠르게 드러나는 오류는 Gitea가 트리거 호출(`POST
+.../push_mirrors-sync`) 자체를 **동기적으로 422로 거부**할 수 있다는
+게 이번에 드러났다. 이 호출은 `try/catch` 없이 그냥 `await`만 하고
+있어서, 이 경우 `gitea.ts`의 `giteaFetch()`가 던지는 원본 예외
+("Gitea API 오류: HTTP 422 ...")가 그대로 호출부까지 새어 나갔다 -
+기존에 이미 있는 "대기열로 우아하게 전환" 경로(비동기 `lastError`
+케이스가 쓰는 것과 똑같은 처리)를 전혀 안 거치고.
+
+**수정**: `gitRepos.ts` - `triggerPushMirrorSync()` 호출을
+`try/catch`로 감싸, 실패하면 기존 "대기열 전환" 로직(DB에
+`push_failed` 큐 항목 생성 + `sendMessage` 안내)을 그대로 재사용한다.
+이 로직을 `queuePublishFailure()`라는 별도 함수로 뽑아, 기존 비동기
+`lastError` 케이스와 신규 동기적 예외 케이스가 정확히 같은 사용자
+경험(큐 항목 + 안내 메시지 + `{status:"queued", queueEntryId}`)을
+갖도록 통일했다.
+
+**검증**: `cd backend && npx tsc --noEmit` 클린. 이 라운드는 실제
+배포 전이라(자격증명이 유효한 채로 트리거가 동기적으로 실패하는
+상황을 안전하게 재현하려면 실제 외부 저장소가 필요) 라이브 재현
+검증은 아직 안 함 - 로직 자체는 이미 실측으로 검증된 비동기
+`lastError` 처리 경로(`queuePublishFailure`)를 그대로 재사용하는 순수
+리팩터링+try/catch 추가라 회귀 위험은 낮다고 판단했다. 배포 후 실제
+상황(또는 안전한 디스포저블 시나리오)으로 재확인하는 걸 후속 과제로
+남긴다.
+
+**결론**: `docs git publish`가 어떤 이유로든 Gitea의 push mirror
+동기화에 실패하면(자격증명 무효/발산/이번처럼 동기적 422까지) 이제
+항상 같은 방식으로 - raw 예외가 아니라 - 대기열 항목 + 안내 메시지로
+우아하게 처리된다. 이 조사 과정에서 실제 `minicore` 프로젝트가
+(자격증명이 실측으로 확인된 대로 정말 만료돼 있었으므로) `self_hosted`
+로 자동 전환된 상태로 남았다 - 외부 동기화를 다시 쓰려면 새 GitHub
+토큰으로 재연동이 필요하다.
