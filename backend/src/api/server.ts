@@ -3081,7 +3081,7 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const status = req.query.status as "pending" | "processing" | "delivered" | "all" | undefined;
+    const status = req.query.status as "pending" | "processing" | "delivered" | "active" | "all" | undefined;
     const markDelivered = req.query.markDelivered === "true";
     res.json(await listMessages(req.params.projectId, { status, markDelivered }));
   }),
@@ -3168,7 +3168,7 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const status = req.query.status as "pending" | "processing" | "delivered" | "all" | undefined;
+    const status = req.query.status as "pending" | "processing" | "delivered" | "active" | "all" | undefined;
     const page = Number(req.query.page ?? 1);
     const pageSize = Number(req.query.pageSize ?? 20);
     res.json(await listMessagesPaged(req.params.projectId, { status, page, pageSize }));

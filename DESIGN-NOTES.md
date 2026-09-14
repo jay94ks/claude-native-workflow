@@ -7305,3 +7305,34 @@ Gitea 왕복 검증은 생략.
 그 순간의 최신 토큰으로 다시 만들어지므로, 재연동 직후는 물론
 OAuth 토큰이 백그라운드에서 자동 갱신된 경우에도 Gitea 쪽이 자동으로
 최신 자격증명을 따라간다.
+
+## CLI/MCP의 message list 기본값을 all에서 active로 변경(`#message-list-active-default`)
+
+**배경**: 설계자 지시 - "CLI/MCP로 보내는 메시지에서 ack된 것, ack
+안된 것만 보내고, 기록은 보낼 필요가 없는데." `message list`/
+`message_list`가 `--status` 생략 시 기본으로 `all`을 돌려줘, 이미
+완료 처리된 "기록" 메시지까지 AI 세션이 매번 다시 받고 있었다.
+
+**설계**: 서버 코어 함수(`listMessages`/`listMessagesPaged`) 자체의
+"status 생략 시" 기본값(`all`)은 그대로 두고(다른 호출부의 암묵적
+계약을 안 깨기 위해), 새 필터 값 `"active"`(대기+처리중,
+`completedAt` 없음)를 추가한 뒤 **CLI/MCP 레이어에서만** status
+생략 시 `active`를 명시적으로 채워 보내도록 바꿨다. 웹 UI는 항상
+명시적으로 status를 보내므로 영향이 없다.
+
+**구현**: `messages.ts` - status 유니온에 `"active"` 추가 +
+where 절 분기(`completedAt: null`). `server.ts` - 두 라우트의 타입
+캐스트에 추가(로직 변경 없음). `cli/index.ts` - `message list`가
+`opts.status ?? "active"`로 기본값 처리. `mcp/server.ts` -
+`message_list`가 `a.status ?? "active"`로 동일 처리.
+
+**검증**: `tsc --noEmit` 클린. 격리 스크래치 SQLite에 대기/처리중/
+기록 메시지를 각각 만들어 9개 assert 확인 - `active`가 대기+처리중
+2건만 반환하고 기록은 제외, `all`은 3건 전부, 개별 pending/
+processing/delivered 필터도 정확, 페이지네이션 버전도 total이
+정확함을 확인. 서버 코어 함수 자체의 기본값이 여전히 `all`인 것도
+확인해 웹 등 다른 호출부에 영향이 없음을 검증했다.
+
+**결론**: CLI/MCP로 status 없이 `message list`를 부르면 이제 아직
+처리 안 끝난(대기+처리중) 메시지만 오고, 완료된 기록은 매번 다시
+안 온다 - 전체 이력이 필요하면 `--status all`을 명시하면 된다.

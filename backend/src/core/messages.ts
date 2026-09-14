@@ -137,17 +137,21 @@ export async function completeMessage(id: string, requesterId: string): Promise<
 }
 
 export interface ListMessagesOptions {
-  status?: "pending" | "processing" | "delivered" | "all";
+  status?: "pending" | "processing" | "delivered" | "active" | "all";
   markDelivered?: boolean;
 }
 
 /** status로 대기(ackedAt 없음)/처리중(ackedAt 있음, completedAt 없음)/
- * 기록(completedAt 있음)을 필터한다 - deliveredAt(AI가 읽어감)은 이
- * 분류와 별개 축이라 필터에 안 쓰인다. markDelivered=true(CLI/MCP
- * 호출부만 명시적으로 보냄 - "AI가 읽어감"의 정의)면 조회 직후 그
- * 결과 중 deliveredAt이 아직 없는 행들을 한 번에 deliveredAt=now()로
- * 갱신하고, 반환 객체에도 그대로 반영한다(웹 UI는 이 플래그를 안
- * 보내므로 읽어도 안 바뀐다). */
+ * 기록(completedAt 있음)/active(대기+처리중, 즉 기록만 제외)를
+ * 필터한다 - deliveredAt(AI가 읽어감)은 이 분류와 별개 축이라 필터에
+ * 안 쓰인다. "active"는 CLI/MCP의 message list 기본값(설계자 지시 -
+ * "ack된 것, ack 안된 것만 보내고, 기록은 보낼 필요가 없다") - 아직
+ * 처리가 끝나지 않은 메시지만 AI에게 보여주고, 이미 완료 처리된
+ * 기록까지 매번 다시 보낼 필요는 없다는 취지. markDelivered=true
+ * (CLI/MCP 호출부만 명시적으로 보냄 - "AI가 읽어감"의 정의)면 조회
+ * 직후 그 결과 중 deliveredAt이 아직 없는 행들을 한 번에
+ * deliveredAt=now()로 갱신하고, 반환 객체에도 그대로 반영한다(웹
+ * UI는 이 플래그를 안 보내므로 읽어도 안 바뀐다). */
 export async function listMessages(projectId: string, opts: ListMessagesOptions = {}): Promise<MessageDetail[]> {
   const db = getDb();
   const where =
@@ -157,7 +161,9 @@ export async function listMessages(projectId: string, opts: ListMessagesOptions 
         ? { projectId, ackedAt: { not: null }, completedAt: null }
         : opts.status === "delivered"
           ? { projectId, completedAt: { not: null } }
-          : { projectId };
+          : opts.status === "active"
+            ? { projectId, completedAt: null }
+            : { projectId };
   const rows = await db.message.findMany({ where, orderBy: { createdAt: "asc" } });
 
   if (opts.markDelivered) {
@@ -187,7 +193,7 @@ export interface MessagePage {
  * CLI/MCP가 쓰는 listMessages()는 그대로 둔다. */
 export async function listMessagesPaged(
   projectId: string,
-  opts: { status?: "pending" | "processing" | "delivered" | "all"; page: number; pageSize: number },
+  opts: { status?: "pending" | "processing" | "delivered" | "active" | "all"; page: number; pageSize: number },
 ): Promise<MessagePage> {
   const db = getDb();
   const where =
@@ -197,7 +203,9 @@ export async function listMessagesPaged(
         ? { projectId, ackedAt: { not: null }, completedAt: null }
         : opts.status === "delivered"
           ? { projectId, completedAt: { not: null } }
-          : { projectId };
+          : opts.status === "active"
+            ? { projectId, completedAt: null }
+            : { projectId };
   const safePage = Math.max(1, opts.page);
   const [items, total] = await Promise.all([
     db.message.findMany({

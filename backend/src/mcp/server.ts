@@ -1486,24 +1486,21 @@ async function main() {
   tool(
     "message_list",
     "인스턴스 메시지 목록",
-    "그 프로젝트의 메시지 기록을 조회한다 - 조회 자체는 상태(대기/처리중/기록)를 안 바꾼다(읽음은 message_ack와 별개 축). status로 pending(대기)/processing(처리중)/delivered(기록)/all 필터 가능(기본 all). page/pageSize를 주면 페이지네이션 응답(total 포함)을 받는다 - 단, 이 경우 웹 화면과 공유하는 라우트라 deliveredAt 자동 갱신은 안 됨. 생략하면 기존처럼 전체 배열 + deliveredAt 자동 갱신.",
+    "그 프로젝트의 메시지 기록을 조회한다 - 조회 자체는 상태(대기/처리중/기록)를 안 바꾼다(읽음은 message_ack와 별개 축). status로 pending(대기)/processing(처리중)/delivered(기록)/active(대기+처리중, 기록 제외)/all 필터 가능 - 생략하면 기본 active(아직 처리 안 끝난 것만, 이미 완료된 기록은 안 보냄 - 전체 이력이 필요하면 all을 명시). page/pageSize를 주면 페이지네이션 응답(total 포함)을 받는다 - 단, 이 경우 웹 화면과 공유하는 라우트라 deliveredAt 자동 갱신은 안 됨. 생략하면 기존처럼 전체 배열 + deliveredAt 자동 갱신.",
     {
       projectId: z.string(),
-      status: z.enum(["pending", "processing", "delivered", "all"]).optional(),
+      status: z.enum(["pending", "processing", "delivered", "active", "all"]).optional(),
       page: z.number().optional(),
       pageSize: z.number().optional(),
     },
     async (a) => {
+      const status = a.status ?? "active";
       const paged = a.page !== undefined || a.pageSize !== undefined;
       if (paged) {
-        const qs = new URLSearchParams({
-          ...(a.status ? { status: String(a.status) } : {}),
-          page: String(a.page ?? 1),
-          pageSize: String(a.pageSize ?? 20),
-        });
+        const qs = new URLSearchParams({ status: String(status), page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
         return call(`/api/projects/${a.projectId}/messages/page?${qs}`);
       }
-      const qs = new URLSearchParams({ markDelivered: "true", ...(a.status ? { status: String(a.status) } : {}) });
+      const qs = new URLSearchParams({ markDelivered: "true", status: String(status) });
       return call(`/api/projects/${a.projectId}/messages?${qs}`);
     },
   );

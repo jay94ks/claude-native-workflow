@@ -2085,24 +2085,24 @@ hookCmd
 const messageCmd = program.command("message").description("인스턴스 메시징 - 대기(미확인)/처리중(ack함)/기록(complete함) 상태 구분");
 messageCmd
   .command("list <projectId>")
-  .option("--status <s>", "pending|processing|delivered|all(기본 all)")
+  .option("--status <s>", "pending|processing|delivered|active|all(기본 active - 기록/완료된 메시지는 빼고 아직 처리 안 끝난 것만)")
   .option(
     "--page <n>",
     "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열. 주의: 페이지네이션 응답에선 deliveredAt 자동 갱신이 안 됨(웹 화면과 공유하는 라우트라 markDelivered 미지원)",
   )
   .option("--count <n>", "페이지당 개수(--page와 함께)")
-  .description("CLI로 조회해도 상태는 안 바뀐다(읽음은 ack와 별개) - 대기 상태였던 메시지의 deliveredAt만 자동 갱신")
+  .description(
+    "CLI로 조회해도 상태는 안 바뀐다(읽음은 ack와 별개) - 대기 상태였던 메시지의 deliveredAt만 자동 갱신. " +
+      "--status를 생략하면 기본으로 active(대기+처리중)만 보여주고 기록(완료)된 메시지는 안 보낸다 - 전체 이력이 필요하면 --status all.",
+  )
   .action((projectId, opts) => {
+    const status = opts.status ?? "active";
     const paged = opts.page !== undefined || opts.count !== undefined;
     if (paged) {
-      const qs = new URLSearchParams({
-        ...(opts.status ? { status: opts.status } : {}),
-        page: opts.page ?? "1",
-        pageSize: opts.count ?? "20",
-      });
+      const qs = new URLSearchParams({ status, page: opts.page ?? "1", pageSize: opts.count ?? "20" });
       return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages/page?${qs}`)));
     }
-    const qs = new URLSearchParams({ markDelivered: "true", ...(opts.status ? { status: opts.status } : {}) });
+    const qs = new URLSearchParams({ markDelivered: "true", status });
     return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages?${qs}`)));
   });
 messageCmd.command("send <projectId> <body...>").action((projectId, bodyParts) =>
