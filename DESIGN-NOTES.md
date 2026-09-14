@@ -7226,3 +7226,39 @@ rename/삭제)는 직전 라운드에서 이미 검증된 로직이라 이번엔
 **결론**: 어느 프로젝트에서든 "자격증명 일괄 확인" 한 번으로 가진
 자격증명 전부의 상태를 파악하고 죽은 것들을 한 번에 정리할 수 있게
 됐다.
+
+## git 경로를 받는 API 전반에 경로 구분자 정규화 추가(`#git-path-separator`)
+
+**배경**: 설계자가 이 저장소 자신의 work 저장소를 실제 GitHub 상태와
+맞추려고 Windows PowerShell에서 `docs git add`를 직접 호출했는데,
+화면에 같은 파일이 `docs/DC-474EE823.md`와 `docs\DC-474EE823.md`
+처럼 구분자만 다른 두 항목으로 중복 표시되는 것을 발견해 보고했다.
+
+**원인**: `docs git add`의 `path` 인자는 CLI가 받은 문자열을 그대로
+API 바디에 실어 보내고, `gitStaging.stageUpsert`는 이를 정규화 없이
+`GitStagingChange`의 유니크 키(`projectId_repoKind_path`)로 쓴다.
+git 저장소 경로는 OS와 무관하게 항상 `/`를 쓰는데, Windows에서
+백슬래시로 타이핑한 경로가 슬래시 버전과 문자열이 달라 별개의
+스테이징 행으로 취급됐다. 조사해보니 이 문제는 `git add` 하나가
+아니라 git 파일 조회/쓰기/blame/tree/raw, 소스 코드 연관 질의, 코드
+관계도(`filePath`) 등 "사용자/CLI가 넘긴 경로를 받는" API 경계
+전체에 동일하게 있었다.
+
+**수정**: 신규 `backend/src/core/gitPath.ts` - `normalizeGitPath(path)`
+(`\`→`/` 치환 + 선행 `/` 제거)를 만들어, 이 경로를 받는 모든 API
+경계(`server.ts`의 git 파일 조회/쓰기/삭제, `/git/files`, `/git/blame`,
+`/git/tree`(`/page`), git 스테이징(add/rm/restore), 소스코드 연관
+링크, 소스 코드 대상 질의, 코드 관계도의 `filePath` 단건/벌크
+생성·수정·목록 필터)에서 공통으로 거치도록 통일했다.
+
+**검증**: `tsc --noEmit` 클린. `normalizeGitPath` 자체는 순수 문자열
+함수라 독립 스크립트로 6개 케이스(설계자가 실제로 겪은
+`"docs\\X.md"` → `"docs/X.md"` 포함)를 전부 실측 통과시켰다 - 감싸는
+하위 로직(Gitea 조회/스테이징 upsert)은 이번에 바꾸지 않아 별도
+Gitea 왕복 검증은 생략.
+
+**결론**: 앞으로 Windows CLI에서 백슬래시로 경로를 입력해도 이미
+슬래시로 저장된 같은 파일과 정확히 같은 키로 취급된다. 이 라운드
+이전에 이미 잘못 스테이징된 항목은 커밋 전 "진행 중인 작업 상태"라
+`docs git status`로 확인 후 `docs git restore`로 지우고 다시
+`docs git add`(이제 자동 정규화됨)로 재스테이징하면 된다.

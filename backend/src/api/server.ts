@@ -237,6 +237,7 @@ import {
 import { isGithubOAuthConfigured, startGithubOAuth, completeGithubOAuth, listGithubRepos } from "../core/githubOAuth.js";
 import * as gitea from "../core/gitea.js";
 import * as gitStaging from "../core/gitStaging.js";
+import { normalizeGitPath } from "../core/gitPath.js";
 import {
   verifyAndParseWebhook,
   recordPushEvent,
@@ -1924,9 +1925,9 @@ app.post(
     if (!doc) { res.status(404).json({ error: "not found" }); return; }
     const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
-    const { filePath } = req.body as { filePath?: string };
-    if (!filePath) { res.status(400).json({ error: "filePath가 필요합니다" }); return; }
-    res.json(await addSourceLink(req.params.trackingCode, filePath, req.userId!));
+    const { filePath: rawFilePath } = req.body as { filePath?: string };
+    if (!rawFilePath) { res.status(400).json({ error: "filePath가 필요합니다" }); return; }
+    res.json(await addSourceLink(req.params.trackingCode, normalizeGitPath(rawFilePath), req.userId!));
   }),
 );
 
@@ -2312,6 +2313,9 @@ app.post(
   asyncRoute(async (req, res) => {
     const { items } = req.body as { items?: CodeRelationInput[] };
     if (!items?.length) { res.status(400).json({ error: "items가 필요합니다" }); return; }
+    for (const item of items) {
+      if (item.filePath) item.filePath = normalizeGitPath(item.filePath);
+    }
     res.json(await bulkCreateRelations(req.params.projectId, req.userId!, items));
   }),
 );
@@ -2323,6 +2327,9 @@ app.put(
   asyncRoute(async (req, res) => {
     const { items } = req.body as { items?: BulkUpdateItem[] };
     if (!items?.length) { res.status(400).json({ error: "items가 필요합니다" }); return; }
+    for (const item of items) {
+      if (item.filePath) item.filePath = normalizeGitPath(item.filePath);
+    }
     res.json(await bulkUpdateRelations(req.params.projectId, req.userId!, items));
   }),
 );
@@ -2361,6 +2368,7 @@ app.post(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const input = req.body as CodeRelationInput;
+    if (input.filePath) input.filePath = normalizeGitPath(input.filePath);
     res.json(await createRelation(req.params.projectId, req.userId!, input));
   }),
 );
@@ -2374,7 +2382,7 @@ app.get(
     res.json(
       await listRelations(req.params.projectId, req.userId!, {
         q,
-        filePath,
+        filePath: filePath ? normalizeGitPath(filePath) : filePath,
         trackingCode,
         tag,
         hasNoParent: hasNoParent === "true",
@@ -2404,6 +2412,7 @@ app.put(
     const patch = req.body as Partial<CodeRelationInput> & {
       addParentIds?: string[]; removeParentIds?: string[]; addChildIds?: string[]; removeChildIds?: string[];
     };
+    if (patch.filePath) patch.filePath = normalizeGitPath(patch.filePath);
     res.json(await updateRelation(req.params.id, req.params.projectId, req.userId!, patch));
   }),
 );
@@ -2681,15 +2690,15 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const { path, kind, text, refs, options } = req.body as {
+    const { path: rawPath, kind, text, refs, options } = req.body as {
       path?: string;
       kind?: string;
       text?: string;
       refs?: string[];
       options?: { label: string; detail?: string }[];
     };
-    if (!path || !kind || !text) { res.status(400).json({ error: "path/kind/text가 필요합니다" }); return; }
-    res.json(await addQuestion(req.params.projectId, "source", path, kind, text, req.userId!, refs, options));
+    if (!rawPath || !kind || !text) { res.status(400).json({ error: "path/kind/text가 필요합니다" }); return; }
+    res.json(await addQuestion(req.params.projectId, "source", normalizeGitPath(rawPath), kind, text, req.userId!, refs, options));
   }),
 );
 
@@ -2712,7 +2721,7 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const path = req.query.path as string | undefined;
+    const path = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!path) { res.status(400).json({ error: "path 쿼리가 필요합니다" }); return; }
     res.json(await listQuestions("source", path));
   }),
@@ -2743,7 +2752,7 @@ app.get(
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
-    const path = req.query.path as string | undefined;
+    const path = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!path) { res.status(400).json({ error: "path 쿼리가 필요합니다" }); return; }
     const page = Number(req.query.page ?? 1);
     const pageSize = Number(req.query.pageSize ?? 20);
@@ -3371,7 +3380,7 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    const filepath = req.query.path as string | undefined;
+    const filepath = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!filepath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     res.json(await gitea.getBlame(target, filepath, req.query.ref as string | undefined));
   }),
@@ -3395,7 +3404,7 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    const dirPath = (req.query.path as string | undefined) ?? "";
+    const dirPath = req.query.path ? normalizeGitPath(req.query.path as string) : "";
     res.json(await gitea.listTree(target, dirPath, req.query.ref as string | undefined));
   }),
 );
@@ -3406,7 +3415,7 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    const dirPath = (req.query.path as string | undefined) ?? "";
+    const dirPath = req.query.path ? normalizeGitPath(req.query.path as string) : "";
     res.json(
       await gitea.listTreePaged(
         target,
@@ -3425,7 +3434,7 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    const filePath = req.query.path as string | undefined;
+    const filePath = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     res.json(await gitea.getFileContent(req.params.projectId, target, filePath, req.query.ref as string | undefined));
   }),
@@ -3439,7 +3448,7 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    const filePath = req.query.path as string | undefined;
+    const filePath = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
     const limit = req.query.limit !== undefined ? Number(req.query.limit) : undefined;
@@ -3453,7 +3462,7 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    const filePath = req.query.path as string | undefined;
+    const filePath = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const { q } = req.query as { q?: string };
     if (!q) { res.status(400).json({ error: "q가 필요합니다" }); return; }
@@ -3484,7 +3493,7 @@ app.put(
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    const filePath = req.query.path as string | undefined;
+    const filePath = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const { content, message } = req.body as { content?: string; message?: string };
     if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
@@ -3504,7 +3513,7 @@ app.delete(
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    const filePath = req.query.path as string | undefined;
+    const filePath = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const { message } = (req.body ?? {}) as { message?: string };
     // put과 같은 원칙 - 커밋이 요청을 보낸 설계자 신원으로 귀속되도록 그
@@ -3526,7 +3535,7 @@ app.get(
     const target = await requireGiteaWorkingRef(req.params.projectId);
     const pathsParam = req.query.paths as string | undefined;
     if (!pathsParam) { res.status(400).json({ error: "paths 쿼리 파라미터가 필요합니다(쉼표로 구분)" }); return; }
-    const paths = pathsParam.split(",").map((p) => p.trim()).filter(Boolean);
+    const paths = pathsParam.split(",").map((p) => normalizeGitPath(p.trim())).filter(Boolean);
     const contentByPath = await gitea.getFileContentsBatch(req.params.projectId, target, paths);
     res.json({
       files: paths.map((path) => {
@@ -3544,10 +3553,10 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const { path: filePath, content } = req.body as { path?: string; content?: string };
-    if (!filePath) { res.status(400).json({ error: "path가 필요합니다" }); return; }
+    const { path: rawPath, content } = req.body as { path?: string; content?: string };
+    if (!rawPath) { res.status(400).json({ error: "path가 필요합니다" }); return; }
     if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
-    res.json(await gitStaging.stageUpsert(req.params.projectId, filePath, content, req.userId));
+    res.json(await gitStaging.stageUpsert(req.params.projectId, normalizeGitPath(rawPath), content, req.userId));
   }),
 );
 
@@ -3556,9 +3565,9 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const { path: filePath } = req.body as { path?: string };
-    if (!filePath) { res.status(400).json({ error: "path가 필요합니다" }); return; }
-    res.json(await gitStaging.stageDelete(req.params.projectId, filePath, req.userId));
+    const { path: rawPath } = req.body as { path?: string };
+    if (!rawPath) { res.status(400).json({ error: "path가 필요합니다" }); return; }
+    res.json(await gitStaging.stageDelete(req.params.projectId, normalizeGitPath(rawPath), req.userId));
   }),
 );
 
@@ -3576,9 +3585,9 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const { path: filePath } = req.body as { path?: string };
-    if (!filePath) { res.status(400).json({ error: "path가 필요합니다" }); return; }
-    await gitStaging.restoreStaged(req.params.projectId, filePath);
+    const { path: rawPath } = req.body as { path?: string };
+    if (!rawPath) { res.status(400).json({ error: "path가 필요합니다" }); return; }
+    await gitStaging.restoreStaged(req.params.projectId, normalizeGitPath(rawPath));
     res.json({ ok: true });
   }),
 );
@@ -3617,7 +3626,7 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
-    const filePath = req.query.path as string | undefined;
+    const filePath = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const raw = await gitea.getFileRaw(target, filePath, req.query.ref as string | undefined);
     res.type(gitea.mimeTypeForPath(filePath));
