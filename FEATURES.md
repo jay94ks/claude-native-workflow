@@ -511,6 +511,12 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   프로젝트 문서 수가 많아도 전체 목록을 한 번에 안 받는다(검색어
   없으면 최근 문서 50개, 있으면 Meilisearch 전문검색으로 서버가
   직접 추림).
+- **`docs search`/`document_search`의 응답 크기 축소 옵션** - 기본은
+  히트마다 본문 전체를 담아 돌려주므로, `--lines <n>`(각 히트 본문을
+  앞 n줄까지만 자름, 실제로 잘렸으면 `bodyTruncated:true`)이나
+  `--codes-only`(본문/메타 없이 trackingCode 배열만 반환, 페이지네이션
+  응답이면 `items`만 문자열 배열로 축소)로 필요한 만큼만 받을 수
+  있다. CLI/MCP 둘 다 지원.
 
 ## 13. git 저장소 연동 + 동기화(제안/발행) + 브랜치/PR 관리
 
@@ -751,6 +757,14 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   넘기면 복원된다.
 - 3절의 "팀/그룹 스코프 DocType 제거"와는 완전히 별개 기능(이름이
   비슷해 보여도 혼동 금지).
+- **웹 UI "템플릿" 조회 패널**(프로젝트 설정 탭) - 이 프로젝트에
+  실제로 적용될 CLAUDE.md/SKILL.md 해석 결과(상속 병합 후 최종
+  내용)를 파일별로 읽기 전용 뷰어(MonacoEditor readOnly)로 보여주고,
+  어느 스코프의 override에서 온 값인지(설치 전역 기본값/팀/그룹/
+  프로젝트) 칩으로 표시한다. 같은 패널에 "저장소에 배포" 버튼이
+  있어 `template deploy`를 바로 실행할 수 있다(editor 권한 이상). 편집
+  자체는 아직 CLI/MCP 전용(`template set`) - 웹에서는 조회+배포만
+  가능하다.
 
 ## 17. 가이디드 마이그레이션
 
@@ -1036,20 +1050,38 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   한다"고 판단한 항목을 모아두는 체크리스트다. 트래킹 코드 접두어는
   `PN`.
 - 필드는 트래킹 코드, 제목, 본문(Markdown), 관련 문서(추적 코드
-  목록, 순서 없음), 상태 5개 고정값 - `계획됨`(planned)/
+  목록, 순서 없음), **선행 조건**(다른 계획들에 대한 의존성, 여러 개
+  가능, 순서 없음), 상태 6개 고정값 - `계획됨`(planned)/
   `승인대기`(pending_approval)/`검토중`(in_review)/`예정`(scheduled)/
-  `거부`(rejected). DocStatus와 달리 프로젝트별로 커스터마이즈되지
-  않으며, 상태 전이는 그래프로 제약되지 않고 언제든 5개 중 아무
-  값으로나 바꿀 수 있다.
+  `완료`(completed)/`거부`(rejected). DocStatus와 달리 프로젝트별로
+  커스터마이즈되지 않으며, 상태 전이는 그래프로 제약되지 않고 언제든
+  6개 중 아무 값으로나 바꿀 수 있다. 선행 조건도 실행 순서를 강제하는
+  그래프가 아니라 순수 참조 목록이라 순환을 막지 않는다 - 자기 자신을
+  선행 조건으로 지정하는 것만 거부된다.
 - CLI: `docs plan new|list|statuses|get|set|status|delete|link|
-  unlink`. MCP: `plan_new`/`plan_list`/`plan_statuses`/`plan_get`/
-  `plan_set`/`plan_status`/`plan_delete`/`plan_link`/`plan_unlink`.
-  REST: `/api/projects/:projectId/plans`, `/api/plans/:trackingCode
-  [/status|/refs[/:code]]`.
+  unlink|depend|undepend`. MCP: `plan_new`/`plan_list`/
+  `plan_statuses`/`plan_get`/`plan_set`/`plan_status`/`plan_delete`/
+  `plan_link`/`plan_unlink`/`plan_depend`/`plan_undepend`. REST:
+  `/api/projects/:projectId/plans`, `/api/plans/:trackingCode[/status|
+  /refs[/:code]|/dependencies[/:code]]`.
 - 웹 UI: 프로젝트 네비게이션의 "계획" 탭 - 목록 화면(상태 필터/검색/
-  생성)과 편집 화면(제목/상태/본문 편집, 관련 문서 추가·삭제)을
-  제공한다. 관련 문서 선택은 항상 검색 기반 선택기 다이얼로그
-  (`EntityPickerDialog`)로 하고, 추적 코드를 직접 타이핑하는 입력은
-  없다. 메시지/코멘트/문서 본문 등에 등장하는 `PN-XXXXXXXX` 코드를
-  클릭하면 미리보기 다이얼로그가 뜬다(질의/칸반 카드 코드와 같은
-  방식).
+  생성 - 생성 시 관련 문서/선행 조건도 같이 지정 가능)과 편집 화면
+  (제목/상태/본문 편집, 관련 문서·선행 조건 추가/삭제)을 제공한다.
+  관련 문서/선행 조건 선택은 항상 검색 기반 선택기 다이얼로그
+  (`EntityPickerDialog`, `kind: "document"`/`"plan"`)로 하고, 추적
+  코드를 직접 타이핑하는 입력은 없다 - 선행 조건 선택기는 편집 중인
+  계획 자기 자신을 목록에서 제외한다(`excludeKeys`). 메시지/코멘트/
+  문서 본문 등에 등장하는 `PN-XXXXXXXX` 코드를 클릭하면 미리보기
+  다이얼로그가 뜬다(질의/칸반 카드 코드와 같은 방식).
+- **bulk 명령**(웹 UI 없음, CLI/MCP 전용) - `plan bulk-export
+  <projectId> <outFile> [--status] [--q]`(조건에 맞는 전체를 페이지
+  상한 없이 로컬 JSON 파일로, MCP `plan_export`는 파일 저장 없이
+  배열만 반환)/`plan bulk-import <projectId> <file>`(로컬 JSON
+  파일의 여러 계획 정의를 한 번에 생성, MCP `plan_bulk_import`는
+  `items` 배열을 직접 받음 - 항목별 성공/실패 반환, `refs`/
+  `dependsOn`은 이미 존재하는 문서/계획만 가리킬 수 있고 같은 배치
+  안 다른 항목은 못 가리킴)/`plan status-bulk <status>
+  <trackingCode...>`·`plan link-bulk <docTrackingCode>
+  <trackingCode...>`·`plan depend-bulk <dependsOnTrackingCode>
+  <trackingCode...>`(같은 값을 여러 계획에 한 번에 적용, 문서
+  `bulk-transition`과 같은 관례 - 항목별 결과 반환).

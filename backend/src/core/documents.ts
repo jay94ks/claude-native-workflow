@@ -294,11 +294,26 @@ export async function listStaleDocuments(projectId: string, staleDays = 14, limi
   return rows.map((r) => ({ trackingCode: r.trackingCode, title: r.title, statusCode: r.status.code, updatedAt: r.updatedAt.getTime() }));
 }
 
+// 검색 결과는 본문을 그대로 다 담아서(SearchableDocument.body) 돌려주는데,
+// 히트가 여러 건이면 그게 그대로 쌓여 읽지도 않을 본문까지 응답에 끌고
+// 오는 경우가 많다(#search-lines-limit, 설계자 지시 - "search 명령에도
+// ... 라인 갯수를 제한하는 옵션"). linesLimit을 주면 각 히트의 body를
+// sliceLines()로 앞 N줄만 남기고, 실제로 잘렸으면 bodyTruncated:true를
+// 얹는다(호출부가 "이 본문은 더 있다"는 걸 구분할 수 있게).
+function truncateHitBody(doc: SearchableDocument, linesLimit?: number): SearchableDocument & { bodyTruncated?: boolean } {
+  if (!linesLimit || linesLimit <= 0) return doc;
+  const { lines, totalLines } = sliceLines(doc.body, 1, linesLimit);
+  if (totalLines <= linesLimit) return doc;
+  return { ...doc, body: lines.join("\n"), bodyTruncated: true };
+}
+
 export async function searchProjectDocuments(
   projectId: string,
   query: string,
+  linesLimit?: number,
 ): Promise<SearchableDocument[]> {
-  return searchDocuments(query, { projectId });
+  const hits = await searchDocuments(query, { projectId });
+  return hits.map((h) => truncateHitBody(h, linesLimit));
 }
 
 export async function searchProjectDocumentsPaged(
@@ -306,11 +321,18 @@ export async function searchProjectDocumentsPaged(
   query: string,
   page: number,
   pageSize: number,
+  linesLimit?: number,
 ): Promise<Page<SearchableDocument>> {
   const safePage = Math.max(1, Math.trunc(page) || 1);
   const safeSize = Math.max(1, Math.trunc(pageSize) || 20);
   const { hits, total } = await rawSearchDocuments(query, { projectId, limit: safeSize, offset: (safePage - 1) * safeSize });
-  return { items: hits, page: safePage, pageSize: safeSize, total, totalPages: Math.max(1, Math.ceil(total / safeSize)) };
+  return {
+    items: hits.map((h) => truncateHitBody(h, linesLimit)),
+    page: safePage,
+    pageSize: safeSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / safeSize)),
+  };
 }
 
 export interface DocumentPage {

@@ -986,9 +986,11 @@ model Plan {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  creator User    @relation("PlanCreatedBy", fields: [createdBy], references: [id])
-  refs    PlanDocumentRef[]
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator      User              @relation("PlanCreatedBy", fields: [createdBy], references: [id])
+  refs         PlanDocumentRef[]
+  dependencies PlanDependency[]  @relation("PlanDependencies")
+  dependents   PlanDependency[]  @relation("PlanDependents")
 
   @@index([projectId])
   @@index([status])
@@ -1006,6 +1008,25 @@ model PlanDocumentRef {
 
   @@unique([planId, trackingCode])
   @@index([trackingCode])
+}
+
+// 계획 간 선행 조건(의존성) - planId가 dependsOnPlanId 없이는 시작할
+// 수 없다는 뜻. 자기 참조라 Plan에 관계 이름 두 개(PlanDependencies=
+// 내가 의존하는 것들, PlanDependents=나에게 의존하는 것들)를 따로
+// 선언해야 한다. 순환/자기 참조 방지는 코드 관계도(#code-relation-graph)
+// 처럼 순환 자체는 막지 않되(순수 참조 목록일 뿐 실행 순서를 강제하는
+// 그래프가 아님) 자기 자신을 선행 조건으로 넣는 것만 core/plans.ts에서
+// 거부한다.
+model PlanDependency {
+  id              String @id @default(cuid())
+  planId          String
+  dependsOnPlanId String
+
+  plan      Plan @relation("PlanDependencies", fields: [planId], references: [id], onDelete: Cascade)
+  dependsOn Plan @relation("PlanDependents", fields: [dependsOnPlanId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, dependsOnPlanId])
+  @@index([dependsOnPlanId])
 }
 
 // ---------------------------------------------------------------- PR 워크플로우

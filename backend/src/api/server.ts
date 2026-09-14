@@ -215,6 +215,11 @@ import {
   deletePlan,
   addPlanDocumentRef,
   removePlanDocumentRef,
+  addPlanDependency,
+  removePlanDependency,
+  listAllPlans,
+  bulkCreatePlans,
+  type PlanImportItem,
 } from "../core/plans.js";
 import {
   createApiKey,
@@ -1654,13 +1659,24 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const q = (req.query.q as string | undefined) ?? "";
+    const lines = req.query.lines !== undefined ? Number(req.query.lines) : undefined;
+    // codesOnly는 순수 응답 모양 변환이라(도메인 로직 없음) core 계층을
+    // 안 건드리고 라우트에서 바로 trackingCode 배열로 축소한다 -
+    // lines와 같이 줘도 무해(어차피 body를 버리므로).
+    const codesOnly = req.query.codesOnly === "true";
     if (req.query.page !== undefined || req.query.pageSize !== undefined) {
-      res.json(
-        await searchProjectDocumentsPaged(req.params.projectId, q, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)),
+      const page = await searchProjectDocumentsPaged(
+        req.params.projectId,
+        q,
+        Number(req.query.page ?? 1),
+        Number(req.query.pageSize ?? 20),
+        lines,
       );
+      res.json(codesOnly ? { ...page, items: page.items.map((h) => h.trackingCode) } : page);
       return;
     }
-    res.json(await searchProjectDocuments(req.params.projectId, q));
+    const hits = await searchProjectDocuments(req.params.projectId, q, lines);
+    res.json(codesOnly ? hits.map((h) => h.trackingCode) : hits);
   }),
 );
 
@@ -2823,9 +2839,15 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const { title, body, status, refs } = req.body as { title?: string; body?: string; status?: string; refs?: string[] };
+    const { title, body, status, refs, dependsOn } = req.body as {
+      title?: string;
+      body?: string;
+      status?: string;
+      refs?: string[];
+      dependsOn?: string[];
+    };
     if (!title || body === undefined) { res.status(400).json({ error: "title/body가 필요합니다" }); return; }
-    res.json(await createPlan(req.params.projectId, title, body, req.userId!, refs, status));
+    res.json(await createPlan(req.params.projectId, title, body, req.userId!, refs, status, dependsOn));
   }),
 );
 
@@ -2844,6 +2866,35 @@ app.get(
         pageSize: Number(req.query.pageSize ?? 20),
       }),
     );
+  }),
+);
+
+// "계획을 하나의 파일로 bulk"(설계자 표현) - 목록(/plans, 페이지네이션)
+// 과 달리 200건 상한 없이 조건에 맞는 전체를 한 번에 돌려준다. CLI가
+// 이 응답을 그대로 로컬 파일에 써서 내보내기를 구현한다.
+app.get(
+  "/api/projects/:projectId/plans/export",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const status = req.query.status as string | undefined;
+    const q = req.query.q as string | undefined;
+    res.json(await listAllPlans(req.params.projectId, { status, q }));
+  }),
+);
+
+// 내보내기의 반대 방향 - 로컬 파일(또는 MCP가 직접 넘긴 배열)의 계획
+// 정의들을 한 번에 만든다. relations/bulk와 같은 원칙으로 항목별
+// 성공/실패를 반환(부분 성공 허용) - refs/dependsOn은 이미 존재하는
+// 문서/계획만 가리킬 수 있고, 같은 배치 안의 다른 항목은 못 가리킨다.
+app.post(
+  "/api/projects/:projectId/plans/import",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { items } = req.body as { items?: PlanImportItem[] };
+    if (!items?.length) { res.status(400).json({ error: "items가 필요합니다" }); return; }
+    res.json(await bulkCreatePlans(req.params.projectId, req.userId!, items));
   }),
 );
 
@@ -2931,6 +2982,111 @@ app.delete(
     const role = await getMemberRole(projectId, req.userId!);
     if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
     res.json(await removePlanDocumentRef(req.params.trackingCode, req.params.docTrackingCode));
+  }),
+);
+
+app.post(
+  "/api/plans/:trackingCode/dependencies",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getPlanProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "계획을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    const { trackingCode } = req.body as { trackingCode?: string };
+    if (!trackingCode) { res.status(400).json({ error: "trackingCode가 필요합니다" }); return; }
+    res.json(await addPlanDependency(req.params.trackingCode, trackingCode));
+  }),
+);
+
+app.delete(
+  "/api/plans/:trackingCode/dependencies/:dependsOnTrackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getPlanProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "계획을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    res.json(await removePlanDependency(req.params.trackingCode, req.params.dependsOnTrackingCode));
+  }),
+);
+
+// bulk-transition(documents)과 같은 원칙 - 새 core 함수 없이 기존
+// 단건 함수를 trackingCode마다 반복 호출, 항목별 성공/실패를 반환
+// (부분 성공 허용). 경로에 projectId가 없어(여러 프로젝트의 계획이
+// 섞여 들어올 수 있음) 항목마다 개별적으로 권한을 확인한다.
+app.post(
+  "/api/plans/bulk-status",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { trackingCodes, status } = req.body as { trackingCodes?: string[]; status?: string };
+    if (!trackingCodes?.length || !status) { res.status(400).json({ error: "trackingCodes/status가 필요합니다" }); return; }
+    const results = await Promise.all(
+      trackingCodes.map(async (trackingCode) => {
+        try {
+          const projectId = await getPlanProjectId(trackingCode);
+          if (!projectId) return { trackingCode, ok: false, error: "계획을 찾을 수 없습니다" };
+          const role = await getMemberRole(projectId, req.userId!);
+          if (!roleSatisfies(role, "editor")) return { trackingCode, ok: false, error: "이 작업은 최소 editor 권한이 필요합니다" };
+          await setPlanStatus(trackingCode, status);
+          return { trackingCode, ok: true };
+        } catch (err) {
+          return { trackingCode, ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }),
+    );
+    res.json(results);
+  }),
+);
+
+app.post(
+  "/api/plans/bulk-link",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { trackingCodes, docTrackingCode } = req.body as { trackingCodes?: string[]; docTrackingCode?: string };
+    if (!trackingCodes?.length || !docTrackingCode) { res.status(400).json({ error: "trackingCodes/docTrackingCode가 필요합니다" }); return; }
+    const results = await Promise.all(
+      trackingCodes.map(async (trackingCode) => {
+        try {
+          const projectId = await getPlanProjectId(trackingCode);
+          if (!projectId) return { trackingCode, ok: false, error: "계획을 찾을 수 없습니다" };
+          const role = await getMemberRole(projectId, req.userId!);
+          if (!roleSatisfies(role, "editor")) return { trackingCode, ok: false, error: "이 작업은 최소 editor 권한이 필요합니다" };
+          await addPlanDocumentRef(trackingCode, docTrackingCode);
+          return { trackingCode, ok: true };
+        } catch (err) {
+          return { trackingCode, ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }),
+    );
+    res.json(results);
+  }),
+);
+
+app.post(
+  "/api/plans/bulk-depend",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { trackingCodes, dependsOnTrackingCode } = req.body as { trackingCodes?: string[]; dependsOnTrackingCode?: string };
+    if (!trackingCodes?.length || !dependsOnTrackingCode) {
+      res.status(400).json({ error: "trackingCodes/dependsOnTrackingCode가 필요합니다" });
+      return;
+    }
+    const results = await Promise.all(
+      trackingCodes.map(async (trackingCode) => {
+        try {
+          const projectId = await getPlanProjectId(trackingCode);
+          if (!projectId) return { trackingCode, ok: false, error: "계획을 찾을 수 없습니다" };
+          const role = await getMemberRole(projectId, req.userId!);
+          if (!roleSatisfies(role, "editor")) return { trackingCode, ok: false, error: "이 작업은 최소 editor 권한이 필요합니다" };
+          await addPlanDependency(trackingCode, dependsOnTrackingCode);
+          return { trackingCode, ok: true };
+        } catch (err) {
+          return { trackingCode, ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }),
+    );
+    res.json(results);
   }),
 );
 

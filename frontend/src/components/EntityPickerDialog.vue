@@ -28,6 +28,10 @@ interface UserListItem {
   id: string;
   displayLabel: string;
 }
+interface PlanSummary {
+  trackingCode: string;
+  title: string;
+}
 
 // sourceFile 선택은 평평한 전체 목록(/git/tree/all - 재귀 전체) 대신
 // SourceBrowserView.vue와 같은 지연 디렉터리 탐색(/git/tree?path=)을
@@ -101,6 +105,19 @@ async function loadDocuments(): Promise<void> {
   }
 }
 
+// document와 같은 이유(#large-list-pagination) - q가 있으면 서버가
+// title/body contains로 걸러준 결과, 없으면 최근 수정순 첫 페이지
+// (PlansView.vue가 이미 쓰는 라우트, 같은 페이지네이션 응답 모양).
+async function loadPlans(): Promise<void> {
+  const options = store.options;
+  if (!options) return;
+  const qs = new URLSearchParams({ page: "1", pageSize: "50" });
+  const q = search.value.trim();
+  if (q) qs.set("q", q);
+  const page = await apiCall<{ items: PlanSummary[] }>(`/projects/${options.projectId ?? ""}/plans?${qs}`);
+  items.value = page.items.map((p) => ({ key: p.trackingCode, label: `${p.trackingCode} · ${p.title}` }));
+}
+
 async function load() {
   const options = store.options;
   if (!options) return;
@@ -109,6 +126,8 @@ async function load() {
   try {
     if (options.kind === "document") {
       await loadDocuments();
+    } else if (options.kind === "plan") {
+      await loadPlans();
     } else if (options.kind === "user") {
       const users = await apiCall<UserListItem[]>(`/users?limit=100`);
       items.value = users.map((u) => ({ key: u.id, label: u.displayLabel }));
@@ -120,15 +139,16 @@ async function load() {
   }
 }
 
-// document kind만 검색어 변경 시 서버에 다시 물어본다(디바운스) -
+// document/plan kind만 검색어 변경 시 서버에 다시 물어본다(디바운스) -
 // user/sourceFile은 이미 한 번 받은 목록을 클라이언트에서만 거른다.
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 watch(search, () => {
-  if (store.options?.kind !== "document") return;
+  const kind = store.options?.kind;
+  if (kind !== "document" && kind !== "plan") return;
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
     loading.value = true;
-    loadDocuments()
+    (kind === "document" ? loadDocuments() : loadPlans())
       .catch((err) => { error.value = err instanceof ApiError ? err.message : "목록을 불러오지 못했습니다"; })
       .finally(() => { loading.value = false; });
   }, 300);
@@ -151,15 +171,25 @@ watch(
   },
 );
 
-// document kind는 이미 서버(검색 또는 페이지 조회)가 걸러준 결과라
-// 여기서 다시 라벨 문자열로 필터하면 안 된다 - Meilisearch가 본문
-// 내용으로 매치시켜준 문서는 추적코드+제목 라벨엔 그 검색어가 없을
-// 수 있어, 그대로 필터링하면 방금 서버가 찾아준 결과가 다시 사라진다.
+// document/plan kind는 이미 서버(검색 또는 페이지 조회)가 걸러준
+// 결과라 여기서 다시 라벨 문자열로 필터하면 안 된다 - Meilisearch가
+// 본문 내용으로 매치시켜준 문서는 추적코드+제목 라벨엔 그 검색어가
+// 없을 수 있어, 그대로 필터링하면 방금 서버가 찾아준 결과가 다시
+// 사라진다(plan도 title/body contains라 같은 이유). excludeKeys는
+// 모든 kind에 공통 적용(예: 계획의 선행 조건 선택 시 자기 자신 제외).
 const filteredItems = computed(() => {
-  if (store.options?.kind === "document") return items.value;
-  const q = search.value.trim().toLowerCase();
-  if (!q) return items.value;
-  return items.value.filter((i) => i.label.toLowerCase().includes(q));
+  const kind = store.options?.kind;
+  const base =
+    kind === "document" || kind === "plan"
+      ? items.value
+      : (() => {
+          const q = search.value.trim().toLowerCase();
+          return q ? items.value.filter((i) => i.label.toLowerCase().includes(q)) : items.value;
+        })();
+  const exclude = store.options?.excludeKeys;
+  if (!exclude || exclude.length === 0) return base;
+  const excludeSet = new Set(exclude);
+  return base.filter((i) => !excludeSet.has(i.key));
 });
 
 function toggle(key: string) {
@@ -195,6 +225,7 @@ const kindTitle = computed(() => {
   const k = store.options?.kind;
   if (store.options?.title) return store.options.title;
   if (k === "document") return "문서 선택";
+  if (k === "plan") return "계획 선택";
   if (k === "user") return "사용자 선택";
   if (k === "sourceFile") return "소스 파일 선택";
   return "선택";

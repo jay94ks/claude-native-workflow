@@ -77,6 +77,7 @@ function onPageChange(p: number) {
 
 const newTitle = ref("");
 const newRefs = ref<string[]>([]);
+const newDependsOn = ref<string[]>([]);
 const creating = ref(false);
 const createError = ref("");
 
@@ -91,6 +92,17 @@ async function pickNewRefs() {
   if (result) newRefs.value = result;
 }
 
+async function pickNewDependsOn() {
+  const result = await entityPicker.pick({
+    kind: "plan",
+    projectId: props.id,
+    multi: true,
+    allowManualEntry: false,
+    initialSelected: newDependsOn.value,
+  });
+  if (result) newDependsOn.value = result;
+}
+
 async function create() {
   if (!newTitle.value.trim()) return;
   creating.value = true;
@@ -98,7 +110,7 @@ async function create() {
   try {
     const plan = await apiCall<{ trackingCode: string }>(`/projects/${props.id}/plans`, {
       method: "POST",
-      body: JSON.stringify({ title: newTitle.value.trim(), body: "", refs: newRefs.value }),
+      body: JSON.stringify({ title: newTitle.value.trim(), body: "", refs: newRefs.value, dependsOn: newDependsOn.value }),
     });
     router.push(`/projects/${props.id}/plans/${plan.trackingCode}`);
   } catch (err) {
@@ -119,6 +131,7 @@ onMounted(async () => {
     <form v-if="canCreate" class="create-row" @submit.prevent="create">
       <input v-model="newTitle" type="text" placeholder="새 계획 제목" />
       <button type="button" class="secondary" @click="pickNewRefs">관련 문서 {{ newRefs.length > 0 ? `(${newRefs.length})` : "" }}</button>
+      <button type="button" class="secondary" @click="pickNewDependsOn">선행 조건 {{ newDependsOn.length > 0 ? `(${newDependsOn.length})` : "" }}</button>
       <button type="submit" :disabled="creating">{{ creating ? "만드는 중..." : "만들기" }}</button>
     </form>
     <p v-if="createError" class="error">{{ createError }}</p>

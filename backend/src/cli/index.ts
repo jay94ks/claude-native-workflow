@@ -1047,12 +1047,16 @@ program
   .command("search <projectId> <query>")
   .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 관련도 상위 50건")
   .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .option("--lines <n>", "각 히트의 본문을 앞 n줄까지만 자른다(생략하면 전체 본문) - 실제로 잘렸으면 결과의 bodyTruncated:true로 표시")
+  .option("--codes-only", "본문/메타 없이 trackingCode 배열만 반환(--lines보다 더 가벼움 - 코드만 필요할 때)")
   .action((projectId, query, opts) =>
     run(async () => {
       const paged = opts.page !== undefined || opts.count !== undefined;
       const qs = new URLSearchParams({
         q: query,
         ...(paged ? { page: opts.page ?? "1", pageSize: opts.count ?? "20" } : {}),
+        ...(opts.lines !== undefined ? { lines: opts.lines } : {}),
+        ...(opts.codesOnly ? { codesOnly: "true" } : {}),
       });
       printJson(await apiCall(`/api/projects/${projectId}/search?${qs}`));
     }),
@@ -1532,8 +1536,9 @@ planCmd
   .command("new <projectId> <title>")
   .description("계획을 새로 만든다")
   .requiredOption("--body <file>", "본문(Markdown) 파일 경로")
-  .option("--status <code>", "초기 상태(생략 시 planned) - planned|pending_approval|in_review|scheduled|rejected")
+  .option("--status <code>", "초기 상태(생략 시 planned) - planned|pending_approval|in_review|scheduled|completed|rejected")
   .option("--refs <codes>", "쉼표로 구분된 관련 문서 trackingCode 목록")
+  .option("--depends-on <codes>", "쉼표로 구분된 선행 조건 계획 trackingCode 목록")
   .action((projectId, title, opts) =>
     run(async () => {
       const fs = await import("node:fs");
@@ -1546,6 +1551,7 @@ planCmd
             body,
             status: opts.status,
             refs: opts.refs ? String(opts.refs).split(",").filter(Boolean) : undefined,
+            dependsOn: opts.dependsOn ? String(opts.dependsOn).split(",").filter(Boolean) : undefined,
           }),
         }),
       );
@@ -1600,7 +1606,7 @@ planCmd
 
 planCmd
   .command("status <trackingCode> <status>")
-  .description("계획 상태를 바꾼다 - planned|pending_approval|in_review|scheduled|rejected 중 하나(전이 제약 없음)")
+  .description("계획 상태를 바꾼다 - planned|pending_approval|in_review|scheduled|completed|rejected 중 하나(전이 제약 없음)")
   .action((trackingCode, status) =>
     run(async () => printJson(await apiCall(`/api/plans/${trackingCode}/status`, { method: "PUT", body: JSON.stringify({ status }) }))),
   );
@@ -1622,10 +1628,89 @@ planCmd
   );
 
 planCmd
+  .command("depend <trackingCode> <dependsOnTrackingCode>")
+  .description("계획에 선행 조건(먼저 끝나야 하는 다른 계획)을 추가한다 - 여러 개 가능, 하나씩 호출")
+  .action((trackingCode, dependsOnTrackingCode) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/plans/${trackingCode}/dependencies`, {
+          method: "POST",
+          body: JSON.stringify({ trackingCode: dependsOnTrackingCode }),
+        }),
+      ),
+    ),
+  );
+
+planCmd
+  .command("undepend <trackingCode> <dependsOnTrackingCode>")
+  .description("계획에서 선행 조건을 제거한다")
+  .action((trackingCode, dependsOnTrackingCode) =>
+    run(async () =>
+      printJson(await apiCall(`/api/plans/${trackingCode}/dependencies/${dependsOnTrackingCode}`, { method: "DELETE" })),
+    ),
+  );
+
+planCmd
   .command("unlink <trackingCode> <docTrackingCode>")
   .description("계획에서 관련 문서를 제거한다")
   .action((trackingCode, docTrackingCode) =>
     run(async () => printJson(await apiCall(`/api/plans/${trackingCode}/refs/${docTrackingCode}`, { method: "DELETE" }))),
+  );
+
+planCmd
+  .command("bulk-export <projectId> <outFile>")
+  .description("이 프로젝트의 계획을 조건에 맞는 전체(페이지 상한 없음) 하나의 로컬 JSON 파일로 내보낸다")
+  .option("--status <code>", "상태로 제한")
+  .option("--q <text>", "제목/본문 검색어")
+  .action((projectId, outFile, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({
+        ...(opts.status ? { status: opts.status } : {}),
+        ...(opts.q ? { q: opts.q } : {}),
+      });
+      const plans = await apiCall(`/api/projects/${projectId}/plans/export?${qs}`);
+      fs.writeFileSync(outFile, JSON.stringify(plans, null, 2), "utf-8");
+      console.log(`${(plans as unknown[]).length}개 계획을 ${outFile}에 썼습니다.`);
+    }),
+  );
+
+planCmd
+  .command("bulk-import <projectId> <file>")
+  .description("로컬 JSON 파일(항목 배열: title/body/status?/refs?/dependsOn?)로 여러 계획을 한 번에 만든다 - 항목별 성공/실패 반환(부분 성공 허용). refs/dependsOn은 이미 존재하는 문서/계획만 가리킬 수 있다(같은 파일 안 다른 항목은 불가)")
+  .action((projectId, file) =>
+    run(async () => {
+      const items = JSON.parse(fs.readFileSync(path.resolve(file), "utf-8"));
+      printJson(await apiCall(`/api/projects/${projectId}/plans/import`, { method: "POST", body: JSON.stringify({ items }) }));
+    }),
+  );
+
+planCmd
+  .command("status-bulk <status> <trackingCodes...>")
+  .description("여러 계획을 한 번에 같은 상태로 바꾼다 - 항목별 결과를 반환(일부만 실패해도 나머지는 계속 진행)")
+  .action((status, trackingCodes) =>
+    run(async () =>
+      printJson(await apiCall(`/api/plans/bulk-status`, { method: "POST", body: JSON.stringify({ trackingCodes, status }) })),
+    ),
+  );
+
+planCmd
+  .command("link-bulk <docTrackingCode> <trackingCodes...>")
+  .description("여러 계획에 같은 관련 문서를 한 번에 추가한다 - 항목별 결과를 반환")
+  .action((docTrackingCode, trackingCodes) =>
+    run(async () =>
+      printJson(await apiCall(`/api/plans/bulk-link`, { method: "POST", body: JSON.stringify({ trackingCodes, docTrackingCode }) })),
+    ),
+  );
+
+planCmd
+  .command("depend-bulk <dependsOnTrackingCode> <trackingCodes...>")
+  .description("여러 계획에 같은 선행 조건을 한 번에 추가한다 - 항목별 결과를 반환")
+  .action((dependsOnTrackingCode, trackingCodes) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/plans/bulk-depend`, { method: "POST", body: JSON.stringify({ trackingCodes, dependsOnTrackingCode }) }),
+      ),
+    ),
   );
 
 // ---------------------------------------------------------------- 질의/답변 (pending/reply)

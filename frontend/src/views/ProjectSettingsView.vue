@@ -5,6 +5,7 @@ import { apiCall, ApiError } from "../api/client";
 import DocTypeManager from "../components/DocTypeManager.vue";
 import GitRepoPanel from "../components/GitRepoPanel.vue";
 import AccessControlManager from "../components/AccessControlManager.vue";
+import TemplateSettingsPanel from "../components/TemplateSettingsPanel.vue";
 import UserRef from "../components/UserRef.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useAuthStore } from "../stores/auth";
@@ -186,6 +187,11 @@ onMounted(load);
         </li>
         <li v-if="members.length === 0" class="muted">멤버가 없습니다.</li>
       </ul>
+    </section>
+
+    <section>
+      <h2>템플릿 (CLAUDE.md / SKILL.md)</h2>
+      <TemplateSettingsPanel :project-id="id" />
     </section>
 
     <section>

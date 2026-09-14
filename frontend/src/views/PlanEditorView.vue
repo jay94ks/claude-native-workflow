@@ -31,6 +31,7 @@ interface PlanDetail {
   createdAt: string;
   updatedAt: string;
   refs: string[];
+  dependencies: string[];
 }
 
 const statuses = ref<PlanStatus[]>([]);
@@ -51,6 +52,9 @@ const statusError = ref("");
 
 const refsError = ref("");
 const refsUpdating = ref(false);
+
+const depsError = ref("");
+const depsUpdating = ref(false);
 
 const deleting = ref(false);
 const deleteError = ref("");
@@ -187,6 +191,51 @@ async function removeRef(code: string) {
   }
 }
 
+async function pickDependencies() {
+  if (!plan.value) return;
+  const result = await entityPicker.pick({
+    kind: "plan",
+    projectId: props.id,
+    multi: true,
+    allowManualEntry: false,
+    initialSelected: plan.value.dependencies,
+    excludeKeys: [plan.value.trackingCode],
+  });
+  if (!result) return;
+  const current = new Set(plan.value.dependencies);
+  const next = new Set(result);
+  const added = result.filter((c) => !current.has(c));
+  const removed = plan.value.dependencies.filter((c) => !next.has(c));
+  if (added.length === 0 && removed.length === 0) return;
+  depsUpdating.value = true;
+  depsError.value = "";
+  try {
+    for (const code of added) {
+      await apiCall(`/plans/${props.trackingCode}/dependencies`, { method: "POST", body: JSON.stringify({ trackingCode: code }) });
+    }
+    for (const code of removed) {
+      await apiCall(`/plans/${props.trackingCode}/dependencies/${code}`, { method: "DELETE" });
+    }
+    plan.value = await apiCall<PlanDetail>(`/plans/${props.trackingCode}`);
+  } catch (err) {
+    depsError.value = err instanceof ApiError ? err.message : "선행 조건 변경에 실패했습니다";
+  } finally {
+    depsUpdating.value = false;
+  }
+}
+
+async function removeDependency(code: string) {
+  depsUpdating.value = true;
+  depsError.value = "";
+  try {
+    plan.value = await apiCall<PlanDetail>(`/plans/${props.trackingCode}/dependencies/${code}`, { method: "DELETE" });
+  } catch (err) {
+    depsError.value = err instanceof ApiError ? err.message : "선행 조건 제거에 실패했습니다";
+  } finally {
+    depsUpdating.value = false;
+  }
+}
+
 async function remove() {
   if (!plan.value) return;
   const confirmed = window.confirm(`"${plan.value.title}"(${props.trackingCode}) 계획을 삭제하시겠습니까?`);
@@ -210,6 +259,7 @@ watch(
     titleError.value = "";
     statusError.value = "";
     refsError.value = "";
+    depsError.value = "";
     deleteError.value = "";
     load();
   },
@@ -276,6 +326,20 @@ onMounted(async () => {
         </ul>
         <p v-else class="muted">관련 문서가 없습니다.</p>
         <button v-if="canWrite" type="button" class="secondary" :disabled="refsUpdating" @click="pickRefs">+ 관련 문서 선택</button>
+      </section>
+
+      <section class="refs-section">
+        <h2>선행 조건</h2>
+        <p class="hint">이 계획을 시작하기 전에 먼저 끝나야 하는 다른 계획들.</p>
+        <p v-if="depsError" class="error">{{ depsError }}</p>
+        <ul v-if="plan.dependencies.length > 0" class="refs-list">
+          <li v-for="code in plan.dependencies" :key="code">
+            <TrackingCodeText :text="code" />
+            <button v-if="canWrite" type="button" class="remove-btn" :disabled="depsUpdating" @click="removeDependency(code)">해제</button>
+          </li>
+        </ul>
+        <p v-else class="muted">선행 조건이 없습니다.</p>
+        <button v-if="canWrite" type="button" class="secondary" :disabled="depsUpdating" @click="pickDependencies">+ 선행 조건 선택</button>
       </section>
     </div>
   </template>
@@ -428,6 +492,11 @@ button:disabled {
 }
 .remove-btn:hover {
   color: var(--color-danger);
+}
+.hint {
+  font-size: 12px;
+  color: var(--color-text-faint);
+  margin: 0 0 10px;
 }
 .muted {
   color: var(--color-text-muted);

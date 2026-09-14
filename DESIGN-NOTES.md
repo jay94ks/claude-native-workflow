@@ -7563,3 +7563,198 @@ EntityPickerDialog)/해제→삭제까지 전체 CRUD를 실제 조작해
 계획해야 할 것"을 즉시 트래킹 코드로 남기고, 설계자가 웹에서 상태를
 검토/승인 처리할 수 있다. 프로젝트 대시보드에 계획 관련 신호를
 얹는 것은 이번 요청 범위 밖 - 필요해지면 후속 라운드로.
+
+## 프로젝트 설정에 템플릿(CLAUDE.md/SKILL.md) 조회 웹 UI 추가(`#template-ui`)
+
+**배경**: 설계자 지시 - "template도 조회할 수 있는 인터페이스가 웹
+UI에 추가되어야해." 템플릿 관리(16절, FT-083CBCFA)는 지금까지 CLI/
+MCP(`template get/set/deploy/revisions`) 전용이었고 웹 UI가 전혀
+없었다(실측 확인 - 프런트엔드 전체에 `/api/templates` 참조 없음).
+
+**조사**: `resolveTemplate(filename, projectId?)`(`backend/src/core/
+templates.ts`)가 project→group→team→전역 기본값 순으로 override를
+찾아 반환하고, 반환된 행 자체의 teamId/projectGroupId/projectId
+필드로 "어느 스코프에서 온 값인지"를 그대로 알 수 있다(별도 계산
+불필요). `GET /api/templates?filename=&projectId=`는 `authenticate`
+만 걸려있고 `POST /api/projects/:id/templates/deploy`는
+`requireProjectRole("editor")` - 둘 다 기존 백엔드가 이미 갖추고
+있어 신규 REST/CLI/MCP는 필요 없었다.
+
+**구현**: 신규 `frontend/src/components/TemplateSettingsPanel.vue` -
+알려진 두 파일(`CLAUDE.md`, `.claude/skills/claude-native-workflow/
+SKILL.md`) 각각을 조회해 스코프 칩(설치 전역 기본값/팀/그룹/이
+프로젝트 override)과 함께 아코디언으로 표시, 펼치면 `MonacoEditor`
+`readOnly` 모드로 렌더링(무거운 에디터 인스턴스를 기본으로 다 띄우지
+않도록 지연 마운트). editor 권한 이상이면 "저장소에 배포" 버튼도
+같이 노출해 `template deploy`를 바로 호출할 수 있다. `Project
+SettingsView.vue`의 "문서 타입"/"멤버" 절과 같은 자리에 "템플릿" 절로
+추가. 편집(override 작성)은 이번 범위에 포함하지 않음 - 설계자 지시가
+"조회"였고, PUT 라우트의 권한 게이트가 멤버 role이 아니라 API 키
+스코프 기준이라(`isProjectAllowedByActiveScope` 등, 뷰어 role도
+통과할 수 있는 구조) 웹에 노출하려면 별도 검토가 필요해 보여 이번엔
+읽기+배포로 범위를 좁혔다.
+
+**검증**: `vue-tsc -b` 클린. 격리된 로컬 환경(스크래치 SQLite +
+디스포저블 Meilisearch + 로컬 backend)에서 새 프로젝트를 만들고
+CLAUDE.md만 프로젝트 스코프로 override한 뒤 브라우저로 설정 페이지를
+열어 CLAUDE.md는 "이 프로젝트 override", SKILL.md는 "설치 전역
+기본값" 칩이 정확히 뜨는 것과, 펼쳤을 때 실제 저장된 내용이 그대로
+렌더링되는 것을 확인했다. "저장소에 배포"는 git 저장소를 아직 안
+연결한 프로젝트에서 눌러 봐서, 백엔드 에러 메시지("먼저 git 저장소를
+연결하세요...")가 깨지지 않고 그대로 화면에 뜨는 것도 확인했다.
+
+**결론**: CLI/MCP 전용이던 템플릿 해석 결과를 웹에서 바로 확인하고
+배포까지 할 수 있게 됐다. 편집(override 작성/복원)은 여전히 CLI/MCP
+전용으로 남아있다 - 필요해지면 후속 라운드에서 PUT 라우트의 권한
+모델부터 다시 점검하고 웹 편집 UI를 추가한다.
+
+## 계획 간 선행 조건(의존성) 추가 + "완료" 상태 신설(`#plan-checklist`)
+
+**배경**: 설계자 지시 두 가지 - (1) "`계획` 기능에 `계획`간의
+의존성(선행 조건)을 기입하는 기능도 있어야 해. 이것 역시도 생성된
+계획들의 목록에서 선택하도록 만들어야 해(다이얼로그로). 선행 조건은
+여러개일 수 있어." (2) "계획 상태에 완료 상태가 빠졌는데 이것도
+추가해야해."
+
+**구현 - 선행 조건**: 신규 `PlanDependency` 모델(3드라이버 스키마
+동일, 자기 참조라 `Plan`에 `dependencies`/`dependents` 두 관계 이름을
+따로 선언) - `PlanDocumentRef`/`QuestionReference`와 같은 순서 없는
+조인 테이블 패턴. `core/plans.ts`에 `addPlanDependency`/
+`removePlanDependency`, `createPlan`도 `dependsOn` 배열을 받아 생성과
+동시에 지정 가능. 자기 자신을 선행 조건으로 넣는 것만 거부하고
+순환은 막지 않는다(코드 관계도와 같은 원칙 - 실행 순서를 강제하는
+그래프가 아니라 참조 목록일 뿐이라 순회 안전성이 필요한 대상이
+아님). REST `/api/plans/:trackingCode/dependencies[/:code]`, CLI
+`plan depend/undepend`(+`plan new --depends-on`), MCP
+`plan_depend`/`plan_undepend` 대칭 추가.
+
+"생성된 계획들의 목록에서 선택하도록(다이얼로그로)"라는 요구는 기존
+범용 `EntityPickerDialog`/`entityPicker.ts`를 확장해서 풀었다 -
+`EntityPickerKind`에 `"plan"`을 추가하고 `/projects/:id/plans?q=`를
+그대로 재사용(문서 kind가 검색어 유무로 `/search`와 `/documents/page`
+를 나눠 쓰는 것과 달리, 계획은 이미 `q` 파라미터 하나로 검색/목록을
+겸하는 REST가 있어 분기가 필요 없었다). 자기 자신을 선행 조건으로
+고르지 못하게 막아야 해서, 피커 스토어에 `excludeKeys` 옵션을
+새로 추가(기존 어떤 kind에도 공통 적용되도록 `filteredItems`에서
+처리) - `PlanEditorView.vue`가 자기 트래킹코드를 넘겨 자기 자신을
+목록에서 제외한다. `PlansView.vue`의 생성 폼에도 같은 피커를 붙여
+계획을 만들면서 바로 선행 조건을 지정할 수 있게 했다.
+
+**구현 - 완료 상태**: `core/plans.ts`의 `PLAN_STATUSES`에
+`{code:"completed", label:"완료"}`를 `scheduled`와 `rejected` 사이에
+추가(두 종결 상태 완료/거부가 나란히 오도록) - REST/웹 UI는 이미
+`plan statuses`를 동적으로 조회해 렌더링하므로 코드 변경 없이 자동
+반영됐다. CLI 옵션 설명 문구와 MCP `z.enum(...)` 스키마(두 도구
+`plan_new`/`plan_status`)에 하드코딩돼 있던 상태 목록만 별도로
+맞춰줬다(실측 확인 - `grep`으로 상태 목록이 하드코딩된 자리 5곳을
+전부 찾아 고침, 빠뜨린 곳 없음).
+
+**검증**: `tsc --noEmit`/`vue-tsc -b` 클린. 격리된 로컬 환경(스크래치
+SQLite + 디스포저블 Meilisearch + 로컬 backend)에서 REST로 선행 조건
+추가/자기 참조 거부/존재하지 않는 계획 거부/생성 시 동시 지정/제거를
+실측했고, 브라우저로 선행 조건 선택 다이얼로그가 편집 중인 계획
+자신을 목록에서 실제로 빼는 것, 다중 선택 diff(추가 2개 확인 →
+추가됨, 1개 해제 → 제거됨)까지 실제 클릭으로 확인했다. "완료" 상태도
+REST로 직접 전이시켜보고, 잘못된 상태 문자열은 여전히 거부되는 것도
+같이 확인했다.
+
+**결론**: 계획들 사이에 "이게 끝나야 이걸 시작할 수 있다"는 관계를
+구조적으로 남길 수 있게 됐고, 관련 문서 선택과 완전히 같은 UX(선택기
+다이얼로그, 여러 개 가능)로 통일됐다. 상태 어휘에 빠져있던 "완료"도
+채워 6개 고정값이 됐다.
+
+## 계획 bulk 명령 5종 추가(`#plan-bulk-ops`)
+
+**배경**: 설계자 지시 - "계획을 하나의 파일로 bulk 하는 명령도
+추가해줘." 방향(내보내기/가져오기)을 확인한 결과 둘 다 필요, 추가로
+"bulk로 상태 바꾸는거랑, bulk로 참조거는거, bulk로 선결 조건 거는것도
+추가해줘"로 범위가 5개 명령으로 확정됐다.
+
+**설계**: 두 가지 다른 "bulk" 성격을 기존 이 저장소 선례에 각각
+맞췄다. (1) **파일 기반 대량 생성/내보내기** - `docs relation
+add-bulk <projectId> <file.json>`(로컬 JSON 배열을 그대로 POST,
+`bulkCreateRelations`가 `Promise.all`+try/catch로 항목별 성공/실패를
+반환)와 `docs git sync-proposal --out <dir>`(서버 응답을 CLI가 로컬
+파일에 직접 씀)를 그대로 따랐다. (2) **여러 대상에 같은 값 적용** -
+`docs transition-bulk <toStatusCode> <trackingCodes...>`(문서,
+`bulk-transition`)와 정확히 같은 모양: `<value> <trackingCode...>`,
+경로에 projectId가 없어(여러 프로젝트의 계획이 섞여 들어올 수 있음)
+trackingCode마다 개별 권한 확인, 새 core 함수 없이 기존 단건 함수
+(`setPlanStatus`/`addPlanDocumentRef`/`addPlanDependency`)를
+반복 호출.
+
+**구현**: `core/plans.ts`에 `listAllPlans(projectId, {status?,q?})`
+(listPlansPaged와 달리 200건 페이지 상한 없이 조건에 맞는 전체 반환
+- listDocuments()가 non-paged 버전을 따로 두는 것과 같은 원칙) +
+`bulkCreatePlans(projectId, createdBy, items)`(`bulkCreateRelations`
+와 동일한 패턴, 기존 `createPlan()`을 항목마다 그대로 호출). REST
+`GET /api/projects/:projectId/plans/export`(viewer), `POST
+.../plans/import`(editor, `{items}`), `POST /api/plans/bulk-status`/
+`bulk-link`/`bulk-depend`(각각 항목별 권한 확인 후 기존 단건 함수
+호출). CLI `plan bulk-export/bulk-import/status-bulk/link-bulk/
+depend-bulk`, MCP `plan_export`(파일 저장 없이 배열 반환 - MCP는
+데이터를 호출자에게 직접 돌려주는 게 자연스러워 CLI처럼 로컬 파일에
+쓰지 않음)/`plan_bulk_import`(items를 배열로 직접 받음, 파일 경로가
+아님 - `relation_add_bulk`와 같은 이유)/`plan_bulk_status`/
+`plan_bulk_link`/`plan_bulk_depend`.
+
+**버그 발견 및 수정**: `bulkCreatePlans`로 `body`가 빠진 항목을 넣어
+검증하던 중, 단건 REST 라우트(`POST /api/projects/:projectId/
+plans`)는 `body === undefined`를 라우트 단계에서 걸러 400을 주지만
+`createPlan()` 자신은 이 검증이 없어(title만 검증) `bulkCreatePlans`
+처럼 라우트를 거치지 않고 직접 호출하는 새 경로에서 Prisma의 원본
+에러 스택(내부 파일 경로 포함)이 그대로 항목별 에러 메시지로
+노출되는 걸 실측 확인. `createPlan()` 안에 `body===undefined||null`
+가드를 title과 같은 자리에 추가해 해결 - 이후 재검증 시 깔끔한
+"본문이 필요합니다" 메시지로 나오는 것 확인.
+
+**검증**: `tsc --noEmit` 클린. 격리된 로컬 환경(스크래치 SQLite +
+디스포저블 Meilisearch + 로컬 backend, CLI 직접 실행)에서 5개 명령
+전부 실측 - bulk-import(정상 2건+본문 누락 1건 섞어 부분 성공 확인,
+버그 수정 전/후 에러 메시지 비교), bulk-export(4건을 파일로 저장 후
+내용 확인), status-bulk(정상 2건+존재하지 않는 코드 1건 섞어 부분
+결과 확인), link-bulk/depend-bulk(각 2건 성공 확인), depend-bulk로
+자기 자신을 선행 조건으로 넣는 시도가 bulk 경로에서도 개별 항목
+에러로 걸리는 것까지 확인, 마지막으로 계획 하나를 `get`으로 재조회해
+상태/refs/dependencies가 전부 기대대로 누적된 것을 확인했다.
+
+**결론**: 계획을 파일 단위로 내보내고 다시 채워 넣거나, 여러 계획에
+같은 상태/관련 문서/선행 조건을 한 번에 적용하는 워크플로우가
+CLI/MCP에 전부 생겼다. 이 과정에서 `createPlan()`의 검증 공백도
+같이 메워졌다.
+
+## `docs search`에 `--lines`/`--codes-only` 응답 축소 옵션 추가(`#search-lines-limit`)
+
+**배경**: 설계자 지시 - "search 명령에도 page옵션과 count옵션을
+달아야 할것 같아"로 시작했으나, 확인해보니 `docs search`는 CLI/REST/
+MCP 전부 이미 `--page`/`--count`(page/pageSize)를 갖추고 있었다
+(실측 확인 - 프로덕션에 직접 `page=1&pageSize=5`로 호출해 정상
+페이지네이션 응답 확인). 대신 실제 문제는 각 히트가 본문 전체를
+그대로 담아 응답이 쉽게 비대해진다는 점이었고, 설계자가 이어서
+"라인 갯수를 제한하는 옵션 `--lines`"와 "문서 코드만 반환하는 옵션
+`--codes-only`"를 요청했다.
+
+**구현**: `core/documents.ts`의 `searchProjectDocuments`/
+`searchProjectDocumentsPaged`에 `linesLimit?: number` 파라미터 추가 -
+기존 `sliceLines()`(textLines.ts, `docs read`가 이미 쓰는 줄 단위
+자르기 유틸)를 재사용해 히트별 `body`를 앞 n줄까지만 남기고, 실제로
+잘렸을 때만 `bodyTruncated:true`를 얹는다(안 잘렸으면 필드 자체를
+안 붙임 - 불필요한 노이즈 방지). `--codes-only`는 도메인 로직이
+전혀 없는 순수 응답 모양 변환이라 core를 안 건드리고 라우트
+(`GET /api/projects/:projectId/search`)에서 바로 처리 - 결과를
+`trackingCode` 문자열 배열로(페이지네이션 응답이면 `items`만) 축소.
+CLI `search --lines <n> --codes-only`, MCP `document_search`에
+`lines`/`codesOnly` 파라미터 대칭 추가.
+
+**검증**: `tsc --noEmit` 클린. 격리된 로컬 환경에서 10줄짜리 문서를
+만들어 lines=3(본문 3줄+`bodyTruncated:true`)/lines=20(전체 10줄,
+플래그 없음 - 자를 게 없으면 안 붙는 것 확인)/codesOnly=true(비페이지
+`string[]`, 페이지 응답은 `items`만 문자열 배열) 전부 REST로 직접
+확인, CLI `search --lines 4`도 별도 자격증명으로 왕복 확인.
+
+**결론**: `docs search`가 이미 갖고 있던 페이지네이션에 더해, 본문
+크기 자체를 줄이는 두 옵션(`--lines`/`--codes-only`)까지 갖춰
+탐색적 검색에서 불필요하게 큰 응답을 만들지 않게 됐다. CLAUDE.md/
+SKILL.md(양쪽 사본)에 "문서 검색은 `--codes-only`를 기본으로 쓴다"는
+6번째 규칙/사용 지침으로 명시해, 앞으로의 세션이 굳이 필요하지 않은
+본문까지 습관적으로 끌고 오지 않게 했다.

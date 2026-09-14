@@ -6,17 +6,21 @@ import { defineStore } from "pinia";
 // documentDialog.ts류의 "보여주기만" 패턴과 달리 값을 반환해야 하므로
 // Promise 기반: pick()을 부른 쪽이 사용자의 확인/취소를 그대로 기다린다.
 
-export type EntityPickerKind = "document" | "user" | "sourceFile";
+export type EntityPickerKind = "document" | "user" | "sourceFile" | "plan";
 
 export interface EntityPickerOptions {
   kind: EntityPickerKind;
-  // document/sourceFile 종류는 프로젝트 스코프 조회가 필요하지만,
+  // document/sourceFile/plan 종류는 프로젝트 스코프 조회가 필요하지만,
   // user 종류(예: 팀장 추가)는 프로젝트 컨텍스트가 없는 화면에서도
   // 써야 해서 선택 필드로 둔다.
   projectId?: string;
   multi?: boolean;
   allowManualEntry?: boolean;
   initialSelected?: string[];
+  // 목록에서 애초에 안 보여줄 키(예: 계획의 선행 조건을 고를 때 자기
+  // 자신은 후보에서 빼야 함) - 서버가 걸러주지 않는 것과 무관하게
+  // 다이얼로그 쪽에서 항상 적용한다.
+  excludeKeys?: string[];
   title?: string;
 }
 
@@ -26,7 +30,9 @@ let pendingResolve: Resolver | null = null;
 export const useEntityPickerStore = defineStore("entityPicker", {
   state: () => ({
     open: false,
-    options: null as (EntityPickerOptions & { multi: boolean; allowManualEntry: boolean; initialSelected: string[] }) | null,
+    options: null as
+      | (EntityPickerOptions & { multi: boolean; allowManualEntry: boolean; initialSelected: string[]; excludeKeys: string[] })
+      | null,
   }),
   actions: {
     pick(options: EntityPickerOptions): Promise<string[] | null> {
@@ -40,6 +46,7 @@ export const useEntityPickerStore = defineStore("entityPicker", {
         multi: false,
         allowManualEntry: false,
         initialSelected: [],
+        excludeKeys: [],
         ...options,
       };
       this.open = true;
