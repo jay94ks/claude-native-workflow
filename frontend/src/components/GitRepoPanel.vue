@@ -33,6 +33,17 @@ interface Credential {
   id: string;
   hostPattern: string | null;
   credentialType: string;
+  accessTokenExpiresAt: string | null;
+}
+
+// GitHub 로그인(OAuth)으로 발급된 자격증명만 accessTokenExpiresAt이
+// 채워진다(수동 PAT/username_password는 항상 null) - select 옵션
+// 라벨에 만료 시점을 병기할 때 쓴다.
+function credentialLabel(c: Credential): string {
+  const base = c.hostPattern ?? c.credentialType;
+  if (!c.accessTokenExpiresAt) return base;
+  const expiresAt = new Date(c.accessTokenExpiresAt);
+  return `${base} (만료: ${expiresAt.toLocaleString()})`;
 }
 interface SyncStatus {
   added: string[];
@@ -439,6 +450,40 @@ const publishError = ref("");
 const publishSuccessAt = ref<number | null>(null);
 const publishQueueEntry = ref<PublishQueueEntry | null>(null);
 
+// "자격증명 확인" - 실제 발행을 시도하지 않고 유효성만 미리 확인한다.
+// 무효로 확인되면 서버가 그 자리에서 자격증명 자체를 파기하고(다른
+// 프로젝트가 같이 쓰고 있었으면 그 프로젝트들도) 이 프로젝트가
+// 자체 호스팅으로 전환됐을 수 있으므로 load()로 전체 상태를 다시
+// 불러온다(그러면 gitRepo.provider가 바뀌어 이 패널 자체가 자동으로
+// 사라짐).
+const credentialChecking = ref(false);
+const credentialCheckError = ref("");
+const credentialCheckMessage = ref("");
+
+async function checkCredential() {
+  if (!publishCredentialId.value) return;
+  credentialChecking.value = true;
+  credentialCheckError.value = "";
+  credentialCheckMessage.value = "";
+  try {
+    const result = await apiCall<{ valid: true } | { valid: false; destroyed: true }>(
+      `/projects/${props.projectId}/git/credentials/${publishCredentialId.value}/check`,
+      { method: "POST" },
+    );
+    if (result.valid) {
+      credentialCheckMessage.value = "자격증명이 유효합니다.";
+    } else {
+      credentialCheckMessage.value = "자격증명이 무효로 확인되어 자동으로 삭제되었습니다.";
+      publishCredentialId.value = "";
+      await load();
+    }
+  } catch (err) {
+    credentialCheckError.value = err instanceof ApiError ? err.message : "자격증명 확인에 실패했습니다";
+  } finally {
+    credentialChecking.value = false;
+  }
+}
+
 let publishQueuePollTimer: ReturnType<typeof setTimeout> | null = null;
 
 function stopPublishQueuePoll() {
@@ -622,13 +667,18 @@ onUnmounted(() => {
         <template v-else>
           <select v-model="publishCredentialId">
             <option value="">자격 증명 선택</option>
-            <option v-for="c in credentials" :key="c.id" :value="c.id">{{ c.hostPattern ?? c.credentialType }}</option>
+            <option v-for="c in credentials" :key="c.id" :value="c.id">{{ credentialLabel(c) }}</option>
           </select>
           <button :disabled="publishing || !publishCredentialId" @click="publish">
             {{ publishing ? "동기화 중..." : "동기화" }}
           </button>
+          <button :disabled="credentialChecking || !publishCredentialId" @click="checkCredential">
+            {{ credentialChecking ? "확인 중..." : "자격증명 확인" }}
+          </button>
           <p v-if="publishError" class="error">{{ publishError }}</p>
           <p v-if="publishSuccessAt" class="publish-success">외부 저장소에 반영됐습니다.</p>
+          <p v-if="credentialCheckError" class="error">{{ credentialCheckError }}</p>
+          <p v-if="credentialCheckMessage" class="publish-success">{{ credentialCheckMessage }}</p>
         </template>
       </div>
     </template>

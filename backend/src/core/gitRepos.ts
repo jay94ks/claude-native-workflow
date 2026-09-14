@@ -644,6 +644,21 @@ export async function validateExternalCredential(projectId: string, gitCredentia
   return validateCredential(detectProvider(repo.repoUrl), repo.repoUrl, token);
 }
 
+export type CredentialCheckResult = { valid: true } | { valid: false; destroyed: true };
+
+/** "동기화(발행)" 패널의 "자격증명 확인" 버튼 전용 - 실제 발행을
+ * 시도하지 않고도 미리 유효성을 확인하고 싶을 때 쓴다. validateExternalCredential
+ * 이 이미 만료 임박 토큰의 자동 갱신까지 시도한 뒤 판정하므로, 여기서
+ * false가 나오면 갱신으로도 못 살린 진짜 무효 상태라는 뜻 - 그 자리에서
+ * destroyInvalidCredential()로 바로 정리한다(설계자 지시 - "자격 증명
+ * 유효성을 확인하고 만료된걸 자동으로 삭제"). */
+export async function checkAndDestroyIfInvalid(projectId: string, gitCredentialId: string): Promise<CredentialCheckResult> {
+  const valid = await validateExternalCredential(projectId, gitCredentialId);
+  if (valid) return { valid: true };
+  await destroyInvalidCredential(gitCredentialId, projectId);
+  return { valid: false, destroyed: true };
+}
+
 /** 실측으로 무효가 확인된 자격증명은 재사용할 수 없으므로(만료/폐기된
  * 토큰을 그대로 들고 있어봐야 다음에 또 같은 실패를 반복할 뿐) 저장소
  * 자체에서 완전히 파기한다(설계자 지시 - "자격 증명 자체가 만료된

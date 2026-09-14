@@ -13,6 +13,10 @@ export interface GitCredentialSummary {
   hostPattern: string | null;
   credentialType: string;
   createdAt: Date;
+  // GitHub OAuth 로그인으로 발급된(=refresh_token이 함께 저장된)
+  // 자격증명만 채워진다 - 수동 PAT/username_password는 항상 null(만료
+  // 관리 대상이 아님을 프런트가 구분할 수 있게).
+  accessTokenExpiresAt: Date | null;
 }
 
 /** OAuth 교환/갱신 응답에서 나오는 부가 정보 - 없으면(수동 PAT 입력 등)
@@ -62,25 +66,39 @@ export async function addGitCredential(
     hostPattern: row.hostPattern,
     credentialType: row.credentialType,
     createdAt: row.createdAt,
+    accessTokenExpiresAt: row.accessTokenExpiresAt,
   };
 }
 
 // payload는 절대 반환하지 않는다 - 목록 조회는 존재 여부/타입/호스트
 // 패턴까지만 보여준다.
-export async function listGitCredentials(userId: string): Promise<GitCredentialSummary[]> {
-  const db = getDb();
-  const rows = await db.gitCredential.findMany({ where: { userId }, orderBy: { createdAt: "desc" } });
-  return rows.map((r: { id: string; hostPattern: string | null; credentialType: string; createdAt: Date }) => ({
+type CredentialListRow = {
+  id: string;
+  hostPattern: string | null;
+  credentialType: string;
+  createdAt: Date;
+  accessTokenExpiresAt: Date | null;
+};
+
+function toSummary(r: CredentialListRow): GitCredentialSummary {
+  return {
     id: r.id,
     hostPattern: r.hostPattern,
     credentialType: r.credentialType,
     createdAt: r.createdAt,
-  }));
+    accessTokenExpiresAt: r.accessTokenExpiresAt,
+  };
+}
+
+export async function listGitCredentials(userId: string): Promise<GitCredentialSummary[]> {
+  const db = getDb();
+  const rows = await db.gitCredential.findMany({ where: { userId }, orderBy: { createdAt: "desc" } });
+  return rows.map(toSummary);
 }
 
 export async function listGitCredentialsPaged(userId: string, page: number, pageSize: number): Promise<Page<GitCredentialSummary>> {
   const db = getDb();
-  const result = await paginate<{ id: string; hostPattern: string | null; credentialType: string; createdAt: Date }>(
+  const result = await paginate<CredentialListRow>(
     (args) => db.gitCredential.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, ...args }),
     () => db.gitCredential.count({ where: { userId } }),
     page,
@@ -88,12 +106,7 @@ export async function listGitCredentialsPaged(userId: string, page: number, page
   );
   return {
     ...result,
-    items: result.items.map((r: { id: string; hostPattern: string | null; credentialType: string; createdAt: Date }) => ({
-      id: r.id,
-      hostPattern: r.hostPattern,
-      credentialType: r.credentialType,
-      createdAt: r.createdAt,
-    })),
+    items: result.items.map(toSummary),
   };
 }
 

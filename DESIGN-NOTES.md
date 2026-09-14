@@ -7151,3 +7151,40 @@ refresh_token 저장해서 자동 갱신하도록 구현해줘"(조사해보니
 조용히 갱신해 연동이 끊기지 않고, 그래도 정말 무효가 확인되면 관련된
 모든 프로젝트를 한 번에 안전하게 정리하고 죽은 자격증명 자체도
 남겨두지 않는다.
+
+## 동기화(발행) 패널에 자격증명 만료 표시 + 수동 확인 버튼 추가(`#credential-lifecycle`)
+
+**배경**: 위 라운드 직후 설계자가 UI 반영을 이어서 지시 - "동기화
+섹션에 Github 로그인으로 연동된 리포면, 토큰 만료시점을 함께
+병기해줘", "동기화(발행) 섹션에서 자격 증명 유효성을 확인하고
+만료된걸 자동으로 삭제하는 기능도 추가해줘".
+
+**구현**: 둘 다 이미 검증된 백엔드 로직 위에 값을 노출/트리거하는
+얇은 작업이었다. `gitCredentials.ts`의 `GitCredentialSummary`에
+`accessTokenExpiresAt` 추가(공통 `toSummary()` 헬퍼로 통일). `gitRepos.ts`에
+`checkAndDestroyIfInvalid(projectId, gitCredentialId)` 추가 - 유효하면
+`{valid:true}`, 무효면 기존 `destroyInvalidCredential`을 그 자리에서
+태우고 `{valid:false, destroyed:true}`. 새 라우트 `POST /api/projects/
+:projectId/git/credentials/:credentialId/check`(owner 전용).
+`GitRepoPanel.vue` - select 옵션 라벨에 `credentialLabel()`로 만료
+시점을 조건부 병기(없으면 그대로), "동기화(발행)" 패널에 "자격증명
+확인" 버튼 추가 - 무효로 확인돼 서버가 파기까지 끝내면 `load()`로
+전체 상태를 다시 불러와(프로젝트가 자체 호스팅으로 전환됐을 수 있어
+`gitRepo.provider`가 바뀌면 기존 `v-if` 조건이 패널 자체를 자동으로
+숨김).
+
+**검증**: `tsc --noEmit`/`vue-tsc -b` 둘 다 클린. 격리된 스크래치
+SQLite(Gitea 없이 순수 DB 레벨)에서 `checkAndDestroyIfInvalid`를
+직접 호출하는 스크립트로 9개 assert 확인 - OAuth 자격증명은
+`accessTokenExpiresAt`이 채워지고 PAT는 null 유지, self_hosted
+프로젝트의 이력성 무효 참조로 실제 github.com API(더미 토큰 401)까지
+호출해 무효 확인 후 `GitCredential` 실제 삭제 + 참조 null 정리까지
+확인, 이미 삭제된 자격증명 재호출 시 기존 `.catch()`가 안전하게
+삼키는 것도 부수 확인. external_linked→self_hosted 전환 자체(Gitea
+rename/삭제)는 직전 라운드에서 이미 검증된 로직이라 이번엔 Gitea
+컨테이너까지 띄운 전체 왕복은 생략 - 브라우저 화면 단위 확인은 후속
+과제로 남긴다.
+
+**결론**: 설계자가 발행을 시도하기 전에 자격증명 만료 시점을 미리
+확인할 수 있고, 실패를 기다리지 않고도 그 자리에서 유효성을 검사해
+죽은 자격증명을 바로 정리할 수 있게 됐다.
