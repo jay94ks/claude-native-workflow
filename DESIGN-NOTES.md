@@ -8166,3 +8166,82 @@ CLI `docs template deploy`/MCP `template_deploy` 설명 문구에 같은
 경우(자체 호스팅 vs 외부 연동)가 이제 명시적으로 문서화됐다 - 다음에
 `link-external` 프로젝트에서 템플릿을 갱신하는 세션(사람이든 AI든)이
 같은 시행착오를 반복하지 않는다.
+
+## 템플릿(CLAUDE.md/SKILL.md) 프로젝트 스코프 웹 편집 UI 추가 + PUT 권한 게이트 실제 수정(`#template-editor-ui`, `#template-write-role-gate`)
+
+**배경**: 설계자가 메시지로 "[DN-20DB634B] 이거 진행해"라고 지시 -
+`#template-ui`(템플릿 조회 웹 UI) 라운드가 "편집(override 작성)은
+범위 밖 - PUT 라우트의 권한 게이트가 멤버 role이 아니라 API 키 스코프
+기준이라 뷰어 role도 통과할 수 있는 구조라 별도 검토 필요"라고 명시적
+으로 미뤄둔 다음 라운드.
+
+**조사**: `PUT /api/templates`(`backend/src/api/server.ts`)의 기존
+권한 검사(`isProjectAllowedByActiveScope`/`isTeamAllowedByActiveScope`/
+`isGroupAllowedByActiveScope`/`getActiveKeyScope().type ===
+"unrestricted"`)를 실제로 뜯어보니, 이 함수들은 전부 "활성 API 키
+스코프가 이 프로젝트/팀/그룹을 다루는 것 자체를 허용하는가"(멀티
+테넌시 경계)만 확인하고, "이 사용자가 그 스코프에서 실제로 쓰기
+권한이 있는가"(역할/관리자 여부)는 전혀 확인하지 않는 걸 확인 -
+실제로 **뷰어 role 멤버**나(프로젝트 스코프), **스코프 미지정
+(설치 전역 기본값) 호출에서 관리자가 아닌 아무 로그인 사용자**나
+CLAUDE.md/SKILL.md를 덮어쓸 수 있는 진짜 권한 구멍이었다(DN-20DB634B
+의 우려가 실제로 맞았음 - 격리 환경에서 viewer 계정으로 직접 재현
+확인). 다행히 프로젝트 role(`getMemberRole`+`roleSatisfies`), 팀
+관리자(`isTeamAdmin`), 그룹 관리자(`isProjectGroupAdmin`), 설치
+super admin(`isSuperAdmin`) 판정 함수가 이미 이 코드베이스 다른
+곳(Plan 라우트, 팀/그룹 관리 라우트 등)에 전부 구현/재사용되고
+있어서, 새 판정 로직을 만들 필요 없이 조합만 하면 됐다.
+
+**설계**: `PUT /api/templates`에서 스코프 검사(멀티테넌시 경계)와
+역할 검사(권한 등급)를 **둘 다** 확인하도록 분리한다 - 스코프별로
+"이 사용자가 실제로 쓸 수 있는가"의 기준을 이미 있는 함수로 매핑:
+프로젝트 스코프 → `getMemberRole`+`roleSatisfies(..., "editor")`
+(웹 UI "저장소에 배포" 버튼과 같은 기준), 팀 스코프 → `isTeamAdmin`,
+그룹 스코프 → `isProjectGroupAdmin`, 스코프 미지정(전역 기본값) →
+`isSuperAdmin`. 웹 UI 쪽은 이번 라운드에서 "프로젝트 스코프 override
+만들기/고치기"만 추가한다(팀/그룹/전역 기본값 편집은 이 화면
+(프로젝트 설정)의 문맥 밖이라 여전히 CLI/MCP `docs template set
+--team`/`--group` 전용으로 남긴다 - DN-20DB634B가 정한 화면 범위를
+그대로 유지, "복원"(override 삭제해 상속값으로 되돌리기) 기능은
+`setTemplateOverride`/`resolveTemplate` 자체에 그 개념이 아직 없어
+이번에도 범위 밖).
+
+**구현**: `backend/src/api/server.ts`의 `PUT /api/templates`가
+`scopeAllowed`(기존 로직 그대로)와 `roleAllowed`(신규, 스코프별로
+위 함수 매핑)를 각각 확인해 하나라도 실패하면 403(에러 메시지로 구분 -
+"이 API 키로는 이 스코프의 템플릿을 수정할 수 없습니다" vs "이
+스코프의 템플릿을 수정할 권한이 없습니다"). `frontend/src/components/
+TemplateSettingsPanel.vue`에 `editing`/`draft`/`saving`/`saveError`
+필드 추가, `startEdit`/`cancelEdit`/`saveEdit` 함수 추가 - "편집"
+버튼(기존 "저장소에 배포"와 같은 `roleSatisfies(myRole, 'editor')`
+기준으로만 노출)을 누르면 읽기 전용 MonacoEditor가 편집 가능한
+에디터로 바뀌고, "이 프로젝트 override로 저장"이 `PUT /templates`를
+`projectId`만 넣어 호출해 결과로 받은 `TemplateFile`을 그 자리에서
+반영(스코프 칩이 즉시 "이 프로젝트 override"로 바뀜), "취소"는
+`draft`만 버리고 서버 호출 없이 편집 모드를 뺀다.
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc -b`(frontend) 클린. 격리된
+로컬 환경(스크래치 SQLite+디스포저블 Meilisearch+로컬 backend+
+`frontend-dev` 프리뷰)에서 계정 3개(admin=super admin, viewer1=이
+프로젝트 viewer, editor1=이 프로젝트 editor)를 만들어 REST로 직접
+왕복 확인: viewer1은 프로젝트 스코프도 전역 스코프도 403(수정 전
+코드였다면 viewer1의 전역 스코프 쓰기는 unrestricted 키라 그냥
+통과했을 것 - 실제로 고쳐지기 전 동작도 별도로 확인), admin(super
+admin)은 둘 다 200, **super admin이 아닌 순수 editor1도 프로젝트
+스코프는 200이지만 전역 스코프는 403**(딱 의도한 등급별 경계).
+브라우저로 editor1 로그인 후 프로젝트 설정 화면에서 "편집" 클릭 →
+내용 수정 → 저장 → `GET /templates`로 실제 반영 확인(`content:
+"final v4"`) → 다시 편집해서 다른 내용을 넣고 "취소" → 서버 값이
+그대로인 것(취소가 실제로 저장하지 않음)까지 확인. viewer1로
+재로그인해 같은 화면에 "편집"/"저장소에 배포" 버튼이 DOM에 아예
+없는 것(단순 CSS 숨김이 아니라 `v-if`로 렌더링 자체가 안 됨)도
+확인.
+
+**결론**: `#template-ui` 라운드가 명시적으로 남겨뒀던 두 가지(웹
+편집 UI, 권한 모델 재검토)가 이번에 같이 해결됐다 - 프로젝트
+설정에서 CLAUDE.md/SKILL.md 프로젝트 override를 CLI 없이 바로
+만들고 고칠 수 있고, 그 과정에서 실제로 존재했던 권한 우회 경로
+(뷰어/비관리자가 스코프 검사만 통과하면 다른 사람의 템플릿을 덮어쓸
+수 있던 구멍)도 같이 막혔다. 팀/그룹/전역 스코프 편집과 override
+"복원"(삭제) 기능은 여전히 후속 과제로 남는다 - 필요해지면 이번에
+쓴 것과 같은 관리자 판정 함수들을 그대로 재사용할 수 있다.

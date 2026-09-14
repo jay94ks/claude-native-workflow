@@ -24,12 +24,16 @@ interface TemplateEntry {
   error: string;
   data: TemplateFile | null;
   expanded: boolean;
+  editing: boolean;
+  draft: string;
+  saving: boolean;
+  saveError: string;
 }
 
 // SEED_FILES(backend/src/core/templates.ts)와 같은 2개 - 지금 이
 // 시스템이 실제로 시드/배포하는 파일은 이 둘뿐이다.
 const entries = ref<TemplateEntry[]>([
-  { label: "CLAUDE.md", filename: "CLAUDE.md", loading: true, error: "", data: null, expanded: false },
+  { label: "CLAUDE.md", filename: "CLAUDE.md", loading: true, error: "", data: null, expanded: false, editing: false, draft: "", saving: false, saveError: "" },
   {
     label: "SKILL.md",
     filename: ".claude/skills/claude-native-workflow/SKILL.md",
@@ -37,6 +41,10 @@ const entries = ref<TemplateEntry[]>([
     error: "",
     data: null,
     expanded: false,
+    editing: false,
+    draft: "",
+    saving: false,
+    saveError: "",
   },
 ]);
 
@@ -64,6 +72,40 @@ async function load() {
   await Promise.all(entries.value.map(loadEntry));
 }
 
+// 이 프로젝트 스코프 override를 만들거나 고친다(#template-editor-ui,
+// DN-20DB634B 후속) - 팀/그룹/전역 기본값 override는 이 화면(프로젝트
+// 설정)의 문맥 밖이라 CLI/MCP(`docs template set --team/--group`) 전용
+// 그대로 남긴다. 백엔드가 스코프 허용 여부와 별개로 editor 이상 역할을
+// 실제로 검사하므로(#template-write-role-gate) 이 버튼도 그 기준과
+// 정확히 같은 `roleSatisfies(myRole, 'editor')`로만 노출한다.
+function startEdit(entry: TemplateEntry) {
+  entry.draft = entry.data?.content ?? "";
+  entry.saveError = "";
+  entry.editing = true;
+}
+
+function cancelEdit(entry: TemplateEntry) {
+  entry.editing = false;
+  entry.saveError = "";
+}
+
+async function saveEdit(entry: TemplateEntry) {
+  entry.saving = true;
+  entry.saveError = "";
+  try {
+    const qs = new URLSearchParams({ filename: entry.filename });
+    entry.data = await apiCall<TemplateFile>(`/templates?${qs}`, {
+      method: "PUT",
+      body: JSON.stringify({ content: entry.draft, projectId: props.projectId }),
+    });
+    entry.editing = false;
+  } catch (err) {
+    entry.saveError = err instanceof ApiError ? err.message : "저장에 실패했습니다";
+  } finally {
+    entry.saving = false;
+  }
+}
+
 const deploying = ref(false);
 const deployResult = ref<string[] | null>(null);
 const deployError = ref("");
@@ -88,8 +130,10 @@ onMounted(load);
 <template>
   <p class="hint">
     이 프로젝트에 적용될 CLAUDE.md/SKILL.md 내용 - 프로젝트 → 그룹 →
-    팀 → 설치 전역 기본값 순으로 override를 찾아 해석한 최종 결과다
-    (편집은 아직 CLI/MCP 전용 - `docs template set`).
+    팀 → 설치 전역 기본값 순으로 override를 찾아 해석한 최종 결과다.
+    이 화면에서는 이 프로젝트 스코프의 override만 만들거나 고칠 수
+    있다(팀/그룹/전역 기본값은 CLI/MCP `docs template set --team`/
+    `--group` 전용).
   </p>
   <ul class="template-list">
     <li v-for="entry in entries" :key="entry.filename">
@@ -105,7 +149,22 @@ onMounted(load);
       <p v-if="entry.loading" class="muted">불러오는 중...</p>
       <p v-else-if="entry.error" class="error">{{ entry.error }}</p>
       <div v-else-if="entry.expanded && entry.data" class="viewer">
-        <MonacoEditor :model-value="entry.data.content" language="markdown" read-only class="editor" />
+        <template v-if="entry.editing">
+          <MonacoEditor v-model="entry.draft" language="markdown" class="editor" />
+          <div class="edit-actions">
+            <button type="button" :disabled="entry.saving" @click="saveEdit(entry)">
+              {{ entry.saving ? "저장 중..." : "이 프로젝트 override로 저장" }}
+            </button>
+            <button type="button" class="secondary" :disabled="entry.saving" @click="cancelEdit(entry)">취소</button>
+          </div>
+          <p v-if="entry.saveError" class="error">{{ entry.saveError }}</p>
+        </template>
+        <template v-else>
+          <MonacoEditor :model-value="entry.data.content" language="markdown" read-only class="editor" />
+          <div v-if="roleSatisfies(myRole, 'editor')" class="edit-actions">
+            <button type="button" class="secondary" @click="startEdit(entry)">편집</button>
+          </div>
+        </template>
       </div>
     </li>
   </ul>
@@ -180,6 +239,24 @@ onMounted(load);
 }
 .editor {
   height: 360px;
+}
+.edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.edit-actions button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.edit-actions button:not(.secondary) {
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+}
+.edit-actions button:disabled {
+  opacity: 0.6;
 }
 .deploy-row {
   display: flex;

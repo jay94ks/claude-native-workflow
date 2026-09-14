@@ -3541,16 +3541,38 @@ app.put(
       projectId?: string;
     };
     if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
-    // 스코프 미지정(셋 다 없음)은 "설치 전역 기본값" 수정이라 unrestricted
-    // (로그인/개인 키)만 허용 - 안 그러면 프로젝트 하나로 좁혀진 키가
-    // 전체 설치의 기본 CLAUDE.md/SKILL.md를 바꿔버릴 수 있다.
-    let allowed: boolean;
-    if (projectId) allowed = await isProjectAllowedByActiveScope(projectId);
-    else if (teamId) allowed = isTeamAllowedByActiveScope(teamId);
-    else if (projectGroupId) allowed = await isGroupAllowedByActiveScope(projectGroupId);
-    else allowed = getActiveKeyScope().type === "unrestricted";
-    if (!allowed) {
+    // 두 가지를 따로 확인해야 한다(#template-write-role-gate, 실사용
+    // 중 발견 - DN-20DB634B가 다음 라운드로 미뤄뒀던 항목) - (1) 활성 API
+    // 키 스코프가 이 스코프(프로젝트/팀/그룹/전역)를 다루는 것 자체를
+    // 허용하는지(멀티테넌시 경계, 아래 *AllowedByActiveScope), (2) 그
+    // 스코프에서 이 사용자가 실제로 쓰기 권한이 있는 역할/관리자인지
+    // (권한 등급, 아래 역할/관리자 조회). (1)만 있고 (2)가 없으면 그
+    // 프로젝트의 viewer 멤버나 - 스코프 미지정일 땐 - 설치의 아무
+    // 로그인 사용자나 이 스코프의 템플릿(전역 기본값까지)을 덮어쓸 수
+    // 있었다.
+    let scopeAllowed: boolean;
+    let roleAllowed: boolean;
+    if (projectId) {
+      scopeAllowed = await isProjectAllowedByActiveScope(projectId);
+      roleAllowed = roleSatisfies(await getMemberRole(projectId, req.userId!), "editor");
+    } else if (teamId) {
+      scopeAllowed = isTeamAllowedByActiveScope(teamId);
+      roleAllowed = await isTeamAdmin(teamId, req.userId!);
+    } else if (projectGroupId) {
+      scopeAllowed = await isGroupAllowedByActiveScope(projectGroupId);
+      roleAllowed = await isProjectGroupAdmin(projectGroupId, req.userId!);
+    } else {
+      // 스코프 미지정 = "설치 전역 기본값" 수정 - unrestricted(로그인/
+      // 개인 키) 스코프에 더해 설치 super admin이어야 한다.
+      scopeAllowed = getActiveKeyScope().type === "unrestricted";
+      roleAllowed = await isSuperAdmin(req.userId!);
+    }
+    if (!scopeAllowed) {
       res.status(403).json({ error: "이 API 키로는 이 스코프의 템플릿을 수정할 수 없습니다" });
+      return;
+    }
+    if (!roleAllowed) {
+      res.status(403).json({ error: "이 스코프의 템플릿을 수정할 권한이 없습니다" });
       return;
     }
     res.json(await setTemplateOverride(filename, { teamId, projectGroupId, projectId }, content, req.userId!));
