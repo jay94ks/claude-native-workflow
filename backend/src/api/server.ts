@@ -231,7 +231,7 @@ import {
   publishToExternalRepo,
   getPendingPublishQueueEntry,
   completePublishQueueEntry,
-  checkAndDestroyIfInvalid,
+  checkAllCredentials,
   GitAuthRequiredError,
 } from "../core/gitRepos.js";
 import { isGithubOAuthConfigured, startGithubOAuth, completeGithubOAuth, listGithubRepos } from "../core/githubOAuth.js";
@@ -384,6 +384,18 @@ app.get(
   requireUnrestrictedScope,
   asyncRoute(async (req, res) => {
     res.json(await listGitCredentialsPaged(req.userId!, Number(req.query.page ?? 1), Number(req.query.pageSize ?? 20)));
+  }),
+);
+
+// 프로젝트 하나에 묶이지 않고 이 사용자의 자격증명 전부를 한 번에
+// 검사한다(#credential-lifecycle 후속 - "일괄 처리") - 무효로 확인된
+// 것은 checkAndDestroyIfInvalid와 같은 파기 경로를 그 자리에서 탄다.
+app.post(
+  "/api/credentials/check-all",
+  authenticate,
+  requireUnrestrictedScope,
+  asyncRoute(async (req, res) => {
+    res.json(await checkAllCredentials(req.userId!));
   }),
 );
 
@@ -3662,19 +3674,6 @@ app.post(
     const { gitCredentialId } = req.body as { gitCredentialId?: string };
     if (!gitCredentialId) { res.status(400).json({ error: "gitCredentialId가 필요합니다" }); return; }
     res.json(await publishToExternalRepo(req.params.projectId, gitCredentialId));
-  }),
-);
-
-// 실제 발행을 시도하지 않고 자격증명 유효성만 미리 확인 - 무효로
-// 확인되면(자동 갱신 시도까지 실패한 경우만) checkAndDestroyIfInvalid가
-// 그 자리에서 파기까지 해버린다(destroyInvalidCredential과 같은 경로 -
-// publishToExternalRepo의 실패 분기와 동일).
-app.post(
-  "/api/projects/:projectId/git/credentials/:credentialId/check",
-  authenticate,
-  requireProjectRole("owner"),
-  asyncRoute(async (req, res) => {
-    res.json(await checkAndDestroyIfInvalid(req.params.projectId, req.params.credentialId));
   }),
 );
 

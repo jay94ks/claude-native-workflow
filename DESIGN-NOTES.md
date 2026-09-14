@@ -7188,3 +7188,41 @@ rename/삭제)는 직전 라운드에서 이미 검증된 로직이라 이번엔
 **결론**: 설계자가 발행을 시도하기 전에 자격증명 만료 시점을 미리
 확인할 수 있고, 실패를 기다리지 않고도 그 자리에서 유효성을 검사해
 죽은 자격증명을 바로 정리할 수 있게 됐다.
+
+## 자격증명 확인을 단건에서 일괄 처리로 전환(`#credential-lifecycle`)
+
+**배경**: 직전 라운드가 만든 "자격증명 확인" 버튼은 select로 고른
+자격증명 하나만 확인했다. 설계자가 "자격 증명 확인을 일괄 처리하게
+수정해줘"라고 지시해 대체했다.
+
+**설계**: 기존 `checkAndDestroyIfInvalid`가 쓰던 `validateExternalCredential`
+은 **현재 프로젝트의 repoUrl**로 provider를 판단하는데, 이건 대상이
+하나일 때만 맞는 전제다 - 일괄로 넓히면 서로 다른 프로젝트/호스트를
+향하는 자격증명이 섞여 있어 한 프로젝트의 provider를 빌리면 틀린다.
+그래서 각 자격증명 자신의 `hostPattern`으로 provider/host를 판단하는
+전용 경로(`validateCredentialGeneric`)를 새로 만들었다(hostPattern이
+없으면 판단 기준이 없으므로 안전하게 건너뜀). `destroyInvalidCredential`의
+`triggeringProjectId`도 옵션으로 바꿔, 일괄 확인처럼 "트리거한
+프로젝트"라는 개념이 없는 호출에서는 영향받은 모든 프로젝트가 같은
+안내 문구를 받도록 정리했다.
+
+**구현**: `gitRepos.ts` - `validateCredentialGeneric()`(신규),
+`checkAllCredentials(userId)`(신규, export, 사용자의 모든 자격증명을
+순회 검사 후 무효면 파기) 추가. 단건 전용이던 `checkAndDestroyIfInvalid`/
+`CredentialCheckResult`는 호출부가 없어져 삭제. `server.ts` - 프로젝트에
+안 묶이는 `POST /api/credentials/check-all` 추가, 단건 전용
+`POST /api/projects/:projectId/git/credentials/:credentialId/check`
+제거. `GitRepoPanel.vue` - 단건 확인 UI를 "자격증명 일괄 확인"
+버튼(select 선택 불필요) + 결과 목록으로 교체, 파기가 하나라도
+있으면 `load()`로 전체 상태 재조회.
+
+**검증**: `tsc --noEmit`/`vue-tsc -b` 클린. 격리 스크래치 SQLite에서
+`checkAllCredentials` 직접 호출로 7개 assert 확인 - 무효 자격증명이
+실제 github.com API로 판정돼 삭제되는 것, hostPattern 없는 자격증명은
+건드리지 않는 것, 그리고 **같은 무효 자격증명을 두 프로젝트가 동시에
+참조하는 상황에서 일괄 확인 한 번으로 두 프로젝트 모두 정리되는 것**
+(트리거 프로젝트 개념이 없는 경로가 실제로 고르게 처리함)까지 실측.
+
+**결론**: 어느 프로젝트에서든 "자격증명 일괄 확인" 한 번으로 가진
+자격증명 전부의 상태를 파악하고 죽은 것들을 한 번에 정리할 수 있게
+됐다.

@@ -450,35 +450,40 @@ const publishError = ref("");
 const publishSuccessAt = ref<number | null>(null);
 const publishQueueEntry = ref<PublishQueueEntry | null>(null);
 
-// "자격증명 확인" - 실제 발행을 시도하지 않고 유효성만 미리 확인한다.
-// 무효로 확인되면 서버가 그 자리에서 자격증명 자체를 파기하고(다른
-// 프로젝트가 같이 쓰고 있었으면 그 프로젝트들도) 이 프로젝트가
-// 자체 호스팅으로 전환됐을 수 있으므로 load()로 전체 상태를 다시
-// 불러온다(그러면 gitRepo.provider가 바뀌어 이 패널 자체가 자동으로
-// 사라짐).
+// "자격증명 일괄 확인" - 이 select에 뜨는 모든(이 사용자 소유)
+// 자격증명을 한 번에 검사한다(설계자 지시 - "자격 증명 확인을 일괄
+// 처리하게 수정해줘", 프로젝트 하나만 선택해 확인하던 이전 방식을
+// 대체). 무효로 확인된 것은 서버가 그 자리에서 자격증명 자체를
+// 파기하고(그걸 쓰던 다른 프로젝트가 있었으면 그 프로젝트들도 함께)
+// 정리한다 - 이 프로젝트가 자체 호스팅으로 전환됐을 수 있으므로
+// load()로 전체 상태를 다시 불러온다(그러면 gitRepo.provider가
+// 바뀌어 이 패널 자체가 자동으로 사라짐).
+interface CredentialCheckItem {
+  id: string;
+  hostPattern: string | null;
+  valid: boolean;
+  destroyed: boolean;
+}
+
 const credentialChecking = ref(false);
 const credentialCheckError = ref("");
-const credentialCheckMessage = ref("");
+const credentialCheckResults = ref<CredentialCheckItem[] | null>(null);
 
-async function checkCredential() {
-  if (!publishCredentialId.value) return;
+async function checkAllCredentialsBulk() {
   credentialChecking.value = true;
   credentialCheckError.value = "";
-  credentialCheckMessage.value = "";
+  credentialCheckResults.value = null;
   try {
-    const result = await apiCall<{ valid: true } | { valid: false; destroyed: true }>(
-      `/projects/${props.projectId}/git/credentials/${publishCredentialId.value}/check`,
-      { method: "POST" },
-    );
-    if (result.valid) {
-      credentialCheckMessage.value = "자격증명이 유효합니다.";
-    } else {
-      credentialCheckMessage.value = "자격증명이 무효로 확인되어 자동으로 삭제되었습니다.";
-      publishCredentialId.value = "";
+    const results = await apiCall<CredentialCheckItem[]>("/credentials/check-all", { method: "POST" });
+    credentialCheckResults.value = results;
+    if (results.some((r) => r.destroyed)) {
+      if (results.some((r) => r.id === publishCredentialId.value && r.destroyed)) {
+        publishCredentialId.value = "";
+      }
       await load();
     }
   } catch (err) {
-    credentialCheckError.value = err instanceof ApiError ? err.message : "자격증명 확인에 실패했습니다";
+    credentialCheckError.value = err instanceof ApiError ? err.message : "자격증명 일괄 확인에 실패했습니다";
   } finally {
     credentialChecking.value = false;
   }
@@ -672,13 +677,18 @@ onUnmounted(() => {
           <button :disabled="publishing || !publishCredentialId" @click="publish">
             {{ publishing ? "동기화 중..." : "동기화" }}
           </button>
-          <button :disabled="credentialChecking || !publishCredentialId" @click="checkCredential">
-            {{ credentialChecking ? "확인 중..." : "자격증명 확인" }}
+          <button :disabled="credentialChecking || credentials.length === 0" @click="checkAllCredentialsBulk">
+            {{ credentialChecking ? "확인 중..." : "자격증명 일괄 확인" }}
           </button>
           <p v-if="publishError" class="error">{{ publishError }}</p>
           <p v-if="publishSuccessAt" class="publish-success">외부 저장소에 반영됐습니다.</p>
           <p v-if="credentialCheckError" class="error">{{ credentialCheckError }}</p>
-          <p v-if="credentialCheckMessage" class="publish-success">{{ credentialCheckMessage }}</p>
+          <ul v-if="credentialCheckResults" class="credential-check-results">
+            <li v-for="r in credentialCheckResults" :key="r.id" :class="r.valid ? 'valid' : 'invalid'">
+              {{ r.hostPattern ?? r.id }} -
+              {{ r.valid ? "유효함" : "무효로 확인되어 삭제됨" }}
+            </li>
+          </ul>
         </template>
       </div>
     </template>
@@ -1069,5 +1079,20 @@ onUnmounted(() => {
 .error {
   color: var(--color-danger);
   font-size: 13px;
+}
+.credential-check-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 13px;
+}
+.credential-check-results li {
+  padding: 2px 0;
+}
+.credential-check-results li.valid {
+  color: var(--color-success);
+}
+.credential-check-results li.invalid {
+  color: var(--color-danger);
 }
 </style>

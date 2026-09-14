@@ -644,19 +644,52 @@ export async function validateExternalCredential(projectId: string, gitCredentia
   return validateCredential(detectProvider(repo.repoUrl), repo.repoUrl, token);
 }
 
-export type CredentialCheckResult = { valid: true } | { valid: false; destroyed: true };
+/** validateExternalCredential과 달리 특정 프로젝트의 repoUrl을 빌려
+ * provider를 판단하지 않는다 - "일괄 확인"은 서로 다른 프로젝트/호스트를
+ * 향하는 자격증명을 한 번에 검사하므로, 아무 프로젝트나 하나 골라
+ * 그 provider로 판정하면 다른 호스트용 자격증명을 잘못된 provider로
+ * 검사하게 된다(예: GitLab 자격증명을 GitHub API로 검증). 대신 자격
+ * 증명 자신의 hostPattern으로 provider/host를 판단한다. hostPattern이
+ * 없는 자격증명(추가 시 생략된 경우 등)은 판단 기준이 없으므로 확인을
+ * 건너뛰고 유효로 간주한다(모르면 지우지 않는다는 원칙). */
+async function validateCredentialGeneric(cred: { id: string; hostPattern: string | null }): Promise<boolean> {
+  if (!cred.hostPattern) return true;
+  const token = await resolveCredentialToken(cred.id);
+  if (!token) return false;
+  const provider = cred.hostPattern === "github.com" ? "github" : "gitlab";
+  return validateCredential(provider, `https://${cred.hostPattern}/`, token);
+}
 
-/** "동기화(발행)" 패널의 "자격증명 확인" 버튼 전용 - 실제 발행을
- * 시도하지 않고도 미리 유효성을 확인하고 싶을 때 쓴다. validateExternalCredential
- * 이 이미 만료 임박 토큰의 자동 갱신까지 시도한 뒤 판정하므로, 여기서
- * false가 나오면 갱신으로도 못 살린 진짜 무효 상태라는 뜻 - 그 자리에서
- * destroyInvalidCredential()로 바로 정리한다(설계자 지시 - "자격 증명
- * 유효성을 확인하고 만료된걸 자동으로 삭제"). */
-export async function checkAndDestroyIfInvalid(projectId: string, gitCredentialId: string): Promise<CredentialCheckResult> {
-  const valid = await validateExternalCredential(projectId, gitCredentialId);
-  if (valid) return { valid: true };
-  await destroyInvalidCredential(gitCredentialId, projectId);
-  return { valid: false, destroyed: true };
+export interface CredentialBulkCheckItem {
+  id: string;
+  hostPattern: string | null;
+  valid: boolean;
+  destroyed: boolean;
+}
+
+/** "동기화(발행)" 패널의 "자격증명 일괄 확인" 버튼 전용(설계자 지시 -
+ * "자격 증명 확인을 일괄 처리하게 수정해줘") - 이 사용자가 가진 모든
+ * 자격증명을 한 번에 검사한다. 무효로 확인된 것은 그 자리에서
+ * destroyInvalidCredential로 파기한다(영향받는 모든 프로젝트가 함께
+ * 정리됨 - 단일 확인과 같은 경로 재사용, triggeringProjectId 없이
+ * 호출하므로 전부 같은 안내 문구를 받는다). */
+export async function checkAllCredentials(userId: string): Promise<CredentialBulkCheckItem[]> {
+  const db = getDb();
+  const creds: { id: string; hostPattern: string | null }[] = await db.gitCredential.findMany({
+    where: { userId },
+    select: { id: true, hostPattern: true },
+  });
+  const results: CredentialBulkCheckItem[] = [];
+  for (const cred of creds) {
+    const valid = await validateCredentialGeneric(cred);
+    if (valid) {
+      results.push({ id: cred.id, hostPattern: cred.hostPattern, valid: true, destroyed: false });
+    } else {
+      await destroyInvalidCredential(cred.id);
+      results.push({ id: cred.id, hostPattern: cred.hostPattern, valid: false, destroyed: true });
+    }
+  }
+  return results;
 }
 
 /** 실측으로 무효가 확인된 자격증명은 재사용할 수 없으므로(만료/폐기된
@@ -669,14 +702,18 @@ export async function checkAndDestroyIfInvalid(projectId: string, gitCredentialI
  * unlinkExternalRepo로 동일하게 self_hosted 전환+안내 메시지를 받고,
  * self_hosted 프로젝트가 최초 import 때 남겨둔 참조만 있는 경우는
  * (지금은 안 쓰는 이력성 참조라) 조용히 null로 지운다. */
-async function destroyInvalidCredential(gitCredentialId: string, triggeringProjectId: string): Promise<void> {
+async function destroyInvalidCredential(gitCredentialId: string, triggeringProjectId?: string): Promise<void> {
   const db = getDb();
   const affected = await db.projectGitRepo.findMany({ where: { gitCredentialId } });
   for (const row of affected) {
     if (row.provider === "external_linked" || row.provider === "github" || row.provider === "gitlab") {
       await unlinkExternalRepo(row.projectId);
+      // triggeringProjectId가 없으면(자격증명 일괄 확인처럼 특정
+      // 프로젝트에 묶이지 않은 호출) 모든 영향받은 프로젝트에 같은
+      // 문구를 쓴다 - "다른 프로젝트에서"라고 콕 집을 트리거 주체
+      // 자체가 없기 때문.
       const reason =
-        row.projectId === triggeringProjectId
+        triggeringProjectId === undefined || row.projectId === triggeringProjectId
           ? "GitHub/GitLab 자격증명이 더 이상 유효하지 않아 외부 연동이 자동으로 해제되고 자체 호스팅으로 전환됐습니다 - 계속 외부 저장소를 쓰려면 새 자격증명으로 다시 연동하세요."
           : "이 프로젝트가 쓰던 GitHub/GitLab 자격증명이 다른 프로젝트에서 무효로 확인돼 함께 자동 해제되고 자체 호스팅으로 전환됐습니다 - 계속 외부 저장소를 쓰려면 새 자격증명으로 다시 연동하세요.";
       await sendMessage(row.projectId, null, reason);
