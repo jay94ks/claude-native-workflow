@@ -55,7 +55,10 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const qs = new URLSearchParams({ page: String(pageNum.value), pageSize: "20" });
+    // CLI/MCP는 이제 기본 정렬이 "의존도 낮은 순"(#plan-list-dependency-sort)
+    // 이지만, 이 화면은 예전 그대로의 "최근 수정순"을 유지하려고 명시적으로
+    // 넘긴다(안 넘기면 core의 새 기본값을 그대로 받아 화면 순서가 바뀜).
+    const qs = new URLSearchParams({ page: String(pageNum.value), pageSize: "20", sort: "updatedAt:desc" });
     if (filterStatus.value) qs.set("status", filterStatus.value);
     if (filterQ.value.trim()) qs.set("q", filterQ.value.trim());
     page.value = await apiCall<PlanPage>(`/projects/${props.id}/plans?${qs}`);

@@ -59,6 +59,20 @@ interface PlanRow {
 
 const PLAN_INCLUDE = { refs: true, dependencies: { include: { dependsOn: { select: { trackingCode: true } } } } } as const;
 
+// 목록 기본 정렬 - "의존도(선행 조건 개수)가 가장 낮은 순"으로 고정한다
+// (설계자 지시, #plan-list-dependency-sort) - 지금 바로 시작할 수
+// 있는(선행 조건이 없거나 적은) 계획이 위로 오게. 개수가 같으면 예전
+// 기본값이던 최근 수정순으로 묶는다(tie-break). 웹 UI(PlansView.vue)는
+// 예전 그대로의 "최근 수정순"을 원해 `sort=updatedAt:desc`를 명시적으로
+// 넘긴다 - CLI/MCP가 sort를 안 넘기면 이 새 기본값을 그대로 받는다.
+export type PlanSortKey = "dependencyCount:asc" | "updatedAt:desc";
+const DEFAULT_PLAN_SORT: PlanSortKey = "dependencyCount:asc";
+
+function planOrderBy(sort: PlanSortKey) {
+  if (sort === "updatedAt:desc") return [{ updatedAt: "desc" as const }];
+  return [{ dependencies: { _count: "asc" as const } }, { updatedAt: "desc" as const }];
+}
+
 function toPlanDetail(row: PlanRow): PlanDetail {
   return {
     trackingCode: row.trackingCode,
@@ -178,7 +192,7 @@ export async function getPlanProjectId(trackingCode: string): Promise<string | n
 
 export async function listPlansPaged(
   projectId: string,
-  opts: { status?: string; q?: string; page: number; pageSize: number },
+  opts: { status?: string; q?: string; page: number; pageSize: number; sort?: PlanSortKey },
 ): Promise<Page<PlanDetail>> {
   const db = getDb();
   const q = opts.q?.trim();
@@ -187,8 +201,9 @@ export async function listPlansPaged(
     ...(opts.status ? { status: opts.status } : {}),
     ...(q ? { OR: [{ title: { contains: q } }, { body: { contains: q } }] } : {}),
   };
+  const orderBy = planOrderBy(opts.sort ?? DEFAULT_PLAN_SORT);
   const result = await paginate<PlanRow>(
-    (args) => db.plan.findMany({ where, include: PLAN_INCLUDE, orderBy: { updatedAt: "desc" }, ...args }),
+    (args) => db.plan.findMany({ where, include: PLAN_INCLUDE, orderBy, ...args }),
     () => db.plan.count({ where }),
     opts.page,
     opts.pageSize,
@@ -202,7 +217,10 @@ export async function listPlansPaged(
  * (listDocuments()가 비슷한 이유로 non-paged 버전을 따로 둔 것과
  * 같은 원칙 - 다만 계획은 프로젝트당 보통 소수라 1000건 상한 에러
  * 없이 그냥 전부 반환). */
-export async function listAllPlans(projectId: string, opts: { status?: string; q?: string } = {}): Promise<PlanDetail[]> {
+export async function listAllPlans(
+  projectId: string,
+  opts: { status?: string; q?: string; sort?: PlanSortKey } = {},
+): Promise<PlanDetail[]> {
   const db = getDb();
   const q = opts.q?.trim();
   const where = {
@@ -210,7 +228,7 @@ export async function listAllPlans(projectId: string, opts: { status?: string; q
     ...(opts.status ? { status: opts.status } : {}),
     ...(q ? { OR: [{ title: { contains: q } }, { body: { contains: q } }] } : {}),
   };
-  const rows = await db.plan.findMany({ where, include: PLAN_INCLUDE, orderBy: { updatedAt: "desc" } });
+  const rows = await db.plan.findMany({ where, include: PLAN_INCLUDE, orderBy: planOrderBy(opts.sort ?? DEFAULT_PLAN_SORT) });
   return rows.map(toPlanDetail);
 }
 

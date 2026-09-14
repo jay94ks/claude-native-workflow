@@ -1144,6 +1144,14 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   계획 자기 자신을 목록에서 제외한다(`excludeKeys`). 메시지/코멘트/
   문서 본문 등에 등장하는 `PN-XXXXXXXX` 코드를 클릭하면 미리보기
   다이얼로그가 뜬다(질의/칸반 카드 코드와 같은 방식).
+- **목록 기본 정렬은 의존도(선행 조건 개수)가 가장 낮은 순**
+  (`docs plan list`/`plan_list`, `docs plan bulk-export`/`plan_export`,
+  `#plan-list-dependency-sort`) - 지금 바로 시작할 수 있는(선행 조건이
+  없거나 적은) 계획이 위로 온다(개수가 같으면 최근 수정순으로
+  묶임). `--sort updatedAt:desc`(CLI)/`sort:"updatedAt:desc"`(MCP)로
+  예전 방식(최근 수정순)으로 되돌릴 수 있다. **웹 UI "계획" 탭은
+  여전히 최근 수정순 그대로**(`sort=updatedAt:desc`를 명시적으로
+  넘김) - 이 기본값 변경은 CLI/MCP에만 적용된다.
 - **bulk 명령**(웹 UI 없음, CLI/MCP 전용) - `plan bulk-export
   <projectId> <outFile> [--status] [--q]`(조건에 맞는 전체를 페이지
   상한 없이 로컬 JSON 파일로, MCP `plan_export`는 파일 저장 없이

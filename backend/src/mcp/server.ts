@@ -1138,14 +1138,22 @@ async function main() {
   tool(
     "plan_list",
     "계획 목록",
-    "이 프로젝트의 계획 목록(페이지네이션) - status/q로 제한 가능.",
-    { projectId: z.string(), status: z.string().optional(), q: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() },
+    "이 프로젝트의 계획 목록(페이지네이션) - status/q로 제한 가능. 기본 정렬은 의존도(선행 조건 개수)가 가장 낮은 순(지금 바로 시작할 수 있는 계획이 위로) - sort:\"updatedAt:desc\"로 예전 방식(최근 수정순)으로 바꿀 수 있다.",
+    {
+      projectId: z.string(),
+      status: z.string().optional(),
+      q: z.string().optional(),
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+      sort: z.enum(["dependencyCount:asc", "updatedAt:desc"]).optional(),
+    },
     async (a) => {
       const qs = new URLSearchParams({
         ...(a.status ? { status: String(a.status) } : {}),
         ...(a.q ? { q: String(a.q) } : {}),
         page: String(a.page ?? 1),
         pageSize: String(a.pageSize ?? 20),
+        ...(a.sort ? { sort: String(a.sort) } : {}),
       });
       return call(`/api/projects/${a.projectId}/plans?${qs}`);
     },
@@ -1211,12 +1219,18 @@ async function main() {
   tool(
     "plan_export",
     "계획 전체 내보내기",
-    "이 프로젝트의 계획을 조건에 맞는 전체(페이지 상한 없음) 배열로 반환한다 - 그대로 파일에 저장하면 \"계획을 하나의 파일로 bulk\"가 된다. plan_list와 달리 페이지네이션이 없다.",
-    { projectId: z.string(), status: z.string().optional(), q: z.string().optional() },
+    "이 프로젝트의 계획을 조건에 맞는 전체(페이지 상한 없음) 배열로 반환한다 - 그대로 파일에 저장하면 \"계획을 하나의 파일로 bulk\"가 된다. plan_list와 달리 페이지네이션이 없다. 기본 정렬은 plan_list와 동일하게 의존도가 가장 낮은 순.",
+    {
+      projectId: z.string(),
+      status: z.string().optional(),
+      q: z.string().optional(),
+      sort: z.enum(["dependencyCount:asc", "updatedAt:desc"]).optional(),
+    },
     async (a) => {
       const qs = new URLSearchParams({
         ...(a.status ? { status: String(a.status) } : {}),
         ...(a.q ? { q: String(a.q) } : {}),
+        ...(a.sort ? { sort: String(a.sort) } : {}),
       });
       return call(`/api/projects/${a.projectId}/plans/export?${qs}`);
     },

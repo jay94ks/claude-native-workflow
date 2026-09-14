@@ -8245,3 +8245,56 @@ admin)은 둘 다 200, **super admin이 아닌 순수 editor1도 프로젝트
 수 있던 구멍)도 같이 막혔다. 팀/그룹/전역 스코프 편집과 override
 "복원"(삭제) 기능은 여전히 후속 과제로 남는다 - 필요해지면 이번에
 쓴 것과 같은 관리자 판정 함수들을 그대로 재사용할 수 있다.
+
+## `docs plan list`/MCP `plan_list`(및 bulk-export) 기본 정렬을 의존도 낮은 순으로 변경(`#plan-list-dependency-sort`)
+
+**배경**: 설계자 지시 - "계획 리스트를 반환하는 CLI와 MCP의 기본
+정렬을 의존도가 가장 낮은 순으로 수정." 지금까지 `docs plan list`/
+`plan_list`(및 `plan bulk-export`/`plan_export`)는 전부
+`updatedAt: desc`(최근 수정순)로만 정렬됐는데, "다음에 뭘 시작할 수
+있는지" 판단하려면 선행 조건이 적거나 없는 계획이 먼저 보이는 게
+더 유용하다.
+
+**조사**: `docs plan list`/`plan_list`와 `docs plan bulk-export`/
+`plan_export`는 결국 같은 REST 엔드포인트(`GET /api/projects/
+:projectId/plans`, `.../plans/export`)를 통해 `core/plans.ts`의
+`listPlansPaged`/`listAllPlans` 하나씩을 호출한다 - 그런데 **웹 UI
+"계획" 탭(`PlansView.vue`)도 정확히 같은 `/plans` 엔드포인트를
+쓴다**(문서 목록처럼 웹 전용 별도 엔드포인트가 없음). 설계자 지시는
+"CLI와 MCP"로 범위를 한정했으므로, 핵심 함수의 기본값 자체를 바꾸고
+**웹 UI 쪽만 예전 방식(`updatedAt:desc`)을 명시적으로 요청하도록
+해서 웹 화면의 체감 순서는 그대로 유지**하는 쪽을 택했다(반대로
+CLI/MCP에 새 옵션을 추가해 새 정렬을 요청하게 만드는 것보다, 핵심
+함수 기본값을 바꾸고 예외 하나(웹)만 명시적으로 되돌리는 쪽이 변경
+지점이 더 적었다).
+
+**설계**: `Plan.dependencies`는 `PlanDependency`(선행 조건) 조인
+테이블이라, "의존도"는 곧 그 배열의 길이 - Prisma의 관계 집계 정렬
+(`orderBy: { dependencies: { _count: "asc" } }`)로 표현할 수 있어
+별도 원시 쿼리나 애플리케이션 레벨 정렬이 필요 없었다(SQLite/
+Postgres/MySQL 스키마가 동일한 관계 모양이라 세 드라이버 전부
+동일하게 동작). 개수가 같은 계획들끼리는 예전 기본값이던
+`updatedAt: desc`로 묶어 tie-break한다.
+
+**구현**: `core/plans.ts`에 `PlanSortKey`("dependencyCount:asc" |
+"updatedAt:desc") 타입과 `planOrderBy()` 헬퍼 추가, `listPlansPaged`/
+`listAllPlans`가 `sort` 옵션(기본값 `dependencyCount:asc`)을 받도록
+확장. REST `GET /api/projects/:projectId/plans`·`.../plans/export`가
+`sort` 쿼리 파라미터를 그대로 전달. CLI `docs plan list`/`bulk-export`
+에 `--sort <key>` 옵션 추가(안 주면 새 기본값), MCP `plan_list`/
+`plan_export`에 `sort` 파라미터(zod enum) 추가. `frontend/src/views/
+PlansView.vue`는 목록 조회 시 `sort: "updatedAt:desc"`를 명시적으로
+넘겨 화면 순서를 예전 그대로 유지한다.
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc -b`(frontend) 클린. 격리된
+로컬 환경(스크래치 SQLite+디스포저블 Meilisearch+로컬 backend)에서
+계획 4개를 선행 조건 0/0/1/2개로 만들어 REST로 직접 확인 - 기본
+호출(`sort` 생략)이 의존도 오름차순(0,0,1,2)이면서 0개인 두 계획은
+최근 수정순으로 묶이는 것, `sort=updatedAt:desc`를 주면 정확히 예전
+순서(생성 역순)로 돌아오는 것, `/plans/export`도 기본이 같은 의존도
+오름차순인 것까지 전부 실측 확인.
+
+**결론**: `docs plan list`/`plan_list`(및 bulk-export 계열)를 그냥
+호출하면 지금 바로 시작할 수 있는 계획이 먼저 보인다 - AI 세션이
+"다음에 뭘 하지"를 판단할 때 매번 의존성 개수를 눈으로 세지 않아도
+된다. 웹 "계획" 탭의 기존 체감 순서(최근 수정순)는 그대로 보존된다.

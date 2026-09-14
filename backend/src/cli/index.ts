@@ -1591,11 +1591,12 @@ planCmd
 
 planCmd
   .command("list <projectId>")
-  .description("이 프로젝트의 계획 목록")
+  .description("이 프로젝트의 계획 목록 - 기본 정렬은 의존도(선행 조건 개수)가 가장 낮은 순(지금 바로 시작할 수 있는 계획이 위로)")
   .option("--status <code>", "상태로 제한")
   .option("--q <text>", "제목/본문 검색어")
   .option("--page <n>", "페이지 번호(1부터, 기본 1)")
   .option("--count <n>", "페이지당 개수(기본 20)")
+  .option("--sort <key>", "dependencyCount:asc(기본) 또는 updatedAt:desc")
   .action((projectId, opts) =>
     run(async () => {
       const qs = new URLSearchParams({
@@ -1603,6 +1604,7 @@ planCmd
         ...(opts.q ? { q: opts.q } : {}),
         page: opts.page ?? "1",
         pageSize: opts.count ?? "20",
+        ...(opts.sort ? { sort: opts.sort } : {}),
       });
       printJson(await apiCall(`/api/projects/${projectId}/plans?${qs}`));
     }),
@@ -1690,14 +1692,16 @@ planCmd
 
 planCmd
   .command("bulk-export <projectId> <outFile>")
-  .description("이 프로젝트의 계획을 조건에 맞는 전체(페이지 상한 없음) 하나의 로컬 JSON 파일로 내보낸다")
+  .description("이 프로젝트의 계획을 조건에 맞는 전체(페이지 상한 없음) 하나의 로컬 JSON 파일로 내보낸다 - 기본 정렬은 의존도가 가장 낮은 순")
   .option("--status <code>", "상태로 제한")
   .option("--q <text>", "제목/본문 검색어")
+  .option("--sort <key>", "dependencyCount:asc(기본) 또는 updatedAt:desc")
   .action((projectId, outFile, opts) =>
     run(async () => {
       const qs = new URLSearchParams({
         ...(opts.status ? { status: opts.status } : {}),
         ...(opts.q ? { q: opts.q } : {}),
+        ...(opts.sort ? { sort: opts.sort } : {}),
       });
       const plans = await apiCall(`/api/projects/${projectId}/plans/export?${qs}`);
       fs.writeFileSync(outFile, JSON.stringify(plans, null, 2), "utf-8");

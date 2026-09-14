@@ -222,6 +222,7 @@ import {
   listAllPlans,
   bulkCreatePlans,
   type PlanImportItem,
+  type PlanSortKey,
 } from "../core/plans.js";
 import {
   createApiKey,
@@ -2945,6 +2946,7 @@ app.get(
         q,
         page: Number(req.query.page ?? 1),
         pageSize: Number(req.query.pageSize ?? 20),
+        sort: req.query.sort as PlanSortKey | undefined,
       }),
     );
   }),
@@ -2960,7 +2962,7 @@ app.get(
   asyncRoute(async (req, res) => {
     const status = req.query.status as string | undefined;
     const q = req.query.q as string | undefined;
-    res.json(await listAllPlans(req.params.projectId, { status, q }));
+    res.json(await listAllPlans(req.params.projectId, { status, q, sort: req.query.sort as PlanSortKey | undefined }));
   }),
 );
 

@@ -340,6 +340,14 @@ Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립
 마찬가지로 순수 참조 목록이라 실행 순서를 강제로 검사하지 않고
 순환도 막지 않는다 - 자기 자신을 선행 조건으로 지정하는 것만 거부.
 
+**`plan list`/`plan_list`(및 `plan bulk-export`/`plan_export`)는
+기본으로 의존도(선행 조건 개수)가 가장 낮은 순으로 정렬된다**
+(`#plan-list-dependency-sort`) - 지금 바로 시작할 수 있는 계획이
+위로 오게(개수가 같으면 최근 수정순으로 묶임). 예전 방식(최근
+수정순)이 필요하면 `--sort updatedAt:desc`(CLI)/
+`sort:"updatedAt:desc"`(MCP)를 준다. 웹 UI "계획" 탭은 이 기본값
+변경과 무관하게 여전히 최근 수정순이다.
+
 **작업 중 스스로 판단해 기록한다** - 코드 관계도/칸반 카드와 같은
 원칙: 설계자가 시켜서가 아니라, 지금 처리할 일이 아니라고 판단되면
 (범위 밖 발견, 후속 확인 필요, 설계자 결정이 필요한 더 큰 작업 등)
@@ -615,7 +623,7 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 칸반 카드 상세 | `docs kanban-card-get <trackingCode>` | `kanban_card_get` |
 | 칸반 카드 이동 | `docs kanban-card-move <trackingCode> <toColumnId> [--index <n>]` | `kanban_card_move` |
 | 계획 생성(+관련 문서/선행 조건) | `docs plan new <projectId> <title> --body <file> [--status <code>] [--refs <codes>] [--depends-on <codes>]` | `plan_new` |
-| 계획 목록 | `docs plan list <projectId> [--status <code>] [--q <text>] [--page <n>] [--count <n>]` | `plan_list` |
+| 계획 목록(기본 정렬: 의존도 낮은 순) | `docs plan list <projectId> [--status <code>] [--q <text>] [--page <n>] [--count <n>] [--sort <key>]` | `plan_list` |
 | 계획 상태 코드 목록(고정값) | `docs plan statuses` | `plan_statuses` |
 | 계획 상세 | `docs plan get <trackingCode>` | `plan_get` |
 | 계획 제목/본문 수정 | `docs plan set <trackingCode> [--title <t>] [--body <file>]` | `plan_set` |
