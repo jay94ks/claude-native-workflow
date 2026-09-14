@@ -7262,3 +7262,46 @@ Gitea 왕복 검증은 생략.
 이전에 이미 잘못 스테이징된 항목은 커밋 전 "진행 중인 작업 상태"라
 `docs git status`로 확인 후 `docs git restore`로 지우고 다시
 `docs git add`(이제 자동 정규화됨)로 재스테이징하면 된다.
+
+## 재연동/자동 갱신 후에도 Gitea push mirror가 예전 죽은 토큰을 계속 쓰던 버그 수정(`#stale-push-mirror-credentials`)
+
+**배경**: 설계자 지시 - "minicore 리포의 충돌을 수정해줘." minicore는
+`#credential-lifecycle` 라운드에서 GitHub 토큰 만료가 확인돼
+`self_hosted`로 자동 전환됐었는데, 그 뒤 설계자가 새 토큰으로
+다시 외부 연동했다. 그런데도 `docs git publish`가 여전히 같은 422
+"error occurred when syncing push mirrors"로 반복 실패하고 있었다.
+
+**조사**: `validateExternalCredential`로 새 자격증명 자체를 직접
+검증하니 `true`(정상) - 그런데도 발행이 계속 실패해, Gitea
+컨테이너에 직접 접속해 `GET .../work/push_mirrors`로 실제 등록
+상태를 까보니 `last_error`가 여전히 "Invalid username or token"
+(예전 폐기된 토큰) - `created`가 오늘 재연동보다 훨씬 이전(최초
+연동 시점 그대로)이었다. Gitea의 swagger 스펙을 직접 조회해
+`/push_mirrors`(GET/POST만)와 `/push_mirrors/{name}`(GET/DELETE만)을
+확인 - 자격증명만 갱신하는 PATCH/PUT이 아예 없다.
+
+**원인**: `publishToExternalRepo()`가 `if (!existing) { configurePushMirror(...) }`
+로 짜여 있어 push mirror가 최초 한 번만 등록되고 이후로 절대
+갱신되지 않았다. 재연동뿐 아니라 `#credential-lifecycle`의 OAuth
+토큰 자동 갱신으로 앱 DB의 토큰이 조용히 회전돼도, Gitea 쪽은
+최초 등록 시점의 자격증명을 영원히 그대로 들고 있는 구조였다.
+
+**수정**: `gitea.ts` - `deletePushMirror()`(신규,
+`DELETE /push_mirrors/{name}`) 추가, `PushMirrorStatus`에
+`remoteName` 필드 추가. `gitRepos.ts`의 `publishToExternalRepo()` -
+기존 등록이 있으면 먼저 삭제 후 항상 현재 토큰으로 새로 등록하도록
+교체(매 발행 시도마다 자격증명 신선도 보장). `waitForPushMirrorOutcome`
+에 넘기던 `existing?.lastUpdate`도 이제 항상 새 레코드라 의미가
+없어져 `null`로 정리.
+
+**검증**: `tsc --noEmit` 클린. 실제 minicore 프로젝트로 근본 원인
+(자격증명 자체는 유효한데 Gitea 쪽 push mirror가 예전 토큰을 들고
+있었다는 것)을 실측으로 확인했다. 이 수정 자체(삭제 후 재생성)의
+실제 배포·재시도 검증은 이 라운드 작성 시점에는 아직 - 배포 후
+`docs git publish`를 다시 실행해 minicore가 실제로 동기화되는지
+확인하는 걸 다음 단계로 남긴다.
+
+**결론**: 이제 발행을 시도할 때마다 Gitea의 push mirror 등록이 항상
+그 순간의 최신 토큰으로 다시 만들어지므로, 재연동 직후는 물론
+OAuth 토큰이 백그라운드에서 자동 갱신된 경우에도 Gitea 쪽이 자동으로
+최신 자격증명을 따라간다.

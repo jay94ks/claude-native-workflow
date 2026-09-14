@@ -239,6 +239,9 @@ export interface PushMirrorStatus {
   remoteAddress: string;
   lastError: string | null;
   lastUpdate: string | null;
+  // Gitea가 붙이는 내부 원격 이름(예: "remote_mirror_VYCZJRgJUX") -
+  // deletePushMirror()의 {name} 경로 인자로 필요하다.
+  remoteName: string;
 }
 
 /** work 저장소에 push mirror를 등록한다(이미 있으면 Gitea가 중복
@@ -278,14 +281,25 @@ export async function triggerPushMirrorSync(target: GiteaRepoRef): Promise<void>
  * (자격증명에 push 권한이 없는 경우 등), null이면 성공. */
 export async function getPushMirrorStatus(target: GiteaRepoRef): Promise<PushMirrorStatus | null> {
   const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/push_mirrors`);
-  const json = (await res.json()) as { remote_address: string; last_error?: string; last_update?: string }[];
+  const json = (await res.json()) as { remote_address: string; remote_name: string; last_error?: string; last_update?: string }[];
   if (json.length === 0) return null;
   const first = json[0];
   return {
     remoteAddress: first.remote_address,
     lastError: first.last_error?.trim() ? first.last_error : null,
     lastUpdate: first.last_update ?? null,
+    remoteName: first.remote_name,
   };
+}
+
+/** 등록된 push mirror를 삭제한다 - Gitea REST에는 push mirror의
+ * 자격증명만 갱신하는 PATCH가 없다(실측으로 swagger 확인: `/push_mirrors`
+ * 는 GET/POST, `/push_mirrors/{name}`은 GET/DELETE뿐). 그래서 자격증명이
+ * 바뀔 수 있는 상황(재연동, #credential-lifecycle의 OAuth 토큰 자동
+ * 갱신)마다 매번 삭제 후 configurePushMirror로 새로 만드는 방식으로
+ * "갱신"을 흉내낸다(#stale-push-mirror-credentials). */
+export async function deletePushMirror(target: GiteaRepoRef, remoteName: string): Promise<void> {
+  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/push_mirrors/${remoteName}`, { method: "DELETE" });
 }
 
 export interface FullTreeEntry {

@@ -791,12 +791,20 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
     return { status: "queued", queueEntryId: entry.id };
   }
 
+  // Gitea REST는 push mirror 자격증명만 갱신하는 API가 없다(PATCH
+  // 미지원, gitea.deletePushMirror 주석 참고) - 자격증명이 재연동으로
+  // 바뀌었거나 #credential-lifecycle의 OAuth 자동 갱신으로 조용히
+  // 회전됐을 수 있으므로, 기존 등록이 있으면 지우고 매번 현재 토큰으로
+  // 새로 만든다(#stale-push-mirror-credentials - 실측으로 발견: minicore
+  // 재연동 후에도 Gitea에는 예전 죽은 토큰이 그대로 남아있어 매번 같은
+  // 422로 계속 실패했다).
   const existing = await gitea.getPushMirrorStatus(workTarget);
-  if (!existing) {
-    // push mirror의 "username"은 대부분의 PAT 기반 인증(GitHub/GitLab)에서
-    // 실질적으로 무시된다 - 토큰을 그대로 재사용한다.
-    await gitea.configurePushMirror(workTarget, repo.repoUrl, token, token);
+  if (existing) {
+    await gitea.deletePushMirror(workTarget, existing.remoteName);
   }
+  // push mirror의 "username"은 대부분의 PAT 기반 인증(GitHub/GitLab)에서
+  // 실질적으로 무시된다 - 토큰을 그대로 재사용한다.
+  await gitea.configurePushMirror(workTarget, repo.repoUrl, token, token);
   try {
     await gitea.triggerPushMirrorSync(workTarget);
   } catch (err) {
@@ -809,7 +817,10 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
     // 흘려보내지 않음.
     return queuePublishFailure(projectId, err instanceof Error ? err.message : String(err));
   }
-  const result = await waitForPushMirrorOutcome(workTarget, existing?.lastUpdate ?? null);
+  // 위에서 항상 삭제 후 새로 만들었으므로(자격증명 신선도 보장) 이
+  // 시점의 push mirror는 항상 lastUpdate가 없는 상태에서 시작한다 -
+  // 예전(삭제된) 레코드의 lastUpdate와 비교할 필요가 없다.
+  const result = await waitForPushMirrorOutcome(workTarget, null);
 
   if (!result?.lastError) {
     return { status: "synced" };
