@@ -7102,3 +7102,52 @@ not supported for Git operations."가 찍혀 있었다. 이 자격증명으로
 (자격증명이 실측으로 확인된 대로 정말 만료돼 있었으므로) `self_hosted`
 로 자동 전환된 상태로 남았다 - 외부 동기화를 다시 쓰려면 새 GitHub
 토큰으로 재연동이 필요하다.
+
+## 무효 자격증명 자동 파기 + GitHub OAuth 토큰 자동 갱신(`#credential-lifecycle`)
+
+**배경**: 위 minicore 사고를 계기로 설계자가 순서대로 두 가지를
+지시했다 - (1) "자격 증명 자체가 만료된 경우엔 저장된 자격 증명도
+파기하는게 맞다고 생각하는데"(지금까지는 프로젝트의 참조만 끊고
+`GitCredential` 레코드 자체는 남아있었음), (2) "expires_in/
+refresh_token 저장해서 자동 갱신하도록 구현해줘"(조사해보니
+`githubOAuth.ts`가 GitHub 토큰 교환 응답의 `expires_in`/
+`refresh_token`을 아예 버리고 있었다는 게 드러난 뒤의 후속 지시).
+
+**설계**: `GitCredential`은 `GitRepoPanel.vue`의 select 목록에서
+보듯 한 사용자가 여러 프로젝트에 재사용하도록 설계된 공용 자원이라
+(스키마의 `projectGitRepos ProjectGitRepo[]` 역관계), "파기"는 단순
+삭제가 아니라 그 자격증명을 참조하던 **모든** `ProjectGitRepo`를
+먼저 정리(external_linked면 self_hosted 전환+안내, self_hosted의
+이력성 참조는 조용히 null)해야 FK가 풀린다. 그리고 "자동 갱신"이
+"파기"보다 먼저 시도돼야 한다 - GitHub 조직의 "OAuth App 토큰 만료"
+정책이 켜진 자격증명은 만료 5분 전부터 조용히 갱신을 시도해, 성공하면
+파기 경로까지 갈 일 자체가 없어진다.
+
+**구현**: 3개 드라이버 스키마 모두에 `GitCredential.refreshTokenEncrypted`/
+`accessTokenExpiresAt`/`refreshTokenExpiresAt`(전부 nullable) 추가.
+`gitCredentials.ts`를 자격증명 저장/조회의 단일 창구로 재정비 -
+`refreshGithubAccessToken()`(GitHub 토큰 교환과 같은 엔드포인트를
+`grant_type=refresh_token`으로 재사용), `resolveTokenWithRefresh()`
+(만료 임박+refresh_token 유효면 갱신 후 DB 반영, 실패해도 예외를
+삼키고 기존 토큰으로 폴백), 이를 공유하는 `resolveCredentialTokenById`
+(신규, `gitRepos.ts` 내부용)/`getCredentialTokenIfOwner`(기존).
+`gitRepos.ts` - 기존 private `resolveCredentialToken`을 제거하고 위
+함수를 같은 이름으로 import해 대체(호출부 4곳이 전부 자동으로 갱신
+인지 버전을 탐), 신규 `destroyInvalidCredential()`이 영향받는 모든
+프로젝트를 순회 정리한 뒤 `GitCredential`을 삭제하도록 `publishToExternalRepo`의
+무효 자격증명 분기를 교체. `githubOAuth.ts` - 토큰 교환 응답에서
+`refresh_token`/`expires_in`/`refresh_token_expires_in`까지 파싱해
+저장(정책이 꺼져 있으면 전부 `undefined`라 예전처럼 동작).
+
+**검증**: `npm run build`(3드라이버 db:generate+tsc) 클린. 자동 갱신
+로직은 격리된 스크래치 SQLite + `global.fetch`를 가로채는 단독
+스크립트로 5개 시나리오(정상 갱신/PAT는 스킵/아직 안 임박/refresh
+자체 만료/GitHub가 갱신 거부)를 전부 실측 통과시켰다. `destroyInvalidCredential`의
+다중 프로젝트 공유 케이스는 실 데이터로는 재현하지 않았다 - 기존에
+검증된 `unlinkExternalRepo`를 순회 재사용하는 구조라 회귀 위험은
+낮다고 판단, 후속 과제로 남긴다.
+
+**결론**: 조직이 GitHub OAuth 토큰 만료 정책을 켜둔 경우에도 대부분
+조용히 갱신해 연동이 끊기지 않고, 그래도 정말 무효가 확인되면 관련된
+모든 프로젝트를 한 번에 안전하게 정리하고 죽은 자격증명 자체도
+남겨두지 않는다.

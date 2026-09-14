@@ -66,12 +66,26 @@ export async function completeGithubOAuth(
     }),
   });
   if (!tokenRes.ok) throw new Error(`GitHub 토큰 교환 실패: HTTP ${tokenRes.status}`);
-  const tokenJson = (await tokenRes.json()) as { access_token?: string; error?: string; error_description?: string };
+  const tokenJson = (await tokenRes.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    refresh_token_expires_in?: number;
+    error?: string;
+    error_description?: string;
+  };
   if (!tokenJson.access_token) {
     throw new Error(`GitHub 토큰 교환 실패: ${tokenJson.error_description ?? tokenJson.error ?? "알 수 없는 오류"}`);
   }
 
-  const cred = await addGitCredential(entry.userId, "token", tokenJson.access_token, "github.com");
+  // expires_in/refresh_token은 조직의 "OAuth App 토큰 만료" 정책이
+  // 켜져 있을 때만 내려온다 - 꺼져 있으면 둘 다 undefined라 그냥 예전
+  // 처럼 만료 없는 토큰으로 저장된다(addGitCredential이 알아서 분기).
+  const cred = await addGitCredential(entry.userId, "token", tokenJson.access_token, "github.com", {
+    refreshToken: tokenJson.refresh_token,
+    accessTokenExpiresInSec: tokenJson.expires_in,
+    refreshTokenExpiresInSec: tokenJson.refresh_token_expires_in,
+  });
   return { userId: entry.userId, credentialId: cred.id };
 }
 

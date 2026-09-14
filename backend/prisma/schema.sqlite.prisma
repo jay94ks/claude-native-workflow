@@ -132,12 +132,15 @@ model RefreshToken {
 // 적용은 설계자 확인 후 - 자동으로 아무 프로젝트에나 재사용하지 않는다
 // (자격증명 자동 유출 방지).
 model GitCredential {
-  id               String   @id @default(cuid())
-  userId           String
-  hostPattern      String?
-  credentialType   String // token | username_password | ssh_key
-  encryptedPayload Bytes // AES-256-GCM 암호문(+ nonce/태그 포함해서 저장)
-  createdAt        DateTime @default(now())
+  id                     String    @id @default(cuid())
+  userId                 String
+  hostPattern            String?
+  credentialType         String // token | username_password | ssh_key
+  encryptedPayload       Bytes // AES-256-GCM 암호문(+ nonce/태그 포함해서 저장) - access token
+  refreshTokenEncrypted  Bytes? // GitHub OAuth App 토큰 만료가 켜진 경우의 refresh_token(암호화) - 없으면 갱신 불가한 자격증명(PAT 등)
+  accessTokenExpiresAt   DateTime? // access token 만료 시각(GitHub가 expires_in을 준 경우만)
+  refreshTokenExpiresAt  DateTime? // refresh token 자체의 만료 시각(GitHub가 refresh_token_expires_in을 준 경우만)
+  createdAt              DateTime  @default(now())
 
   user            User             @relation(fields: [userId], references: [id])
   projectGitRepos ProjectGitRepo[]

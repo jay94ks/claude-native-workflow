@@ -8,6 +8,7 @@ import type { GiteaRepoRef } from "./gitea.js";
 import { registerWebhook, detectProvider, validateCredential } from "./externalGit.js";
 import { resyncCollaboratorGrantsForProject } from "./members.js";
 import { sendMessage } from "./messages.js";
+import { resolveCredentialTokenById as resolveCredentialToken } from "./gitCredentials.js";
 
 export { GitAuthRequiredError };
 export type { GiteaRepoRef };
@@ -133,14 +134,6 @@ function webhookTargetUrl(provider: string, projectId: string): string | null {
   const base = process.env.PUBLIC_BACKEND_URL;
   if (!base) return null;
   return `${base.replace(/\/$/, "")}/api/webhooks/${provider}/${projectId}`;
-}
-
-async function resolveCredentialToken(gitCredentialId?: string): Promise<string | undefined> {
-  if (!gitCredentialId) return undefined;
-  const db = getDb();
-  const cred = await db.gitCredential.findUnique({ where: { id: gitCredentialId } });
-  if (!cred) return undefined;
-  return decryptSecret(cred.encryptedPayload);
 }
 
 /** gitea.migrateRepo()가 clone 단계에서 실패하면(특히 인증 필요) Gitea가
@@ -651,6 +644,36 @@ export async function validateExternalCredential(projectId: string, gitCredentia
   return validateCredential(detectProvider(repo.repoUrl), repo.repoUrl, token);
 }
 
+/** 실측으로 무효가 확인된 자격증명은 재사용할 수 없으므로(만료/폐기된
+ * 토큰을 그대로 들고 있어봐야 다음에 또 같은 실패를 반복할 뿐) 저장소
+ * 자체에서 완전히 파기한다(설계자 지시 - "자격 증명 자체가 만료된
+ * 경우엔 저장된 자격 증명도 파기하는게 맞다"). `GitCredential`은
+ * 여러 프로젝트가 골라 쓰는 공용 자원(`GitRepoPanel.vue`의 credential
+ * 선택 목록)이라, 이 자격증명을 쓰던 **모든** `ProjectGitRepo`를 먼저
+ * 정리해야 FK 삭제가 가능하다 - 외부 연동 중이던 프로젝트는
+ * unlinkExternalRepo로 동일하게 self_hosted 전환+안내 메시지를 받고,
+ * self_hosted 프로젝트가 최초 import 때 남겨둔 참조만 있는 경우는
+ * (지금은 안 쓰는 이력성 참조라) 조용히 null로 지운다. */
+async function destroyInvalidCredential(gitCredentialId: string, triggeringProjectId: string): Promise<void> {
+  const db = getDb();
+  const affected = await db.projectGitRepo.findMany({ where: { gitCredentialId } });
+  for (const row of affected) {
+    if (row.provider === "external_linked" || row.provider === "github" || row.provider === "gitlab") {
+      await unlinkExternalRepo(row.projectId);
+      const reason =
+        row.projectId === triggeringProjectId
+          ? "GitHub/GitLab 자격증명이 더 이상 유효하지 않아 외부 연동이 자동으로 해제되고 자체 호스팅으로 전환됐습니다 - 계속 외부 저장소를 쓰려면 새 자격증명으로 다시 연동하세요."
+          : "이 프로젝트가 쓰던 GitHub/GitLab 자격증명이 다른 프로젝트에서 무효로 확인돼 함께 자동 해제되고 자체 호스팅으로 전환됐습니다 - 계속 외부 저장소를 쓰려면 새 자격증명으로 다시 연동하세요.";
+      await sendMessage(row.projectId, null, reason);
+    } else {
+      await db.projectGitRepo.update({ where: { projectId: row.projectId }, data: { gitCredentialId: null } });
+    }
+  }
+  await db.gitCredential.delete({ where: { id: gitCredentialId } }).catch((err: unknown) => {
+    console.error(`destroyInvalidCredential(${gitCredentialId}) - 자격증명 삭제 실패:`, err);
+  });
+}
+
 async function waitForPushMirrorOutcome(target: GiteaRepoRef, previousUpdate: string | null): Promise<gitea.PushMirrorStatus | null> {
   for (let i = 0; i < 20; i++) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -671,13 +694,14 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
   // 전에 토큰이 아직 유효한지 먼저 확인한다. 무효면 unlinkExternalRepo로
   // self_hosted로 자동 전환(work 저장소는 그대로 보존)하고, 프로젝트에
   // 안내 메시지를 남긴 뒤 호출자에게도 명확한 에러로 구분해 알린다.
+  // 자격증명 자체도 이미 확인된 대로 무효라 재사용할 수 없으므로
+  // destroyInvalidCredential()로 완전히 파기한다(설계자 지시,
+  // #credential-lifecycle). 여기 도달하기 전에 resolveCredentialTokenById
+  // (gitCredentials.ts)가 이미 만료 임박/지난 OAuth 토큰의 자동 갱신을
+  // 먼저 시도했으므로, 이 분기는 갱신이 불가능했거나(refresh_token
+  // 없음/만료) 실패한 "진짜로 죽은" 자격증명만 걸러낸다.
   if (!(await validateExternalCredential(projectId, gitCredentialId))) {
-    await unlinkExternalRepo(projectId);
-    await sendMessage(
-      projectId,
-      null,
-      "GitHub/GitLab 자격증명이 더 이상 유효하지 않아 외부 연동이 자동으로 해제되고 자체 호스팅으로 전환됐습니다 - 계속 외부 저장소를 쓰려면 새 자격증명으로 다시 연동하세요.",
-    );
+    await destroyInvalidCredential(gitCredentialId, projectId);
     throw new Error("자격증명이 더 이상 유효하지 않아 외부 연동이 자동으로 해제되고 자체 호스팅으로 전환되었습니다");
   }
 
