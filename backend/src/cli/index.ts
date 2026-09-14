@@ -1140,6 +1140,35 @@ program
   );
 
 program
+  .command("links-out <trackingCode>")
+  .description("이 문서가 링크한 문서들을 순서대로 조회한다(report/여러 문서를 엮은 챕터 구조 확인용) - backlinks(역참조)의 정방향 짝")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/links`))));
+
+program
+  .command("unlink <fromTrackingCode> <toTrackingCode>")
+  .option("--type <linkType>", "같은 대상으로의 링크가 여러 개(서로 다른 linkType)일 때만 필요")
+  .action((from, to, opts) =>
+    run(async () => {
+      const qs = opts.type ? `?linkType=${encodeURIComponent(opts.type)}` : "";
+      printJson(await apiCall(`/api/documents/${from}/links/${to}${qs}`, { method: "DELETE" }));
+    }),
+  );
+
+program
+  .command("links-reorder <trackingCode> <orderedTrackingCodes...>")
+  .description("이 문서가 링크한 문서들의 순서를 바꾼다 - 현재 링크 대상 집합과 정확히 같은 순열이어야 한다(누락/추가 불가)")
+  .action((trackingCode, orderedTrackingCodes) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/documents/${trackingCode}/links/reorder`, {
+          method: "PUT",
+          body: JSON.stringify({ orderedTrackingCodes }),
+        }),
+      ),
+    ),
+  );
+
+program
   .command("revisions <trackingCode>")
   .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
   .option("--count <n>", "페이지당 개수(--page와 함께)")
@@ -1187,6 +1216,64 @@ program
       const qs = new URLSearchParams({ from, ...(to ? { to } : {}) });
       printJson(await apiCall(`/api/documents/${trackingCode}/diff?${qs}`));
     }),
+  );
+
+// ---------------------------------------------------------------- 챕터(헤딩 섹션) CRUD
+// 긴 문서를 매번 전체 본문으로 안 읽고/안 덮어써도 되도록 - 챕터는
+// 마크다운 헤딩(#~######) 하나 + 그 하위 헤딩들의 내용까지를 가리키고,
+// 번호(ordinal)는 매번 본문에서 새로 계산되는 1-based 순번이다(제목
+// 텍스트가 아님 - 중복 제목이 있어도 항상 명확).
+const chapterCmd = program.command("chapter").description("문서 본문의 섹션(헤딩) 단위 CRUD - 긴 문서를 전체로 안 읽고/안 덮어써도 되게");
+
+chapterCmd
+  .command("list <trackingCode>")
+  .description("챕터 목록(번호/레벨/제목/줄 범위) - 본문 없이 목차만")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/chapters`))));
+
+chapterCmd
+  .command("get <trackingCode> <ordinal>")
+  .description("특정 챕터의 내용만 조회(하위 헤딩 포함)")
+  .action((trackingCode, ordinal) => run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/chapters/${ordinal}`))));
+
+chapterCmd
+  .command("set <trackingCode> <ordinal> <file>")
+  .description("특정 챕터의 내용을 로컬 파일 내용으로 통째로 교체(파일은 헤딩 줄 자체를 포함해야 함) - 응답에 본문 없음, 갱신된 챕터 목록만")
+  .action((trackingCode, ordinal, file) =>
+    run(async () => {
+      const fs = await import("node:fs");
+      const content = fs.readFileSync(file, "utf-8").replace(/\r\n/g, "\n");
+      printJson(
+        await apiCall(`/api/documents/${trackingCode}/chapters/${ordinal}`, { method: "PUT", body: JSON.stringify({ content }) }),
+      );
+    }),
+  );
+
+chapterCmd
+  .command("add <trackingCode> <file>")
+  .description("새 챕터를 삽입(파일은 헤딩 줄 자체를 포함해야 함) - after/before/at-start/at-end 중 정확히 하나 필요")
+  .option("--after <ordinal>", "이 챕터 번호 바로 뒤에 삽입")
+  .option("--before <ordinal>", "이 챕터 번호 바로 앞에 삽입")
+  .option("--at-start", "문서 맨 앞에 삽입")
+  .option("--at-end", "문서 맨 끝에 삽입")
+  .action((trackingCode, file, opts) =>
+    run(async () => {
+      const fs = await import("node:fs");
+      const content = fs.readFileSync(file, "utf-8").replace(/\r\n/g, "\n");
+      const body: Record<string, unknown> = { content };
+      if (opts.after !== undefined) body.after = Number(opts.after);
+      else if (opts.before !== undefined) body.before = Number(opts.before);
+      else if (opts.atStart) body.atStart = true;
+      else if (opts.atEnd) body.atEnd = true;
+      else throw new Error("--after|--before|--at-start|--at-end 중 하나가 필요합니다");
+      printJson(await apiCall(`/api/documents/${trackingCode}/chapters`, { method: "POST", body: JSON.stringify(body) }));
+    }),
+  );
+
+chapterCmd
+  .command("delete <trackingCode> <ordinal>")
+  .description("챕터를 삭제한다(문서에 챕터가 하나뿐이면 거부)")
+  .action((trackingCode, ordinal) =>
+    run(async () => printJson(await apiCall(`/api/documents/${trackingCode}/chapters/${ordinal}`, { method: "DELETE" }))),
   );
 
 program
@@ -1555,6 +1642,19 @@ program
       const paged = opts.page !== undefined || opts.count !== undefined;
       const qs = paged ? `?page=${opts.page ?? "1"}&pageSize=${opts.count ?? "20"}` : "";
       printJson(await apiCall(`/api/projects/${projectId}/pending${paged ? "/page" : ""}${qs}`));
+    }),
+  );
+
+program
+  .command("dashboard <projectId>")
+  .description(
+    "프로젝트 진행 상황 요약(문서 상태 분포+정체 문서, 미답변 Q&A, 처리 안 된 메시지, 칸반 컬럼별 카드 수, 최근 활동) - 웹 홈 화면과 같은 데이터",
+  )
+  .option("--stale-days <n>", "며칠 이상 안 바뀌면 '정체 문서'로 볼지(기본 14)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const qs = opts.staleDays !== undefined ? `?staleDays=${opts.staleDays}` : "";
+      printJson(await apiCall(`/api/projects/${projectId}/dashboard${qs}`));
     }),
   );
 

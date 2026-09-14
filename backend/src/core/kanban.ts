@@ -269,6 +269,51 @@ export async function listKanbanCardsPaged(
   };
 }
 
+export interface KanbanColumnCount {
+  columnId: string;
+  columnName: string;
+  count: number;
+}
+
+/** 대시보드용 컬럼별 카드 수 - 뷰어 개인의 숨김/순서 설정(KanbanColumnPref)
+ * 이 아니라 프로젝트 공유 컬럼 순서 기준(모두가 같은 걸 보는 요약이라
+ * 한 사람의 커스터마이징에 흔들리면 안 됨). 카드가 0개인 컬럼도
+ * 빠지지 않고 count:0으로 나온다. */
+export async function countKanbanCardsByColumn(projectId: string, includeHidden = false): Promise<KanbanColumnCount[]> {
+  const db = getDb();
+  const [columns, cards] = await Promise.all([
+    db.kanbanColumn.findMany({ where: { projectId }, orderBy: { order: "asc" } }),
+    db.kanbanCard.findMany({
+      where: { projectId, ...(includeHidden ? {} : { hidden: false }) },
+      select: { columnId: true },
+    }),
+  ]);
+  const countByColumn = new Map<string, number>();
+  for (const c of cards as { columnId: string }[]) {
+    countByColumn.set(c.columnId, (countByColumn.get(c.columnId) ?? 0) + 1);
+  }
+  return (columns as { id: string; name: string }[]).map((col) => ({
+    columnId: col.id,
+    columnName: col.name,
+    count: countByColumn.get(col.id) ?? 0,
+  }));
+}
+
+/** 대시보드 "최근 활동"용 - 컬럼 이동/숨김이 아니라 카드가 처음
+ * 생성된 시점만 본다(생성 이후 updatedAt은 형제 카드 재정렬 등으로도
+ * 계속 바뀌어 "최근 활동" 신호로 쓰기엔 노이즈가 많음 - kanban.ts
+ * 모듈 상단 주석 및 moveKanbanCard 참고). */
+export async function listRecentKanbanCards(projectId: string, limit = 10): Promise<{ trackingCode: string; title: string; createdAt: Date }[]> {
+  const db = getDb();
+  const rows = await db.kanbanCard.findMany({
+    where: { projectId, hidden: false },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: { trackingCode: true, title: true, createdAt: true },
+  });
+  return rows;
+}
+
 /** 문서/질문과 같은 "트래킹 코드로 조회" 관례 - 카드 하위 라우트(이동/
  * 숨김/코멘트)들이 전부 이걸로 먼저 카드+projectId를 얻은 뒤
  * getMemberRole로 인라인 인가한다. */

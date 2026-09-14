@@ -418,6 +418,7 @@ model DocumentLink {
   fromDocumentId String
   toTrackingCode String
   linkType       String?
+  order          Int     @default(0) // 아웃바운드 링크 순서(report/챕터 구조용) - #document-link-ordering
 
   fromDocument Document @relation("DocumentLinkSource", fields: [fromDocumentId], references: [id], onDelete: Cascade)
   toDocument   Document @relation("DocumentLinkTarget", fields: [toTrackingCode], references: [trackingCode], onDelete: Cascade)

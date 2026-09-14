@@ -7336,3 +7336,97 @@ processing/delivered 필터도 정확, 페이지네이션 버전도 total이
 **결론**: CLI/MCP로 status 없이 `message list`를 부르면 이제 아직
 처리 안 끝난(대기+처리중) 메시지만 오고, 완료된 기록은 매번 다시
 안 온다 - 전체 이력이 필요하면 `--status all`을 명시하면 된다.
+
+## 문서 챕터(헤딩 섹션) CRUD 툴킷 + 문서 링크 순서/삭제 CRUD 추가(`#document-chapters` `#document-link-ordering`)
+
+**배경**: 설계자 지시 - "챕터 별로 문서를 CRUD하는 도구 키트가
+필요. (클로드가 호출)." "챕터"가 뭘 가리키는지 확인한 결과 둘 다
+확답: (a) 문서 하나의 본문 안에서 섹션(헤딩) 단위 CRUD, (b) 여러
+문서를 순서 있는 챕터로 엮은 구조(보고서/매뉴얼) 자체의 CRUD.
+Plan Mode로 설계를 정리해 승인받은 뒤 구현했다.
+
+**조사**: `saveDocumentBody()`가 `Document.body`를 쓰는 유일한
+함수라 새 챕터 쓰기도 반드시 이걸 거쳐야 버전 이력이 유지된다.
+"Report"는 별도 엔티티가 아니라 `docTypeId`가 `"DN"`인 `Document`일
+뿐(`report.ts`) - `DocumentLink`엔 순서 필드가 없고 `create`/
+`findMany`/`count` 외에 update/delete가 전혀 없었다(실측 확인).
+"생성"만 있고 조회/수정/삭제/재정렬이 전부 빠져있었다.
+
+**구현**: 신규 `backend/src/core/docChapters.ts`(textLines.ts와 같은
+관례 - 순수 문자열 함수). 챕터 = 헤딩 하나 + 그보다 깊은 하위
+헤딩들의 내용까지(같은 레벨 이하의 다음 헤딩 전까지), 번호(ordinal)
+는 제목 텍스트가 아니라 매번 본문에서 새로 계산되는 1-based 순번.
+"몇 레벨까지만 챕터로 볼지" 필터(`maxLevel`)도 설계에는 있었는데,
+list와 개별 조작이 서로 다른 maxLevel로 불리면 같은 ordinal이 다른
+챕터를 가리키는 순서 꼬임 위험이 있어 구현 단계에서 뺐다(대신 매
+챕터마다 `level` 필드를 그대로 줌). `documents.ts`에 래퍼 추가,
+쓰기는 반드시 `saveDocumentBody()`를 거침. REST/CLI(`docs chapter
+list|get|set|add|delete`)/MCP(`chapter_*`) 전부 추가, 스키마 변경
+없음. 링크 쪽은 `DocumentLink.order Int @default(0)`(3드라이버,
+추가적 변경) 추가 - `addDocumentLink`가 현재 아웃바운드 링크 개수를
+자동으로 order로 부여, 신규 `listDocumentLinksOut`/
+`reorderDocumentLinks`(현재 링크 집합과 정확히 같은 순열만 허용)/
+`removeDocumentLink`(삭제 후 남은 형제 order 재정렬) 추가.
+
+**검증**: `tsc --noEmit`/`vue-tsc -b` 클린. 격리된 로컬 환경(스크래치
+SQLite + 디스포저블 Meilisearch + 로컬 backend)에서 실제 HTTP API로
+왕복 확인 - 중첩 헤딩 문서로 list/get/set/add/delete 전부 실측(한글
+텍스트 포함, 리비전 생성 확인, 챕터 번호 재계산 확인), 헤딩 없는
+문서의 합성 챕터 + 유일한 챕터 삭제 거부 확인, 링크 3개로 자동 순서
+부여/재정렬/삭제 후 order 재정렬까지 확인. 마지막으로 웹 UI에서
+편집 결과가 실제 문서 본문에 정확히 반영된 것도 재확인.
+
+**결론**: 긴 문서를 매번 전체로 안 읽고/안 덮어써도 되는 챕터 단위
+CRUD와, 여러 문서를 순서 있는 챕터 구조로 엮고 실제로 재배치·정리할
+수 있는 링크 CRUD가 CLI/MCP로 열렸다. 웹 UI 쪽 챕터 에디터/링크
+뷰어는 여전히 없다 - 필요해지면 후속 라운드로.
+
+## 프로젝트 홈을 진행 상황 대시보드로 강화(`#project-dashboard`)
+
+**배경**: 설계자 지시 - "전체적으로 프로젝트의 진행 상황이 문서와
+현재 도구들로 파악하기 힘듬 --> 대시보드(현재 홈) 기능이 강화되어야
+함." 필요한 신호를 확인한 결과 4가지 전부 확답: 문서 상태 분포+정체
+문서, 미답변 Q&A/처리 안 된 메시지, 칸반 보드 요약, 최근 활동
+타임라인(통합). Plan Mode로 설계를 정리해 승인받은 뒤 구현했다.
+
+**조사**: 문서 상태별 개수를 세는 함수가 없었고, `DocStatus`가
+DocType마다 별도 행이라 `statusId`가 아니라 `code` 문자열 기준으로
+합산해야 하는 함정이 있었다. 칸반은 `KanbanColumn`에 종료 컬럼
+개념이 없어(컬럼명 자유 변경 가능) "정체 카드" 판정 신호가 애초에
+신뢰할 수 없다고 판단해 컬럼별 카운트만 다루기로 했다.
+`countPendingQuestions()`는 이름과 달리 `pending`만 세고(`open`
+제외) 통합 개수 함수가 없었다. 프로젝트 단위 통합 활동 피드도
+없었으나 `activity.ts`의 `listUserActivity()`가 그대로 복제할 수
+있는 선례였다.
+
+**구현**: `documents.ts`에 `countDocumentsByStatus`(code 기준 합산)/
+`listStaleDocuments`, `kanban.ts`에 `countKanbanCardsByColumn`/
+`listRecentKanbanCards`(신규), `questions.ts`에
+`countOpenAndPendingQuestions`, `messages.ts`에 `countMessages`
+(status→where 변환을 `buildMessageWhere()`로 공유하도록 리팩터링
+겸함), `activity.ts`에 `listProjectActivity`(신규 - 모든 항목의
+summary에 추적 코드를 직접 박아 `TrackingCodeText`로 일관되게
+클릭 가능하게 함, 기존 `listUserActivity`의 document 계열 항목은
+이게 빠져있던 흠도 발견). 신규 `dashboard.ts`가 이 함수들을
+Promise.all로 묶어 `getProjectDashboard()` 하나로. REST `GET
+/api/projects/:id/dashboard`, CLI `docs dashboard`, MCP
+`project_dashboard`. `ProjectHomeView.vue`를 통계 스트립+정체 문서
+섹션+통합 활동 피드로 재구성(기존 "최근 변경 문서/코멘트/발신
+메시지" 3개 분리 섹션 대체).
+
+**검증**: `tsc --noEmit`/`vue-tsc -b` 클린. 격리된 로컬 환경에서
+서로 다른 DocType 2개로 "draft" 4건이 정확히 하나로 합산되는지
+실측 확인(핵심 함정이 실제로 막혔는지 직접 검증). `listStaleDocuments`
+는 첫 실측에서 빈 배열이 나와 조사했는데, 원인은 구현이 아니라
+검증 스크립트 쪽이었다 - Prisma의 SQLite 커넥터가 DateTime을
+INTEGER(epoch ms)로 저장하는데 테스트용 raw SQL을 TEXT(ISO
+문자열)로 써넣어 SQLite 타입 친화성 규칙상 비교가 안 됐던 것(코드
+관계도에 별도 기록). INTEGER로 다시 쓰니 정상 동작 확인. 칸반/Q&A/
+메시지 카운트, 통합 활동 피드까지 API로 실측 확인 후 Browser pane
+으로 실제 웹 화면까지 확인(활동 피드의 문서 언급 클릭 시 정확한
+문서로 이동하는 것 포함).
+
+**결론**: 프로젝트 홈이 "최근 목록 3개"에서 문서/Q&A/메시지/칸반을
+한눈에 보여주는 진행 상황 대시보드로 바뀌었다. 같은 데이터를 CLI/MCP
+로도 그대로 조회할 수 있어 AI 세션도 여러 API를 따로 안 불러도
+된다.

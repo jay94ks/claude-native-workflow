@@ -1,9 +1,11 @@
 import { MeiliSearchRequestError } from "meilisearch";
 import { diffLines, type Change } from "diff";
 import { sliceLines, grepLines, type LinesResult, type GrepMatch, type GrepOptions } from "./textLines.js";
+import * as docChapters from "./docChapters.js";
+import type { ChapterInfo, ChapterInsertPosition } from "./docChapters.js";
 import { getDb } from "./db.js";
 import { withTrackingCode } from "./tracking.js";
-import { findDocTypeByCode, findDocStatusByCode, initialStatusFor, allowedNextStatuses } from "./docTypes.js";
+import { findDocTypeByCode, findDocStatusByCode, initialStatusFor, allowedNextStatuses, STANDARD_DOC_STATUSES } from "./docTypes.js";
 import { indexSyncUpsert, indexSyncDelete, getDocumentFromIndex, listDocumentsFromIndex, listDocumentsFromIndexPaged, searchDocuments, rawSearchDocuments } from "./search.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 import { enqueueSearchSync } from "./searchSyncQueue.js";
@@ -225,6 +227,73 @@ export async function listRecentDocuments(projectId: string, limit = 5): Promise
   return searchDocuments("", { projectId, limit, sort: ["updatedAt:desc"] });
 }
 
+export interface DocStatusCount {
+  code: string;
+  label: string;
+  count: number;
+}
+
+/** 대시보드용 - 상태 코드별 문서 수. DocStatus는 DocType마다 별도
+ * 행이라(같은 "draft"라도 DocType 6개짜리 프로젝트면 DocStatus.id가
+ * 6개 따로 있음) statusId가 아니라 DocStatus.code 문자열 기준으로
+ * 합산해야 한다 - 안 그러면 같은 "초안"이 DocType 수만큼 쪼개져
+ * 보인다. 검색 인덱스 대신 DB를 직접 findMany+집계(이 코드베이스에
+ * groupBy 선례가 전혀 없어 기존 패턴을 그대로 따름 - #project-dashboard).
+ * 출력 순서는 STANDARD_DOC_STATUSES 선언 순서로 고정해 매번 같은
+ * 막대 순서가 나오게 한다. */
+export async function countDocumentsByStatus(projectId: string): Promise<DocStatusCount[]> {
+  const db = getDb();
+  const rows: { statusId: string }[] = await db.document.findMany({ where: { projectId }, select: { statusId: true } });
+  if (rows.length === 0) return [];
+  const statusIds = [...new Set(rows.map((r) => r.statusId))];
+  const statuses: { id: string; code: string; label: string }[] = await db.docStatus.findMany({
+    where: { id: { in: statusIds } },
+    select: { id: true, code: true, label: true },
+  });
+  const labelByCode = new Map(statuses.map((s) => [s.code, s.label]));
+  const codeById = new Map(statuses.map((s) => [s.id, s.code]));
+  const countByCode = new Map<string, number>();
+  for (const r of rows) {
+    const code = codeById.get(r.statusId);
+    if (!code) continue;
+    countByCode.set(code, (countByCode.get(code) ?? 0) + 1);
+  }
+  const knownOrder = STANDARD_DOC_STATUSES.map((s) => s.code);
+  const orderedCodes = [...countByCode.keys()].sort((a, b) => {
+    const ia = knownOrder.indexOf(a);
+    const ib = knownOrder.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+  return orderedCodes.map((code) => ({ code, label: labelByCode.get(code) ?? code, count: countByCode.get(code)! }));
+}
+
+export interface StaleDocumentView {
+  trackingCode: string;
+  title: string;
+  statusCode: string;
+  updatedAt: number;
+}
+
+/** 대시보드용 - 종료 상태(isTerminal:true, 표준상 "archived"만)가
+ * 아니면서 staleDays일 넘게 안 건드려진 문서. 검색 인덱스를 거치지
+ * 않고 DB를 직접 조회한다(isTerminal 조인 + updatedAt 범위 조건은
+ * 검색 인덱스가 다루는 대상이 아님 - getDocumentAccessInfo와 같은
+ * "내부 게이트/집계, 진짜 조회 아님" 성격). */
+export async function listStaleDocuments(projectId: string, staleDays = 14, limit = 10): Promise<StaleDocumentView[]> {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - staleDays * 24 * 60 * 60 * 1000);
+  const rows: { trackingCode: string; title: string; updatedAt: Date; status: { code: string } }[] = await db.document.findMany({
+    where: { projectId, updatedAt: { lt: cutoff }, status: { isTerminal: false } },
+    include: { status: { select: { code: true } } },
+    orderBy: { updatedAt: "asc" },
+    take: limit,
+  });
+  return rows.map((r) => ({ trackingCode: r.trackingCode, title: r.title, statusCode: r.status.code, updatedAt: r.updatedAt.getTime() }));
+}
+
 export async function searchProjectDocuments(
   projectId: string,
   query: string,
@@ -433,6 +502,72 @@ export async function saveDocumentBody(
   });
 }
 
+// ---------------------------------------------------------------- 챕터(헤딩 섹션) CRUD
+// 긴 문서(라운드가 쌓이는 DN류, 긴 SP/PL 스펙 등)를 매번 전체 본문으로
+// 안 읽고/안 덮어써도 되도록 - docChapters.ts의 순수 함수 위에서 읽기는
+// 기존 getDocumentFromIndex(검색 엔진 경유) 경로를, 쓰기는 반드시
+// saveDocumentBody()를 거친다(리비전 생성·검색 재동기화를 그대로
+// 재사용 - 별도 쓰기 경로를 새로 안 만듦). 쓰기 응답도 다른 변형
+// 함수들과 마찬가지로 본문 전체 대신 DocumentMutationSummary(+ 갱신된
+// chapters 목록)만 돌려준다.
+
+export type { ChapterInfo, ChapterInsertPosition } from "./docChapters.js";
+
+export async function listDocumentChapters(trackingCode: string): Promise<ChapterInfo[]> {
+  const doc = await getDocumentFromIndex(trackingCode);
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  return docChapters.listChapters(doc.body);
+}
+
+export async function getDocumentChapter(trackingCode: string, ordinal: number): Promise<{ chapter: ChapterInfo; content: string }> {
+  const doc = await getDocumentFromIndex(trackingCode);
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  return docChapters.getChapterContent(doc.body, ordinal);
+}
+
+export interface DocumentChapterMutationResult {
+  document: DocumentMutationSummary;
+  chapters: ChapterInfo[];
+}
+
+export async function replaceDocumentChapter(
+  trackingCode: string,
+  ordinal: number,
+  newContent: string,
+  editedBy: string,
+): Promise<DocumentChapterMutationResult> {
+  const doc = await getDocumentFromIndex(trackingCode);
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const newBody = docChapters.replaceChapter(doc.body, ordinal, newContent);
+  const document = await saveDocumentBody(trackingCode, newBody, editedBy);
+  return { document, chapters: docChapters.listChapters(newBody) };
+}
+
+export async function insertDocumentChapter(
+  trackingCode: string,
+  position: ChapterInsertPosition,
+  content: string,
+  editedBy: string,
+): Promise<DocumentChapterMutationResult> {
+  const doc = await getDocumentFromIndex(trackingCode);
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const newBody = docChapters.insertChapter(doc.body, position, content);
+  const document = await saveDocumentBody(trackingCode, newBody, editedBy);
+  return { document, chapters: docChapters.listChapters(newBody) };
+}
+
+export async function deleteDocumentChapter(
+  trackingCode: string,
+  ordinal: number,
+  editedBy: string,
+): Promise<DocumentChapterMutationResult> {
+  const doc = await getDocumentFromIndex(trackingCode);
+  if (!doc) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const newBody = docChapters.deleteChapter(doc.body, ordinal);
+  const document = await saveDocumentBody(trackingCode, newBody, editedBy);
+  return { document, chapters: docChapters.listChapters(newBody) };
+}
+
 export async function transitionDocumentStatus(trackingCode: string, toStatusCode: string): Promise<DocumentMutationSummary> {
   const db = getDb();
   const existing = await db.document.findUnique({ where: { trackingCode } });
@@ -510,6 +645,10 @@ export async function resyncDocumentIndex(trackingCode: string): Promise<void> {
   await syncAndPublish(toSearchable(row, status.code), "update");
 }
 
+/** 새 링크는 항상 그 문서의 현재 아웃바운드 링크 목록 맨 끝에
+ * 붙는다(order = 현재 개수) - report처럼 여러 문서를 순서 있는
+ * 챕터로 엮는 용도에서, addDocumentLink를 호출한 순서가 곧 초기
+ * 챕터 순서가 되게 하기 위함(#document-link-ordering). */
 export async function addDocumentLink(
   fromTrackingCode: string,
   toTrackingCode: string,
@@ -521,9 +660,88 @@ export async function addDocumentLink(
   const to = await db.document.findUnique({ where: { trackingCode: toTrackingCode } });
   if (!to) throw new Error(`링크 대상 문서를 찾을 수 없습니다: ${toTrackingCode}`);
 
+  const count = await db.documentLink.count({ where: { fromDocumentId: from.id } });
   await db.documentLink.create({
-    data: { fromDocumentId: from.id, toTrackingCode, linkType: linkType ?? null },
+    data: { fromDocumentId: from.id, toTrackingCode, linkType: linkType ?? null, order: count },
   });
+}
+
+export interface DocumentLinkView {
+  trackingCode: string;
+  title: string;
+  linkType: string | null;
+  order: number;
+}
+
+/** 정방향: 이 문서가 링크한 문서 전부, 순서대로(#document-link-ordering) -
+ * report/매뉴얼처럼 여러 문서를 챕터로 엮은 구조를 그대로 조회할 때
+ * 쓴다. 역참조인 listBacklinks와 대칭. */
+export async function listDocumentLinksOut(trackingCode: string): Promise<DocumentLinkView[]> {
+  const db = getDb();
+  const from = await db.document.findUnique({ where: { trackingCode } });
+  if (!from) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const links = await db.documentLink.findMany({
+    where: { fromDocumentId: from.id },
+    include: { toDocument: true },
+    orderBy: [{ order: "asc" }, { id: "asc" }],
+  });
+  return links.map((l: { order: number; linkType: string | null; toDocument: { trackingCode: string; title: string } }) => ({
+    trackingCode: l.toDocument.trackingCode,
+    title: l.toDocument.title,
+    linkType: l.linkType,
+    order: l.order,
+  }));
+}
+
+/** orderedTrackingCodes는 이 문서의 현재 아웃바운드 링크 대상 집합과
+ * 정확히 같은 순열이어야 한다(빠지거나 새로 생기면 거부 - "몰라서
+ * 조용히 하나가 사라짐"보다 명확한 에러가 낫다는 원칙). */
+export async function reorderDocumentLinks(trackingCode: string, orderedTrackingCodes: string[]): Promise<void> {
+  const db = getDb();
+  const from = await db.document.findUnique({ where: { trackingCode } });
+  if (!from) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+  const links = await db.documentLink.findMany({ where: { fromDocumentId: from.id } });
+
+  const currentTargets = links.map((l: { toTrackingCode: string }) => l.toTrackingCode).sort();
+  const wantedTargets = [...orderedTrackingCodes].sort();
+  if (currentTargets.length !== wantedTargets.length || currentTargets.some((t: string, i: number) => t !== wantedTargets[i])) {
+    throw new Error(
+      `orderedTrackingCodes가 이 문서의 현재 링크 대상(${links.length}건)과 정확히 같은 집합이어야 합니다 - ` +
+        `누락/추가 없이 순서만 바꿀 수 있습니다`,
+    );
+  }
+
+  await db.$transaction(
+    orderedTrackingCodes.map((toTrackingCode, order) =>
+      db.documentLink.updateMany({ where: { fromDocumentId: from.id, toTrackingCode }, data: { order } }),
+    ),
+  );
+}
+
+/** linkType을 생략했는데 같은 대상으로의 링크가 여러 개(서로 다른
+ * linkType)면 어느 걸 지울지 특정할 수 없어 에러로 거부한다. 삭제
+ * 후 남은 형제 링크들의 order를 0..n-1로 재정렬해 빈 구멍이 안
+ * 남게 한다. */
+export async function removeDocumentLink(fromTrackingCode: string, toTrackingCode: string, linkType?: string): Promise<void> {
+  const db = getDb();
+  const from = await db.document.findUnique({ where: { trackingCode: fromTrackingCode } });
+  if (!from) throw new Error(`문서를 찾을 수 없습니다: ${fromTrackingCode}`);
+  const matches = await db.documentLink.findMany({
+    where: { fromDocumentId: from.id, toTrackingCode, ...(linkType !== undefined ? { linkType } : {}) },
+  });
+  if (matches.length === 0) throw new Error(`링크를 찾을 수 없습니다: ${fromTrackingCode} -> ${toTrackingCode}`);
+  if (matches.length > 1) {
+    throw new Error(`같은 대상으로의 링크가 ${matches.length}개 있어 특정할 수 없습니다 - --type으로 linkType을 지정하세요`);
+  }
+  await db.documentLink.delete({ where: { id: matches[0].id } });
+
+  const remaining = await db.documentLink.findMany({
+    where: { fromDocumentId: from.id },
+    orderBy: [{ order: "asc" }, { id: "asc" }],
+  });
+  await db.$transaction(
+    remaining.map((l: { id: string }, order: number) => db.documentLink.update({ where: { id: l.id }, data: { order } })),
+  );
 }
 
 /** 역참조: 이 문서를 링크한 문서 전부(JSON 배열로는 불가능했던 조회 -

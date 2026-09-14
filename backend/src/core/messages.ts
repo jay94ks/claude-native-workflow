@@ -152,18 +152,23 @@ export interface ListMessagesOptions {
  * 직후 그 결과 중 deliveredAt이 아직 없는 행들을 한 번에
  * deliveredAt=now()로 갱신하고, 반환 객체에도 그대로 반영한다(웹
  * UI는 이 플래그를 안 보내므로 읽어도 안 바뀐다). */
+/** listMessages/listMessagesPaged/countMessages 셋이 똑같이 쓰는
+ * status→where 변환 - 한 곳에서만 바뀌면 되게 뽑아둠. */
+function buildMessageWhere(projectId: string, status: ListMessagesOptions["status"]) {
+  return status === "pending"
+    ? { projectId, ackedAt: null }
+    : status === "processing"
+      ? { projectId, ackedAt: { not: null }, completedAt: null }
+      : status === "delivered"
+        ? { projectId, completedAt: { not: null } }
+        : status === "active"
+          ? { projectId, completedAt: null }
+          : { projectId };
+}
+
 export async function listMessages(projectId: string, opts: ListMessagesOptions = {}): Promise<MessageDetail[]> {
   const db = getDb();
-  const where =
-    opts.status === "pending"
-      ? { projectId, ackedAt: null }
-      : opts.status === "processing"
-        ? { projectId, ackedAt: { not: null }, completedAt: null }
-        : opts.status === "delivered"
-          ? { projectId, completedAt: { not: null } }
-          : opts.status === "active"
-            ? { projectId, completedAt: null }
-            : { projectId };
+  const where = buildMessageWhere(projectId, opts.status);
   const rows = await db.message.findMany({ where, orderBy: { createdAt: "asc" } });
 
   if (opts.markDelivered) {
@@ -196,16 +201,7 @@ export async function listMessagesPaged(
   opts: { status?: "pending" | "processing" | "delivered" | "active" | "all"; page: number; pageSize: number },
 ): Promise<MessagePage> {
   const db = getDb();
-  const where =
-    opts.status === "pending"
-      ? { projectId, ackedAt: null }
-      : opts.status === "processing"
-        ? { projectId, ackedAt: { not: null }, completedAt: null }
-        : opts.status === "delivered"
-          ? { projectId, completedAt: { not: null } }
-          : opts.status === "active"
-            ? { projectId, completedAt: null }
-            : { projectId };
+  const where = buildMessageWhere(projectId, opts.status);
   const safePage = Math.max(1, opts.page);
   const [items, total] = await Promise.all([
     db.message.findMany({
@@ -217,6 +213,13 @@ export async function listMessagesPaged(
     db.message.count({ where }),
   ]);
   return { items, page: safePage, pageSize: opts.pageSize, total, totalPages: Math.max(1, Math.ceil(total / opts.pageSize)) };
+}
+
+/** 대시보드용 - 목록 대신 개수만. 기본 "active"(대기+처리중, 기록
+ * 제외) - CLI/MCP의 message list와 같은 기본값 취지(#message-list-active-default). */
+export async function countMessages(projectId: string, status: ListMessagesOptions["status"] = "active"): Promise<number> {
+  const db = getDb();
+  return db.message.count({ where: buildMessageWhere(projectId, status) });
 }
 
 /** 상태를 전혀 바꾸지 않는 순수 조회 - 시스템 다운 등으로 세션이

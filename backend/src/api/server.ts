@@ -103,13 +103,22 @@ import {
   addDocumentLink,
   listBacklinks,
   listBacklinksPaged,
+  listDocumentLinksOut,
+  reorderDocumentLinks,
+  removeDocumentLink,
   listDocumentRevisions,
   listDocumentRevisionsPaged,
   deleteDocument,
   readDocumentLines,
   grepDocument,
   diffDocument,
+  listDocumentChapters,
+  getDocumentChapter,
+  replaceDocumentChapter,
+  insertDocumentChapter,
+  deleteDocumentChapter,
 } from "../core/documents.js";
+import { getProjectDashboard } from "../core/dashboard.js";
 import { addSourceLink, removeSourceLink, listSourceLinks, listSourceLinksPaged } from "../core/documentSourceLinks.js";
 import { addBranchLink, removeBranchLink, listBranchLinks, listBranchLinksPaged } from "../core/documentBranchLinks.js";
 import { createReport } from "../core/report.js";
@@ -1573,6 +1582,19 @@ app.get(
   }),
 );
 
+// 프로젝트 홈(대시보드) 집계 - 문서 상태 분포+정체 문서, 미답변 Q&A/
+// 처리 안 된 메시지, 칸반 컬럼별 카드 수, 통합 최근 활동을 한 번에
+// (#project-dashboard).
+app.get(
+  "/api/projects/:projectId/dashboard",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const staleDays = req.query.staleDays !== undefined ? Number(req.query.staleDays) : undefined;
+    res.json(await getProjectDashboard(req.params.projectId, { staleDays }));
+  }),
+);
+
 const DOCUMENT_SORT_KEYS: DocumentSortKey[] = ["createdAt:desc", "createdAt:asc", "updatedAt:desc"];
 function parseDocumentSort(raw: unknown): DocumentSortKey | undefined {
   return DOCUMENT_SORT_KEYS.includes(raw as DocumentSortKey) ? (raw as DocumentSortKey) : undefined;
@@ -1840,6 +1862,49 @@ app.get(
   }),
 );
 
+// 정방향 링크(이 문서가 링크한 문서들, 순서대로) - report/여러 문서를
+// 엮은 챕터 구조 조회용(#document-link-ordering). 기존 POST
+// "/links"(addDocumentLink)와 대칭.
+app.get(
+  "/api/documents/:trackingCode/links",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(await listDocumentLinksOut(req.params.trackingCode));
+  }),
+);
+
+app.put(
+  "/api/documents/:trackingCode/links/reorder",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    const { orderedTrackingCodes } = req.body as { orderedTrackingCodes?: string[] };
+    if (!orderedTrackingCodes?.length) { res.status(400).json({ error: "orderedTrackingCodes가 필요합니다" }); return; }
+    await reorderDocumentLinks(req.params.trackingCode, orderedTrackingCodes);
+    res.json({ ok: true });
+  }),
+);
+
+app.delete(
+  "/api/documents/:trackingCode/links/:toTrackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    await removeDocumentLink(req.params.trackingCode, req.params.toTrackingCode, req.query.linkType as string | undefined);
+    res.json({ ok: true });
+  }),
+);
+
 app.get(
   "/api/documents/:trackingCode/revisions",
   authenticate,
@@ -1912,6 +1977,82 @@ app.get(
     const { from, to } = req.query as { from?: string; to?: string };
     if (!from) { res.status(400).json({ error: "from이 필요합니다" }); return; }
     res.json(await diffDocument(req.params.trackingCode, from, to ?? "current"));
+  }),
+);
+
+// 챕터(헤딩 섹션) CRUD - 긴 문서를 매번 전체 본문으로 안 읽고/안
+// 덮어써도 되도록(#document-chapters). 쓰기는 documents.ts 내부에서
+// saveDocumentBody를 거치므로 리비전/검색 재동기화가 그대로 유지된다.
+app.get(
+  "/api/documents/:trackingCode/chapters",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(await listDocumentChapters(req.params.trackingCode));
+  }),
+);
+
+app.get(
+  "/api/documents/:trackingCode/chapters/:ordinal",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.read) { res.status(403).json({ error: "이 문서에 대한 읽기 권한이 없습니다" }); return; }
+    res.json(await getDocumentChapter(req.params.trackingCode, Number(req.params.ordinal)));
+  }),
+);
+
+app.put(
+  "/api/documents/:trackingCode/chapters/:ordinal",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    const { content } = req.body as { content?: string };
+    if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
+    res.json(await replaceDocumentChapter(req.params.trackingCode, Number(req.params.ordinal), content, req.userId!));
+  }),
+);
+
+app.post(
+  "/api/documents/:trackingCode/chapters",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    const { content, after, before, atStart, atEnd } = req.body as {
+      content?: string;
+      after?: number;
+      before?: number;
+      atStart?: boolean;
+      atEnd?: boolean;
+    };
+    if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
+    const position =
+      after !== undefined ? { after } : before !== undefined ? { before } : atStart ? { atStart: true as const } : atEnd ? { atEnd: true as const } : undefined;
+    if (!position) { res.status(400).json({ error: "after|before|atStart|atEnd 중 하나가 필요합니다" }); return; }
+    res.json(await insertDocumentChapter(req.params.trackingCode, position, content, req.userId!));
+  }),
+);
+
+app.delete(
+  "/api/documents/:trackingCode/chapters/:ordinal",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    res.json(await deleteDocumentChapter(req.params.trackingCode, Number(req.params.ordinal), req.userId!));
   }),
 );
 

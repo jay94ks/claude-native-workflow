@@ -735,6 +735,34 @@ async function main() {
   );
 
   tool(
+    "document_links_out",
+    "정방향 링크 조회",
+    "이 문서가 링크한 문서들을 순서대로 조회한다(report/여러 문서를 엮은 챕터 구조 확인용) - document_backlinks(역참조)의 정방향 짝.",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/documents/${a.trackingCode}/links`),
+  );
+  tool(
+    "document_unlink",
+    "문서 링크 제거",
+    "한 문서에서 다른 문서로의 링크를 제거한다. 같은 대상으로의 링크가 여러 개(서로 다른 linkType)면 linkType으로 특정해야 한다.",
+    { fromTrackingCode: z.string(), toTrackingCode: z.string(), linkType: z.string().optional() },
+    async (a) => {
+      const qs = a.linkType ? `?linkType=${encodeURIComponent(String(a.linkType))}` : "";
+      return call(`/api/documents/${a.fromTrackingCode}/links/${a.toTrackingCode}${qs}`, { method: "DELETE" });
+    },
+  );
+  tool(
+    "document_links_reorder",
+    "문서 링크 순서 변경",
+    "이 문서가 링크한 문서들의 순서를 바꾼다 - orderedTrackingCodes는 현재 링크 대상 집합과 정확히 같은 순열이어야 한다(누락/추가 불가).",
+    { trackingCode: z.string(), orderedTrackingCodes: z.array(z.string()) },
+    async (a) =>
+      call(`/api/documents/${a.trackingCode}/links/reorder`, {
+        method: "PUT",
+        body: JSON.stringify({ orderedTrackingCodes: a.orderedTrackingCodes }),
+      }),
+  );
+  tool(
     "document_revisions",
     "버전 이력 조회",
     "문서의 수정 이력(리비전) 목록 - 각 항목은 그 시점까지의 본문 스냅샷. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
@@ -783,6 +811,57 @@ async function main() {
       const qs = new URLSearchParams({ from: String(a.from), ...(a.to ? { to: String(a.to) } : {}) });
       return call(`/api/documents/${a.trackingCode}/diff?${qs}`);
     },
+  );
+  tool(
+    "chapter_list",
+    "문서 챕터 목록",
+    "문서 본문을 마크다운 헤딩(#~######) 단위 챕터로 분해한 목록(번호/레벨/제목/줄 범위) - 본문 없이 목차만. 긴 문서를 전체로 안 읽고/안 덮어써도 되게 하는 챕터 CRUD 툴킷의 조회 진입점.",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/documents/${a.trackingCode}/chapters`),
+  );
+  tool(
+    "chapter_get",
+    "문서 챕터 조회",
+    "특정 챕터의 내용만 조회한다(하위 헤딩 포함) - ordinal은 chapter_list가 돌려준 1-based 번호.",
+    { trackingCode: z.string(), ordinal: z.number().int() },
+    async (a) => call(`/api/documents/${a.trackingCode}/chapters/${a.ordinal}`),
+  );
+  tool(
+    "chapter_set",
+    "문서 챕터 교체",
+    "특정 챕터의 내용을 통째로 교체한다(content는 헤딩 줄 자체를 포함해야 함) - 응답에 본문 없음, 갱신된 챕터 목록만.",
+    { trackingCode: z.string(), ordinal: z.number().int(), content: z.string() },
+    async (a) =>
+      call(`/api/documents/${a.trackingCode}/chapters/${a.ordinal}`, { method: "PUT", body: JSON.stringify({ content: a.content }) }),
+  );
+  tool(
+    "chapter_add",
+    "문서 챕터 삽입",
+    "새 챕터를 삽입한다(content는 헤딩 줄 자체를 포함해야 함) - after/before/atStart/atEnd 중 정확히 하나 필요.",
+    {
+      trackingCode: z.string(),
+      content: z.string(),
+      after: z.number().int().optional(),
+      before: z.number().int().optional(),
+      atStart: z.boolean().optional(),
+      atEnd: z.boolean().optional(),
+    },
+    async (a) => {
+      const body: Record<string, unknown> = { content: a.content };
+      if (a.after !== undefined) body.after = a.after;
+      else if (a.before !== undefined) body.before = a.before;
+      else if (a.atStart) body.atStart = true;
+      else if (a.atEnd) body.atEnd = true;
+      else throw new Error("after|before|atStart|atEnd 중 하나가 필요합니다");
+      return call(`/api/documents/${a.trackingCode}/chapters`, { method: "POST", body: JSON.stringify(body) });
+    },
+  );
+  tool(
+    "chapter_delete",
+    "문서 챕터 삭제",
+    "챕터를 삭제한다(문서에 챕터가 하나뿐이면 거부).",
+    { trackingCode: z.string(), ordinal: z.number().int() },
+    async (a) => call(`/api/documents/${a.trackingCode}/chapters/${a.ordinal}`, { method: "DELETE" }),
   );
   tool(
     "document_next_statuses",
@@ -1062,6 +1141,16 @@ async function main() {
       if (a.page === undefined && a.pageSize === undefined) return call(`/api/projects/${a.projectId}/pending`);
       const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
       return call(`/api/projects/${a.projectId}/pending/page?${qs}`);
+    },
+  );
+  tool(
+    "project_dashboard",
+    "프로젝트 진행 상황 대시보드",
+    "프로젝트 진행 상황 요약(문서 상태 분포+정체 문서, 미답변 Q&A, 처리 안 된 메시지, 칸반 컬럼별 카드 수, 최근 활동) - 웹 홈 화면과 같은 데이터.",
+    { projectId: z.string(), staleDays: z.number().int().optional() },
+    async (a) => {
+      const qs = a.staleDays !== undefined ? `?staleDays=${a.staleDays}` : "";
+      return call(`/api/projects/${a.projectId}/dashboard${qs}`);
     },
   );
   tool(

@@ -495,6 +495,17 @@ export async function countPendingQuestions(projectId: string): Promise<number> 
   return db.question.count({ where: { status: "pending", projectId } });
 }
 
+/** 대시보드용 - "open"(설계자 답변 대기) + "pending"(설계자는 답했고
+ * AI가 아직 확인 안 함) 합친 개수. 이름이 비슷한 countPendingQuestions
+ * 는 "pending"만 세고(위), listPendingQuestions는 이름과 달리 이미
+ * open+pending을 합쳐 돌려주지만 카운트만 필요한 호출자에게는 문서마다
+ * targetLabel을 조회하는 무거운 함수다 - 대시보드처럼 개수만 필요할
+ * 때는 이 가벼운 전용 함수를 쓴다. */
+export async function countOpenAndPendingQuestions(projectId: string): Promise<number> {
+  const db = getDb();
+  return db.question.count({ where: { projectId, status: { in: ["open", "pending"] } } });
+}
+
 export interface ReplyResult {
   question: QuestionDetail;
   answer: AnswerDetail;

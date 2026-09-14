@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import UserRef from "../components/UserRef.vue";
+import TrackingCodeText from "../components/TrackingCodeText.vue";
 import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
 
 const props = defineProps<{ id: string }>();
@@ -15,10 +16,6 @@ interface PendingQuestion {
   text: string;
   status: string;
 }
-interface RecentDocument {
-  trackingCode: string;
-  title: string;
-}
 interface FavoriteDocument {
   trackingCode: string;
   title: string;
@@ -26,25 +23,40 @@ interface FavoriteDocument {
 interface FavoriteDocumentPage {
   items: FavoriteDocument[];
 }
-interface RecentComment {
-  id: string;
-  targetType: string;
-  targetKey: string;
-  targetLabel: string;
-  body: string;
-  authorId: string;
+interface DocStatusCount {
+  code: string;
+  label: string;
+  count: number;
 }
-interface RecentMessage {
-  id: string;
-  authorId: string | null;
-  body: string;
+interface StaleDocument {
+  trackingCode: string;
+  title: string;
+  statusCode: string;
+  updatedAt: number;
+}
+interface KanbanColumnCount {
+  columnId: string;
+  columnName: string;
+  count: number;
+}
+interface ActivityItem {
+  type: string;
+  trackingCode: string | null;
+  summary: string;
+  at: string;
+}
+interface ProjectDashboard {
+  docStatusCounts: DocStatusCount[];
+  staleDocuments: StaleDocument[];
+  openQuestionsCount: number;
+  activeMessagesCount: number;
+  kanbanColumns: KanbanColumnCount[];
+  activity: ActivityItem[];
 }
 
 const pending = ref<PendingQuestion[]>([]);
-const recentDocuments = ref<RecentDocument[]>([]);
-const recentComments = ref<RecentComment[]>([]);
-const recentMessages = ref<RecentMessage[]>([]);
 const favoriteDocuments = ref<FavoriteDocument[]>([]);
+const dashboard = ref<ProjectDashboard | null>(null);
 const loading = ref(true);
 const error = ref("");
 
@@ -52,21 +64,17 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [pendingResult, docs, comments, messages, favorites] = await Promise.all([
+    const [pendingResult, favorites, dashboardResult] = await Promise.all([
       apiCall<{ questions: PendingQuestion[] }>(`/projects/${props.id}/pending`).catch(() => ({ questions: [] })),
-      apiCall<RecentDocument[]>(`/projects/${props.id}/documents/recent?limit=5`).catch(() => []),
-      apiCall<RecentComment[]>(`/projects/${props.id}/comments/recent?limit=5`).catch(() => []),
-      apiCall<RecentMessage[]>(`/projects/${props.id}/messages/recent?limit=5`).catch(() => []),
       apiCall<FavoriteDocumentPage>(`/projects/${props.id}/documents/favorites/page?page=1&pageSize=5`).catch(() => ({ items: [] })),
+      apiCall<ProjectDashboard>(`/projects/${props.id}/dashboard`).catch(() => null),
     ]);
     // "pending"(설계자 답변 완료, AI 확인 대기)은 AI가 처리할 몫이라
     // 설계자 화면엔 노이즈로 안 얹는다 - "open"(설계자가 지금 답해야
     // 할 것)만 보여준다.
     pending.value = pendingResult.questions.filter((q) => q.status === "open");
-    recentDocuments.value = docs;
-    recentComments.value = comments;
-    recentMessages.value = messages;
     favoriteDocuments.value = favorites.items;
+    dashboard.value = dashboardResult;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "정보를 불러오지 못했습니다";
   } finally {
@@ -78,8 +86,8 @@ function openQuestionTarget(q: PendingQuestion) {
   if (q.targetType === "kanbanCard") kanbanDialog.show(q.targetKey);
 }
 
-function openCommentTarget(c: RecentComment) {
-  if (c.targetType === "kanbanCard") kanbanDialog.show(c.targetKey);
+function daysAgo(updatedAt: number): number {
+  return Math.floor((Date.now() - updatedAt) / (24 * 60 * 60 * 1000));
 }
 
 onMounted(load);
@@ -87,6 +95,29 @@ onMounted(load);
 
 <template>
   <p v-if="error" class="error">{{ error }}</p>
+
+  <section v-if="!loading && dashboard" class="stat-strip">
+    <h2>프로젝트 현황</h2>
+    <div class="chips">
+      <span v-for="s in dashboard.docStatusCounts" :key="s.code" class="chip">{{ s.label }} {{ s.count }}</span>
+      <span v-if="dashboard.docStatusCounts.length === 0" class="chip muted-chip">문서 없음</span>
+      <router-link :to="`/projects/${id}/messages?status=active`" class="chip chip-link">미처리 메시지 {{ dashboard.activeMessagesCount }}</router-link>
+      <span class="chip">미답변 질의 {{ dashboard.openQuestionsCount }}</span>
+      <span v-for="c in dashboard.kanbanColumns" :key="c.columnId" class="chip">{{ c.columnName }} {{ c.count }}</span>
+    </div>
+  </section>
+
+  <section v-if="!loading && dashboard && dashboard.staleDocuments.length > 0">
+    <h2>정체된 문서</h2>
+    <ul class="list">
+      <li v-for="d in dashboard.staleDocuments" :key="d.trackingCode">
+        <router-link :to="`/projects/${id}/documents/${d.trackingCode}`">
+          <code>{{ d.trackingCode }}</code> {{ d.title }}
+        </router-link>
+        <span class="right muted">{{ daysAgo(d.updatedAt) }}일째 변경 없음</span>
+      </li>
+    </ul>
+  </section>
 
   <section v-if="!loading && pending.length > 0">
     <h2>답변 대기 질문</h2>
@@ -122,52 +153,14 @@ onMounted(load);
   </section>
 
   <section v-if="!loading">
-    <div class="section-header">
-      <h2>최근 변경 문서</h2>
-      <router-link :to="`/projects/${id}/documents?recent=1`">더보기</router-link>
-    </div>
-    <ul v-if="recentDocuments.length > 0" class="list">
-      <li v-for="d in recentDocuments" :key="d.trackingCode">
-        <router-link :to="`/projects/${id}/documents/${d.trackingCode}`">
-          <code>{{ d.trackingCode }}</code> {{ d.title }}
-        </router-link>
+    <h2>최근 활동</h2>
+    <ul v-if="dashboard && dashboard.activity.length > 0" class="activity-list">
+      <li v-for="(item, i) in dashboard.activity" :key="i">
+        <TrackingCodeText :text="item.summary" />
+        <span class="right muted">{{ new Date(item.at).toLocaleString() }}</span>
       </li>
     </ul>
-    <p v-else class="muted">최근 변경된 문서가 없습니다.</p>
-  </section>
-
-  <section v-if="!loading">
-    <div class="section-header">
-      <h2>최근 코멘트</h2>
-      <router-link :to="`/projects/${id}/comments`">더보기</router-link>
-    </div>
-    <ul v-if="recentComments.length > 0" class="list">
-      <li v-for="c in recentComments" :key="c.id">
-        <router-link v-if="c.targetType === 'document'" :to="`/projects/${id}/documents/${c.targetKey}`">
-          {{ c.targetLabel }} - {{ c.body }}
-        </router-link>
-        <router-link v-else-if="c.targetType === 'source'" :to="`/projects/${id}/source?path=${encodeURIComponent(c.targetKey)}`">
-          {{ c.targetLabel }} - {{ c.body }}
-        </router-link>
-        <button v-else type="button" class="target-link" @click="openCommentTarget(c)">{{ c.targetLabel }} - {{ c.body }}</button>
-        <span class="right"><UserRef :user-id="c.authorId" /></span>
-      </li>
-    </ul>
-    <p v-else class="muted">최근 코멘트가 없습니다.</p>
-  </section>
-
-  <section v-if="!loading">
-    <div class="section-header">
-      <h2>최근 발신 메시지</h2>
-      <router-link :to="`/projects/${id}/messages`">더보기</router-link>
-    </div>
-    <ul v-if="recentMessages.length > 0" class="list">
-      <li v-for="m in recentMessages" :key="m.id">
-        <span class="msg-body">{{ m.body }}</span>
-        <span class="right" v-if="m.authorId"><UserRef :user-id="m.authorId" /></span>
-      </li>
-    </ul>
-    <p v-else class="muted">최근 발신한 메시지가 없습니다.</p>
+    <p v-else class="muted">최근 활동이 없습니다.</p>
   </section>
 </template>
 
@@ -195,6 +188,30 @@ section {
 }
 .section-header a:hover {
   text-decoration: underline;
+}
+.stat-strip .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+  color: var(--color-text);
+}
+.chip-link {
+  text-decoration: none;
+  cursor: pointer;
+}
+.chip-link:hover {
+  text-decoration: underline;
+}
+.muted-chip {
+  color: var(--color-text-faint);
 }
 .list {
   list-style: none;
@@ -240,12 +257,26 @@ section {
 .target-link:hover {
   text-decoration: underline;
 }
-.msg-body {
-  font-size: 13px;
-  color: var(--color-text);
+.activity-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  background: var(--color-surface);
+  border-radius: 8px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+.activity-list li {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.activity-list li:last-child {
+  border-bottom: none;
 }
 .right {
   flex-shrink: 0;
