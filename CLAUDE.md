@@ -242,5 +242,9 @@ SKILL.md`(관리되는 프로젝트에 배포되는 원본)도 지금은 내용�
    옮기거나 설계자에게 어떻게 옮길지 확인한다.
 5. **정리**: 이전이 끝나고 그 폴더가 이 시스템과 완전히 통합됐다고
    판단되면(모든 문서가 옮겨졌고 `docs template deploy`+`git pull`로
-   CLAUDE.md/SKILL.md도 받은 상태) `MIGRATION.md`를 삭제한다 - 그 뒤로는
-   이 폴더도 정상적으로 관리되는 프로젝트로 취급한다.
+   CLAUDE.md/SKILL.md도 받은 상태 - **`link-external`이면 `deploy`가
+   커밋하는 곳은 내부 Gitea 작업 저장소일 뿐이라 `docs git publish
+   <projectId>`까지 별도로 해야 실제 GitHub/GitLab에 반영된다**,
+   README.md "로컬/사설 서버에 설치한 경우..." 절 참고) `MIGRATION.md`를
+   삭제한다 - 그 뒤로는 이 폴더도 정상적으로 관리되는 프로젝트로
+   취급한다.

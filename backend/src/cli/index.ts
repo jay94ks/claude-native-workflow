@@ -1955,6 +1955,7 @@ templateCmd
 
 templateCmd
   .command("deploy <projectId>")
+  .description("CLAUDE.md/SKILL.md를 해석해 이 프로젝트의 내부 Gitea 작업 저장소에 커밋한다 - link-external 프로젝트라면 이것만으로 GitHub/GitLab에 반영되지 않으니 이어서 `docs git publish <projectId>`까지 호출한다")
   .action((projectId) =>
     run(async () => printJson(await apiCall(`/api/projects/${projectId}/templates/deploy`, { method: "POST" }))),
   );

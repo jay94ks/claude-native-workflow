@@ -1419,7 +1419,7 @@ async function main() {
   tool(
     "template_deploy",
     "템플릿 배포",
-    "CLAUDE.md/SKILL.md를 해석해 프로젝트의 자체 호스팅 git 저장소 루트에 실제로 커밋한다.",
+    "CLAUDE.md/SKILL.md를 해석해 이 프로젝트의 내부 Gitea 작업 저장소에 커밋한다 - link-external 프로젝트라면 이것만으로 GitHub/GitLab에 반영되지 않으니 이어서 git_publish까지 호출해야 한다.",
     { projectId: z.string() },
     async (a) => call(`/api/projects/${a.projectId}/templates/deploy`, { method: "POST" }),
   );

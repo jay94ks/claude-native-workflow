@@ -796,7 +796,14 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   프로젝트 단위로 override(project→group→team→설치 전역 기본값 순
   상속, 더 구체적인 쪽이 우선).
 - `template deploy` - 해석된 템플릿(상속 병합 결과)을 그 프로젝트의
-  자체 호스팅 저장소 루트에 실제로 커밋.
+  내부 Gitea 작업 저장소(work repo) 루트에 실제로 커밋. **`git
+  link`(자체 호스팅)** 프로젝트는 그 work repo 자체가 authoritative라
+  `git pull` 한 번이면 끝나지만, **`git link-external`(외부 GitHub/
+  GitLab 연동)** 프로젝트는 work repo가 authoritative가 아니라서
+  `deploy` 직후 `docs git publish <projectId>`까지 별도로 호출해야
+  실제 GitHub/GitLab에 반영된다(`#template-deploy-external-publish`,
+  실사용 중 발견 - `deploy`만으로는 내부 커밋만 생기고 외부 동기화
+  대기열에는 자동으로 안 올라감).
 - **변경 이력** - 이미 override가 있는 스코프를 다시 덮어쓰면 덮어써
   지기 직전의 내용이 자동으로 리비전으로 남는다(`template revisions`
   로 조회, 최초로 override가 생기는 시점엔 스냅샷할 이전 값이 없어

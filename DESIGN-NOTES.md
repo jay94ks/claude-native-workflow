@@ -8131,3 +8131,38 @@ REST/CLI/MCP 배선 자체는 이번에 안 바뀌었고(둘 다 기존 `grepLin
 동작하고 진짜 잘못된 패턴은 명확한 에러로 알려준다. SKILL.md(양쪽
 사본)에도 이 차이(특히 `\d` 등이 더 이상 숫자 클래스가 아니라는 점)를
 명시했다.
+
+## `template deploy`는 `link-external` 프로젝트에선 별도 `git publish`가 필요함을 문서화(`#template-deploy-external-publish`)
+
+**배경**: minicore 세션(peer)이 SKILL.md 템플릿 갱신분을 받으려고
+`docs template deploy <projectId>`를 실행한 뒤 "실제 GitHub에는
+반영이 안 됐다"고 보고 - `git publish`까지 별도로 호출해야 외부
+저장소에 동기화된다는 걸 실사용 중 직접 발견해 알려줬다.
+
+**조사**: `POST /api/projects/:projectId/templates/deploy`(`backend/
+src/api/server.ts`)는 `requireGiteaWorkingRef(projectId)`로 얻은
+대상에 커밋한다 - 이 함수는 항상 내부 Gitea의 "작업 저장소"(work
+repo)를 가리킨다(`git link`로 만든 자체 호스팅 프로젝트는 그 work
+repo 자체가 authoritative, `git link-external`은 GitHub/GitLab이
+authoritative고 work repo는 내부 스테이징일 뿐). 즉 `deploy`는 항상
+같은 곳(work repo)에 커밋하지만, "그게 authoritative인가"는 프로젝트
+연동 방식에 따라 다르다 - `link-external`이면 `docs git publish`로
+그 work repo의 변경을 authoritative(외부) 저장소로 실제 push해야
+한다. 코드 동작 자체는 처음부터 의도한 대로였고, 버그는 아니었다 -
+다만 이 구분이 `template deploy` 관련 문서(README.md 공통 온보딩
+스니펫, CLI/MCP 설명, FT-083CBCFA, CLAUDE.md 온보딩 절차) 어디에도
+명시돼 있지 않아 `link-external` 프로젝트에서 처음 `deploy`를 쓰는
+세션이 매번 똑같이 놓칠 수 있는 함정이었다.
+
+**구현**: 코드 변경 없음(순수 문서화) - README.md의 "docs template
+deploy" 온보딩 스니펫 바로 아래에 `link-external` 케이스 설명 추가,
+CLI `docs template deploy`/MCP `template_deploy` 설명 문구에 같은
+안내를 짧게 추가("자체 호스팅 git 저장소 루트"라는 기존 MCP 설명이
+부정확했던 것도 "내부 Gitea 작업 저장소"로 정정), `FT-083CBCFA`(16.
+템플릿 관리)와 `CLAUDE.md`의 "다른 프로젝트에 이 시스템을 도입하는
+방법 - 정리" 단계에도 같은 내용 반영.
+
+**결론**: `template deploy` → `git publish`가 필요한 경우와 필요 없는
+경우(자체 호스팅 vs 외부 연동)가 이제 명시적으로 문서화됐다 - 다음에
+`link-external` 프로젝트에서 템플릿을 갱신하는 세션(사람이든 AI든)이
+같은 시행착오를 반복하지 않는다.

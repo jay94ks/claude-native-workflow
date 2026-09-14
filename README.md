@@ -458,6 +458,17 @@ git pull   # 방금 커밋된 CLAUDE.md/SKILL.md를 로컬로 받기
 (`docs template deploy`는 로컬 파일을 직접 안 건드리고 Gitea REST API로
 그 저장소에 바로 커밋한다 - 그래서 마지막에 `git pull`이 필요하다.)
 
+**`link-external`(외부 GitHub/GitLab 저장소 연동) 프로젝트라면 한 단계
+더 필요하다** - `docs template deploy`가 커밋하는 곳은 항상 내부
+Gitea의 "작업 저장소"(work repo)인데, `link-external` 프로젝트는 그
+work repo가 authoritative 저장소가 아니라 GitHub/GitLab이 authoritative
+저장소다(`git link`로 만든 자체 호스팅 프로젝트만 work repo 자체가
+authoritative). 그래서 `docs template deploy` 직후 `docs git publish
+<projectId>`까지 별도로 호출해야 실제로 GitHub/GitLab에 CLAUDE.md/
+SKILL.md 변경이 반영된다 - `deploy`만으로는 내부 Gitea 커밋만 생기고
+외부 동기화 대기열에는 자동으로 올라가지 않는다(실사용 중 발견 -
+`#template-deploy-external-publish`).
+
 1. **로컬 설치(신규) + 현재 작업 폴더 연동** - 위 "Docker Compose"
    절대로 이 PC에 처음 설치한 뒤, 위 공통 단계를 그대로 따른다. 이후
    이 PC의 다른 폴더/프로젝트도 같은 설치에 계속 연동할 수 있다(PC
