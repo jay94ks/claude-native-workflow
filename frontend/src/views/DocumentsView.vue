@@ -133,7 +133,7 @@ const selectedTypeGuideline = computed(() => docTypes.value.find((t) => t.code =
 // ---------------------------------------------------------------- 서브탭(폴더/문서 분류/리스트/답변 대기/답변 기록)
 // - #documents-tab-redesign, "답변 대기"/"답변 기록"은 #document-answer-status-subtabs
 
-type SubTab = "folder" | "type" | "list" | "pendingAnswers" | "answerHistory" | "docGraph";
+type SubTab = "folder" | "status" | "type" | "list" | "pendingAnswers" | "answerHistory" | "docGraph";
 const activeTab = ref<SubTab>("folder");
 
 // ---------------------------------------------------------------- "폴더" 서브탭 (요청 1번)
@@ -170,6 +170,52 @@ function onSelectFolder(folderId: string | null) {
 function onFolderPageChange(page: number) {
   folderPageNum.value = page;
   loadFolderPage();
+}
+
+// ---------------------------------------------------------------- "상태별 조회" 서브탭(#document-status-subtab)
+// 문서 상태(DocStatus.code)는 6개 고정값이라(docTypes.ts의
+// STANDARD_DOC_STATUSES, 프로젝트별 커스터마이즈 없음) 별도 조회
+// 없이 그대로 하드코딩한다 - "문서 분류" 탭과 똑같은 구조(왼쪽에
+// 선택 목록, 오른쪽에 그 조건의 문서 목록)로, 이미 CLI(`docs list
+// --status`)/REST(`statusCode` 쿼리)가 갖추고 있던 필터를 웹에도
+// 노출한 것뿐이다(백엔드 변경 없음).
+
+const DOC_STATUS_OPTIONS = [
+  { code: "draft", label: "초안" },
+  { code: "review", label: "검토 중" },
+  { code: "pending", label: "보류" },
+  { code: "approved", label: "승인됨" },
+  { code: "deprecated", label: "더 이상 인용되지 않음" },
+  { code: "archived", label: "보관됨" },
+];
+
+const selectedStatusCode = ref<string | null>(null);
+const statusPage = ref<DocumentPage>({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 1 });
+const statusLoading = ref(true);
+const statusError = ref("");
+const statusPageNum = ref(1);
+
+async function loadStatusPage() {
+  statusLoading.value = true;
+  statusError.value = "";
+  try {
+    const qs = new URLSearchParams({ page: String(statusPageNum.value), pageSize: "20" });
+    if (selectedStatusCode.value) qs.set("statusCode", selectedStatusCode.value);
+    statusPage.value = await apiCall<DocumentPage>(`/projects/${props.id}/documents/page?${qs}`);
+  } catch (err) {
+    statusError.value = err instanceof ApiError ? err.message : "문서 목록을 불러오지 못했습니다";
+  } finally {
+    statusLoading.value = false;
+  }
+}
+function onSelectStatus(code: string | null) {
+  selectedStatusCode.value = code;
+  statusPageNum.value = 1;
+  loadStatusPage();
+}
+function onStatusPageChange(page: number) {
+  statusPageNum.value = page;
+  loadStatusPage();
 }
 
 // ---------------------------------------------------------------- "문서 분류" 서브탭 (요청 2-2번)
@@ -394,12 +440,29 @@ function openDocGraphDetailInEditor() {
   router.push(`/projects/${docGraphDetail.value.projectId}/documents/${docGraphDetail.value.trackingCode}`);
 }
 
+// 추적 코드로 바로 조회(설계자 지시, #document-graph-code-lookup) -
+// "문서간 관계" 탭이 로드 전이어도(다른 탭을 보고 있어도) 상관없이
+// 그 탭으로 전환하고 상세 패널을 채운다. 조회 대상이 그래프의 실제
+// 노드(링크가 하나라도 있는 문서)가 아니어도 상세 패널 자체는
+// selectDocGraphNode()가 문서 단건 조회로 채우므로 그대로 뜨고,
+// 캔버스의 선택 하이라이트만 해당 노드가 없어 안 보일 뿐이다.
+const lookupCode = ref("");
+
+function submitLookup() {
+  const code = lookupCode.value.trim();
+  if (!code) return;
+  activeTab.value = "docGraph";
+  ensureTabLoaded("docGraph");
+  selectDocGraphNode(code);
+}
+
 // 탭을 처음 열 때만 그 탭의 목록을 불러온다(전부 미리 불러올 필요 없음).
 const loadedTabs = new Set<SubTab>();
 function ensureTabLoaded(tab: SubTab) {
   if (loadedTabs.has(tab)) return;
   loadedTabs.add(tab);
   if (tab === "folder") loadFolderPage();
+  else if (tab === "status") loadStatusPage();
   else if (tab === "type") loadTypePage();
   else if (tab === "list") loadListPage();
   else if (tab === "pendingAnswers") loadPendingPage();
@@ -462,11 +525,16 @@ onMounted(async () => {
 
       <nav class="subtabs">
         <button type="button" :class="{ active: activeTab === 'folder' }" @click="activeTab = 'folder'">폴더</button>
+        <button type="button" :class="{ active: activeTab === 'status' }" @click="activeTab = 'status'">상태별 조회</button>
         <button type="button" :class="{ active: activeTab === 'type' }" @click="activeTab = 'type'">문서 분류</button>
         <button type="button" :class="{ active: activeTab === 'list' }" @click="activeTab = 'list'">리스트</button>
         <button type="button" :class="{ active: activeTab === 'pendingAnswers' }" @click="activeTab = 'pendingAnswers'">답변 대기</button>
         <button type="button" :class="{ active: activeTab === 'answerHistory' }" @click="activeTab = 'answerHistory'">답변 기록</button>
         <button type="button" :class="{ active: activeTab === 'docGraph' }" @click="activeTab = 'docGraph'">문서간 관계</button>
+        <form class="doc-lookup" @submit.prevent="submitLookup">
+          <input v-model="lookupCode" type="text" placeholder="추적 코드로 조회(예: SP-XXXXXXXX)" />
+          <button type="submit">조회</button>
+        </form>
       </nav>
 
       <!-- 요청 1번: 폴더 좌측 + 선택된 폴더(또는 전체)의 문서 우측 -->
@@ -482,6 +550,33 @@ onMounted(async () => {
           :loading="folderLoading"
           :error="folderError"
           @page-change="onFolderPageChange"
+        />
+      </div>
+
+      <!-- 상태별 조회: 상태 목록 좌측 + 그 상태의 문서 우측(#document-status-subtab) -->
+      <div v-else-if="activeTab === 'status'" class="split">
+        <div class="type-list">
+          <div class="type-item" :class="{ selected: selectedStatusCode === null }" @click="onSelectStatus(null)">전체 상태</div>
+          <div
+            v-for="s in DOC_STATUS_OPTIONS"
+            :key="s.code"
+            class="type-item"
+            :class="{ selected: selectedStatusCode === s.code }"
+            @click="onSelectStatus(s.code)"
+          >
+            {{ s.label }}
+          </div>
+        </div>
+        <DocumentListPanel
+          :project-id="id"
+          :items="statusPage.items"
+          :doc-types="docTypes"
+          :page="statusPage.page"
+          :total-pages="statusPage.totalPages"
+          :total="statusPage.total"
+          :loading="statusLoading"
+          :error="statusError"
+          @page-change="onStatusPageChange"
         />
       </div>
 
@@ -703,6 +798,31 @@ onMounted(async () => {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: #fff;
+}
+.doc-lookup {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.doc-lookup input {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  width: 200px;
+}
+.doc-lookup button {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.doc-lookup button:hover {
+  background: var(--color-surface-hover);
 }
 .split {
   display: flex;
