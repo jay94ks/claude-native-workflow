@@ -16,7 +16,7 @@ const router = useRouter();
 const entityPicker = useEntityPickerStore();
 const targetPanelDialog = useTargetPanelDialogStore();
 const folderPicker = useFolderPickerStore();
-const activeTab = ref<"view" | "qa">("view");
+const activeTab = ref<"view" | "chapters" | "qa">("view");
 
 // 메시지로 지시는 문서 자체 권한이 아니라 프로젝트 editor 이상(백엔드
 // POST .../messages가 requireProjectRole("editor")) - 편집/저장/삭제/
@@ -51,6 +51,16 @@ interface SourceLink {
 interface BranchLink {
   id: string;
   branchName: string;
+}
+interface ChapterInfo {
+  ordinal: number;
+  level: number;
+  heading: string;
+  lineStart: number;
+  lineEnd: number;
+}
+interface ChapterMutationResult {
+  chapters: ChapterInfo[];
 }
 
 const doc = ref<DocumentDetail | null>(null);
@@ -246,6 +256,165 @@ async function toggleFavorite() {
   }
 }
 
+// ---------------------------------------------------------------- 챕터(헤딩 섹션) CRUD(#document-chapters)
+// 백엔드는 CLI/MCP 전용으로 먼저 나왔고(설계자 지시 "클로드가 호출"),
+// 이번에 웹 에디터에도 붙인다. 한 번에 챕터 하나만 편집/추가 폼을
+// 열 수 있게 한다(아코디언 - 여러 개를 동시에 열면 어느 걸 저장했을
+// 때 다른 편집 중인 내용의 lineStart/lineEnd가 밀려 꼬일 수 있어서).
+// 챕터를 쓰면(교체/삽입/삭제) 그 자리에서 받은 최신 chapters 배열로
+// 목록만 갱신하고, "보기"/"편집" 탭이 보는 doc.body/body도 같이
+// 새로고침해 두 탭이 항상 같은 내용을 보게 한다.
+
+const chapters = ref<ChapterInfo[]>([]);
+const chaptersLoading = ref(false);
+const chaptersError = ref("");
+const chaptersLoaded = ref(false);
+
+const editingChapterOrdinal = ref<number | null>(null);
+const editingChapterContent = ref("");
+const editingChapterLoading = ref(false);
+const editingChapterSaving = ref(false);
+const editingChapterError = ref("");
+
+const addingChapter = ref(false);
+const addChapterContent = ref("");
+const addChapterPosition = ref<"atStart" | "atEnd" | "after" | "before">("atEnd");
+const addChapterRelativeOrdinal = ref<number | "">("");
+const addChapterSaving = ref(false);
+const addChapterError = ref("");
+
+function chapterLabel(c: ChapterInfo): string {
+  return c.heading || (c.level === 0 ? "(제목 없음)" : `(제목 없는 ${"#".repeat(c.level)} 헤딩)`);
+}
+
+async function loadChapters() {
+  chaptersLoading.value = true;
+  chaptersError.value = "";
+  try {
+    chapters.value = await apiCall<ChapterInfo[]>(`/documents/${props.trackingCode}/chapters`);
+    chaptersLoaded.value = true;
+  } catch (err) {
+    chaptersError.value = err instanceof ApiError ? err.message : "챕터 목록을 불러오지 못했습니다";
+  } finally {
+    chaptersLoading.value = false;
+  }
+}
+
+// 챕터를 쓴 뒤 doc.body/body(보기·편집 탭용)도 최신화 - 재조회는
+// fetchDocument()의 404 재시도 없이 바로(이미 존재이 확인된 문서라).
+async function refreshDocumentBody() {
+  try {
+    const updated = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}`);
+    if (doc.value) doc.value = { ...doc.value, ...updated };
+    if (mode.value === "read") body.value = updated.body;
+  } catch {
+    // 챕터 자체는 이미 반영됐으니, 본문 새로고침 실패는 조용히 무시
+    // (다음 탭 전환/새로고침 때 자연스럽게 맞음).
+  }
+}
+
+function openChapterTab() {
+  activeTab.value = "chapters";
+  if (!chaptersLoaded.value) loadChapters();
+}
+
+async function startEditChapter(ordinal: number) {
+  addingChapter.value = false;
+  editingChapterOrdinal.value = ordinal;
+  editingChapterContent.value = "";
+  editingChapterError.value = "";
+  editingChapterLoading.value = true;
+  try {
+    const result = await apiCall<{ chapter: ChapterInfo; content: string }>(`/documents/${props.trackingCode}/chapters/${ordinal}`);
+    editingChapterContent.value = result.content;
+  } catch (err) {
+    editingChapterError.value = err instanceof ApiError ? err.message : "챕터 내용을 불러오지 못했습니다";
+  } finally {
+    editingChapterLoading.value = false;
+  }
+}
+
+function cancelEditChapter() {
+  editingChapterOrdinal.value = null;
+  editingChapterContent.value = "";
+  editingChapterError.value = "";
+}
+
+async function saveEditChapter() {
+  if (editingChapterOrdinal.value === null) return;
+  editingChapterSaving.value = true;
+  editingChapterError.value = "";
+  try {
+    const result = await apiCall<ChapterMutationResult>(`/documents/${props.trackingCode}/chapters/${editingChapterOrdinal.value}`, {
+      method: "PUT",
+      body: JSON.stringify({ content: editingChapterContent.value }),
+    });
+    chapters.value = result.chapters;
+    cancelEditChapter();
+    await refreshDocumentBody();
+  } catch (err) {
+    editingChapterError.value = err instanceof ApiError ? err.message : "저장에 실패했습니다";
+  } finally {
+    editingChapterSaving.value = false;
+  }
+}
+
+async function deleteChapter(ordinal: number) {
+  const chapter = chapters.value.find((c) => c.ordinal === ordinal);
+  const confirmed = window.confirm(`"${chapter ? chapterLabel(chapter) : ordinal}" 챕터를 삭제하시겠습니까?`);
+  if (!confirmed) return;
+  chaptersError.value = "";
+  try {
+    const result = await apiCall<ChapterMutationResult>(`/documents/${props.trackingCode}/chapters/${ordinal}`, { method: "DELETE" });
+    chapters.value = result.chapters;
+    if (editingChapterOrdinal.value === ordinal) cancelEditChapter();
+    await refreshDocumentBody();
+  } catch (err) {
+    chaptersError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
+  }
+}
+
+function startAddChapter() {
+  cancelEditChapter();
+  addingChapter.value = true;
+  addChapterContent.value = "";
+  addChapterPosition.value = "atEnd";
+  addChapterRelativeOrdinal.value = "";
+  addChapterError.value = "";
+}
+
+function cancelAddChapter() {
+  addingChapter.value = false;
+}
+
+async function saveAddChapter() {
+  if (!addChapterContent.value.trim()) return;
+  if ((addChapterPosition.value === "after" || addChapterPosition.value === "before") && addChapterRelativeOrdinal.value === "") {
+    addChapterError.value = "기준 챕터 번호를 입력하세요";
+    return;
+  }
+  addChapterSaving.value = true;
+  addChapterError.value = "";
+  try {
+    const payload: Record<string, unknown> = { content: addChapterContent.value };
+    if (addChapterPosition.value === "atStart") payload.atStart = true;
+    else if (addChapterPosition.value === "atEnd") payload.atEnd = true;
+    else if (addChapterPosition.value === "after") payload.after = Number(addChapterRelativeOrdinal.value);
+    else if (addChapterPosition.value === "before") payload.before = Number(addChapterRelativeOrdinal.value);
+    const result = await apiCall<ChapterMutationResult>(`/documents/${props.trackingCode}/chapters`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    chapters.value = result.chapters;
+    addingChapter.value = false;
+    await refreshDocumentBody();
+  } catch (err) {
+    addChapterError.value = err instanceof ApiError ? err.message : "추가에 실패했습니다";
+  } finally {
+    addChapterSaving.value = false;
+  }
+}
+
 // QAPanel에서 답변으로 인한 자동 상태 전이가 일어났을 때만 씀 - 전체
 // load()는 loading 플래그를 다시 세워 화면을 통째로 숨기고 편집 중인
 // body도 서버 값으로 덮어써버리므로, 상단 상태 배지만 조용히 갱신한다.
@@ -411,6 +580,11 @@ watch(
     messageOpen.value = false;
     messageError.value = "";
     messageSent.value = false;
+    chapters.value = [];
+    chaptersLoaded.value = false;
+    chaptersError.value = "";
+    cancelEditChapter();
+    cancelAddChapter();
     load();
   },
 );
@@ -440,6 +614,7 @@ onMounted(load);
   
       <div class="tabs">
         <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
+        <button :class="{ active: activeTab === 'chapters' }" @click="openChapterTab">챕터</button>
         <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
         <span class="spacer"></span>
         <button
@@ -543,6 +718,72 @@ onMounted(load);
             <button type="submit" class="secondary" :disabled="!newBranchName.trim()">+ 브랜치 연결</button>
           </form>
         </section>
+      </template>
+      <template v-else-if="activeTab === 'chapters'">
+        <p class="hint">
+          본문을 마크다운 헤딩(#~######) 단위로 나눠 개별 조회·교체·삽입·삭제한다 - 긴 문서를 매번 전체로 안 읽고/안
+          덮어써도 된다(CLI/MCP의 <code>docs chapter</code>/<code>chapter_*</code>와 같은 기능).
+        </p>
+        <p v-if="chaptersError" class="error">{{ chaptersError }}</p>
+        <p v-if="chaptersLoading">불러오는 중...</p>
+        <ul v-else class="chapter-list">
+          <li v-for="c in chapters" :key="c.ordinal">
+            <div class="chapter-row" :style="{ paddingLeft: `${Math.max(0, c.level - 1) * 16}px` }">
+              <span class="chapter-ordinal">{{ c.ordinal }}</span>
+              <span class="chapter-heading" :class="{ empty: !c.heading }">{{ chapterLabel(c) }}</span>
+              <span class="chapter-lines">{{ c.lineStart }}-{{ c.lineEnd }}행</span>
+              <span class="spacer"></span>
+              <template v-if="doc.perm.write">
+                <button type="button" class="secondary small" @click="startEditChapter(c.ordinal)">편집</button>
+                <button type="button" class="danger small" @click="deleteChapter(c.ordinal)">삭제</button>
+              </template>
+            </div>
+            <div v-if="editingChapterOrdinal === c.ordinal" class="chapter-edit-panel">
+              <p v-if="editingChapterLoading">불러오는 중...</p>
+              <template v-else>
+                <MonacoEditor v-model="editingChapterContent" language="markdown" class="chapter-editor" />
+                <p v-if="editingChapterError" class="error">{{ editingChapterError }}</p>
+                <div class="edit-actions">
+                  <button :disabled="editingChapterSaving" @click="saveEditChapter">
+                    {{ editingChapterSaving ? "저장 중..." : "저장" }}
+                  </button>
+                  <button type="button" class="secondary" @click="cancelEditChapter">취소</button>
+                </div>
+              </template>
+            </div>
+          </li>
+        </ul>
+        <p v-if="!chaptersLoading && chapters.length === 0" class="muted">챕터가 없습니다.</p>
+
+        <button v-if="doc.perm.write && !addingChapter" type="button" class="secondary" @click="startAddChapter">+ 챕터 추가</button>
+        <div v-if="addingChapter" class="chapter-add-panel">
+          <div class="chapter-add-position">
+            <select v-model="addChapterPosition">
+              <option value="atStart">문서 맨 앞에</option>
+              <option value="atEnd">문서 맨 끝에</option>
+              <option value="after">이 챕터 번호 다음에</option>
+              <option value="before">이 챕터 번호 앞에</option>
+            </select>
+            <input
+              v-if="addChapterPosition === 'after' || addChapterPosition === 'before'"
+              v-model="addChapterRelativeOrdinal"
+              type="number"
+              step="1"
+              min="0"
+              placeholder="챕터 번호"
+              class="chapter-ordinal-input"
+            />
+          </div>
+          <MonacoEditor v-model="addChapterContent" language="markdown" class="chapter-editor" />
+          <p class="hint">헤딩 줄 자체(`## 제목`처럼)를 포함해서 입력하세요.</p>
+          <p v-if="addChapterError" class="error">{{ addChapterError }}</p>
+          <div class="edit-actions">
+            <button :disabled="addChapterSaving || !addChapterContent.trim()" @click="saveAddChapter">
+              {{ addChapterSaving ? "추가 중..." : "추가" }}
+            </button>
+            <button type="button" class="secondary" @click="cancelAddChapter">취소</button>
+          </div>
+        </div>
       </template>
       <template v-else>
         <QAPanel :project-id="id" target-type="document" :target-key="trackingCode" @status-transitioned="refreshStatus" />
@@ -815,9 +1056,102 @@ button:disabled {
   color: var(--color-success);
   font-size: 13px;
 }
+.hint {
+  font-size: 12px;
+  color: var(--color-text-faint);
+  margin: 0 0 12px;
+}
+button.small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.chapter-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+  background: var(--color-surface);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+.chapter-list > li {
+  border-bottom: 1px solid var(--color-border-light);
+}
+.chapter-list > li:last-child {
+  border-bottom: none;
+}
+.chapter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.chapter-ordinal {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--color-text-faint);
+  background: var(--color-surface-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+  min-width: 20px;
+  text-align: center;
+}
+.chapter-heading {
+  font-size: 13px;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chapter-heading.empty {
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+.chapter-lines {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-faint);
+}
+.chapter-edit-panel {
+  padding: 0 12px 12px;
+}
+.chapter-editor {
+  height: 300px;
+  margin: 8px 0;
+}
+.chapter-add-panel {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--color-bg);
+  border-radius: 8px;
+}
+.chapter-add-position {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.chapter-add-position select {
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.chapter-ordinal-input {
+  width: 100px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
 @media (max-width: 768px) {
   .editor {
     height: 60vh;
+  }
+  .chapter-editor {
+    height: 50vh;
   }
 }
 </style>
