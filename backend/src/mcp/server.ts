@@ -1154,6 +1154,16 @@ async function main() {
     },
   );
   tool(
+    "project_activity",
+    "프로젝트 최근 활동 전체 목록",
+    "프로젝트 최근 활동 전체 목록(문서 생성/수정, 질의, 답변, 코멘트, 메시지, 칸반 카드 생성) - project_dashboard의 최근 활동(20건 고정) 더보기용, 기본 100건.",
+    { projectId: z.string(), limit: z.number().int().optional() },
+    async (a) => {
+      const qs = a.limit !== undefined ? `?limit=${a.limit}` : "";
+      return call(`/api/projects/${a.projectId}/activity${qs}`);
+    },
+  );
+  tool(
     "question_reply",
     "질의에 답변",
     "질의에 답변하면 상태가 pending으로 바뀌고(종결 아님 - AI 확인 대기), 문서 대상의 모든 질의가 open을 벗어나면 문서 상태도 자동 전이될 수 있다. kind=answer면 body, kind=approval이면 decision(+선택 body 메모)을 쓴다.",

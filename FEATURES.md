@@ -811,9 +811,15 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
     코멘트/발신 메시지)을 대체 - 문서 생성/수정, 질의 등록/답변,
     코멘트, 메시지, 칸반 카드 생성을 시간순으로 병합해 하나의
     타임라인으로 보여준다(추적 코드 자동 링크 - `TrackingCodeText`).
+    홈에는 20건까지만(대시보드 위젯 고정값) - "더보기"를 누르면
+    전용 페이지(`/projects/:id/activity`, `ProjectActivityView.vue`)
+    에서 최대 100건까지 본다(`RecentCommentsView.vue`의 "최근 코멘트"
+    더보기와 같은 관례 - 실제 페이지네이션 없이 더 큰 limit 하나로
+    "더 보여준다").
   전부 새 집계 엔드포인트(`GET /api/projects/:id/dashboard`, CLI
   `docs dashboard`/MCP `project_dashboard`로도 동일 데이터 조회 가능)
-  하나로 온다.
+  하나로 온다. 활동 전체 목록은 별도로 `GET /api/projects/:id/activity`
+  (CLI `docs activity`/MCP `project_activity`)로도 조회 가능.
 - **Monaco 에디터** - 문서 본문(마크다운)과 소스 코드 파일 편집·저장·
   커밋에 공통 사용. 문서는 기본이 렌더링된 읽기 모드("편집" 클릭 시
   전환).

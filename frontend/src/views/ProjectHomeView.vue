@@ -153,7 +153,10 @@ onMounted(load);
   </section>
 
   <section v-if="!loading">
-    <h2>최근 활동</h2>
+    <div class="section-header">
+      <h2>최근 활동</h2>
+      <router-link :to="`/projects/${id}/activity`">더보기</router-link>
+    </div>
     <ul v-if="dashboard && dashboard.activity.length > 0" class="activity-list">
       <li v-for="(item, i) in dashboard.activity" :key="i">
         <TrackingCodeText :text="item.summary" />

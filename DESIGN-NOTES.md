@@ -7459,3 +7459,38 @@ Monaco 입력). 한 번에 편집/추가 폼 하나만 열리게 제한(아코�
 
 **결론**: 챕터 CRUD를 CLI/MCP뿐 아니라 웹 UI에서도 직접 쓸 수 있게
 됐다 - 직전 라운드에서 "범위 밖"으로 명시했던 유일한 항목이었다.
+
+## 최근 활동 "더보기" 페이지 추가(`#project-dashboard`)
+
+**배경**: 설계자 지시 - "최근 활동 더보기 버튼도 만들어줘." 대시보드
+라운드(DN-BD819BF6)에서 만든 통합 "최근 활동" 피드는
+`getProjectDashboard()` 내부에서 항상 20건으로 고정돼 있어 "더보기"
+링크가 없었고, 전체 목록을 볼 방법이 없었다.
+
+**설계**: 여러 엔티티 타입을 매번 병합정렬하는 활동 피드에 커서
+기반 페이지네이션을 붙이는 건 비용 대비 이득이 낮다고 판단 - 이미
+이 저장소에 있는 `RecentCommentsView.vue`("최근 코멘트" 더보기,
+`?limit=100`으로 실제 페이지네이션 없이 더 큰 목록 하나만 보여주는
+방식)와 같은 관례를 그대로 따랐다.
+
+**구현**: `listProjectActivity(projectId, limit)`는 이미 limit
+매개변수를 받고 있어(대시보드가 20으로 고정 호출하던 것뿐) 새 로직
+없이 새 라우트 `GET /api/projects/:id/activity?limit=`(기본 100)만
+추가, CLI `docs activity`/MCP `project_activity` 대칭 추가. 신규
+`ProjectActivityView.vue`(`RecentCommentsView.vue`와 거의 같은
+구조)가 그 라우트를 불러와 `TrackingCodeText` 기반으로 렌더링(이미
+모든 activity 항목의 summary에 추적 코드가 박혀있어 직전 라운드
+작업 덕에 그대로 클릭 가능). 라우터에 `activity` 자식 경로 등록,
+`ProjectHomeView.vue`의 "최근 활동" 제목을 다른 섹션들과 같은
+`.section-header`(제목+더보기 링크) 패턴으로 통일.
+
+**검증**: `tsc --noEmit`/`vue-tsc -b` 클린. 격리된 로컬 환경에서
+문서 25개를 만들어(고정 20건보다 많게) 대시보드 `activity`가
+정확히 20건, 신규 `/activity`가 25건 전부 반환하는 것을 API로 먼저
+확인, Browser pane으로 홈의 "더보기" 링크가 `/projects/:id/activity`
+로 정확히 연결되고 그 페이지에서 25건 전부가 시간순 렌더링되는
+것까지 확인했다.
+
+**결론**: 프로젝트 홈의 "최근 활동"도 다른 섹션들과 마찬가지로
+더보기 페이지를 갖게 됐다 - 20건보다 오래된 활동도 필요하면 바로
+볼 수 있다.

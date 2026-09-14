@@ -1659,6 +1659,17 @@ program
   );
 
 program
+  .command("activity <projectId>")
+  .description("프로젝트 최근 활동 전체 목록(문서 생성/수정, 질의, 답변, 코멘트, 메시지, 칸반 카드 생성) - 대시보드의 최근 활동(20건 고정) 더보기용, 기본 100건")
+  .option("--limit <n>", "최대 건수(기본 100)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const qs = opts.limit !== undefined ? `?limit=${opts.limit}` : "";
+      printJson(await apiCall(`/api/projects/${projectId}/activity${qs}`));
+    }),
+  );
+
+program
   .command("reply <questionTrackingCode> [answer...]")
   .description("답변 요청(kind=answer)은 answer 텍스트로, 승인 요청(kind=approval)은 --decision으로 답한다")
   .option("--decision <approved|rejected>", "승인 요청에 대한 결정")

@@ -75,7 +75,7 @@ import {
 import { isTeamAdmin } from "../core/teamAdmins.js";
 import { listUserMemberships } from "../core/userMemberships.js";
 import { getActiveKeyScope } from "../core/requestScope.js";
-import { listUserActivity } from "../core/activity.js";
+import { listUserActivity, listProjectActivity } from "../core/activity.js";
 import {
   createDocType,
   listDocTypes,
@@ -1592,6 +1592,20 @@ app.get(
   asyncRoute(async (req, res) => {
     const staleDays = req.query.staleDays !== undefined ? Number(req.query.staleDays) : undefined;
     res.json(await getProjectDashboard(req.params.projectId, { staleDays }));
+  }),
+);
+
+// 대시보드의 "최근 활동" 위젯은 20건 고정(getProjectDashboard 내부) -
+// 그 "더보기"가 부르는 전체 목록 전용 라우트(#project-dashboard 후속,
+// RecentCommentsView.vue의 `?limit=100` 관례와 동일 - 실제 페이지네이션
+// 없이 더 큰 limit 하나로 "더 보여준다").
+app.get(
+  "/api/projects/:projectId/activity",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const limit = Number(req.query.limit ?? 100);
+    res.json(await listProjectActivity(req.params.projectId, limit));
   }),
 );
 
