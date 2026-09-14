@@ -7,6 +7,9 @@ import FolderSelectTree from "../components/FolderSelectTree.vue";
 import { UNFILED_SENTINEL } from "../utils/folderTree";
 import DocumentListPanel from "../components/DocumentListPanel.vue";
 import QuestionListPanel from "../components/QuestionListPanel.vue";
+import RelationGraphCanvas from "../components/RelationGraphCanvas.vue";
+import type { RelationGraphNode, RelationGraphEdge } from "../utils/relationGraph";
+import { RELATION_VIEW_MODES } from "../utils/relationViewModes";
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -130,7 +133,7 @@ const selectedTypeGuideline = computed(() => docTypes.value.find((t) => t.code =
 // ---------------------------------------------------------------- 서브탭(폴더/문서 분류/리스트/답변 대기/답변 기록)
 // - #documents-tab-redesign, "답변 대기"/"답변 기록"은 #document-answer-status-subtabs
 
-type SubTab = "folder" | "type" | "list" | "pendingAnswers" | "answerHistory";
+type SubTab = "folder" | "type" | "list" | "pendingAnswers" | "answerHistory" | "docGraph";
 const activeTab = ref<SubTab>("folder");
 
 // ---------------------------------------------------------------- "폴더" 서브탭 (요청 1번)
@@ -281,6 +284,71 @@ function onHistoryPageChange(page: number) {
   loadHistoryPage();
 }
 
+// ---------------------------------------------------------------- "문서간 관계" 서브탭 (#document-link-graph)
+// DocumentLink(정방향/역방향 링크)를 프로젝트 전체 그래프로 - 관계도
+// (코드 관계 그래프) 화면이 이미 쓰는 Cytoscape 캔버스/뷰 모드를
+// 그대로 재사용한다(별도 그래프 컴포넌트를 새로 안 만듦). 코드
+// 관계도와 달리 "펼치기" 개념 없이 한 번에 전체를 불러온다 - 문서
+// 링크는 보통 코드 관계보다 훨씬 적어서(report/챕터 구조 용도) 상한
+// 걱정 없이 다 받아도 된다.
+
+interface DocumentLinkGraphNode {
+  trackingCode: string;
+  title: string;
+  docTypeCode: string;
+}
+interface DocumentLinkGraphEdge {
+  fromTrackingCode: string;
+  toTrackingCode: string;
+  linkType: string | null;
+}
+interface DocumentLinkGraph {
+  nodes: DocumentLinkGraphNode[];
+  edges: DocumentLinkGraphEdge[];
+}
+
+const docGraphLoading = ref(true);
+const docGraphError = ref("");
+const docGraphViewMode = ref("hierarchical");
+const docGraphNodes = ref<RelationGraphNode[]>([]);
+const docGraphEdges = ref<RelationGraphEdge[]>([]);
+
+function truncateLabel(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+async function loadDocGraph() {
+  docGraphLoading.value = true;
+  docGraphError.value = "";
+  try {
+    const graph = await apiCall<DocumentLinkGraph>(`/projects/${props.id}/document-graph`);
+    docGraphNodes.value = graph.nodes.map((n) => ({
+      id: n.trackingCode,
+      label: `${n.trackingCode}\n${truncateLabel(n.title, 30)}`,
+      primaryTag: n.docTypeCode,
+    }));
+    // RelationGraphCanvas는 parentChild 엣지를 "자식→부모"로 가정하고
+    // 화면에서 화살표를 뒤집어(부모→자식으로 보이게) 그린다(코드
+    // 관계도의 DB 방향 관례) - 문서 링크는 그런 관례가 없고 "A가
+    // B를 링크한다"를 그대로 A→B로 보여줘야 하므로, from/to를 미리
+    // 뒤집어 넘겨 그 반전을 상쇄한다(#document-link-graph).
+    docGraphEdges.value = graph.edges.map((e) => ({
+      id: `${e.fromTrackingCode}->${e.toTrackingCode}`,
+      from: e.toTrackingCode,
+      to: e.fromTrackingCode,
+      kind: "parentChild",
+    }));
+  } catch (err) {
+    docGraphError.value = err instanceof ApiError ? err.message : "문서 관계 그래프를 불러오지 못했습니다";
+  } finally {
+    docGraphLoading.value = false;
+  }
+}
+
+function openDocGraphNode(trackingCode: string) {
+  router.push(`/projects/${props.id}/documents/${trackingCode}`);
+}
+
 // 탭을 처음 열 때만 그 탭의 목록을 불러온다(전부 미리 불러올 필요 없음).
 const loadedTabs = new Set<SubTab>();
 function ensureTabLoaded(tab: SubTab) {
@@ -290,6 +358,7 @@ function ensureTabLoaded(tab: SubTab) {
   else if (tab === "type") loadTypePage();
   else if (tab === "list") loadListPage();
   else if (tab === "pendingAnswers") loadPendingPage();
+  else if (tab === "docGraph") loadDocGraph();
   else loadHistoryPage();
 }
 watch(activeTab, (tab) => ensureTabLoaded(tab), { immediate: false });
@@ -352,6 +421,7 @@ onMounted(async () => {
         <button type="button" :class="{ active: activeTab === 'list' }" @click="activeTab = 'list'">리스트</button>
         <button type="button" :class="{ active: activeTab === 'pendingAnswers' }" @click="activeTab = 'pendingAnswers'">답변 대기</button>
         <button type="button" :class="{ active: activeTab === 'answerHistory' }" @click="activeTab = 'answerHistory'">답변 기록</button>
+        <button type="button" :class="{ active: activeTab === 'docGraph' }" @click="activeTab = 'docGraph'">문서간 관계</button>
       </nav>
 
       <!-- 요청 1번: 폴더 좌측 + 선택된 폴더(또는 전체)의 문서 우측 -->
@@ -434,7 +504,7 @@ onMounted(async () => {
       </div>
 
       <!-- 답변 기록: AI 확인 완료(resolved)까지 끝난 질의 -->
-      <div v-else class="list-tab">
+      <div v-else-if="activeTab === 'answerHistory'" class="list-tab">
         <QuestionListPanel
           :items="historyPage.items"
           :page="historyPage.page"
@@ -444,6 +514,34 @@ onMounted(async () => {
           :error="historyError"
           empty-text="답변 기록이 없습니다."
           @page-change="onHistoryPageChange"
+        />
+      </div>
+
+      <!-- 문서간 관계: DocumentLink 전체를 프로젝트 그래프로(#document-link-graph) -->
+      <div v-else class="graph-tab">
+        <nav class="subtabs">
+          <button
+            v-for="mode in RELATION_VIEW_MODES"
+            :key="mode.id"
+            type="button"
+            :class="{ active: docGraphViewMode === mode.id }"
+            @click="docGraphViewMode = mode.id"
+          >
+            {{ mode.label }}
+          </button>
+        </nav>
+        <p v-if="docGraphError" class="error">{{ docGraphError }}</p>
+        <p v-if="docGraphLoading" class="muted">불러오는 중...</p>
+        <template v-else-if="docGraphNodes.length === 0">
+          <p class="muted graph-empty">아직 문서 간 링크가 없습니다 - <code>docs link</code>/<code>document_link</code>로 문서끼리 연결하면 여기 그래프로 보입니다.</p>
+        </template>
+        <RelationGraphCanvas
+          v-else
+          class="graph-canvas"
+          :nodes="docGraphNodes"
+          :edges="docGraphEdges"
+          :view-mode="docGraphViewMode"
+          @select="openDocGraphNode"
         />
       </div>
     </template>
@@ -583,6 +681,22 @@ onMounted(async () => {
   padding: 2px 6px;
   border-radius: 4px;
   margin-right: 6px;
+}
+.graph-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 65vh;
+  min-height: 420px;
+}
+.graph-canvas {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.graph-empty {
+  white-space: normal;
 }
 .muted {
   color: var(--color-text-muted);

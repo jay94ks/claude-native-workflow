@@ -836,6 +836,63 @@ export async function listBacklinksPaged(
   };
 }
 
+export interface DocumentLinkGraphNode {
+  trackingCode: string;
+  title: string;
+  docTypeCode: string;
+}
+export interface DocumentLinkGraphEdge {
+  fromTrackingCode: string;
+  toTrackingCode: string;
+  linkType: string | null;
+}
+export interface DocumentLinkGraph {
+  nodes: DocumentLinkGraphNode[];
+  edges: DocumentLinkGraphEdge[];
+}
+
+/** 이 프로젝트의 문서 간 링크(DocumentLink) 전체를 그래프 하나로
+ * 반환한다 - listDocumentLinksOut/listBacklinks는 문서 한 건 기준
+ * 정방향/역방향만 주는데, "문서간 관계 그래프"(웹 UI)는 프로젝트
+ * 전체를 한 번에 그려야 해서 별도로 둔다(#document-link-graph).
+ * 양쪽 문서 다 이 프로젝트 소속인 링크만 포함(스키마상 링크가 다른
+ * 프로젝트 문서를 가리키는 것 자체는 막혀있지 않지만, 그런 링크까지
+ * 섞이면 "이 프로젝트의" 그래프라는 전제가 깨짐). 노드는 실제로 링크에
+ * 참여하는 문서만(고립 문서는 관계가 없으니 그래프에 안 나온다 -
+ * 코드 관계도와 같은 원칙). */
+export async function getProjectDocumentLinkGraph(projectId: string): Promise<DocumentLinkGraph> {
+  const db = getDb();
+  const links = await db.documentLink.findMany({
+    where: { fromDocument: { projectId }, toDocument: { projectId } },
+    include: {
+      fromDocument: { include: { docType: { select: { code: true } } } },
+      toDocument: { include: { docType: { select: { code: true } } } },
+    },
+  });
+  type LinkRow = (typeof links)[number];
+  const nodeMap = new Map<string, DocumentLinkGraphNode>();
+  for (const l of links as LinkRow[]) {
+    nodeMap.set(l.fromDocument.trackingCode, {
+      trackingCode: l.fromDocument.trackingCode,
+      title: l.fromDocument.title,
+      docTypeCode: l.fromDocument.docType.code,
+    });
+    nodeMap.set(l.toDocument.trackingCode, {
+      trackingCode: l.toDocument.trackingCode,
+      title: l.toDocument.title,
+      docTypeCode: l.toDocument.docType.code,
+    });
+  }
+  return {
+    nodes: [...nodeMap.values()],
+    edges: (links as LinkRow[]).map((l) => ({
+      fromTrackingCode: l.fromDocument.trackingCode,
+      toTrackingCode: l.toTrackingCode,
+      linkType: l.linkType,
+    })),
+  };
+}
+
 /** 문서 삭제 - 리비전/링크(양쪽)/질의 참고 태깅까지는 스키마의
  * onDelete: Cascade로 정리되지만, 코멘트/질문은 Comment/Question이
  * targetType/targetKey로 다형화되면서 Document로의 직접 FK가 없어져

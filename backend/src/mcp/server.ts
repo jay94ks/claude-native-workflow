@@ -796,6 +796,13 @@ async function main() {
       }),
   );
   tool(
+    "document_graph",
+    "프로젝트 문서 관계 그래프",
+    "이 프로젝트의 문서 간 링크(DocumentLink) 전체를 그래프(nodes/edges)로 반환한다 - 웹 UI '문서' 탭의 '문서간 관계' 서브탭이 쓰는 것과 같은 데이터.",
+    { projectId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/document-graph`),
+  );
+  tool(
     "document_revisions",
     "버전 이력 조회",
     "문서의 수정 이력(리비전) 목록 - 각 항목은 그 시점까지의 본문 스냅샷. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",

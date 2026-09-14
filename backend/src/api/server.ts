@@ -107,6 +107,7 @@ import {
   listDocumentLinksOut,
   reorderDocumentLinks,
   removeDocumentLink,
+  getProjectDocumentLinkGraph,
   listDocumentRevisions,
   listDocumentRevisionsPaged,
   deleteDocument,
@@ -1998,6 +1999,18 @@ app.delete(
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
     await removeDocumentLink(req.params.trackingCode, req.params.toTrackingCode, req.query.linkType as string | undefined);
     res.json({ ok: true });
+  }),
+);
+
+// 프로젝트 전체 문서 간 링크 그래프(#document-link-graph) - 위 단건
+// 문서 기준 links-out/backlinks와 달리 한 번에 전체를 그린다("문서"
+// 탭의 "문서간 관계" 서브탭이 씀).
+app.get(
+  "/api/projects/:projectId/document-graph",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await getProjectDocumentLinkGraph(req.params.projectId));
   }),
 );
 

@@ -1198,6 +1198,11 @@ program
   );
 
 program
+  .command("doc-graph <projectId>")
+  .description("이 프로젝트의 문서 간 링크(DocumentLink) 전체를 그래프(nodes/edges)로 조회한다 - 웹 UI '문서간 관계' 서브탭이 쓰는 것과 같은 데이터")
+  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/document-graph`))));
+
+program
   .command("revisions <trackingCode>")
   .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
   .option("--count <n>", "페이지당 개수(--page와 함께)")

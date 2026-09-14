@@ -7808,3 +7808,63 @@ apple 2번 전부 교체까지 REST로 직접 확인 후 최종 본문이
 치환)까지 마저 구현했다 - 1번(MCP 도구 노출 안 됨)만 코드 문제가
 아니라 그 세션의 MCP 프로세스가 이 기능들보다 먼저 떠 있었던 게
 원인으로 보여 구현 대상에서 제외했다.
+
+## 문서 탭에 "문서간 관계" 그래프 서브탭 추가(`#document-link-graph`)
+
+**배경**: 설계자 지시 - "문서간 관계 그래프를 `문서` 탭의 하위 탭인
+`답변 기록` 우측에 추가해줘." `#document-link-ordering` 라운드에서
+`DocumentLink`(정방향/역방향/순서변경/삭제) 백엔드는 다 갖췄지만
+"웹 UI에는 아직 문서 링크를 보여주는 화면이 없다"고 명시적으로 범위
+밖 처리했던 부분의 후속.
+
+**조사**: 이미 "관계도"(§22, `CodeRelation`) 화면이 Cytoscape.js
+기반 그래프 캔버스(`RelationGraphCanvas.vue`)를 갖고 있고, 그 props
+타입(`RelationGraphNode`/`RelationGraphEdge`, `utils/relationGraph.ts`)
+과 뷰 모드 정의(`RELATION_VIEW_MODES`, `utils/relationViewModes.ts`)
+가 이미 CodeRelation 전용 필드에 묶여있지 않고 범용(id/label/
+tagged/primaryTag, id/from/to/kind)이라 **컴포넌트 수정 없이 그대로
+재사용 가능**했다. 다만 `DocumentLink`가 "이 프로젝트 전체"를 한 번에
+주는 조회가 없었다(있는 건 문서 한 건 기준 links-out/backlinks뿐) -
+새 집계 함수가 필요했다.
+
+**설계**: `RelationGraphCanvas`의 `kind:"parentChild"` 엣지는 DB
+방향(자식→부모)을 화면에서 뒤집어(부모→자식으로 보이게) 그리는
+CodeRelation 고유의 관례다 - 문서 링크는 그런 관례가 없고 "A가 B를
+링크한다"를 그대로 A→B 화살표로 보여줘야 해서, 컴포넌트를 안 건드리고
+호출부(`DocumentsView.vue`)에서 `from`/`to`를 미리 바꿔 넘겨 그 반전을
+상쇄했다(주석으로 명시). 노드의 `primaryTag`에 문서 타입 코드(SP/DC/
+...)를 넣어 네트워크형 뷰에서 기존 `colorForTag()` 색상 해싱을 그대로
+얻었다(코드 추가 없이). "펼치기"(CodeRelation의 depth 기반 점진 로드)
+개념은 안 씀 - 문서 링크는 보통 report/챕터 구조 용도라 규모가 훨씬
+작아서 프로젝트 전체를 한 번에 다 가져와도 부담 없다고 판단.
+
+**구현**: `core/documents.ts`에 `getProjectDocumentLinkGraph(projectId)`
+(양쪽 문서 다 그 프로젝트 소속인 링크만, 실제로 링크에 참여하는
+문서만 노드로 - 고립 문서는 제외, 코드 관계도와 같은 원칙). REST
+`GET /api/projects/:projectId/document-graph`(viewer), CLI `docs
+doc-graph <projectId>`, MCP `document_graph` 대칭 추가(이 참에
+`#document-link-ordering`에서 SKILL.md에 빠져있던 `links-out`/
+`unlink`/`links-reorder` 표 행도 같이 채워 넣음 - 실측 확인 결과
+그 라운드 이후 한 번도 문서화 안 돼 있었음). 프런트는
+`DocumentsView.vue`의 서브탭에 "문서간 관계"(답변 기록 바로 오른쪽)
+를 추가 - `RelationGraphCanvas`를 그대로 마운트하고, 네트워크형/
+계층형 뷰 모드 토글도 `RELATION_VIEW_MODES`를 그대로 재사용. 노드
+클릭 시 그 문서 편집 화면으로 바로 이동(코드 관계도처럼 상세 패널/
+편집 폼은 없음 - 순수 조회+탐색). 기본 뷰 모드는 계층형(보고서→챕터
+같은 방향성 있는 구조를 표현하기에 네트워크형보다 자연스러움).
+
+**검증**: `tsc --noEmit`/`vue-tsc -b` 클린. 격리된 로컬 환경에서
+문서 3개(Report A → Chapter B, Chapter C)를 만들어 REST로 그래프
+응답 모양(nodes 3개, edges 2개, fromTrackingCode 기준) 먼저 확인한
+뒤, 브라우저로 "문서간 관계" 서브탭을 열어 계층형 뷰에서 Report A가
+위, Chapter B/C가 아래로 화살표가 정확히 A→B, A→C 방향으로 그려지는
+것을 스크린샷으로 확인(방향 반전 트릭이 실제로 의도대로 동작함을
+실측 검증). Chapter C 노드를 클릭해 그 문서 편집 화면
+(`/projects/:id/documents/SP-16C78F71`)으로 정확히 이동하는 것도
+확인.
+
+**결론**: `#document-link-ordering`에서 "웹 UI 쪽은 범위 밖"으로
+남겨뒀던 마지막 조각이 채워졌다 - 문서 링크로 엮은 report/챕터 구조를
+이제 CLI/MCP뿐 아니라 웹에서 그래프로 한눈에 보고 클릭 탐색도 할 수
+있다. 기존 "관계도" 화면의 그래프 인프라를 완전히 재사용해 새 UI
+컴포넌트를 만들지 않고 처리했다.

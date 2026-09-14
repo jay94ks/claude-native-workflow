@@ -520,6 +520,10 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 다음 가능 상태 조회 | `docs next-statuses <trackingCode>` | `document_next_statuses` |
 | 문서 삭제 | `docs delete <trackingCode>` | `document_delete` |
 | 문서 링크 | `docs link <from> <to>` | `document_link` |
+| 정방향 링크 조회(이 문서가 링크한 문서들, 순서대로) | `docs links-out <trackingCode>` | `document_links_out` |
+| 문서 링크 해제 | `docs unlink <from> <to> [--type <linkType>]` | `document_unlink` |
+| 문서 링크 순서 변경 | `docs links-reorder <trackingCode> <orderedTrackingCodes...>` | `document_links_reorder` |
+| 프로젝트 문서 관계 그래프(문서간 관계 서브탭과 같은 데이터) | `docs doc-graph <projectId>` | `document_graph` |
 | 역참조 조회 | `docs backlinks <trackingCode>` | `document_backlinks` |
 | 버전 이력 조회 | `docs revisions <trackingCode>` | `document_revisions` |
 | 부분 읽기(줄 범위) | `docs read <trackingCode> [--offset <n>] [--limit <n>]` | `document_read` |
