@@ -243,6 +243,15 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   꼬일 수 있어서). 개별 챕터 편집·추가는 전체 본문 편집과 같은
   Monaco 에디터를 재사용한다. 챕터를 쓰면(교체/삽입/삭제) "보기"/
   "편집" 탭이 보는 본문도 자동으로 새로고침돼 항상 같은 내용을 본다.
+- **본문 부분 치환**(`docs patch`/`document_patch`, `#document-patch`) -
+  본문 전체를 다시 구성해 보내지 않고 `oldStr`/`newStr`만 주는
+  str_replace 방식. `oldStr`이 본문에 정확히 한 번만 있을 때만
+  적용하고, 없거나 여러 번 있으면 아무것도 안 바꾸고 실패(`replaceAll`
+  플래그로 일치하는 곳 전부 교체 가능). 내부적으로 `saveDocumentBody`
+  를 그대로 거쳐 리비전·검색 재동기화 유지. `docs patch-batch <file>`/
+  `document_patch_batch`(로컬 JSON 파일 또는 items 배열)로 서로 다른
+  문서에 각자 다른 치환을 한 번에 적용할 수도 있다(항목별 성공/실패
+  반환).
 - **버전 이력**(`DocumentRevision`) - 저장할 때마다 리비전이 쌓이고
   diff로 비교 가능.
 - **문서 간 링크**(`DocumentLink`, `#document-link-ordering`) -

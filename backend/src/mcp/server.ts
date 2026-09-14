@@ -700,6 +700,30 @@ async function main() {
     call(`/api/documents/${a.trackingCode}`, { method: "PUT", body: JSON.stringify({ body: a.body }) }),
   );
   tool(
+    "document_patch",
+    "문서 본문 부분 치환",
+    "문서 본문의 일부만 바꾼다(str_replace 방식) - oldStr이 본문에 정확히 한 번만 있을 때만 적용하고, 없거나 여러 번 있으면 아무것도 바꾸지 않고 실패한다(replaceAll:true면 일치하는 곳 전부 교체). 본문 전체를 다시 안 보내도 되므로 큰 문서에 짧은 내용만 끼워 넣을 때 document_save보다 적합. 응답에 본문은 없음.",
+    { trackingCode: z.string(), oldStr: z.string(), newStr: z.string(), replaceAll: z.boolean().optional() },
+    async (a) =>
+      call(`/api/documents/${a.trackingCode}/patch`, {
+        method: "PUT",
+        body: JSON.stringify({ oldStr: a.oldStr, newStr: a.newStr, replaceAll: a.replaceAll }),
+      }),
+  );
+  const documentPatchItemObject = z.object({
+    trackingCode: z.string(),
+    oldStr: z.string(),
+    newStr: z.string(),
+    replaceAll: z.boolean().optional(),
+  });
+  tool(
+    "document_patch_batch",
+    "문서 본문 일괄 부분 치환",
+    "여러 문서에 각자 다른 oldStr/newStr로 document_patch를 한 번에 적용한다(예: 여러 문서에 각각 다른 교차 참조 태그 삽입). 항목별 성공/실패 결과 배열을 반환(부분 성공 허용).",
+    { items: z.array(documentPatchItemObject) },
+    async (a) => call(`/api/documents/patch-batch`, { method: "POST", body: JSON.stringify({ items: a.items }) }),
+  );
+  tool(
     "document_transition",
     "문서 상태 전이",
     "정의된 전이 규칙에 따라 문서 상태를 바꾼다. 응답에 본문은 없음(전이는 본문을 안 건드림), updatedAt으로 변경 여부만 확인 - 본문이 필요하면 document_get/document_read/document_grep으로 이어서 조회.",

@@ -109,6 +109,14 @@ document next-statuses <trackingCode>`로 확인한다.
   [--ref <r>] [--offset <n>] [--limit <n>]` - 1부터 시작하는 줄
   번호로 범위를 지정, 둘 다 생략하면 처음 2000줄. `totalLines`로
   전체 줄 수를 알 수 있다.
+- **부분 치환(문서 전용)**: `docs patch <trackingCode> <oldStr>
+  <newStr> [--replace-all]` - 본문 전체를 다시 구성해 `docs save`로
+  덮어쓰지 않고, `oldStr`이 본문에 정확히 한 번만 있을 때만 그
+  자리만 바꾼다(없거나 여러 번 있으면 아무것도 안 바꾸고 실패,
+  `--replace-all`이면 전부 교체) - 긴 문서에 짧은 내용만 끼워
+  넣을 때 쓴다. 여러 문서에 각자 다른 치환을 한 번에 적용하려면
+  `docs patch-batch <file>`(로컬 JSON 배열)/`document_patch_batch`
+  (items 배열)로 - 항목별 성공/실패 반환.
 - **본문 검색**: 문서는 `docs grep <trackingCode> <pattern>
   [--case-insensitive] [--context <n>]`, 소스 파일은 `docs git grep
   <projectId> <path> <pattern> [--ref <r>] [--case-insensitive]
@@ -504,6 +512,8 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 문서 목록 | `docs list <projectId>` | `document_list` |
 | 검색 | `docs search <projectId> <query> [--page <n>] [--count <n>] [--lines <n>] [--codes-only]` | `document_search` |
 | 본문 갱신 | `docs save <trackingCode> <file>` | `document_save` |
+| 본문 부분 치환(str_replace) | `docs patch <trackingCode> <oldStr> <newStr> [--replace-all]` | `document_patch` |
+| 본문 일괄 부분 치환(로컬 JSON 파일) | `docs patch-batch <file>` | `document_patch_batch`(items 배열을 직접 전달) |
 | 상태 전이 | `docs transition <trackingCode> <toStatusCode>` | `document_transition` |
 | 상태 일괄 전이 | `docs transition-bulk <toStatusCode> <trackingCode...>` | `document_transition_bulk` |
 | 우선순위 설정(review/pending 전용) | `docs priority-set <trackingCode> <n>` | `document_priority_set` |

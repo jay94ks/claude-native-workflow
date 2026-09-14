@@ -98,6 +98,7 @@ import {
   searchProjectDocuments,
   searchProjectDocumentsPaged,
   saveDocumentBody,
+  patchDocumentBody,
   transitionDocumentStatus,
   setDocumentPriority,
   addDocumentLink,
@@ -1786,6 +1787,59 @@ app.put(
     const { body } = req.body as { body?: string };
     if (body === undefined) { res.status(400).json({ error: "body가 필요합니다" }); return; }
     res.json(withNotices(await saveDocumentBody(req.params.trackingCode, body, req.userId!), perm.notice));
+  }),
+);
+
+// str_replace 스타일 부분 치환(#document-patch, SP-85D7DA9F 2번 제안) -
+// oldStr이 본문에 정확히 한 번만 있을 때만 적용(또는 replaceAll)하고,
+// 본문 전체를 응답에 안 돌려준다(save와 동일 원칙 - 호출자가 이미
+// 보낸 내용이라 되돌려줄 필요 없음).
+app.put(
+  "/api/documents/:trackingCode/patch",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const doc = await getDocumentAccessInfo(req.params.trackingCode);
+    if (!doc) { res.status(404).json({ error: "not found" }); return; }
+    const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+    if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
+    const { oldStr, newStr, replaceAll } = req.body as { oldStr?: string; newStr?: string; replaceAll?: boolean };
+    if (!oldStr || newStr === undefined) { res.status(400).json({ error: "oldStr/newStr이 필요합니다" }); return; }
+    res.json(withNotices(await patchDocumentBody(req.params.trackingCode, oldStr, newStr, req.userId!, replaceAll), perm.notice));
+  }),
+);
+
+// bulk-folder/bulk-transition과 같은 원칙 - 서로 다른 문서에 각자 다른
+// oldStr/newStr을 걸 수 있어야(#document-patch 사용 사례: 여러 문서에
+// 각각 다른 교차 참조 태그 삽입) 값 하나를 여러 trackingCode에 적용하는
+// 모양이 아니라 항목 배열을 받는다(relations/bulk, plans/import와
+// 같은 모양).
+app.post(
+  "/api/documents/patch-batch",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { items } = req.body as {
+      items?: { trackingCode?: string; oldStr?: string; newStr?: string; replaceAll?: boolean }[];
+    };
+    if (!items?.length) { res.status(400).json({ error: "items가 필요합니다" }); return; }
+    const results = await Promise.all(
+      items.map(async (item) => {
+        const trackingCode = item.trackingCode;
+        try {
+          if (!trackingCode || !item.oldStr || item.newStr === undefined) {
+            return { trackingCode, ok: false, error: "trackingCode/oldStr/newStr이 필요합니다" };
+          }
+          const doc = await getDocumentAccessInfo(trackingCode);
+          if (!doc) return { trackingCode, ok: false, error: "문서를 찾을 수 없습니다" };
+          const perm = await resolveEffectivePermission(doc.projectId, req.userId!, { docTypeId: doc.docTypeId, documentId: doc.id });
+          if (!perm.write) return { trackingCode, ok: false, error: "이 문서에 대한 쓰기 권한이 없습니다" };
+          await patchDocumentBody(trackingCode, item.oldStr, item.newStr, req.userId!, item.replaceAll);
+          return { trackingCode, ok: true };
+        } catch (err) {
+          return { trackingCode, ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }),
+    );
+    res.json(results);
   }),
 );
 

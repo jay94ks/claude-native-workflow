@@ -524,6 +524,40 @@ export async function saveDocumentBody(
   });
 }
 
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  return haystack.split(needle).length - 1;
+}
+
+/** Artifact 데이터베이스의 str_replace와 같은 의도 - 본문 몇 단어만
+ * 바꾸려고 전체를 다시 구성해 saveDocumentBody()로 통째로 보내야
+ * 했던 문제(minicore 세션 제안, SP-85D7DA9F 2번)를 없앤다. oldStr이
+ * 본문에 정확히 한 번만 나타날 때만 적용하고(찾을 수 없거나 여러
+ * 번 나타나면 아무것도 안 바꾸고 실패), replaceAll을 주면 전부
+ * 바꾼다. 실제 쓰기는 그대로 saveDocumentBody()를 거쳐(리비전 스냅샷
+ * +검색 재동기화 유지) 이 함수는 "어떤 내용으로 바꿀지"만 계산한다. */
+export async function patchDocumentBody(
+  trackingCode: string,
+  oldStr: string,
+  newStr: string,
+  editedBy: string,
+  replaceAll = false,
+): Promise<DocumentMutationSummary> {
+  if (!oldStr) throw new Error("oldStr이 필요합니다");
+  const db = getDb();
+  const existing = await db.document.findUnique({ where: { trackingCode } });
+  if (!existing) throw new Error(`문서를 찾을 수 없습니다: ${trackingCode}`);
+
+  const occurrences = countOccurrences(existing.body, oldStr);
+  if (occurrences === 0) throw new Error("oldStr과 일치하는 내용이 본문에 없습니다");
+  if (!replaceAll && occurrences > 1) {
+    throw new Error(`oldStr이 본문에 ${occurrences}번 나타나 어느 자리를 바꿀지 알 수 없습니다 - replaceAll을 쓰거나 더 구체적인 문자열을 주세요`);
+  }
+
+  const newBody = replaceAll ? existing.body.split(oldStr).join(newStr) : existing.body.replace(oldStr, newStr);
+  return saveDocumentBody(trackingCode, newBody, editedBy);
+}
+
 // ---------------------------------------------------------------- 챕터(헤딩 섹션) CRUD
 // 긴 문서(라운드가 쌓이는 DN류, 긴 SP/PL 스펙 등)를 매번 전체 본문으로
 // 안 읽고/안 덮어써도 되도록 - docChapters.ts의 순수 함수 위에서 읽기는

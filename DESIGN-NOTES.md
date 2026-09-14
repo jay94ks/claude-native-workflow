@@ -7758,3 +7758,53 @@ CLI `search --lines <n> --codes-only`, MCP `document_search`에
 SKILL.md(양쪽 사본)에 "문서 검색은 `--codes-only`를 기본으로 쓴다"는
 6번째 규칙/사용 지침으로 명시해, 앞으로의 세션이 굳이 필요하지 않은
 본문까지 습관적으로 끌고 오지 않게 했다.
+
+## 문서 본문 부분 치환(`document_patch`) + 일괄 버전 추가(`#document-patch`)
+
+**배경**: `SP-85D7DA9F`(minicore 세션이 남긴 "CNW 도구 개선 제안
+5건") 2번/3번(문서 절반) 제안 - 설계자 지시 "제안받은 것 중 없는거
+다 구현해". 본문 몇 단어만 바꾸려고 `document_save`로 수 KB 본문
+전체를 재구성해 다시 보내야 했던 문제(Artifact 데이터베이스의
+`str_replace`와 비교하며 제안)와, 여러 문서에 흩어진 작은 수정을
+한 번에 적용할 수단이 없던 문제.
+
+**설계**: Artifact DB의 `str_replace` 정확히 그대로 - `oldStr`이
+본문에 **정확히 한 번**만 나타날 때만 적용하고, 0번이면 "없음", 2번
+이상이면 "여러 번 일치"로 실패시켜 아무것도 안 바꾼다(`replaceAll`
+플래그로 전부 교체하는 탈출구만 예외). 실제 쓰기는 새 쓰기 경로를
+만들지 않고 기존 `saveDocumentBody()`를 그대로 거쳐(리비전 스냅샷+
+검색 재동기화 유지) - `patchDocumentBody()`는 "새 본문이 뭐가 될지"만
+계산해 그 함수에 넘기는 얇은 래퍼. 일괄 버전은 여러 문서에 **각자
+다른** oldStr/newStr을 걸어야 하는 실사용 사례(문서 14개에 각각 다른
+교차 참조 태그 삽입)라, 값 하나를 여러 trackingCode에 적용하는
+`bulk-transition` 모양이 아니라 항목 배열을 받는 `relations/bulk`/
+`plans/import` 모양을 따랐다.
+
+**구현**: `core/documents.ts`에 `patchDocumentBody(trackingCode,
+oldStr, newStr, editedBy, replaceAll?)`(문자열 발생 횟수는
+`split(needle).length-1`로 셈, 정규식 없이 리터럴 일치). REST
+`PUT /api/documents/:trackingCode/patch`(단건, 기존 문서 쓰기
+라우트와 같은 `resolveEffectivePermission` 권한 모델)/`POST
+/api/documents/patch-batch`(일괄, `bulk-folder`와 같은 원칙 - 항목별로
+`getDocumentAccessInfo`+`resolveEffectivePermission`을 인라인으로
+확인 후 기존 `patchDocumentBody()` 반복 호출, 새 core 함수 없음).
+CLI `docs patch <trackingCode> <oldStr> <newStr> [--replace-all]`/
+`docs patch-batch <file>`(로컬 JSON 배열). MCP `document_patch`/
+`document_patch_batch`(items 배열을 직접 받음 - CLI처럼 파일 경로가
+아님, `plan_bulk_import`와 같은 이유). 두 라우트 모두 응답에 본문을
+안 돌려준다(`document_save`와 같은 원칙 - 호출자가 이미 보낸 내용).
+
+**검증**: `tsc --noEmit` 클린. 격리된 로컬 환경에서 "apple banana
+apple cherry" 본문으로 - 유일 일치(banana→BLUEBERRY) 성공, 모호한
+일치(apple 2번) 실패, 존재하지 않는 문자열 실패, `replaceAll`로
+apple 2번 전부 교체까지 REST로 직접 확인 후 최종 본문이
+"X BLUEBERRY X cherry"인 것 확인. `patch-batch`는 서로 다른 두 문서에
+각자 다른 치환(상호 교차 참조 삽입) + 존재하지 않는 trackingCode
+1건을 섞어 부분 성공 응답 확인. CLI `docs patch`로 한글 치환 텍스트
+왕복까지 별도 자격증명으로 확인.
+
+**결론**: `SP-85D7DA9F`의 5개 제안 중 4번(완료 상태)/5번(search 축소)/
+3번(계획 쪽 bulk)에 이어 2번(부분 치환)과 3번의 문서 쪽 절반(일괄
+치환)까지 마저 구현했다 - 1번(MCP 도구 노출 안 됨)만 코드 문제가
+아니라 그 세션의 MCP 프로세스가 이 기능들보다 먼저 떠 있었던 게
+원인으로 보여 구현 대상에서 제외했다.

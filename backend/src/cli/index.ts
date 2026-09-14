@@ -1074,6 +1074,31 @@ program
   );
 
 program
+  .command("patch <trackingCode> <oldStr> <newStr>")
+  .description("문서 본문의 일부만 바꾼다(str_replace 방식) - oldStr이 본문에 정확히 한 번만 있을 때만 적용, 없거나 여러 번 있으면 아무것도 안 바꾸고 실패. 본문 전체를 다시 안 보내도 됨")
+  .option("--replace-all", "일치하는 곳 전부를 바꾼다(기본은 정확히 1번만 허용)")
+  .action((trackingCode, oldStr, newStr, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/documents/${trackingCode}/patch`, {
+          method: "PUT",
+          body: JSON.stringify({ oldStr, newStr, replaceAll: !!opts.replaceAll }),
+        }),
+      ),
+    ),
+  );
+
+program
+  .command("patch-batch <file>")
+  .description("로컬 JSON 파일(항목 배열: trackingCode/oldStr/newStr/replaceAll?)로 여러 문서를 한 번에 patch한다 - 항목별 성공/실패 반환(부분 성공 허용)")
+  .action((file) =>
+    run(async () => {
+      const items = JSON.parse(fs.readFileSync(path.resolve(file), "utf-8"));
+      printJson(await apiCall(`/api/documents/patch-batch`, { method: "POST", body: JSON.stringify({ items }) }));
+    }),
+  );
+
+program
   .command("transition <trackingCode> <toStatusCode>")
   .description("정의된 전이 규칙에 따라 문서 상태를 바꾼다 - 응답에 본문은 없음(전이는 본문을 안 건드림), updatedAt으로 변경 여부만 확인, 본문이 필요하면 get/read/grep으로 이어서 조회한다")
   .action((trackingCode, toStatusCode) =>
