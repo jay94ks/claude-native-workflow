@@ -8004,3 +8004,48 @@ Chapter B 정보로 갱신되고(이 문서를 링크한 문서에 `SP-983750AF`
 없이 한 번에 준다 - CNW 설치 전체의 `DocumentLink` 자동 보완
 (`#document-link-auto-scan`) 직후라 이 정보의 활용도가 특히 높아진
 시점이다.
+
+## 문서 읽기 화면에 "연관 문서" 목록 추가(`#document-editor-related-docs`)
+
+**배경**: 설계자 지시 - "문서를 읽는 인터페이스에도 연관 문서 목록을
+`연관된 소스 코드` 섹션 바로 위에 추가해줘." `#document-detail-related-
+codes` 라운드에서 문서 단건 조회 REST 응답에 이미 `linksOut`/
+`backlinks`가 실려오게 됐지만, 그래프 탭이 아닌 평소 문서 편집/읽기
+화면(`DocumentEditorView.vue`)에는 아직 그 정보가 노출되지 않고
+있었다.
+
+**설계**: 새 API 호출 없이 이미 그 화면이 문서를 불러올 때 쓰는
+`GET /documents/:trackingCode` 응답을 그대로 활용한다 - 프런트
+로컬 `DocumentDetail` 인터페이스에 `linksOut`/`backlinks` 필드만
+추가하면 된다. 표시는 그래프 탭의 상세 패널과 마찬가지로 조회
+전용(추가/해제 UI 없음 - 링크 자체를 만들고 끊는 건 `docs link`/
+`docs unlink`나 그래프 탭에서 처리) - 이미 있는 "연관된 소스 코드"
+섹션의 `.source-list`/`.source-path` 스타일을 그대로 재사용해 새
+컴포넌트 없이 처리했다. 목록 항목을 클릭하면 그 문서 편집 화면으로
+바로 이동한다("연관된 소스 코드"가 소스 브라우저로 이동시키는 것과
+같은 패턴).
+
+**구현**: `DocumentEditorView.vue`에 `DocumentLinkOutItem`/
+`DocumentBacklinkItem` 인터페이스 + `DocumentDetail`에 `linksOut`/
+`backlinks` 필드 추가, `openRelatedDocument(trackingCode)` 함수
+추가. 템플릿에 "연관된 소스 코드" 섹션 바로 위에 새 `<section
+class="source-links">`(제목 "연관 문서")를 넣어 "이 문서가 링크한
+문서"/"이 문서를 링크한 문서" 두 그룹으로 나눠 보여준다(둘 다
+비어있으면 각각 "없음"). `.related-doc-group-label` 스타일 소규모
+추가.
+
+**검증**: `vue-tsc -b` 클린. 격리된 로컬 환경(스크래치 SQLite+
+디스포저블 Meilisearch+로컬 backend+`frontend-dev` 프리뷰)에서 문서
+2개(Report A → Chapter B)를 링크해두고 브라우저로 Report A 읽기
+화면을 열어 "연관 문서" 섹션이 "연관된 소스 코드" 바로 위에
+렌더링되는 것(`document.querySelectorAll('h2')` 순서로 실측:
+연관 문서 → 연관된 소스 코드 → 연관 브랜치)과 "이 문서가 링크한
+문서"에 `SP-45399E3B · Chapter B`가 뜨는 것을 확인. 그 항목을 눌러
+Chapter B 편집 화면으로 이동한 뒤, 그 문서의 "연관 문서"에는
+반대로 "이 문서를 링크한 문서"에 `SP-FCF0014D · Report A`가 뜨는
+것(역참조 방향도 정확함)을 확인.
+
+**결론**: 그래프 탭을 열지 않고도 평소 문서를 읽는 화면에서 바로
+그 문서가 다른 어떤 문서와 연결돼 있는지 보고 클릭 이동까지 할 수
+있게 됐다 - 새 API 호출이나 백엔드 변경 없이, 이미 있던 응답 필드를
+화면에 노출하기만 한 가벼운 변경이다.

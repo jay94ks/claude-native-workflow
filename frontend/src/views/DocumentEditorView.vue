@@ -25,6 +25,16 @@ const activeTab = ref<"view" | "chapters" | "qa">("view");
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
 const canSendInstruction = computed(() => roleSatisfies(myRole.value, "editor"));
 
+interface DocumentLinkOutItem {
+  trackingCode: string;
+  title: string;
+  linkType: string | null;
+  order: number;
+}
+interface DocumentBacklinkItem {
+  trackingCode: string;
+  title: string;
+}
 interface DocumentDetail {
   trackingCode: string;
   title: string;
@@ -32,6 +42,8 @@ interface DocumentDetail {
   statusCode: string;
   priority: number | null;
   createdBy: string;
+  linksOut: DocumentLinkOutItem[];
+  backlinks: DocumentBacklinkItem[];
   perm: { read: boolean; write: boolean; delete: boolean };
   notices?: string[];
 }
@@ -173,6 +185,10 @@ async function removeSourceLink(id: string) {
 
 function openSourceFile(filePath: string) {
   router.push(`/projects/${props.id}/source?path=${encodeURIComponent(filePath)}`);
+}
+
+function openRelatedDocument(trackingCode: string) {
+  router.push(`/projects/${props.id}/documents/${trackingCode}`);
 }
 
 async function loadBranchLinks() {
@@ -691,6 +707,28 @@ onMounted(load);
         </template>
   
         <section class="source-links">
+          <h2>연관 문서</h2>
+          <p class="related-doc-group-label">이 문서가 링크한 문서</p>
+          <ul v-if="doc.linksOut.length > 0" class="source-list">
+            <li v-for="link in doc.linksOut" :key="link.trackingCode">
+              <button type="button" class="source-path" @click="openRelatedDocument(link.trackingCode)">
+                {{ link.trackingCode }} · {{ link.title }}
+              </button>
+            </li>
+          </ul>
+          <p v-else class="muted">없음</p>
+          <p class="related-doc-group-label">이 문서를 링크한 문서</p>
+          <ul v-if="doc.backlinks.length > 0" class="source-list">
+            <li v-for="link in doc.backlinks" :key="link.trackingCode">
+              <button type="button" class="source-path" @click="openRelatedDocument(link.trackingCode)">
+                {{ link.trackingCode }} · {{ link.title }}
+              </button>
+            </li>
+          </ul>
+          <p v-else class="muted">없음</p>
+        </section>
+
+        <section class="source-links">
           <h2>연관된 소스 코드</h2>
           <p v-if="sourceLinksError" class="error">{{ sourceLinksError }}</p>
           <ul v-if="sourceLinks.length > 0" class="source-list">
@@ -994,6 +1032,11 @@ button:disabled {
 .source-links h2 {
   font-size: 15px;
   margin: 0 0 10px;
+}
+.related-doc-group-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0 0 6px;
 }
 .branch-add-row {
   display: flex;
