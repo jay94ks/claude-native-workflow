@@ -44,6 +44,7 @@ watch(() => props.id, load);
       <router-link :to="`/projects/${id}`">홈</router-link>
       <router-link :to="`/projects/${id}/messages`">메시지</router-link>
       <router-link :to="`/projects/${id}/documents`">문서</router-link>
+      <router-link :to="`/projects/${id}/plans`">계획</router-link>
       <router-link :to="`/projects/${id}/source`">소스 코드</router-link>
       <router-link :to="`/projects/${id}/repo`">저장소 관리</router-link>
       <router-link :to="`/projects/${id}/relations`">관계도</router-link>

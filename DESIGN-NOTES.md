@@ -7494,3 +7494,72 @@ Monaco 입력). 한 번에 편집/추가 폼 하나만 열리게 제한(아코�
 **결론**: 프로젝트 홈의 "최근 활동"도 다른 섹션들과 마찬가지로
 더보기 페이지를 갖게 됐다 - 20건보다 오래된 활동도 필요하면 바로
 볼 수 있다.
+
+## 별도 계획 체크리스트("계획") 기능 추가(`#plan-checklist`)
+
+**배경**: 설계자 지시 - "별도 계획을 해야 하는 것들을 모아놓을 수
+있는 기능이 필요해. 클로드가 작업하면서, 추후에 하기로 한 것들을
+모아놓는 체크리스트 같은거지." 필드는 문서 추적 코드, 제목, 뭘
+해야 하는지(Markdown), 관련 문서(추적 코드), 계획의 상태(계획됨/
+승인대기/검토중/예정/거부) 5가지. `문서`처럼 CRUD용 웹 인터페이스와
+CLI/MCP 입력이 둘 다 필요하다는 요구. Plan Mode로 설계를 정리해
+승인받은 뒤 구현했다.
+
+**조사**: 요청받은 5개 상태 어휘가 기존 `DocStatus` 표준 6개(draft/
+review/pending/approved/deprecated/archived, `docTypes.ts`의
+`STANDARD_DOC_STATUSES`)와 다르고, `addDocStatus()`가 이 6개 외의
+코드를 거부해 커스터마이즈가 아예 안 된다는 걸 확인했다. 설계자
+확인 결과 이 기능은 애초에 Document/DocType/DocStatus 체계와
+완전히 별개로 관리하기로 했다 - `Question`이 DocStatus 없이 자기만의
+고정 상태 문자열(open/pending/resolved/withdrawn)을 갖는 선례를
+그대로 따른다. "관련 문서" 조인 테이블은 `QuestionReference`/
+`KanbanCardDocumentRef`와 같은 모양(순서 없는 단순 참조)으로
+충분하다고 판단.
+
+**구현**: 신규 `Plan`/`PlanDocumentRef` 모델(3드라이버 스키마 동일,
+순수 추가라 마이그레이션 스크립트 불필요) - 트래킹 코드 접두어
+`PN`(`docTypes.ts`의 `RESERVED_DOC_TYPE_CODES`에 추가), 상태는
+`planned`/`pending_approval`/`in_review`/`scheduled`/`rejected` 5개
+고정 화이트리스트(`core/plans.ts`의 `PLAN_STATUSES`) - 전이 그래프는
+강제하지 않고 자유 재설정(칸반 카드 컬럼 이동과 같은 원칙). REST
+(`/api/projects/:projectId/plans`, `/api/plans/:trackingCode[/status|
+/refs[/:code]]`)/CLI(`docs plan new|list|statuses|get|set|status|
+delete|link|unlink`)/MCP(`plan_*`) 전부 대칭 추가. 웹 UI는
+`PlansView.vue`(목록+필터+생성)/`PlanEditorView.vue`(제목/상태/본문
+편집+관련 문서)를 신규로 추가하고 "계획" 네비 탭을 붙였다. 추적
+코드 클릭 라우팅(`TrackingCodeText.vue`)은 기존 KB/QU 하드코딩
+3-way 분기 방식을 그대로 유지하며 `PN-` 분기만 추가(설계자 지시 -
+범용 라우팅 테이블로 바꾸지 않음), 새 `planDialog` 스토어 +
+`PlanPreviewDialog.vue`(`DocumentPreviewDialog.vue` 축소 복제)로
+미리보기 모달을 지원한다. "관련 문서" 선택은 텍스트 직접 입력이
+아니라 기존 범용 `EntityPickerDialog`(`entityPicker.pick({kind:
+"document", multi:true, ...})`)를 그대로 재사용한다(설계자 지시).
+
+**검증**: `tsc --noEmit`/`vue-tsc -b` 클린. 격리된 로컬 환경(스크래치
+SQLite + 디스포저블 Meilisearch + 로컬 backend)에서 REST 전 구간(생성/
+조회/목록/상태 화이트리스트 검증/잘못된 관련 문서 거부/관련 문서
+추가·삭제/삭제 후 404)과 CLI 전 명령(new/list/get/statuses/status/
+set/link/unlink/delete, 파일 기반 한글 Markdown 본문 포함)을 실제
+호출로 확인했고, viewer/editor 권한 게이트(쓰기 라우트 403, 읽기
+라우트 200)도 실제 두 계정으로 검증했다. 브라우저로 실제 UI 조작 중
+버그를 하나 발견해 그 자리에서 고쳤다 - 상태 `<select>`에
+`v-model="plan.status"`와 `@change="changeStatus(plan.status)"`를
+같이 걸었더니, 같은 change 이벤트에서 v-model의 내부 리스너가 먼저
+`plan.status`를 새 값으로 반영해버려 그 뒤에 실행되는
+`changeStatus`가 "새 값 === plan.value.status"로 항상 참이 돼 PUT
+요청이 아예 안 나가는 문제였다(네트워크 로그로 실측 확인). `:value`
+바인딩 + `@change`에서 `$event.target.value`를 직접 읽는 방식으로
+고쳐 해결 - v-model과 그 값을 참조하는 별도 @change 핸들러를 같은
+엘리먼트에 같이 걸면 순서 의존적인 버그가 생길 수 있다는 게 이번에
+확인한 설계 원칙이라 코드 관계도에 기록했다(`#vue-vmodel-change-order`).
+이후 브라우저로 생성→상태 변경→본문/제목 편집→관련 문서 선택(
+EntityPickerDialog)/해제→삭제까지 전체 CRUD를 실제 조작해
+재확인했고, `TrackingCodeText`의 `PN-` 코드 클릭이 문서 다이얼로그로
+새지 않고 `PlanPreviewDialog`를 정확히 여는 것도 메시지 본문에 코드를
+넣어 실측했다.
+
+**결론**: 문서 체계와 완전히 독립된 "계획" 엔티티가 CLI/MCP/웹 UI
+전부에서 대칭적으로 열렸다. Claude가 작업 중 발견한 "나중에 따로
+계획해야 할 것"을 즉시 트래킹 코드로 남기고, 설계자가 웹에서 상태를
+검토/승인 처리할 수 있다. 프로젝트 대시보드에 계획 관련 신호를
+얹는 것은 이번 요청 범위 밖 - 필요해지면 후속 라운드로.

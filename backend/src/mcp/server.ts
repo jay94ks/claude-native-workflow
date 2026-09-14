@@ -1067,6 +1067,88 @@ async function main() {
       }),
   );
 
+  // ---------------------------------------------------------------- 보류 계획
+  // Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립
+  // 엔티티 - 작업 중 "이건 나중에 따로 계획을 잡아야 한다"고 판단한
+  // 항목을 모아두는 체크리스트. 상태는 5개 고정(plan_statuses로 조회
+  // 가능), 전이 제약 없음.
+
+  tool(
+    "plan_new",
+    "계획 생성",
+    "별도 계획이 필요한 항목을 새로 만든다(문서와 별개 체계) - status를 생략하면 planned로 시작.",
+    {
+      projectId: z.string(),
+      title: z.string(),
+      body: z.string(),
+      status: z.enum(["planned", "pending_approval", "in_review", "scheduled", "rejected"]).optional(),
+      refs: z.array(z.string()).optional(),
+    },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/plans`, {
+        method: "POST",
+        body: JSON.stringify({ title: a.title, body: a.body, status: a.status, refs: a.refs }),
+      }),
+  );
+  tool(
+    "plan_list",
+    "계획 목록",
+    "이 프로젝트의 계획 목록(페이지네이션) - status/q로 제한 가능.",
+    { projectId: z.string(), status: z.string().optional(), q: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({
+        ...(a.status ? { status: String(a.status) } : {}),
+        ...(a.q ? { q: String(a.q) } : {}),
+        page: String(a.page ?? 1),
+        pageSize: String(a.pageSize ?? 20),
+      });
+      return call(`/api/projects/${a.projectId}/plans?${qs}`);
+    },
+  );
+  tool("plan_statuses", "계획 상태 목록", "계획 상태로 쓸 수 있는 코드/라벨 목록(고정값).", {}, async () => call(`/api/plans/statuses`));
+  tool(
+    "plan_get",
+    "계획 상세",
+    "계획 상세(관련 문서 포함).",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/plans/${a.trackingCode}`),
+  );
+  tool(
+    "plan_set",
+    "계획 수정",
+    "제목/본문을 수정한다(둘 중 준 것만 바뀜).",
+    { trackingCode: z.string(), title: z.string().optional(), body: z.string().optional() },
+    async (a) => call(`/api/plans/${a.trackingCode}`, { method: "PUT", body: JSON.stringify({ title: a.title, body: a.body }) }),
+  );
+  tool(
+    "plan_status",
+    "계획 상태 변경",
+    "계획 상태를 바꾼다 - planned|pending_approval|in_review|scheduled|rejected 중 하나(전이 제약 없음).",
+    { trackingCode: z.string(), status: z.enum(["planned", "pending_approval", "in_review", "scheduled", "rejected"]) },
+    async (a) => call(`/api/plans/${a.trackingCode}/status`, { method: "PUT", body: JSON.stringify({ status: a.status }) }),
+  );
+  tool(
+    "plan_delete",
+    "계획 삭제",
+    "계획을 삭제한다.",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/plans/${a.trackingCode}`, { method: "DELETE" }),
+  );
+  tool(
+    "plan_link",
+    "계획에 관련 문서 추가",
+    "계획에 관련 문서를 추가한다.",
+    { trackingCode: z.string(), docTrackingCode: z.string() },
+    async (a) => call(`/api/plans/${a.trackingCode}/refs`, { method: "POST", body: JSON.stringify({ trackingCode: a.docTrackingCode }) }),
+  );
+  tool(
+    "plan_unlink",
+    "계획에서 관련 문서 제거",
+    "계획에서 관련 문서를 제거한다.",
+    { trackingCode: z.string(), docTrackingCode: z.string() },
+    async (a) => call(`/api/plans/${a.trackingCode}/refs/${a.docTrackingCode}`, { method: "DELETE" }),
+  );
+
   // ---------------------------------------------------------------- 질의/답변
   // targetType/targetKey로 다형화됨(document/source/kanbanCard) - document/
   // kanbanCard 대상은 그 자신의 트래킹 코드만으로 서버가 대상 종류를

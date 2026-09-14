@@ -92,11 +92,12 @@ async function seedStandardStatuses(docTypeId: string): Promise<void> {
 
 // 문서가 아닌 다른 엔티티가 이미 이 접두어로 추적코드를 발급한다 -
 // questions.ts의 QUESTION_TYPE_CODE("QU"), kanban.ts의
-// KANBAN_CARD_TYPE_CODE("KB")와 값이 같아야 한다(순환 참조를 피하려고
-// 여기 문자열로 다시 적음 - 저 두 상수를 바꾸면 여기도 같이 고쳐야
-// 한다). DocType이 이 코드를 쓰면 예: "QU-XXXXXXXX"가 문서인지
-// 질의인지 구분이 안 돼 문서 뷰어/TrackingCodeText가 엉뚱한 걸 연다.
-const RESERVED_DOC_TYPE_CODES = ["QU", "KB"];
+// KANBAN_CARD_TYPE_CODE("KB"), plans.ts의 PLAN_TYPE_CODE("PN")와 값이
+// 같아야 한다(순환 참조를 피하려고 여기 문자열로 다시 적음 - 저 상수를
+// 바꾸면 여기도 같이 고쳐야 한다). DocType이 이 코드를 쓰면 예:
+// "QU-XXXXXXXX"가 문서인지 질의인지 구분이 안 돼 문서 뷰어/
+// TrackingCodeText가 엉뚱한 걸 연다.
+const RESERVED_DOC_TYPE_CODES = ["QU", "KB", "PN"];
 
 function assertNotReservedCode(code: string): void {
   if (RESERVED_DOC_TYPE_CODES.includes(code.toUpperCase())) {

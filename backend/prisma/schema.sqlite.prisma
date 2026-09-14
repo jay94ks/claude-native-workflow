@@ -113,6 +113,7 @@ model User {
   apiKeysRevoked    ApiKey[]           @relation("ApiKeyRevoker")
   kanbanColumnPrefs KanbanColumnPref[]
   kanbanCardsCreated KanbanCard[]        @relation("KanbanCardCreatedBy")
+  plansCreated      Plan[]             @relation("PlanCreatedBy")
 }
 
 model RefreshToken {
@@ -235,6 +236,7 @@ model Project {
   apiKeys         ApiKey[]
   kanbanColumns   KanbanColumn[]
   kanbanCards     KanbanCard[]
+  plans           Plan[]
   gitSyncQueueEntries GitSyncQueueEntry[]
   codeRelations   CodeRelation[]
   pullRequestMetas PullRequestMeta[]
@@ -392,6 +394,7 @@ model Document {
   sourceLinks        DocumentSourceLink[]
   branchLinks        DocumentBranchLink[]
   kanbanCardRefs     KanbanCardDocumentRef[]
+  planRefs           PlanDocumentRef[]
 
   @@index([projectId])
   @@index([docTypeId])
@@ -962,6 +965,46 @@ model KanbanCardDocumentRef {
 
 // 카드별 코멘트는 더 이상 별도 모델이 아니다 - 공용 Comment
 // (targetType:"kanbanCard", targetKey=카드의 트래킹 코드)로 흡수됨.
+
+// ---------------------------------------------------------------- 보류 계획
+// Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립 엔티티
+// (설계자 지시) - Claude가 작업 중 "이건 나중에 따로 계획을 잡아야
+// 한다"고 판단한 항목을 모아두는 체크리스트. 상태는 DocStatus처럼
+// 프로젝트마다 커스터마이즈되는 게 아니라 이 5개로 고정(core/plans.ts
+// 의 PLAN_STATUSES) - Question이 자기만의 고정 상태 문자열을 갖는
+// 것과 같은 원칙.
+model Plan {
+  id           String   @id @default(cuid())
+  projectId    String
+  trackingCode String   @unique // "PN-XXXXXXXX"
+  title        String
+  body         String
+  status       String   @default("planned") // planned | pending_approval | in_review | scheduled | rejected
+  createdBy    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator User    @relation("PlanCreatedBy", fields: [createdBy], references: [id])
+  refs    PlanDocumentRef[]
+
+  @@index([projectId])
+  @@index([status])
+}
+
+// 계획이 참고하는 문서들 - QuestionReference/KanbanCardDocumentRef와
+// 같은 조인 테이블 패턴(순서 요구사항이 없어 order 필드 없음).
+model PlanDocumentRef {
+  id           String @id @default(cuid())
+  planId       String
+  trackingCode String
+
+  plan     Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+  document Document @relation(fields: [trackingCode], references: [trackingCode], onDelete: Cascade)
+
+  @@unique([planId, trackingCode])
+  @@index([trackingCode])
+}
 
 // ---------------------------------------------------------------- PR 워크플로우
 // Gitea PR(#index) 자체는 state(open/closed)+merged(bool)만 주고

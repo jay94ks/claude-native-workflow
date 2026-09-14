@@ -1521,6 +1521,113 @@ program
     }),
   );
 
+// ---------------------------------------------------------------- 보류 계획
+// Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립
+// 엔티티(core/plans.ts 참고) - Claude가 작업 중 "이건 나중에 따로
+// 계획을 잡아야 한다"고 판단한 항목을 모아두는 체크리스트.
+
+const planCmd = program.command("plan").description("별도 계획이 필요한 항목 체크리스트 - 문서와 별개 체계, 상태는 5개 고정");
+
+planCmd
+  .command("new <projectId> <title>")
+  .description("계획을 새로 만든다")
+  .requiredOption("--body <file>", "본문(Markdown) 파일 경로")
+  .option("--status <code>", "초기 상태(생략 시 planned) - planned|pending_approval|in_review|scheduled|rejected")
+  .option("--refs <codes>", "쉼표로 구분된 관련 문서 trackingCode 목록")
+  .action((projectId, title, opts) =>
+    run(async () => {
+      const fs = await import("node:fs");
+      const body = fs.readFileSync(opts.body, "utf-8");
+      printJson(
+        await apiCall(`/api/projects/${projectId}/plans`, {
+          method: "POST",
+          body: JSON.stringify({
+            title,
+            body,
+            status: opts.status,
+            refs: opts.refs ? String(opts.refs).split(",").filter(Boolean) : undefined,
+          }),
+        }),
+      );
+    }),
+  );
+
+planCmd
+  .command("list <projectId>")
+  .description("이 프로젝트의 계획 목록")
+  .option("--status <code>", "상태로 제한")
+  .option("--q <text>", "제목/본문 검색어")
+  .option("--page <n>", "페이지 번호(1부터, 기본 1)")
+  .option("--count <n>", "페이지당 개수(기본 20)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({
+        ...(opts.status ? { status: opts.status } : {}),
+        ...(opts.q ? { q: opts.q } : {}),
+        page: opts.page ?? "1",
+        pageSize: opts.count ?? "20",
+      });
+      printJson(await apiCall(`/api/projects/${projectId}/plans?${qs}`));
+    }),
+  );
+
+planCmd
+  .command("statuses")
+  .description("계획 상태로 쓸 수 있는 코드/라벨 목록(고정값)")
+  .action(() => run(async () => printJson(await apiCall(`/api/plans/statuses`))));
+
+planCmd
+  .command("get <trackingCode>")
+  .description("계획 상세(관련 문서 포함)")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/plans/${trackingCode}`))));
+
+planCmd
+  .command("set <trackingCode>")
+  .description("제목/본문을 수정한다(둘 중 준 것만 바뀜)")
+  .option("--title <t>")
+  .option("--body <file>", "본문(Markdown) 파일 경로")
+  .action((trackingCode, opts) =>
+    run(async () => {
+      const body: Record<string, unknown> = {};
+      if (opts.title !== undefined) body.title = opts.title;
+      if (opts.body !== undefined) {
+        const fs = await import("node:fs");
+        body.body = fs.readFileSync(opts.body, "utf-8");
+      }
+      printJson(await apiCall(`/api/plans/${trackingCode}`, { method: "PUT", body: JSON.stringify(body) }));
+    }),
+  );
+
+planCmd
+  .command("status <trackingCode> <status>")
+  .description("계획 상태를 바꾼다 - planned|pending_approval|in_review|scheduled|rejected 중 하나(전이 제약 없음)")
+  .action((trackingCode, status) =>
+    run(async () => printJson(await apiCall(`/api/plans/${trackingCode}/status`, { method: "PUT", body: JSON.stringify({ status }) }))),
+  );
+
+planCmd
+  .command("delete <trackingCode>")
+  .description("계획을 삭제한다")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/plans/${trackingCode}`, { method: "DELETE" }))));
+
+planCmd
+  .command("link <trackingCode> <docTrackingCode>")
+  .description("계획에 관련 문서를 추가한다")
+  .action((trackingCode, docTrackingCode) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/plans/${trackingCode}/refs`, { method: "POST", body: JSON.stringify({ trackingCode: docTrackingCode }) }),
+      ),
+    ),
+  );
+
+planCmd
+  .command("unlink <trackingCode> <docTrackingCode>")
+  .description("계획에서 관련 문서를 제거한다")
+  .action((trackingCode, docTrackingCode) =>
+    run(async () => printJson(await apiCall(`/api/plans/${trackingCode}/refs/${docTrackingCode}`, { method: "DELETE" }))),
+  );
+
 // ---------------------------------------------------------------- 질의/답변 (pending/reply)
 // targetType/targetKey로 다형화됨(document/source/kanbanCard) - document/
 // kanbanCard 대상은 그 자신의 트래킹 코드만으로 서버가 대상 종류를

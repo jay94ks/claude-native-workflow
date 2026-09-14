@@ -205,6 +205,18 @@ import {
   setKanbanCardHidden,
 } from "../core/kanban.js";
 import {
+  PLAN_STATUSES,
+  createPlan,
+  getPlanByTrackingCode,
+  getPlanProjectId,
+  listPlansPaged,
+  updatePlan,
+  setPlanStatus,
+  deletePlan,
+  addPlanDocumentRef,
+  removePlanDocumentRef,
+} from "../core/plans.js";
+import {
   createApiKey,
   listProjectKeys,
   listProjectKeysPaged,
@@ -2796,6 +2808,129 @@ app.post(
     res.json(
       await createReport({ projectId: req.params.projectId, title, body, createdBy: req.userId!, links }),
     );
+  }),
+);
+
+// ---------------------------------------------------------------- 보류 계획
+// Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립
+// 엔티티(설계자 지시, core/plans.ts 참고) - 트래킹코드 전용 라우트
+// (GET/PUT/status/DELETE/refs)는 경로에 projectId가 없어
+// requireProjectRole을 못 쓴다 - 칸반 카드 라우트와 같은 원칙으로
+// getPlanProjectId + getMemberRole/roleSatisfies를 인라인으로 쓴다.
+
+app.post(
+  "/api/projects/:projectId/plans",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { title, body, status, refs } = req.body as { title?: string; body?: string; status?: string; refs?: string[] };
+    if (!title || body === undefined) { res.status(400).json({ error: "title/body가 필요합니다" }); return; }
+    res.json(await createPlan(req.params.projectId, title, body, req.userId!, refs, status));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/plans",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const status = req.query.status as string | undefined;
+    const q = req.query.q as string | undefined;
+    res.json(
+      await listPlansPaged(req.params.projectId, {
+        status,
+        q,
+        page: Number(req.query.page ?? 1),
+        pageSize: Number(req.query.pageSize ?? 20),
+      }),
+    );
+  }),
+);
+
+app.get(
+  "/api/plans/statuses",
+  authenticate,
+  asyncRoute(async (_req, res) => {
+    res.json(PLAN_STATUSES);
+  }),
+);
+
+// PN-XXXXXXXX 코드 클릭(TrackingCodeText)이 씀 - #reserved-tracking-codes.
+app.get(
+  "/api/plans/:trackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const plan = await getPlanByTrackingCode(req.params.trackingCode);
+    if (!plan) { res.status(404).json({ error: "not found" }); return; }
+    const role = await getMemberRole(plan.projectId, req.userId!);
+    if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
+    res.json(plan);
+  }),
+);
+
+app.put(
+  "/api/plans/:trackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getPlanProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "계획을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    const { title, body } = req.body as { title?: string; body?: string };
+    res.json(await updatePlan(req.params.trackingCode, { title, body }));
+  }),
+);
+
+app.put(
+  "/api/plans/:trackingCode/status",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getPlanProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "계획을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    const { status } = req.body as { status?: string };
+    if (!status) { res.status(400).json({ error: "status가 필요합니다" }); return; }
+    res.json(await setPlanStatus(req.params.trackingCode, status));
+  }),
+);
+
+app.delete(
+  "/api/plans/:trackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getPlanProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "계획을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    await deletePlan(req.params.trackingCode);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/plans/:trackingCode/refs",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getPlanProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "계획을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    const { trackingCode } = req.body as { trackingCode?: string };
+    if (!trackingCode) { res.status(400).json({ error: "trackingCode가 필요합니다" }); return; }
+    res.json(await addPlanDocumentRef(req.params.trackingCode, trackingCode));
+  }),
+);
+
+app.delete(
+  "/api/plans/:trackingCode/refs/:docTrackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getPlanProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "계획을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
+    res.json(await removePlanDocumentRef(req.params.trackingCode, req.params.docTrackingCode));
   }),
 );
 

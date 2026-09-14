@@ -1028,3 +1028,28 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   구분 없이 프로젝트 전체에서 일괄 삭제된다** - "지금 탐색 상태"라
   사라진 브랜치를 계속 가리키면 오히려 오해를 부르기 때문(개인 소유
   스코핑의 유일한 의도적 예외).
+
+## 23. 보류 계획 (별도 계획 체크리스트)
+
+- Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립
+  엔티티("계획") - Claude가 작업 중 "이건 나중에 따로 계획을 잡아야
+  한다"고 판단한 항목을 모아두는 체크리스트다. 트래킹 코드 접두어는
+  `PN`.
+- 필드는 트래킹 코드, 제목, 본문(Markdown), 관련 문서(추적 코드
+  목록, 순서 없음), 상태 5개 고정값 - `계획됨`(planned)/
+  `승인대기`(pending_approval)/`검토중`(in_review)/`예정`(scheduled)/
+  `거부`(rejected). DocStatus와 달리 프로젝트별로 커스터마이즈되지
+  않으며, 상태 전이는 그래프로 제약되지 않고 언제든 5개 중 아무
+  값으로나 바꿀 수 있다.
+- CLI: `docs plan new|list|statuses|get|set|status|delete|link|
+  unlink`. MCP: `plan_new`/`plan_list`/`plan_statuses`/`plan_get`/
+  `plan_set`/`plan_status`/`plan_delete`/`plan_link`/`plan_unlink`.
+  REST: `/api/projects/:projectId/plans`, `/api/plans/:trackingCode
+  [/status|/refs[/:code]]`.
+- 웹 UI: 프로젝트 네비게이션의 "계획" 탭 - 목록 화면(상태 필터/검색/
+  생성)과 편집 화면(제목/상태/본문 편집, 관련 문서 추가·삭제)을
+  제공한다. 관련 문서 선택은 항상 검색 기반 선택기 다이얼로그
+  (`EntityPickerDialog`)로 하고, 추적 코드를 직접 타이핑하는 입력은
+  없다. 메시지/코멘트/문서 본문 등에 등장하는 `PN-XXXXXXXX` 코드를
+  클릭하면 미리보기 다이얼로그가 뜬다(질의/칸반 카드 코드와 같은
+  방식).
