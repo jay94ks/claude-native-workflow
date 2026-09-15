@@ -35,6 +35,22 @@ function aliveSince(minutes: number): Date {
   return new Date(Date.now() - minutes * 60_000);
 }
 
+// 세션 목록(내 정보/프로젝트 홈 카드)에 오래전에 끊긴 세션이 계속
+// 쌓이지 않도록 일정 시간 지나면 자동 삭제한다(설계자 지시) - Session
+// 삭제는 스키마의 onDelete: Cascade로 그 세션이 남긴 WorkClaim도 같이
+// 지운다(어차피 findConflictNotices/listWorkClaims는 DEFAULT_ALIVE_MINUTES
+// (30분)가 지나면 그 클레임을 이미 "죽은 세션"으로 취급해 무시하므로,
+// 1시간 뒤 행 자체를 지워도 동시성 경고 동작에는 영향 없음). api/
+// server.ts의 주기 워커(#hook-queue-ttl과 같은 setInterval 패턴)가
+// 이 함수를 호출한다.
+const SESSION_TTL_MINUTES = 60;
+
+export async function deleteStaleSessions(): Promise<number> {
+  const db = getDb();
+  const result = await db.session.deleteMany({ where: { lastSeenAt: { lt: aliveSince(SESSION_TTL_MINUTES) } } });
+  return result.count;
+}
+
 // 마지막 갱신에서 일정 시간 안 지났으면 쓰기를 건너뛴다 - 매 요청마다
 // DB에 쓰면 부담이 크지만, 이 스로틀 자체는 프로세스 메모리에만 있는
 // 캐시라 재시작하면 초기화된다(그래도 다음 요청에서 다시 쓰기만 할

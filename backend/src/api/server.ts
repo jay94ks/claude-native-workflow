@@ -302,7 +302,7 @@ import {
 } from "../core/pushHookPrompts.js";
 import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages, editMessage, deleteMessage, ackMessage, completeMessage, type MessageOrigin } from "../core/messages.js";
 import { checkConnect, checkAcl, ensureEmqxAuthConfigured, getOrCreateMqttCredential } from "../core/emqxAuth.js";
-import { listSessions, listProjectSessions, renameSession, claimWork, releaseWork, listWorkClaims, findConflictNotices, type WorkTargetType } from "../core/sessions.js";
+import { listSessions, listProjectSessions, renameSession, claimWork, releaseWork, listWorkClaims, findConflictNotices, deleteStaleSessions, type WorkTargetType } from "../core/sessions.js";
 
 const app = express();
 // nginx 리버스 프록시 뒤에서 실행된다(#gitea-nginx-lockdown) - req.protocol/
@@ -4842,6 +4842,13 @@ async function main() {
   setInterval(() => {
     expireStalePushHookQueueEntries().catch((err) => console.error("push 훅 대기열 만료 처리 실패:", err));
   }, 24 * 60 * 60 * 1000);
+
+  // 세션 목록에 1시간 넘게 활동이 없는(lastSeenAt 기준) 세션을 주기적으로
+  // 삭제한다(설계자 지시) - TTL(1시간)이 위 push 훅(30일)보다 훨씬 짧아
+  // 같은 비율로 더 자주 돈다.
+  setInterval(() => {
+    deleteStaleSessions().catch((err) => console.error("오래된 세션 정리 실패:", err));
+  }, 5 * 60 * 1000);
 
   const port = Number(process.env.PORT ?? 8760);
   const host = process.env.HOST ?? "127.0.0.1";

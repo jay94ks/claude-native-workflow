@@ -385,6 +385,17 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 - `docs work list <projectId> [--minutes <n>]`/`work_list` - 이
   프로젝트에서 지금 살아있는 세션들이 뭘 작업 중인지.
 
+**세션 목록은 하트비트가 1시간 넘게 끊긴 세션을 자동으로 지운다**
+(설계자 지시, 5분 주기 서버 워커 - push 훅 대기열 TTL 정리와 같은
+패턴) - `docs session list`/`docs session project`/웹 UI 목록에
+계속 쌓이지 않는다. 삭제되면 그 세션이 남긴 `WorkClaim`도 같이
+사라지지만, `docs work list`/충돌 `notices`는 애초에 30분 넘게
+하트비트가 없는 세션의 클레임을 이미 무시하므로 동시성 경고 동작에는
+영향이 없다. 1시간 넘게 쉬다가 다시 부르는 CLI/MCP 호출은 세션이
+사라진 뒤라 그 세션 id로 `session rename`/`work claim`을 바로 부르면
+"세션을 찾을 수 없습니다"가 날 수 있다 - 아무 `docs` 명령이나 한 번
+호출하면(자동 하트비트로) 같은 id로 다시 등록된다.
+
 문서/계획 저장(`docs save`/`plan set`)·전이(`docs transition`/
 `plan status`)에서 *다른* 세션이 같은 대상(또는 링크로 1단계
 연결된 대상 - 문서↔문서 링크, 계획↔문서 근거, 문서↔소스 파일 연결)

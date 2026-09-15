@@ -8826,3 +8826,38 @@ resolved/withdrawn 질의를 하나씩 만들어 `listQuestions`/
 **결론**: 질의/답변 목록 기본 응답이 `message list`와 같은 관례로
 "아직 처리 안 끝난 것"만 보여주게 됐다 - 전체 이력이 필요하면 CLI/MCP
 `--status all`, 웹은 체크박스로 여전히 볼 수 있다.
+
+## 1시간 이상 비활성 세션 자동 삭제
+
+**배경**: 설계자 지시 - "세션 목록에서 1시간이 경과된 것들은 자동으로
+삭제하도록 만들어줘." 지금까지 `Session` 행은 한번 생기면 영구히
+남아있어서(`docs session list`/`docs session project`/웹 UI 목록
+모두) 오래전에 끝난 CLI 프로세스나 옛 대화의 세션이 계속 쌓였다.
+
+**설계**: `#hook-queue-ttl`(push 훅 대기열, 30일 TTL을 24시간 주기
+워커로 정리)과 같은 패턴을 그대로 따랐다 - TTL이 1시간으로 훨씬
+짧으므로 같은 비율로 주기도 5분으로 더 촘촘하게 잡았다. `Session`
+삭제는 스키마의 `WorkClaim.session`이 `onDelete: Cascade`라 그
+세션이 남긴 클레임도 자동으로 같이 지워지는데, `findConflictNotices`/
+`listWorkClaims`는 애초에 `DEFAULT_ALIVE_MINUTES`(30분) 넘게
+하트비트가 없는 세션의 클레임을 이미 "죽은 세션"으로 무시하므로
+1시간 뒤 행 자체를 지워도 동시성 경고 동작에는 영향이 없다 - 순수
+목록 정리 기능.
+
+**구현**:
+- `core/sessions.ts`: `SESSION_TTL_MINUTES = 60` 상수 +
+  `deleteStaleSessions()` 추가(`lastSeenAt < now - 60분`인 `Session`
+  을 `deleteMany` - `expireStalePushHookQueueEntries()`와 같은 형태).
+- `api/server.ts`: `main()`에 5분 주기 `setInterval` 워커 등록(기존
+  push 훅 만료 워커 바로 아래, 같은 에러 처리 관례 - `.catch(console.error)`).
+- CLI/MCP/REST 시그니처 변경 없음 - 순수 백그라운드 정리라 새 명령
+  불필요.
+
+**검증**: `tsc --noEmit`(backend) 클린. 격리 SQLite에 세션 3개
+(61분 전/59분 전/방금 활동)를 만들어 `deleteStaleSessions()`가
+61분 전 세션 1개만 지우고 나머지 2개는 남기는 것을 확인
+(`listSessions()`로 재조회).
+
+**결론**: 세션 목록이 더 이상 무한정 쌓이지 않는다 - 1시간 넘게
+하트비트가 없으면 자동으로 없어지고, 동시성 경고(`notices`)는
+원래도 30분 TTL로 별도 관리돼 있어 이번 변경의 영향을 받지 않는다.
