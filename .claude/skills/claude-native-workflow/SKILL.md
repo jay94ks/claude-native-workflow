@@ -237,18 +237,37 @@ targetType/targetKey로 다형화해 처리). 판단에 참고한 문서가 있�
 전이된다(모호하면 자동 전이하지 않고 `docs transition`으로 직접
 지정 - 칸반 카드/소스 코드 대상은 이 자동 전이 개념 자체가 없다).
 
-## 메시지 — 대기/기록 분리 + 문서별 지시 + 장애 복구
+## 메시지 — 대기/처리중/기록(ack/complete) + 읽음 여부(별도 축) + 문서별 지시 + 장애 복구
 
-메시지는 "AI가 CLI/MCP로 읽어갔는가"를 기준으로 **대기**(아직 안
-읽음, `deliveredAt`이 비어 있음)와 **기록**(이미 읽음)으로 나뉜다.
-`docs message list <projectId> [--status pending|delivered|all]`을
-호출하면(CLI/MCP는 항상 그 순간 `markDelivered=true`로 호출 -
-호출 자체가 "읽었다"는 뜻) 조회된 대기 메시지가 자동으로 기록으로
-전환된다. `docs message wait <projectId> [--timeout <초>]`도 새
-메시지를 받으면 즉시 기록으로 처리한다 - 새 메시지가 오거나 타임아웃
-될 때까지 블로킹하는 명령으로, "이벤트가 올 때까지 막혀 있다가 돌아
-오는 한 번의 툴 호출"로 실시간성과 턴 기반 실행 모델을 이어붙이는
-패턴이다.
+**처리 상태는 `ackedAt`/`completedAt` 기준 3단계다** - **대기**
+(`ackedAt` 없음) → **처리중**(`ackedAt`는 있고 `completedAt`는 없음,
+`docs message ack <id>`/`message_ack`로 전이) → **기록**
+(`completedAt` 있음, `docs message complete <id>`/`message_complete`로
+전이). `message complete`를 처리중을 거치지 않고 바로 부르면(대기 →
+곧장 완료) `ackedAt`도 그 자리에서 같이 채워진다 - "일단 시작했다"는
+중간 신호를 남길 필요가 없는 호출자(대부분의 AI 세션 - 읽자마자 바로
+처리)는 처리중 단계를 건너뛰어도 되게 하려는 의도적 설계이지,
+처리중 상태 자체가 관측 안 되는 게 버그는 아니다. `docs message list
+<projectId> [--status pending|processing|delivered|active|all]`의
+`--status`는 이 축을 필터한다 - 생략하면 기본값 `active`(대기+처리중,
+즉 이미 끝난 "기록"만 제외 - "이미 처리된 건 매번 다시 안 보내도
+된다"는 취지). CLI/MCP 호출은 매번 이 3단계 중 하나로 명시적으로
+전이시켜야 하며, 단순 조회만으로 저절로 "기록"이 되는 경로는 없다.
+
+**"읽었는가"(`deliveredAt`)는 위 3단계와 완전히 별개인 축이다** -
+이름이 "기록"의 완료 상태(`delivered` 필터 값)와 비슷해 보이지만
+다른 개념이니 혼동하지 않는다: `deliveredAt`은 오직 "AI가 CLI/MCP로
+이 메시지를 한 번이라도 읽어갔는가"만 추적하고, 처리 상태(대기/
+처리중/기록)에는 전혀 관여하지 않는다(`--status` 필터에도 안 쓰임).
+`docs message list`/`docs message wait`는 CLI/MCP 호출부가 매번
+`markDelivered=true`로 부르므로(호출 자체가 "읽었다"는 뜻) 그 결과
+중 `deliveredAt`이 비어 있던 행들이 자동으로 채워진다 - 이건 처리
+상태 전이가 **아니다**, 여전히 대기/처리중/기록 중 원래 있던 상태
+그대로다. `docs message wait <projectId> [--timeout <초>]`도 새
+메시지가 오면 같은 방식으로 `deliveredAt`만 채운다 - 새 메시지가
+오거나 타임아웃될 때까지 블로킹하는 명령으로, "이벤트가 올 때까지
+막혀 있다가 돌아오는 한 번의 툴 호출"로 실시간성과 턴 기반 실행
+모델을 이어붙이는 패턴이다.
 
 **`docs message recent <projectId> [--limit <n>]`**(기본 20)은 상태를
 전혀 바꾸지 않는 순수 조회다 - 시스템/세션이 다운됐다가 복구됐을 때

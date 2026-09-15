@@ -9262,3 +9262,139 @@ OAuth는 이번 스택에서 당장 불필요해 값을 비워둠(README가 문�
 "답변 기록" 서브탭과 같은 관례가 개별 대상 화면까지 일관되게
 내려왔다. 소스 코드/칸반 카드는 탭 구조가 없어 기존 체크박스 방식을
 그대로 유지했다.
+
+## 문서/계획 편집 화면에 실시간 토스트 알림 추가
+
+**배경**: 설계자 지시 - "문서와 계획을 읽다가 문서가 변경되었다는
+신호가 MQTT(EMQX)를 통해 들어오면, 개정되었다는 토스트 메시지를
+보여주고 질의가 등록되었으면 질의가 등록되었다고 토스트 메시지를
+보여주도록 해." 조사해보니 `frontend/src/realtime.ts`의
+`connectProjectRealtime()`(프로젝트 `changes`/`messages` topic을
+MQTT-over-WebSocket으로 직접 구독하는 공유 클라이언트)은 이미
+`QAPanel.vue`/`ChangeTrackingView.vue`/`KanbanBoardView.vue`/
+`MessagesView.vue` 등에서 쓰이고 있었지만, `DocumentEditorView.vue`/
+`PlanEditorView.vue`는 지금까지 실시간 구독 자체가 아예 없었다(REST로
+한 번 불러온 뒤 그대로 - 다른 세션이 같은 문서/계획을 바꿔도 새로고침
+전까진 전혀 모름).
+
+**설계**: 이 저장소에 토스트(잠깐 떴다 사라지는 알림) UI가 여태
+하나도 없어서 새로 만들었다 - 기존 "전역 마운트 + Pinia 스토어로
+어디서든 트리거" 패턴(`useQuestionDialogStore`/`useDocumentDialogStore`
+등과 완전히 같은 구조)을 그대로 따라 `useToastStore`(여러 건을 동시에
+띄울 수 있게 배열로 관리, `push(text)`가 5초 타이머로 자동
+제거)+`ToastStack.vue`(그 배열을 렌더링만 하는 순수 표시 컴포넌트)를
+만들고 `AppLayout.vue`에 다른 다이얼로그들과 나란히 한 번만
+마운트했다. 자동 새로고침은 의도적으로 안 한다 - 편집 중인 내용을
+조용히 덮어쓰는 게 알림 없는 것보다 더 위험하다고 판단(문서 저장
+로직도 낙관적 동시성 체크 없이 마지막 쓰기가 이기는 구조라, 자동
+리로드는 오히려 "방금 입력한 내용이 사라짐" 사고를 만들 수 있음).
+
+`ChangeEvent`(`frontend/src/realtime.ts`)의 `entity` 유니온에 `plan`이
+빠져 있던 것도 이번에 발견·수정했다 - 백엔드 `core/plans.ts`는 이미
+`entity: "plan"`으로 발행하고 있었는데(계획 CRUD 전부) 프런트 타입만
+안 따라가고 있었다(지금까지 계획 변경 이벤트를 구독하는 화면이
+하나도 없어서 드러나지 않았을 뿐).
+
+**구현**:
+- `frontend/src/stores/toast.ts`(신규) - `useToastStore`, `push(text)`/
+  `dismiss(id)`.
+- `frontend/src/components/ToastStack.vue`(신규) - 우하단 고정 위치,
+  여러 개면 위로 쌓임, 클릭하면 즉시 닫힘.
+- `frontend/src/components/AppLayout.vue` - `<ToastStack />` 마운트.
+- `frontend/src/realtime.ts` - `ChangeEvent.entity`에 `"plan"` 추가.
+- `frontend/src/views/DocumentEditorView.vue` - `onMounted`에서
+  `connectProjectRealtime(id, { onChange })` 구독 추가, `onUnmounted`
+  에서 해제. `entity === "document" && action === "update" &&
+  trackingCode === props.trackingCode`면 "문서가 개정되었습니다.",
+  `entity === "question" && action === "create" && targetType ===
+  "document" && targetKey === props.trackingCode`면 "새 질의가
+  등록되었습니다." 핸들러 안에서 `props.trackingCode`를 직접
+  참조해(클로저에 미리 담지 않음) - 사이드바에서 다른 문서로 이동해
+  같은 컴포넌트 인스턴스가 재사용되는 기존 알려진 패턴에서도 항상
+  "지금 보고 있는" 문서 기준으로 정확히 걸러짐.
+- `frontend/src/views/PlanEditorView.vue` - 동일 패턴(`entity ===
+  "plan"`/`targetType === "plan"`), 토스트 문구만 "계획이
+  개정되었습니다."로 다름.
+
+**검증**: `vue-tsc -b` 클린. `C:\CNW-test`에서 실제로 EMQX까지
+살아있는 상태로 왕복 확인(미커밋 변경분을 그 클론에 복사해 즉시
+반영):
+- 처음엔 브라우저 콘솔에 `ws://localhost:8084/mqtt` 연결 실패가
+  반복적으로 찍혀 당황했으나, 원인은 기능 버그가 아니라 오래
+  떠 있던 액세스 토큰 만료였다(로그아웃 후 재로그인해 새 토큰을
+  받자 바로 해소) - Node로 같은 주소에 가짜 자격증명으로 직접
+  접속해 "Connection refused: Not authorized"(인증 자체는 동작,
+  자격증명만 틀림)를 확인해 네트워크/EMQX 리스너 자체는 정상임을
+  먼저 배제했다.
+- 계획 하나를 CLI `docs plan set`으로 제목 변경 → 그 계획을 보고
+  있던 브라우저 탭에 "계획이 개정되었습니다." 토스트가 정확히 뜨는
+  것을 DOM에서 직접 확인(스크린샷 대신 `document.querySelectorAll
+  ('.toast')`로 - 5초 자동소멸이라 스크린샷 타이밍을 맞추기보다
+  이 방식이 더 확실).
+- 그 계획에 `docs question`으로 새 질의를 걸었을 때 "새 질의가
+  등록되었습니다." 토스트가 뜨는 것도 같은 방식으로 확인.
+- 문서(SP-)에서도 `docs save`(본문 갱신)/`docs question` 둘 다 같은
+  방식으로 재현 확인("문서가 개정되었습니다."/"새 질의가
+  등록되었습니다.").
+- 5초 뒤 토스트가 실제로 DOM에서 사라지는 것(자동 소멸 타이머 동작)
+  까지 확인.
+
+**결론**: 문서/계획을 읽는 중에 다른 세션이 그 대상을 바꾸거나 새
+질의를 걸면 화면을 새로고침하지 않아도 토스트로 바로 알 수 있게
+됐다 - 내용은 강제로 덮어쓰지 않으므로 지금 보고 있는 화면이나
+편집 중인 내용은 안전하게 그대로 남는다. 새 `useToastStore`/
+`ToastStack.vue`는 범용이라 앞으로 다른 화면에서도 같은 방식으로
+재사용할 수 있다.
+
+## SKILL.md 메시지 상태 설명이 옛 2단계 모델로 남아있던 것 발견·수정
+
+**배경**: minicore-c1 세션이 실사용 중 두 가지를 보고 - (1)
+`message_complete`를 ack 없이 바로 부르면 `ackedAt`까지 자동으로
+채워져서, 자기 프로젝트(cmtzsjm5c000fo401iozcc60t)의 최근 메시지
+60건을 전수 확인해봐도 "처리중"(`ackedAt`만 있고 `completedAt`은
+없는) 상태로 남아있는 메시지가 단 한 건도 없더라 - 버그인지 의도된
+설계인지 확인 요청. (2) claude-native-workflow 스킬 문서(SKILL.md)
+자체는 메시지 상태를 "대기/기록" 2단계(`deliveredAt` 기준)로
+설명하는데, `message_ack`/`message_complete` 도구 설명은 "대기/
+처리중/기록" 3단계(`ackedAt`/`completedAt` 기준)로 설명해서, 같은
+"기록"이라는 단어가 서로 다른 필드를 가리키는 것처럼 보여 혼란스러웠다.
+
+**조사 결과**:
+1. **(1)은 버그가 아니다** - `core/messages.ts`의 `completeMessage()`
+   주석에 이미 명시돼 있다: "ack 없이 바로 complete를 부르면(처리
+   시작 선언 없이 곧장 완료) ackedAt도 같이 채워 넣는다 - 이미
+   완료됐다면 거기서 멈춰 있어야 자연스럽다." 처리중 단계는 "일단
+   시작했다"는 중간 신호가 필요한 호출자를 위한 **선택적** 단계라,
+   읽자마자 바로 처리하는 호출 패턴(minicore가 실제로 그렇게 쓰고
+   있다고 밝힘)에서는 구조적으로 관측될 일이 없는 게 맞는 동작이다.
+2. **(2)는 실제 문서 버그였다** - `FT-71975940`(기능 카탈로그, DB
+   문서)은 이미 정확하게 3단계 모델(`ackedAt`/`completedAt`)과
+   `deliveredAt`(읽음 여부)이 완전히 별개 축이라는 걸 명시하고
+   있었는데, `SKILL.md`(양쪽 사본)의 "메시지" 절 프로즈만 `ackedAt`/
+   `completedAt` 기반 3단계 모델이 도입되기 전의 옛 `deliveredAt`
+   기반 "대기/기록" 2단계 설명이 그대로 남아있었다 - 심지어 "`docs
+   message list`를 호출하면(읽으면) 대기 메시지가 자동으로 기록으로
+   전환된다"고 서술하고 있었는데, 이건 실제 코드와 안 맞는다(단순
+   조회는 `deliveredAt`만 채우고 `ackedAt`/`completedAt`은 전혀 안
+   건드림 - `listMessages()`가 직접 확인됨). 명령 요약 표(라인
+   694-695)는 이미 올바르게 "대기→처리중"/"처리중→기록"으로
+   적혀 있었으므로, 이전에 "처리중" 3단계를 추가한 라운드(백로그
+   #37)가 요약 표는 갱신했지만 이 프로즈 절은 놓친 것으로 보인다 -
+   CLAUDE.md의 "CLAUDE.md/SKILL.md 동기화" 규칙이 부분적으로만
+   지켜진 사례.
+
+**수정**: `.claude/skills/claude-native-workflow/SKILL.md`와
+`backend/prisma/seed-templates/SKILL.md`(+ DB의 전역 기본
+TemplateFile, `docs template set`으로 재동기화) 둘 다 "메시지" 절을
+다시 썼다 - `ackedAt`/`completedAt` 기반 3단계(대기/처리중/기록,
+`message ack`/`message complete`가 전이시킴, complete만 바로 불러도
+됨)와 `deliveredAt` 기반 읽음 여부를 명확히 분리된 두 축으로
+설명하고, `--status` 값도 실제(`pending|processing|delivered|active|all`)
+로 고쳤다. `FT-71975940`/FEATURES.md는 원래도 정확해서 손대지
+않았다.
+
+**결론**: minicore가 보고한 두 건 중 하나는 의도된 설계(문서화도
+이미 정확했음, 답변만 하면 됨), 다른 하나는 실제로 확인된 SKILL.md
+프로즈 누락 - 후자를 고쳐 앞으로 이 프로젝트(또는 SKILL.md를 배포
+받는 다른 관리 대상 프로젝트)를 여는 세션은 더 이상 두 개념이 섞여
+보이지 않는다.

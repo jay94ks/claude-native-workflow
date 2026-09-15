@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, watch } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
@@ -9,6 +9,8 @@ import QAPanel from "../components/QAPanel.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
 import { useFolderPickerStore } from "../stores/folderPicker";
+import { useToastStore } from "../stores/toast";
+import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
 const props = defineProps<{ id: string; trackingCode: string }>();
@@ -16,6 +18,7 @@ const router = useRouter();
 const entityPicker = useEntityPickerStore();
 const targetPanelDialog = useTargetPanelDialogStore();
 const folderPicker = useFolderPickerStore();
+const toast = useToastStore();
 const activeTab = ref<"view" | "chapters" | "qa" | "qa-history">("view");
 
 // 메시지로 지시는 문서 자체 권한이 아니라 프로젝트 editor 이상(백엔드
@@ -605,6 +608,32 @@ watch(
   },
 );
 onMounted(load);
+
+// 지금 읽고 있는 문서가 다른 세션에서 개정되거나 새 질의가 등록되면
+// 토스트로 알려준다(#realtime-toast) - 이 화면은 QAPanel.vue와 달리
+// 지금까지 실시간 구독 자체가 없었다. props.trackingCode를 핸들러
+// 안에서 직접 참조하므로(클로저에 값을 미리 담지 않음) 사이드바에서
+// 다른 문서로 이동해 컴포넌트가 재사용돼도 항상 "지금 보고 있는"
+// 문서 기준으로 정확히 걸러진다. 자동 새로고침은 하지 않는다 - 편집
+// 중인 내용을 조용히 덮어쓰면 더 위험하다.
+let disconnectRealtime: (() => void) | null = null;
+onMounted(async () => {
+  disconnectRealtime = await connectProjectRealtime(props.id, {
+    onChange: (event: ChangeEvent) => {
+      if (event.entity === "document" && event.action === "update" && event.trackingCode === props.trackingCode) {
+        toast.push("문서가 개정되었습니다.");
+      } else if (
+        event.entity === "question" &&
+        event.action === "create" &&
+        event.targetType === "document" &&
+        event.targetKey === props.trackingCode
+      ) {
+        toast.push("새 질의가 등록되었습니다.");
+      }
+    },
+  });
+});
+onUnmounted(() => disconnectRealtime?.());
 </script>
 
 <template>

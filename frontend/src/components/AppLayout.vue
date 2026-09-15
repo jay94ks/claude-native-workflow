@@ -16,6 +16,7 @@ import SidebarSearchBox from "./SidebarSearchBox.vue";
 import SearchScopeDialog from "./SearchScopeDialog.vue";
 import TargetPanelDialog from "./TargetPanelDialog.vue";
 import MembershipsDialog from "./MembershipsDialog.vue";
+import ToastStack from "./ToastStack.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -196,6 +197,7 @@ function handleLogout() {
     <FolderPickerDialog />
     <SearchScopeDialog />
     <TargetPanelDialog />
+    <ToastStack />
   </div>
 </template>
 

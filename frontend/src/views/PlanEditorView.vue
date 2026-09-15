@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, watch } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import MonacoEditor from "../components/MonacoEditor.vue";
@@ -8,11 +8,14 @@ import UserRef from "../components/UserRef.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
 import QAPanel from "../components/QAPanel.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import { useToastStore } from "../stores/toast";
+import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
 const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
 const entityPicker = useEntityPickerStore();
+const toast = useToastStore();
 const activeTab = ref<"view" | "qa" | "qa-history">("view");
 
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
@@ -271,6 +274,29 @@ onMounted(async () => {
   await loadStatuses();
   await load();
 });
+
+// 지금 읽고 있는 계획이 다른 세션에서 개정되거나 새 질의가 등록되면
+// 토스트로 알려준다(#realtime-toast, DocumentEditorView.vue와 같은
+// 패턴) - props.trackingCode를 핸들러 안에서 직접 참조해 다른
+// 계획으로 이동해 컴포넌트가 재사용돼도 항상 정확히 걸러진다.
+let disconnectRealtime: (() => void) | null = null;
+onMounted(async () => {
+  disconnectRealtime = await connectProjectRealtime(props.id, {
+    onChange: (event: ChangeEvent) => {
+      if (event.entity === "plan" && event.action === "update" && event.trackingCode === props.trackingCode) {
+        toast.push("계획이 개정되었습니다.");
+      } else if (
+        event.entity === "question" &&
+        event.action === "create" &&
+        event.targetType === "plan" &&
+        event.targetKey === props.trackingCode
+      ) {
+        toast.push("새 질의가 등록되었습니다.");
+      }
+    },
+  });
+});
+onUnmounted(() => disconnectRealtime?.());
 </script>
 
 <template>
