@@ -1809,15 +1809,17 @@ program
   .command("questions <trackingCode>")
   .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
   .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .option("--status <s>", "open|pending|resolved|withdrawn|active|all(기본 active - 이미 처리된(resolved/withdrawn) 질의는 빼고 아직 처리 안 끝난 것만)")
   .action((trackingCode, opts) =>
     run(async () => {
       const paged = opts.page !== undefined || opts.count !== undefined;
       if (paged) {
-        const qs = new URLSearchParams({ trackingCode, page: opts.page ?? "1", pageSize: opts.count ?? "20" });
+        const qs = new URLSearchParams({ trackingCode, page: opts.page ?? "1", pageSize: opts.count ?? "20", ...(opts.status ? { status: opts.status } : {}) });
         printJson(await apiCall(`/api/questions/page?${qs}`));
         return;
       }
-      printJson(await apiCall(`/api/questions?trackingCode=${trackingCode}`));
+      const qs = new URLSearchParams({ trackingCode, ...(opts.status ? { status: opts.status } : {}) });
+      printJson(await apiCall(`/api/questions?${qs}`));
     }),
   );
 
@@ -1825,15 +1827,17 @@ program
   .command("questions-source <projectId> <path>")
   .option("--page <n>", "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열")
   .option("--count <n>", "페이지당 개수(--page와 함께)")
+  .option("--status <s>", "open|pending|resolved|withdrawn|active|all(기본 active - 이미 처리된(resolved/withdrawn) 질의는 빼고 아직 처리 안 끝난 것만)")
   .action((projectId, path, opts) =>
     run(async () => {
       const paged = opts.page !== undefined || opts.count !== undefined;
       if (paged) {
-        const qs = new URLSearchParams({ path, page: opts.page ?? "1", pageSize: opts.count ?? "20" });
+        const qs = new URLSearchParams({ path, page: opts.page ?? "1", pageSize: opts.count ?? "20", ...(opts.status ? { status: opts.status } : {}) });
         printJson(await apiCall(`/api/projects/${projectId}/questions/source/page?${qs}`));
         return;
       }
-      printJson(await apiCall(`/api/projects/${projectId}/questions/source?path=${encodeURIComponent(path)}`));
+      const qs = new URLSearchParams({ path, ...(opts.status ? { status: opts.status } : {}) });
+      printJson(await apiCall(`/api/projects/${projectId}/questions/source?${qs}`));
     }),
   );
 

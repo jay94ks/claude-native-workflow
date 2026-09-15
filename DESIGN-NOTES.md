@@ -8771,3 +8771,58 @@ admin --password 12345678`로 즉시 재로그인해 정상 복구했다(운영
 호출은 예외 없이 매번 `HOME`/`USERPROFILE`을 스크래치 디렉터리로
 오버라이드해야 한다는 걸 이번에 실수로 재확인 - 앞으로도 이 원칙을
 빠뜨리지 않도록 각별히 주의.
+
+## 질의/답변 목록 응답에서 기본적으로 처리된 질의 제외
+
+**배경**: 설계자 지시 - "질의/답변에서 이미 처리된 질의를 리스트
+응답에서 빼줘." 지금까지 `docs questions <trackingCode>`/`docs
+questions-source`/MCP `question_list`/`question_list_source`/웹
+`QAPanel.vue`(문서 [질의/답변] 탭, 소스 코드 화면, 칸반 카드
+다이얼로그가 공유)는 대상 하나의 질의를 상태 구분 없이 전부
+(open+pending+resolved+withdrawn) 돌려주고 있었다 - 이미 처리 끝난
+`resolved`/`withdrawn`도 계속 목록에 남아 새로 확인해야 할 질의를
+찾기 번거로웠다.
+
+**설계**: `docs message list`가 이미 쓰는 관례(기본 `active`=대기+
+처리중만, `--status all`로 opt-out)를 그대로 따랐다 - 이 저장소가
+반복적으로 쓰는 "필터링된 기본값 + 명시적 opt-out"패턴. `Question.
+status`(`open`/`pending`/`resolved`/`withdrawn`)에 같은 이름의
+"active"(= open+pending) 가상 상태를 추가하고, 기본값을 active로
+바꿨다. 프로젝트 전체를 대상으로 하는 `docs pending`(open+pending)/
+`GET /projects/:id/questions/resolved/page`(resolved 전용, "답변
+기록" 서브탭)는 원래도 상태별로 이미 분리돼 있어 이번 변경과 무관 -
+이번 건 대상 하나(문서/칸반 카드/소스 파일)의 전체 스레드를 보여주는
+`listQuestions`/`listQuestionsPaged` 두 함수만 대상.
+
+**구현**:
+- `core/questions.ts`: `QuestionListStatus` 타입(open|pending|
+  resolved|withdrawn|active|all) + `questionStatusWhere()` 헬퍼
+  추가(`core/messages.ts`의 `buildMessageWhere()`와 같은 패턴).
+  `listQuestions(targetType, targetKey, status = "active")`/
+  `listQuestionsPaged(..., { ..., status })` 둘 다 이 필터를 적용.
+- `api/server.ts`: `GET /api/questions`, `GET /api/projects/:id/
+  questions/source`, `GET /api/questions/page`, `GET /api/projects/
+  :id/questions/source/page` 네 라우트 모두 `req.query.status`를
+  그대로 전달.
+- CLI `docs questions`/`docs questions-source`에 `--status <s>` 옵션
+  추가(`docs message list --status`와 동일한 관례 문구).
+- MCP `question_list`/`question_list_source`에 `status` enum 파라미터
+  추가, 설명 문구도 기본 active 필터를 명시하도록 갱신.
+- 웹 `QAPanel.vue`: "처리된 질의(처리 완료/철회됨) 포함" 체크박스
+  추가(기본 꺼짐 - 켜면 쿼리에 `status=all` 포함).
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc -b`(frontend) 클린. 격리
+SQLite(스크래치 디렉터리, `HOME`/`USERPROFILE` 오버라이드 없이도
+안전 - Prisma 클라이언트를 직접 import해 core 함수만 호출하는 스크립트라
+전역 CLI 자격증명 파일을 전혀 안 건드림)에 문서 하나에 open/pending/
+resolved/withdrawn 질의를 하나씩 만들어 `listQuestions`/
+`listQuestionsPaged`를 기본값·`"all"`·`"resolved"` 세 가지로 호출해
+각각 기대한 집합만 돌아오는 것을 확인. 웹 UI는 이번 라운드에서
+브라우저로 직접 조작해 확인하지 않았다 - EMQX/Gitea/Meilisearch까지
+띄우는 전체 스택 기동 비용 대비 변경이 작고(체크박스 하나+쿼리
+파라미터 전달) `vue-tsc` 통과 + 이미 검증된 core 로직 재사용이라
+생략, 설계자가 원하면 다음 라운드에 별도로 확인 가능.
+
+**결론**: 질의/답변 목록 기본 응답이 `message list`와 같은 관례로
+"아직 처리 안 끝난 것"만 보여주게 됐다 - 전체 이력이 필요하면 CLI/MCP
+`--status all`, 웹은 체크박스로 여전히 볼 수 있다.

@@ -223,10 +223,14 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 - **`docs question ack <trackingCode>`** - `pending`을 `resolved`로
   전이(AI가 "확인했다"고 표시). **세션 시작 시 체크리스트의 2번 항목이
   바로 이것 - `pending` 상태를 방치하지 않는다.**
-- `docs questions <trackingCode>` - 문서/칸반 카드 하나의 전체
-  질의/답변 스레드(모든 상태) 조회.
-- `docs questions-source <projectId> <path>` - 소스 코드 파일 하나의
-  전체 질의/답변 스레드 조회.
+- `docs questions <trackingCode> [--status open|pending|resolved|
+  withdrawn|active|all]` - 문서/칸반 카드 하나의 질의/답변 스레드
+  조회. `--status`를 생략하면 `message list`와 같은 관례로 기본값
+  `active`(`open`+`pending`)만 보여주고 이미 처리된(`resolved`/
+  `withdrawn`) 질의는 리스트 응답에서 뺀다 - 전체 이력이 필요하면
+  `--status all`.
+- `docs questions-source <projectId> <path> [--status ...]` - 소스
+  코드 파일 하나의 질의/답변 스레드 조회, `--status` 관례는 위와 동일.
 
 대상이 문서이고 그 문서의 모든 질의가 `open`을 벗어나면, 그 문서
 타입에 유일하게 허용된 다음 상태가 있을 경우 문서 상태가 자동으로
@@ -623,8 +627,8 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 보고서 생성 | `docs report-new <projectId> --title <t> --body <file>` | `report_new` |
 | 질의 등록(문서/칸반 카드, +참고 문서) | `docs question <trackingCode> <text> [--kind <approval\|answer>] [--refs <codes>]` | `question_add` |
 | 질의 등록(소스 코드 파일) | `docs question-source <projectId> <path> <text> [--kind ...] [--refs ...]` | `question_add_source` |
-| 대상의 전체 질의/답변(문서/칸반 카드) | `docs questions <trackingCode>` | `question_list` |
-| 대상의 전체 질의/답변(소스 코드 파일) | `docs questions-source <projectId> <path>` | `question_list_source` |
+| 대상의 질의/답변(문서/칸반 카드, 기본 active만) | `docs questions <trackingCode> [--status open\|pending\|resolved\|withdrawn\|active\|all]` | `question_list` |
+| 대상의 질의/답변(소스 코드 파일, 기본 active만) | `docs questions-source <projectId> <path> [--status ...]` | `question_list_source` |
 | 답변 대기 목록(open+pending, 전체 대상) | `docs pending <projectId>` | `pending_list` |
 | 답변 | `docs reply <questionTrackingCode> [answer] [--decision <approved\|rejected>] [--note <text>]` | `question_reply` |
 | 질의 확인 완료 처리 | `docs question-ack <trackingCode>` | `question_ack` |

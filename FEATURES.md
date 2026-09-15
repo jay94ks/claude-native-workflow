@@ -417,6 +417,13 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
 - 웹 UI(`QAPanel.vue`) - 문서 에디터의 [질의/응답] 탭, 소스 코드
   화면, 칸반 카드 다이얼로그에서 등록/답변/승인·거부 가능(CLI 없이도
   전체 워크플로우 가능).
+- **대상별 질의/답변 목록은 기본적으로 이미 처리된 질의를 뺀다** -
+  `docs questions`/`docs questions-source`/MCP `question_list`/
+  `question_list_source`/웹 `QAPanel.vue`의 기본 응답은 `message
+  list`의 `active` 관례와 동일하게 `open`+`pending`만 보여주고
+  `resolved`/`withdrawn`은 뺀다. 전체 이력이 필요하면 CLI/MCP는
+  `--status all`(또는 `open`/`pending`/`resolved`/`withdrawn` 개별
+  지정), 웹은 QAPanel의 "처리된 질의 포함" 체크박스로 켠다.
 - **질의 자신의 추적코드(`QU-XXXXXXXX`)를 문서 본문/코멘트/메시지/
   다른 질의 본문 등 어디서 클릭해도 전용 미리보기(`QuestionDialog.vue`)가
   뜬다** - 종류/상태/본문/참고 문서/제안 선택지/답변(승인·거부·본문)을

@@ -201,10 +201,27 @@ export async function getQuestionByTrackingCode(trackingCode: string): Promise<Q
 }
 
 /** 대상 하나의 전체 질문(open+pending+resolved) 스레드. */
-export async function listQuestions(targetType: string, targetKey: string): Promise<QuestionWithAnswer[]> {
+/** message list의 --status active/all(#message-origin-tagging)과 같은
+ * 관례 - "active"(기본값)는 아직 처리 안 끝난 것(open+pending)만 보여
+ * 주고, 이미 처리된(resolved+withdrawn) 질의는 리스트 응답에서 뺀다.
+ * open/pending/resolved/withdrawn을 직접 주면 그 상태만, "all"이면
+ * 필터 없이 전체. */
+export type QuestionListStatus = "open" | "pending" | "resolved" | "withdrawn" | "active" | "all";
+
+function questionStatusWhere(status: QuestionListStatus = "active"): Record<string, unknown> {
+  if (status === "all") return {};
+  if (status === "active") return { status: { in: ["open", "pending"] } };
+  return { status };
+}
+
+export async function listQuestions(
+  targetType: string,
+  targetKey: string,
+  status: QuestionListStatus = "active",
+): Promise<QuestionWithAnswer[]> {
   const db = getDb();
   const rows = await db.question.findMany({
-    where: { targetType, targetKey },
+    where: { targetType, targetKey, ...questionStatusWhere(status) },
     include: { answer: true, refs: true, options: { orderBy: { order: "asc" } } },
     orderBy: { ordinal: "asc" },
   });
@@ -225,7 +242,7 @@ export interface QuestionPage {
 export async function listQuestionsPaged(
   targetType: string,
   targetKey: string,
-  opts: { page: number; pageSize: number; q?: string },
+  opts: { page: number; pageSize: number; q?: string; status?: QuestionListStatus },
 ): Promise<QuestionPage> {
   const db = getDb();
   const safePage = Math.max(1, opts.page);
@@ -233,6 +250,7 @@ export async function listQuestionsPaged(
   const where = {
     targetType,
     targetKey,
+    ...questionStatusWhere(opts.status),
     ...(q ? { OR: [{ text: { contains: q } }, { answer: { body: { contains: q } } }] } : {}),
   };
   const [rows, total] = await Promise.all([

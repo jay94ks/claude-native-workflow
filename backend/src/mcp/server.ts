@@ -1178,7 +1178,7 @@ async function main() {
     "계획 상태 변경",
     "계획 상태를 바꾼다 - planned|pending_approval|in_review|scheduled|completed|rejected 중 하나(전이 제약 없음).",
     { trackingCode: z.string(), status: z.enum(["planned", "pending_approval", "in_review", "scheduled", "completed", "rejected"]) },
-    async (a) => call(`/api/plans/${a.trackingCode}/status`, { method: "PUT", body: JSON.stringify({ status: a.status }) }),
+    async (a) => call(`/api/plans/${a.trackingCode}/status`, { method: "PUT", body: JSON.stringify({ status: String(a.status) }) }),
   );
   tool(
     "plan_delete",
@@ -1319,25 +1319,52 @@ async function main() {
   );
   tool(
     "question_list",
-    "문서/칸반 카드의 전체 질의/답변 조회",
-    "한 대상의 질의 전체(open+pending+resolved)를 답변과 함께 순서대로 조회한다. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
-    { trackingCode: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    "문서/칸반 카드의 질의/답변 조회",
+    "한 대상의 질의를 답변과 함께 순서대로 조회한다. status를 생략하면 기본 active(open+pending)만 보여주고 이미 처리된(resolved+withdrawn) 질의는 빼며, 특정 상태나 all(전체)도 지정 가능. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    {
+      trackingCode: z.string(),
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+      status: z.enum(["open", "pending", "resolved", "withdrawn", "active", "all"]).optional(),
+    },
     async (a) => {
       const paged = a.page !== undefined || a.pageSize !== undefined;
-      if (!paged) return call(`/api/questions?trackingCode=${a.trackingCode}`);
-      const qs = new URLSearchParams({ trackingCode: String(a.trackingCode), page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      if (!paged) {
+        const qs = new URLSearchParams({ trackingCode: String(a.trackingCode), ...(a.status ? { status: String(a.status) } : {}) });
+        return call(`/api/questions?${qs}`);
+      }
+      const qs = new URLSearchParams({
+        trackingCode: String(a.trackingCode),
+        page: String(a.page ?? 1),
+        pageSize: String(a.pageSize ?? 20),
+        ...(a.status ? { status: String(a.status) } : {}),
+      });
       return call(`/api/questions/page?${qs}`);
     },
   );
   tool(
     "question_list_source",
-    "소스 코드 파일의 전체 질의/답변 조회",
-    "소스 코드 파일에 달린 질의 전체를 조회한다. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
-    { projectId: z.string(), path: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    "소스 코드 파일의 질의/답변 조회",
+    "소스 코드 파일에 달린 질의를 조회한다. status를 생략하면 기본 active(open+pending)만 보여주고 이미 처리된(resolved+withdrawn) 질의는 빼며, 특정 상태나 all(전체)도 지정 가능. page/pageSize를 주면 페이지네이션 응답(total 포함), 생략하면 전체 배열.",
+    {
+      projectId: z.string(),
+      path: z.string(),
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+      status: z.enum(["open", "pending", "resolved", "withdrawn", "active", "all"]).optional(),
+    },
     async (a) => {
       const paged = a.page !== undefined || a.pageSize !== undefined;
-      if (!paged) return call(`/api/projects/${a.projectId}/questions/source?path=${encodeURIComponent(String(a.path))}`);
-      const qs = new URLSearchParams({ path: String(a.path), page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      if (!paged) {
+        const qs = new URLSearchParams({ path: String(a.path), ...(a.status ? { status: String(a.status) } : {}) });
+        return call(`/api/projects/${a.projectId}/questions/source?${qs}`);
+      }
+      const qs = new URLSearchParams({
+        path: String(a.path),
+        page: String(a.page ?? 1),
+        pageSize: String(a.pageSize ?? 20),
+        ...(a.status ? { status: String(a.status) } : {}),
+      });
       return call(`/api/projects/${a.projectId}/questions/source/page?${qs}`);
     },
   );

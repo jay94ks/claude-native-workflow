@@ -141,6 +141,7 @@ import {
   acknowledgeQuestion,
   countPendingQuestions,
   withdrawQuestion,
+  type QuestionListStatus,
 } from "../core/questions.js";
 import {
   addComment,
@@ -3254,7 +3255,7 @@ app.get(
     if (!target) { res.status(404).json({ error: "대상을 찾을 수 없습니다" }); return; }
     const role = await getMemberRole(target.projectId, req.userId!);
     if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
-    res.json(await listQuestions(target.targetType, trackingCode));
+    res.json(await listQuestions(target.targetType, trackingCode, req.query.status as QuestionListStatus | undefined));
   }),
 );
 
@@ -3265,7 +3266,7 @@ app.get(
   asyncRoute(async (req, res) => {
     const path = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!path) { res.status(400).json({ error: "path 쿼리가 필요합니다" }); return; }
-    res.json(await listQuestions("source", path));
+    res.json(await listQuestions("source", path, req.query.status as QuestionListStatus | undefined));
   }),
 );
 
@@ -3285,7 +3286,8 @@ app.get(
     const page = Number(req.query.page ?? 1);
     const pageSize = Number(req.query.pageSize ?? 20);
     const q = req.query.q as string | undefined;
-    res.json(await listQuestionsPaged(target.targetType, trackingCode, { page, pageSize, q }));
+    const status = req.query.status as QuestionListStatus | undefined;
+    res.json(await listQuestionsPaged(target.targetType, trackingCode, { page, pageSize, q, status }));
   }),
 );
 
@@ -3299,7 +3301,8 @@ app.get(
     const page = Number(req.query.page ?? 1);
     const pageSize = Number(req.query.pageSize ?? 20);
     const q = req.query.q as string | undefined;
-    res.json(await listQuestionsPaged("source", path, { page, pageSize, q }));
+    const status = req.query.status as QuestionListStatus | undefined;
+    res.json(await listQuestionsPaged("source", path, { page, pageSize, q, status }));
   }),
 );
 

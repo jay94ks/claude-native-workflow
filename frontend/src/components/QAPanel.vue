@@ -78,6 +78,7 @@ const page = ref(1);
 const totalPages = ref(1);
 const pageSize = 20;
 const searchQuery = ref("");
+const showProcessed = ref(false);
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 const newQuestion = ref("");
@@ -103,6 +104,7 @@ const listPath = () => {
   qs.set("page", String(page.value));
   qs.set("pageSize", String(pageSize));
   if (searchQuery.value.trim()) qs.set("q", searchQuery.value.trim());
+  if (showProcessed.value) qs.set("status", "all");
   if (props.targetType === "source") {
     qs.set("path", props.targetKey);
     return `/projects/${props.projectId}/questions/source/page?${qs}`;
@@ -138,6 +140,11 @@ function onSearchInput() {
 
 function goToPage(p: number) {
   page.value = p;
+  load();
+}
+
+function onToggleProcessed() {
+  page.value = 1;
   load();
 }
 
@@ -275,6 +282,10 @@ onUnmounted(() => disconnect?.());
       placeholder="질의/답변 내용 검색..."
       @input="onSearchInput"
     />
+    <label class="processed-toggle">
+      <input type="checkbox" v-model="showProcessed" @change="onToggleProcessed" />
+      처리된 질의(처리 완료/철회됨) 포함
+    </label>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="transitionNotice" class="notice">{{ transitionNotice }}</p>
     <p v-if="loading" class="muted">불러오는 중...</p>
@@ -390,6 +401,14 @@ h2 {
   margin-bottom: 10px;
   background: var(--color-surface);
   color: var(--color-text);
+}
+.processed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
 }
 .questions {
   list-style: none;
