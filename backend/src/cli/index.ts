@@ -712,15 +712,43 @@ codeReviewCmd
 codeReviewCmd
   .command("resolve-finding <projectId> <findingId> <status>")
   .description("status는 fixed|wontfix|false_positive 중 하나")
-  .action((projectId, findingId, status) =>
+  .option("--comment <text>", "상태 전환과 함께 판단 근거를 코멘트로 같이 남긴다(예: false_positive라고 본 이유)")
+  .action((projectId, findingId, status, opts) =>
     run(async () =>
       printJson(
         await apiCall(`/api/projects/${projectId}/git/code-review/findings/${findingId}/resolve`, {
           method: "POST",
-          body: JSON.stringify({ status }),
+          body: JSON.stringify({ status, comment: opts.comment }),
         }),
       ),
     ),
+  );
+
+codeReviewCmd
+  .command("comment-add <projectId> <reviewId> <body>")
+  .description("리뷰(또는 --finding 지정 시 그 발견 항목)에 코멘트를 남긴다 - 수정/삭제 불가(불변 기록)")
+  .option("--finding <findingId>", "이 발견 항목에 달기(생략 시 리뷰 전체 코멘트)")
+  .action((projectId, reviewId, body, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/code-review/${reviewId}/comments`, {
+          method: "POST",
+          body: JSON.stringify({ body, findingId: opts.finding }),
+        }),
+      ),
+    ),
+  );
+
+codeReviewCmd
+  .command("file-history <projectId> <filePath>")
+  .description("이 파일이 과거 리뷰에서 걸렸던 발견(+코멘트) 이력을 최신순으로 조회 - 새 리뷰를 시작하기 전 참고용")
+  .option("--line <n>", "그 라인에 걸린 것만(정확히 일치)")
+  .action((projectId, filePath, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({ path: filePath });
+      if (opts.line !== undefined) qs.set("line", String(Number(opts.line)));
+      printJson(await apiCall(`/api/projects/${projectId}/git/code-review/file-history?${qs}`));
+    }),
   );
 
 codeReviewCmd

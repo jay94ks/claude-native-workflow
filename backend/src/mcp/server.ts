@@ -445,12 +445,17 @@ async function main() {
   tool(
     "code_review_resolve_finding",
     "발견 항목 트리아지",
-    "status는 fixed/wontfix/false_positive 중 하나(open으로 되돌리는 것은 지원 안 함 - 필요하면 새 finding으로 다시 제출).",
-    { projectId: z.string(), findingId: z.string(), status: z.enum(["fixed", "wontfix", "false_positive"]) },
+    "status는 fixed/wontfix/false_positive 중 하나(open으로 되돌리는 것은 지원 안 함 - 필요하면 새 finding으로 다시 제출). comment를 같이 주면 상태 전환과 함께 판단 근거(예: false_positive라고 본 이유)를 코멘트로 남긴다 - 다음 리뷰가 file_history로 이 근거를 다시 찾아볼 수 있다.",
+    {
+      projectId: z.string(),
+      findingId: z.string(),
+      status: z.enum(["fixed", "wontfix", "false_positive"]),
+      comment: z.string().optional(),
+    },
     async (a) =>
       call(`/api/projects/${a.projectId}/git/code-review/findings/${a.findingId}/resolve`, {
         method: "POST",
-        body: JSON.stringify({ status: a.status }),
+        body: JSON.stringify({ status: a.status, comment: a.comment }),
       }),
   );
   tool(
@@ -459,6 +464,28 @@ async function main() {
     "발견 항목이 0건인 리뷰만 삭제할 수 있다 - 하나라도 있으면 거부된다(잡아낸 게 있으면 영구 보존).",
     { projectId: z.string(), reviewId: z.string() },
     async (a) => call(`/api/projects/${a.projectId}/git/code-review/${a.reviewId}`, { method: "DELETE" }),
+  );
+  tool(
+    "code_review_comment_add",
+    "코드 리뷰 코멘트 추가",
+    "findingId를 주면 그 발견 항목에, 생략하면 리뷰 전체(스코프 고지 등)에 코멘트를 남긴다. 문서/칸반 코멘트와 달리 AI가 직접 쓰는 채널 - 트리아지 근거를 여기 남겨두면 file_history로 다음 리뷰가 참고할 수 있다. 수정/삭제 불가(불변 기록).",
+    { projectId: z.string(), reviewId: z.string(), body: z.string(), findingId: z.string().optional() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/code-review/${a.reviewId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: a.body, findingId: a.findingId }),
+      }),
+  );
+  tool(
+    "code_review_file_history",
+    "파일별 과거 리뷰 이력 조회",
+    "이 프로젝트의 모든 리뷰를 통틀어 그 파일(line을 주면 그 라인까지 정확히 일치)에 걸렸던 과거 finding과 딸린 코멘트를 최신순으로 모아 보여준다. 새 리뷰를 시작하기 전에 '이 파일은 예전에도 잡힌 적 있나/그때 뭐라고 판단했나'를 확인하는 용도(자동 주입은 없음 - 직접 불러서 참고).",
+    { projectId: z.string(), filePath: z.string(), line: z.number().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({ path: a.filePath as string });
+      if (a.line !== undefined) qs.set("line", String(a.line));
+      return call(`/api/projects/${a.projectId}/git/code-review/file-history?${qs}`);
+    },
   );
 
   // ---------------------------------------------------------------- 팀/그룹/프로젝트

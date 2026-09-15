@@ -17,6 +17,13 @@ const toast = useToastStore();
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
 const canAct = computed(() => roleSatisfies(myRole.value, "editor"));
 
+interface Comment {
+  id: string;
+  findingId: string | null;
+  body: string;
+  authorId: string;
+  createdAt: string;
+}
 interface Finding {
   id: string;
   filePath: string;
@@ -46,6 +53,7 @@ interface ReviewDetail {
   createdAt: string;
   completedAt: string | null;
   findings: Finding[];
+  comments: Comment[];
 }
 
 const review = ref<ReviewDetail | null>(null);
@@ -103,6 +111,19 @@ const fileGroups = computed<FileGroup[]>(() => {
   }));
 });
 
+// 코멘트는 서버가 findingId 유무로 구분해서 한 배열로 주므로
+// 프론트에서 finding별/리뷰 전체용으로 나눠 쓴다.
+const reviewComments = computed(() => review.value?.comments.filter((c) => c.findingId === null) ?? []);
+const commentsByFinding = computed(() => {
+  const map = new Map<string, Comment[]>();
+  for (const c of review.value?.comments ?? []) {
+    if (!c.findingId) continue;
+    if (!map.has(c.findingId)) map.set(c.findingId, []);
+    map.get(c.findingId)!.push(c);
+  }
+  return map;
+});
+
 async function loadDiff(r: ReviewDetail) {
   diffLoading.value = true;
   diffError.value = "";
@@ -142,6 +163,28 @@ async function resolveFinding(findingId: string, status: string) {
     error.value = err instanceof ApiError ? err.message : "트리아지에 실패했습니다";
   } finally {
     resolvingId.value = "";
+  }
+}
+
+// findingId 없는 항목은 "리뷰 전체" 초안용 키("review")를 따로 둔다.
+const commentDrafts = ref<Record<string, string>>({});
+const postingComment = ref("");
+async function postComment(findingId: string | null) {
+  const key = findingId ?? "review";
+  const body = (commentDrafts.value[key] ?? "").trim();
+  if (!body) return;
+  postingComment.value = key;
+  try {
+    await apiCall(`/projects/${props.id}/git/code-review/${props.reviewId}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body, findingId }),
+    });
+    commentDrafts.value[key] = "";
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "코멘트 등록에 실패했습니다";
+  } finally {
+    postingComment.value = "";
   }
 }
 
@@ -196,6 +239,22 @@ onUnmounted(() => disconnectRealtime?.());
       <p v-if="review.aiSummary" class="summary">{{ review.aiSummary }}</p>
 
       <section class="block">
+        <h2>리뷰 전체 메모 ({{ reviewComments.length }}건)</h2>
+        <ul v-if="reviewComments.length > 0" class="comment-list">
+          <li v-for="c in reviewComments" :key="c.id">
+            <span class="c-meta">{{ c.authorId.slice(0, 8) }} · {{ new Date(c.createdAt).toLocaleString() }}</span>
+            <p class="c-body">{{ c.body }}</p>
+          </li>
+        </ul>
+        <div v-if="canAct" class="comment-form">
+          <textarea v-model="commentDrafts.review" rows="2" placeholder="이 리뷰 전체에 대한 메모(스코프 고지 등)" />
+          <button type="button" :disabled="postingComment === 'review' || !commentDrafts.review?.trim()" @click="postComment(null)">
+            메모 추가
+          </button>
+        </div>
+      </section>
+
+      <section class="block">
         <h2>파일별 변경 및 발견 항목 (발견 {{ review.findings.length }}건)</h2>
         <p v-if="diffError" class="error">{{ diffError }}</p>
         <p v-if="diffLoading">불러오는 중...</p>
@@ -232,6 +291,18 @@ onUnmounted(() => disconnectRealtime?.());
                     @click="resolveFinding(f.id, 'false_positive')"
                   >
                     오탐
+                  </button>
+                </div>
+                <ul v-if="(commentsByFinding.get(f.id)?.length ?? 0) > 0" class="comment-list">
+                  <li v-for="c in commentsByFinding.get(f.id)" :key="c.id">
+                    <span class="c-meta">{{ c.authorId.slice(0, 8) }} · {{ new Date(c.createdAt).toLocaleString() }}</span>
+                    <p class="c-body">{{ c.body }}</p>
+                  </li>
+                </ul>
+                <div v-if="canAct" class="comment-form">
+                  <textarea v-model="commentDrafts[f.id]" rows="2" placeholder="이 발견 항목에 대한 코멘트(판단 근거 등)" />
+                  <button type="button" :disabled="postingComment === f.id || !commentDrafts[f.id]?.trim()" @click="postComment(f.id)">
+                    코멘트 추가
                   </button>
                 </div>
               </li>
@@ -373,6 +444,54 @@ h1 {
   color: var(--color-text);
 }
 .f-actions button:disabled {
+  opacity: 0.6;
+}
+.comment-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--color-border-light);
+}
+.comment-list li {
+  margin-bottom: 6px;
+}
+.c-meta {
+  font-size: 11px;
+  color: var(--color-text-faint);
+  font-family: monospace;
+}
+.c-body {
+  margin: 2px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.comment-form textarea {
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-light);
+  background: var(--color-bg);
+  color: var(--color-text);
+  resize: vertical;
+}
+.comment-form button {
+  align-self: flex-start;
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  border: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.comment-form button:disabled {
   opacity: 0.6;
 }
 .delete-btn {

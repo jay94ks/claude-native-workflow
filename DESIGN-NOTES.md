@@ -9730,3 +9730,65 @@ reply <code>`(둘 다 없이)는 여전히 명확한 에러로 거부되는지 �
 가능해졌다(다만 질의 하나당 답변은 여전히 한 번뿐이라 - 진짜
 여러 턴을 주고받는 토론은 Q&A가 아니라 메시지 채널이나 새 질의로
 이어가는 게 여전히 맞는 방식).
+
+## 코드 리뷰 - CodeReviewComment(코멘트/file-history)
+
+**배경**: `CodeReviewComment` 모델은 Phase 1 때 스키마만 먼저
+반영해뒀고("Phase 2 웹 UI에서 설계자가 finding에 답글을 남기는
+용도") 이걸 쓰는 API/CLI/MCP/UI는 없었다. 설계자 요청으로
+minicore-1f와 이 기능의 설계를 논의했고, minicore-1f는 자신이 겪은
+사례(git_add_bulk 한글 손상 버그 조사, SP-00CA7175 동시편집 충돌
+해소)를 근거로 세 가지를 답했다: (1) 트리아지 상태값만으로는 "왜
+그렇게 판단했는지"가 안 담긴다, (2) 문서/칸반의 기존 `Comment`
+모델(AI 참고 지표가 될 수 없다는 제약)과 달리 CodeReviewComment는
+정반대 목적(다음 리뷰 때 AI가 같은 finding을 또 안 잡게 하는 것)
+이라 AI가 직접 읽고 써야 한다, (3) `findingId` null(리뷰 전체
+코멘트)도 스코프 고지에 쓸모 있다.
+
+**설계 결정**: 작성 주체를 폐쇄하지 않음(`authorId`가 일반 `User`
+FK라 AI/설계자 둘 다 자기 계정으로 그대로 씀) / 수정·삭제 API 없이
+불변(append-only, Answer/Finding과 같은 감사 가능성 원칙) /
+`resolveFinding()`에 선택적 `comment`를 추가해 상태 전환+판단 근거를
+한 트랜잭션으로 묶음 / 파일 단위 과거 이력은 자동 컨텍스트 주입이
+아니라 명시적 조회 명령(`file-history`)으로 - 자동 주입은 "얼마나
+오래된 것까지/토큰 얼마나"라는 새 정책 결정이 따라와 범위가 커지기
+때문.
+
+**구현**:
+- 스키마 3종에 `CodeReviewFinding` ↔ `CodeReviewComment` 사이 빠져
+  있던 양방향 relation(`comments`/`finding` 필드, `@@index([findingId])`)
+  추가 - 원래 `findingId`가 관계 없는 평범한 String 컬럼이라 `include`가
+  안 됐음.
+- `core/codeReview.ts`: `addComment()`, `getFileHistory()`(프로젝트
+  전체에서 같은 filePath[+line] 재조회, comments/review 요약 포함),
+  `getReviewDetail()`의 `include`에 `comments` 추가, `resolveFinding()`
+  에 `comment?` 인자(트랜잭션으로 상태 갱신+코멘트 생성 묶음).
+- REST `POST .../code-review/:reviewId/comments`,
+  `GET .../code-review/file-history?path=&line=`(`:reviewId` 라우트
+  보다 먼저 등록 - 기존 `/pending`과 같은 이유로 안 그러면
+  "file-history"가 reviewId로 파싱됨).
+- CLI `code-review comment-add <projectId> <reviewId> <body>
+  [--finding <findingId>]` / `code-review file-history <projectId>
+  <filePath> [--line <n>]` / `resolve-finding --comment <text>`.
+  MCP `code_review_comment_add` / `code_review_file_history` /
+  `code_review_resolve_finding`에 `comment` 파라미터 추가.
+- 웹 UI(`CodeReviewDetailView.vue`) - 리뷰 헤더 아래 "리뷰 전체 메모"
+  섹션, 각 finding 카드 안 트리아지 버튼 아래 코멘트 목록+작성 폼
+  (둘 다 editor 이상만 작성 폼 노출).
+
+**검증**: `C:\CNW-test`에 새 테스트 프로젝트를 만들어(커밋 2개로
+리뷰 요청 → finding 제출) `resolve-finding --comment`/`comment-add`
+(리뷰 전체+finding별)를 CLI로 호출 → `code-review get`/`file-history`
+(라인 필터 포함, 빈 결과도) 응답 확인 → 브라우저로 리뷰 상세 페이지의
+코멘트 스레드가 실제로 보이는지, 직접 입력한 코멘트가 실시간
+반영되는지 확인 - 모두 정상. (검증 중간에 `python -c`로 응답을 확인
+하다 한글이 깨져 보여 CLI 인자 인코딩 버그로 의심해 `--body-file`/
+`--comment-file` 류를 한때 추가했으나, Node로 같은 응답을 다시
+확인하니 완전히 깨끗했다 - Windows에서 `python -c`가 파이프 입력을
+UTF-8이 아닌 인코딩으로 읽어 생긴 순수 확인 절차상의 오탐이었고,
+실제 버그는 없어 해당 옵션은 되돌렸다.)
+
+**결론**: 코드 리뷰 코멘트가 문서/칸반과 별개로 AI도 직접 쓰는
+채널로 완성돼, 트리아지 판단 근거를 남기고(`resolve-finding
+--comment`) 다음 리뷰가 그 근거를 `file-history`로 다시 찾아볼 수
+있게 됐다.

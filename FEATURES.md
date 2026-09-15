@@ -1401,13 +1401,32 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   가능한 작업이 된다) - minor/nit는 기록만.
 - **트리아지** - `docs code-review resolve-finding <findingId>
   <status>`로 각 finding을 fixed/wontfix/false_positive로 전이한다
-  (open으로 되돌리는 것은 지원 안 함).
+  (open으로 되돌리는 것은 지원 안 함). `--comment <text>`를 같이 주면
+  상태 전환과 함께 판단 근거("false_positive, 왜냐하면...")를 코멘트로
+  한 번에 남길 수 있다.
+- **코멘트(CodeReviewComment)** - `docs code-review comment-add
+  <reviewId> <body> [--finding <findingId>]`로 finding별(판단 근거 등)
+  또는 리뷰 전체(스코프 고지 등, `--finding` 생략)에 코멘트를 남긴다.
+  문서/칸반의 일반 코멘트(`Comment` 모델)와 달리 "AI 참고 지표가 될 수
+  없다"는 제약이 없는 별도 채널이다 - 오히려 정반대 목적(다음 리뷰 때
+  AI가 같은 finding을 또 안 잡게 하는 것)이라 AI도 CLI/MCP로 그대로
+  쓴다. 수정/삭제 API 없음(Answer/finding과 같은 불변 원칙 - 판단
+  근거는 나중에 안 바뀌는 게 맞다). 리뷰 상세 조회(`code-review get`)
+  응답에 findings와 나란히 포함돼 한 번의 조회로 같이 온다.
+- **파일별 과거 이력(`file-history`)** - `docs code-review
+  file-history <projectId> <filePath> [--line <n>]`로 이 프로젝트의
+  모든 리뷰를 통틀어 그 파일(라인 지정 시 그 라인까지 정확히 일치)에
+  걸렸던 과거 finding+코멘트를 최신순으로 모아 본다 - 새 리뷰를
+  시작하기 전 "이 파일은 예전에도 잡힌 적 있나/그때 뭐라고 판단했나"를
+  AI가 스스로 판단해서 부르는 명시적 조회 도구다(자동 컨텍스트 주입은
+  하지 않음 - 범위 확장 방지, 필요해지면 별도 계획으로).
 - **삭제(취소/정리)** - `docs code-review delete`는 **findings가
   0건인 리뷰만** 지울 수 있다 - 하나라도 있으면 명확한 에러로 거부된다
   (잡아낸 게 있으면 그 기록은 영구 보존).
 - **CLI/MCP 1:1 대응** - `docs code-review request/pending/get/
-  submit/resolve-finding/delete` ↔ MCP `code_review_request/
-  pending/get/submit/resolve_finding/delete`. REST는
+  submit/resolve-finding/delete/comment-add/file-history` ↔ MCP
+  `code_review_request/pending/get/submit/resolve_finding/delete/
+  comment_add/file_history`. REST는
   `/api/projects/:projectId/git/code-review/*`(조회는 viewer, 요청/
   제출/트리아지/삭제는 editor 이상 - 게이트가 아니라 owner 전용
   액션이 없다).
@@ -1427,4 +1446,6 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   fixed/wontfix/false_positive로 직접 트리아지할 수 있다. 다른
   세션이 CLI로 finding을 제출하면 보고 있는 화면이 실시간 토스트와
   함께 자동 갱신된다. findings 0건인 리뷰만 웹에서도 삭제(취소) 버튼이
-  뜬다.
+  뜬다. 리뷰 헤더에 리뷰 전체 코멘트 스레드, 각 finding 아래에 그
+  finding 전용 코멘트 스레드가 있어(목록 + 작성 폼) 설계자도 웹에서
+  직접 코멘트를 남길 수 있다(editor 이상).

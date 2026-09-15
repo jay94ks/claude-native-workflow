@@ -1170,14 +1170,18 @@ model CodeReviewFinding {
   followUpRef     String? // 자동 생성된 PN/칸반 카드의 trackingCode(있으면)
   createdAt       DateTime  @default(now())
 
-  review CodeReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  review   CodeReview          @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  comments CodeReviewComment[]
 
   @@index([reviewId])
 }
 
-// Phase 2(웹 UI)에서 설계자가 finding에 답글을 남기는 용도 - Phase 1
-// 백엔드 라운드엔 이 모델을 쓰는 API/CLI가 없다(스키마만 먼저 반영,
-// 안 쓰는 라우트를 미리 만들지 않는다는 원칙).
+// findingId를 주면 그 발견 항목에, 안 주면 리뷰 전체에 남기는 코멘트
+// (스코프 고지 등) - 문서/칸반 코멘트(Comment 모델, comments.ts)와
+// 달리 "AI 참고 지표가 될 수 없다"는 제약이 없다(오히려 정반대 목적:
+// 다음 리뷰 때 AI가 같은 finding을 또 안 잡게 하는 것) - CLI/MCP로
+// AI도 그대로 쓴다. 수정/삭제 API 없음(Answer/Finding과 같은 불변
+// 원칙 - 판단 근거는 나중에 안 바뀌는 게 맞다).
 model CodeReviewComment {
   id        String   @id @default(cuid())
   reviewId  String
@@ -1186,9 +1190,11 @@ model CodeReviewComment {
   body      String
   createdAt DateTime @default(now())
 
-  review CodeReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  review  CodeReview         @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  finding CodeReviewFinding? @relation(fields: [findingId], references: [id], onDelete: Cascade)
 
   @@index([reviewId])
+  @@index([findingId])
 }
 
 // 문서 ↔ "연관된 git 브랜치" - DocumentSourceLink와 완전히 같은 패턴

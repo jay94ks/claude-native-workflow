@@ -99,10 +99,69 @@ export async function getReviewDetail(reviewId: string) {
   const db = getDb();
   const review = await db.codeReview.findUnique({
     where: { id: reviewId },
-    include: { findings: { orderBy: { createdAt: "asc" } } },
+    include: {
+      findings: { orderBy: { createdAt: "asc" } },
+      comments: { orderBy: { createdAt: "asc" } },
+    },
   });
   if (!review) throw new Error(`리뷰를 찾을 수 없습니다: ${reviewId}`);
   return review;
+}
+
+/** findingId를 주면 그 발견 항목에, 안 주면 리뷰 전체에 코멘트를
+ * 남긴다(스코프 고지 등) - 문서/칸반 코멘트(Comment 모델)와 달리
+ * AI도 CLI/MCP로 그대로 쓴다(설계자 전용이 아님, DN 참고) - 수정/삭제는
+ * 지원하지 않는다(Answer/Finding과 같은 불변 원칙 - "왜 그렇게
+ * 판단했는지"의 근거는 나중에 안 바뀌는 게 맞다). */
+export async function addComment(
+  projectId: string,
+  reviewId: string,
+  input: { body: string; findingId?: string | null },
+  authorId: string,
+): Promise<{ id: string; createdAt: Date }> {
+  if (!input.body.trim()) throw new Error("body가 필요합니다");
+  const db = getDb();
+  const review = await db.codeReview.findUnique({ where: { id: reviewId } });
+  if (!review || review.projectId !== projectId) throw new Error(`리뷰를 찾을 수 없습니다: ${reviewId}`);
+  if (input.findingId) {
+    const finding = await db.codeReviewFinding.findUnique({ where: { id: input.findingId } });
+    if (!finding || finding.reviewId !== reviewId) throw new Error(`발견 항목을 찾을 수 없습니다: ${input.findingId}`);
+  }
+
+  const row = await db.codeReviewComment.create({
+    data: { reviewId, findingId: input.findingId ?? null, body: input.body, authorId },
+  });
+
+  await realtimePublish(projectChangesTopic(projectId), {
+    entity: "codeReview",
+    action: "update",
+    id: reviewId,
+    at: new Date().toISOString(),
+  } satisfies ChangeEvent);
+
+  return { id: row.id, createdAt: row.createdAt };
+}
+
+/** 프로젝트 전체 리뷰 이력에서 같은 파일(line 주면 그 라인까지 정확히
+ * 일치)에 걸렸던 과거 finding + 딸린 코멘트를 모은다 - "이 파일은
+ * 예전에도 리뷰한 적 있나/그때 뭐라고 판단했나"를 AI가 새 리뷰 시작
+ * 전에 스스로 판단해서 부를 수 있는 명시적 조회 도구(자동 컨텍스트
+ * 주입은 하지 않음 - DN 참고, 범위 확장 방지). */
+export async function getFileHistory(projectId: string, filePath: string, line?: number) {
+  const db = getDb();
+  const findings = await db.codeReviewFinding.findMany({
+    where: {
+      filePath,
+      ...(line !== undefined ? { line } : {}),
+      review: { projectId },
+    },
+    orderBy: { createdAt: "desc" },
+    include: {
+      comments: { orderBy: { createdAt: "asc" } },
+      review: { select: { id: true, label: true, createdAt: true } },
+    },
+  });
+  return findings;
 }
 
 /** severity별 자동 후속 작업 연결 - blocker는 PN(실행 계획), major는
@@ -185,18 +244,37 @@ export async function submitFindings(
 }
 
 /** open → fixed/wontfix/false_positive만 허용(다시 open으로 되돌리는
- * 것은 범위 밖 - 필요해지면 새 finding으로 다시 잡는 게 자연스럽다). */
-export async function resolveFinding(findingId: string, status: string, resolvedBy: string | null): Promise<void> {
+ * 것은 범위 밖 - 필요해지면 새 finding으로 다시 잡는 게 자연스럽다).
+ * `comment`를 같이 주면 "상태 전환 + 왜"를 한 번의 호출로 남긴다
+ * (예: false_positive라고 판단한 근거) - 상태 갱신과 같은 트랜잭션으로
+ * 묶어 둘 중 하나만 반영되는 경우가 없게 한다. */
+export async function resolveFinding(
+  findingId: string,
+  status: string,
+  resolvedBy: string | null,
+  comment?: string,
+): Promise<void> {
   if (!["fixed", "wontfix", "false_positive"].includes(status)) {
     throw new Error(`status는 fixed/wontfix/false_positive 중 하나여야 합니다: ${status}`);
   }
   const db = getDb();
   const finding = await db.codeReviewFinding.findUnique({ where: { id: findingId } });
   if (!finding) throw new Error(`발견 항목을 찾을 수 없습니다: ${findingId}`);
-  await db.codeReviewFinding.update({
-    where: { id: findingId },
-    data: { status, resolvedBy, resolvedAt: new Date() },
-  });
+
+  const ops = [
+    db.codeReviewFinding.update({
+      where: { id: findingId },
+      data: { status, resolvedBy, resolvedAt: new Date() },
+    }),
+  ];
+  if (comment && comment.trim()) {
+    ops.push(
+      db.codeReviewComment.create({
+        data: { reviewId: finding.reviewId, findingId, body: comment, authorId: resolvedBy ?? "system" },
+      }),
+    );
+  }
+  await db.$transaction(ops);
 }
 
 /** findings가 하나라도 있으면 삭제할 수 없다(설계자 지시 - "잡아낸 게

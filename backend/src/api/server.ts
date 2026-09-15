@@ -296,6 +296,8 @@ import {
   submitFindings as submitCodeReviewFindings,
   resolveFinding as resolveCodeReviewFinding,
   deleteReview as deleteCodeReview,
+  addComment as addCodeReviewComment,
+  getFileHistory as getCodeReviewFileHistory,
 } from "../core/codeReview.js";
 import { paginateInMemory } from "../core/pagination.js";
 import {
@@ -4651,6 +4653,20 @@ app.get(
   }),
 );
 
+// :reviewId 라우트보다 먼저 등록해야 한다 - 안 그러면 "file-history"가
+// reviewId로 파싱된다(위 pending과 같은 순서 이유).
+app.get(
+  "/api/projects/:projectId/git/code-review/file-history",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const path = req.query.path as string | undefined;
+    if (!path) { res.status(400).json({ error: "path가 필요합니다" }); return; }
+    const line = req.query.line !== undefined ? Number(req.query.line) : undefined;
+    res.json(await getCodeReviewFileHistory(req.params.projectId, path, line));
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/git/code-review/:reviewId",
   authenticate,
@@ -4678,10 +4694,21 @@ app.post(
   authenticate,
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
-    const { status } = req.body as { status?: string };
+    const { status, comment } = req.body as { status?: string; comment?: string };
     if (!status) { res.status(400).json({ error: "status가 필요합니다" }); return; }
-    await resolveCodeReviewFinding(req.params.findingId, status, req.userId!);
+    await resolveCodeReviewFinding(req.params.findingId, status, req.userId!, comment);
     res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/code-review/:reviewId/comments",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { body, findingId } = req.body as { body?: string; findingId?: string };
+    if (!body?.trim()) { res.status(400).json({ error: "body가 필요합니다" }); return; }
+    res.json(await addCodeReviewComment(req.params.projectId, req.params.reviewId, { body: body.trim(), findingId }, req.userId!));
   }),
 );
 
