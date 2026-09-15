@@ -9139,3 +9139,63 @@ URL만 바뀌고 화면은 안 바뀌던" 버그 방지 관례와 동일한 이�
 목록" 회귀까지 같이 발견·수정했다 - `targetType` 분기가 세 곳
 (QAPanel/QuestionDialog/ProjectHomeView)에 흩어져 있어 새 대상을
 추가할 때 놓치기 쉽다는 게 이번에 실측으로 확인된 교훈.
+
+## 계획 삭제 시 관련 질의도 함께 정리(`deletePlan` 고아 데이터 버그 수정)
+
+**배경**: 설계자가 "테스트를 진행하면서 만들었던 QU- 항목 두건이
+삭제되지 않아서 이상 동작을 하고 있어"라고 보고. 확인해보니 `docs
+cache sync`/plan Q&A 라운드 검증 중 만들었던 임시 계획 3개를 `docs
+plan delete`로 지웠는데, 그 계획들을 대상으로 걸어둔 질의(Question)
+행은 그대로 DB에 남아 고아가 됐다 - `targetType: "plan"`인 채로
+가리키는 계획이 사라져, 프로젝트 홈/알림의 "답변 대기" 집계에 계속
+잡히거나(pending 상태였던 것) 대상 조회 라우트가 404를 반환하는 등
+이상 동작을 일으켰다.
+
+**원인**: `core/documents.ts`의 `deleteDocument()`는 문서를 지우기
+전에 `db.question.deleteMany({ where: { targetType: "document",
+targetKey: trackingCode } })`를 같은 트랜잭션으로 먼저 실행해 관련
+질의를 정리한다(`Question.targetKey`가 FK가 아니라 문자열 다형화
+참조라 DB의 cascade가 안 먹기 때문) - 하지만 `core/plans.ts`의
+`deletePlan()`은 이 정리 없이 `plan.delete()`만 했다. 이건 새로
+생긴 버그가 아니라 **처음부터 있던 공백**이다 - `deletePlan()`이
+작성된 시점엔 계획이 질의 대상이 될 수 없었으므로(이번 세션의
+`#plan-qa-target` 라운드에서 처음 가능해짐) 문제가 없었는데, Plan을
+Q&A 대상에 추가하면서 이 정리 로직을 같이 안 넣은 게 이번에 실측으로
+드러났다.
+
+**수정**: `core/plans.ts`의 `deletePlan()`을 `deleteDocument()`와
+같은 패턴(`$transaction`으로 질의 정리 먼저, 계획 삭제 나중)으로
+고쳤다 - 코멘트는 계획을 대상으로 못 하므로(설계자 전용 채널이라
+Plan 지원 자체가 없음) 정리 대상에서 제외.
+
+**격리 데이터 정리**: 프로덕션에 이미 남아있던 고아 질의 3건
+(QU-EDDC0EEB/QU-ED7A3010/QU-BDAECAC7, 전부 이번 세션 검증 중 만든
+테스트 데이터)은 원본 DB를 직접 지우는 대신(설계자 지시로 운영 DB
+직접 쓰기 자체가 이번에 막혔다 - "Modify Shared Resources" 안전
+게이트) CNW가 이미 제공하는 정상 경로(`docs question-ack`/`docs
+question-withdraw`)로 각각 resolved/withdrawn 처리해 기본(active)
+조회에서 빠지게 정리했다 - 물리적으로 지우진 않았지만 이상 동작의
+원인(active 상태로 남아 집계에 잡히던 것)은 해소됐다.
+
+**테스트 인프라 변경**: 이 사고를 계기로 설계자 지시 - "앞으로 테스트는
+별도 테스트 서버를 열어서 하도록 하자." 이번 라운드부터 검증은
+`C:\CNW-test`(운영 설치 `C:\CNW`와 완전히 분리된 두 번째 로컬
+docker-compose 스택 - 별도 포트/비밀값/데이터, `COMPOSE_PROJECT_NAME=cnw-test`
+로 컨테이너/볼륨/네트워크 이름까지 분리)를 만들어 그 위에서
+진행했다(README.md "이미 이 시스템의 다른 클론/설치가 있다면" 절이
+정확히 이 상황을 다룸). 설계자가 "필요할 때만 기동"을 선택해 평소엔
+컨테이너를 내려두고(`docker compose down`, 데이터 볼륨은 유지) 검증이
+필요할 때만 `docker compose up -d --build`로 띄운다 - Gitea/GitHub
+OAuth는 이번 스택에서 당장 불필요해 값을 비워둠(README가 문서화한
+그대로 그 기능만 꺼진 채 나머지는 정상 동작).
+
+**검증**: `C:\CNW-test`를 기동해(git 미커밋 상태의 수정 파일을 그
+클론에 그대로 복사해 즉시 반영 - 커밋 전 검증이라 정상적인 흐름)
+실제로 재현: 계획 생성 → 질의 등록 → 계획 삭제 → Postgres를
+`docker exec`로 직접 조회해 그 질의 행이 실제로 사라진 것을 확인
+(수정 전엔 그대로 남아있던 것과 대조 - 같은 절차를 수정 전 코드로도
+한 번 돌려 재현 확인한 뒤 수정 코드로 다시 돌려 해소 확인).
+
+**결론**: 계획을 삭제해도 더 이상 질의가 고아로 남지 않는다 - 문서
+삭제와 동일한 안전장치를 갖추게 됐다. 앞으로 CNW 자신에 대한 검증은
+프로덕션이 아니라 별도 테스트 스택에서 진행한다.

@@ -304,11 +304,21 @@ export async function setPlanStatus(trackingCode: string, status: string): Promi
   return toPlanDetail(row);
 }
 
+/** documents.ts의 deleteDocument()와 같은 이유 - Question.targetKey는
+ * FK가 아니라 문자열 다형화 참조라 계획을 지워도 DB가 알아서 그
+ * 계획을 겨눈 질의를 정리해주지 않는다(#plan-qa-target으로 계획도
+ * 질의 대상이 될 수 있게 된 뒤에야 이 문제가 생김 - 코멘트는 계획을
+ * 대상으로 못 하므로 정리 대상 아님). 안 지우면 대상이 사라진
+ * 질의가 고아로 남아 프로젝트 홈/알림의 "답변 대기" 집계에 계속
+ * 잡히는 등 이상 동작을 일으킨다(실측으로 발견). */
 export async function deletePlan(trackingCode: string): Promise<void> {
   const db = getDb();
   const existing = await db.plan.findUnique({ where: { trackingCode } });
   if (!existing) throw new Error(`계획을 찾을 수 없습니다: ${trackingCode}`);
-  await db.plan.delete({ where: { trackingCode } });
+  await db.$transaction([
+    db.question.deleteMany({ where: { targetType: "plan", targetKey: trackingCode } }),
+    db.plan.delete({ where: { trackingCode } }),
+  ]);
   await realtimePublish(projectChangesTopic(existing.projectId), {
     entity: "plan",
     action: "delete",
