@@ -1401,9 +1401,12 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   `/api/projects/:projectId/git/code-review/*`(조회는 viewer, 요청/
   제출/트리아지/삭제는 editor 이상 - 게이트가 아니라 owner 전용
   액션이 없다).
-- **웹 UI**(Phase 2) - 저장소 관리 탭의 "코드 리뷰" 링크(`/repo/reviews`)로
-  전체 목록 + 새 리뷰 요청 폼(PR 번호 또는 브랜치 범위 직접 선택)에
-  들어간다. PR 상세 페이지에도 "리뷰(사후 검토)" 섹션이 있어 그
+- **웹 UI**(Phase 2, 별도 최상위 탭으로 분리됨) - 프로젝트 탭 바에
+  "저장소 관리" 옆 "코드 리뷰"가 독립 탭이다(`/projects/:id/code-review`,
+  `/projects/:id/code-review/:reviewId` - 더 이상 `/repo` 하위가
+  아님, 저장소 관리 화면의 PR 헤더에 있던 인라인 링크는 제거됨). 전체
+  목록 + 새 리뷰 요청 폼(PR 번호 또는 브랜치 범위 직접 선택)이 여기
+  있다. PR 상세 페이지에도 "리뷰(사후 검토)" 섹션이 있어 그
   PR의 리뷰 이력을 보고 "AI 리뷰 요청" 버튼으로 바로 요청할 수
   있다. 리뷰 상세 화면(`/repo/reviews/:reviewId`)은 diff(파일별
   +/- 라인, 기존 커밋 diff 뷰어 재사용)와 finding 목록(심각도

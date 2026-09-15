@@ -114,7 +114,7 @@ async function deleteReview() {
   deleteError.value = "";
   try {
     await apiCall(`/projects/${props.id}/git/code-review/${props.reviewId}`, { method: "DELETE" });
-    router.push(`/projects/${props.id}/repo/reviews`);
+    router.push(`/projects/${props.id}/code-review`);
   } catch (err) {
     deleteError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
   } finally {
@@ -139,7 +139,7 @@ onUnmounted(() => disconnectRealtime?.());
 
 <template>
   <section class="panel">
-    <router-link :to="`/projects/${id}/repo/reviews`" class="back-link">← 코드 리뷰 목록으로</router-link>
+    <router-link :to="`/projects/${id}/code-review`" class="back-link">← 코드 리뷰 목록으로</router-link>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="loading">불러오는 중...</p>
     <template v-else-if="review">

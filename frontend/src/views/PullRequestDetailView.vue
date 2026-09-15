@@ -102,7 +102,7 @@ async function requestReview() {
       method: "POST",
       body: JSON.stringify({ prIndex: Number(props.index), label: `PR#${props.index} 사후 검토` }),
     });
-    router.push(`/projects/${props.id}/repo/reviews/${result.id}`);
+    router.push(`/projects/${props.id}/code-review/${result.id}`);
   } catch (err) {
     reviewError.value = err instanceof ApiError ? err.message : "리뷰 요청에 실패했습니다";
   } finally {
@@ -309,7 +309,7 @@ onMounted(load);
         <p v-if="reviewError" class="error">{{ reviewError }}</p>
         <ul v-if="reviews.length > 0" class="list reviews">
           <li v-for="r in reviews" :key="r.id">
-            <router-link :to="`/projects/${id}/repo/reviews/${r.id}`" class="review-link">
+            <router-link :to="`/projects/${id}/code-review/${r.id}`" class="review-link">
               <span class="body-text">{{ r.label }}</span>
               <StatusBadge :code="r.status" />
             </router-link>

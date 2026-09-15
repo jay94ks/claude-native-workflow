@@ -67,7 +67,7 @@ async function requestReview() {
       method: "POST",
       body: JSON.stringify(body),
     });
-    router.push(`/projects/${props.id}/repo/reviews/${result.id}`);
+    router.push(`/projects/${props.id}/code-review/${result.id}`);
   } catch (err) {
     requestError.value = err instanceof ApiError ? err.message : "요청에 실패했습니다";
   } finally {
@@ -88,7 +88,6 @@ onMounted(load);
   <section class="panel">
     <div class="header">
       <h1>코드 리뷰(사후 검토)</h1>
-      <router-link :to="`/projects/${id}/repo`" class="back-link">← 저장소 관리로</router-link>
     </div>
 
     <button v-if="canRequest" type="button" class="toggle-btn" @click="showForm = !showForm">
@@ -122,7 +121,7 @@ onMounted(load);
     <template v-else>
       <ul class="review-list">
         <li v-for="r in reviews" :key="r.id">
-          <router-link class="review-row" :to="`/projects/${id}/repo/reviews/${r.id}`">
+          <router-link class="review-row" :to="`/projects/${id}/code-review/${r.id}`">
             <span class="review-label">{{ r.label }}</span>
             <StatusBadge :code="r.status" />
           </router-link>

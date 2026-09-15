@@ -58,13 +58,6 @@ const router = createRouter({
           component: () => import("../views/PullRequestDetailView.vue"),
           props: true,
         },
-        { path: "repo/reviews", name: "repo-review-list", component: () => import("../views/CodeReviewListView.vue"), props: true },
-        {
-          path: "repo/reviews/:reviewId",
-          name: "repo-review-detail",
-          component: () => import("../views/CodeReviewDetailView.vue"),
-          props: true,
-        },
         {
           path: "relations",
           name: "project-relations",
@@ -73,6 +66,18 @@ const router = createRouter({
           meta: { fullWidth: true },
         },
         { path: "changes", name: "changes", component: () => import("../views/ChangeTrackingView.vue"), props: true },
+        {
+          path: "code-review",
+          name: "code-review-list",
+          component: () => import("../views/CodeReviewListView.vue"),
+          props: true,
+        },
+        {
+          path: "code-review/:reviewId",
+          name: "code-review-detail",
+          component: () => import("../views/CodeReviewDetailView.vue"),
+          props: true,
+        },
         {
           path: "kanban",
           name: "kanban",
