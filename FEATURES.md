@@ -1016,6 +1016,16 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   "남은 높이를 다 쓰고 그 안에서 가로/세로로 스크롤"하는 화면도
   자연스럽게 구성 가능.
 
+- **문서/계획 상태 라벨 색상화**(DN-7E29984D) - 문서 `statusCode`
+  (draft/review/pending/approved/deprecated/archived)와 계획 `status`
+  (planned/pending_approval/in_review/scheduled/completed/rejected)가
+  편집 화면 헤더/목록/미리보기 다이얼로그/검색 결과/관계도 상세
+  패널에서 색상 없는 텍스트로만 보이던 것을, 재사용 컴포넌트
+  `StatusBadge.vue`(+ 상태 코드→색상 톤 매핑 `statusTone.ts`)로
+  바꿔 상태별로(예: draft=회색, review=파랑, pending=노랑,
+  approved=초록, rejected=빨강) 색상 pill로 표시한다. 기존 테마
+  변수(`--color-success-bg` 등)만 재사용, 새 색상 변수 추가 없음.
+
 ## 20. CLI / MCP
 
 - **완전성 원칙** - 클로드가 문서/워크플로우 상태를 읽거나 쓰는 모든

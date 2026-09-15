@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import StatusBadge from "./StatusBadge.vue";
 // "문서" 탭의 폴더/문서 분류/리스트 서브탭이 공유하는 우측 문서
 // 목록(#documents-tab-redesign) - 데이터 소스(폴더별/분류별/전체)는
 // 다르지만 렌더링·페이지네이션·클릭 시 문서 보기 이동은 항상 동일해서
@@ -45,7 +46,8 @@ function docTypeLabel(id: string): string {
             <code>{{ doc.trackingCode }}</code> {{ doc.title }}
           </router-link>
           <span class="right">
-            <span class="muted">{{ docTypeLabel(doc.docTypeId) }} · {{ doc.statusCode }}</span>
+            <span class="muted">{{ docTypeLabel(doc.docTypeId) }}</span>
+            <StatusBadge :code="doc.statusCode" />
           </span>
         </li>
         <li v-if="items.length === 0" class="muted empty">문서가 없습니다.</li>

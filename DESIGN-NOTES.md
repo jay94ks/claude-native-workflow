@@ -9398,3 +9398,48 @@ TemplateFile, `docs template set`으로 재동기화) 둘 다 "메시지" 절을
 프로즈 누락 - 후자를 고쳐 앞으로 이 프로젝트(또는 SKILL.md를 배포
 받는 다른 관리 대상 프로젝트)를 여는 세션은 더 이상 두 개념이 섞여
 보이지 않는다.
+
+## 문서/계획 상태 라벨(draft/review/...)에 색상 부여
+
+**배경**: 문서(Document)의 `statusCode`(draft/review/pending/approved/
+deprecated/archived)와 계획(Plan)의 `status`(planned/pending_approval/
+in_review/scheduled/completed/rejected)가 웹 UI 여러 곳(문서/계획
+편집 화면 헤더, 목록, 미리보기 다이얼로그, 검색 결과, 관계도 상세
+패널)에 텍스트로만 표시되고 있었다 - 색상 구분이 없어 한눈에 지금
+어떤 단계인지 파악하기 어렵다는 설계자 지시로 색상을 부여했다.
+
+**구현**:
+- `frontend/src/statusTone.ts` - 상태 코드 문자열 → 색상 톤
+  (`neutral`/`info`/`warning`/`success`/`purple`/`danger`) 매핑 테이블.
+  Document 상태 코드와 Plan 상태 코드는 어휘가 겹치지 않아(예: `draft`
+  vs `planned`) 하나의 맵으로 합쳤다.
+  - 문서: draft=neutral, review=info, pending=warning, approved=success,
+    deprecated=purple, archived=neutral.
+  - 계획: planned=neutral, pending_approval=warning, in_review=info,
+    scheduled=purple, completed=success, rejected=danger.
+  - 의미가 비슷한 문서/계획 상태끼리(예: review/in_review) 같은 톤을
+    쓰되, 문서와 계획 목록이 같은 화면에 동시에 안 나오므로 톤
+    슬롯(purple 등)을 재사용해도 시각적 혼동이 없다.
+- `frontend/src/components/StatusBadge.vue` - `code`(필수)/`label`
+  (선택, 없으면 code 그대로 표시) prop을 받아 위 톤에 맞는 배경/글자색
+  pill로 렌더링하는 재사용 컴포넌트. 이미 있던 `--color-success-bg`/
+  `--color-warning-bg`/`--color-info-bg`/`--color-danger-bg`/
+  `--color-purple-bg` 등 테마 변수(라이트/다크 모두 정의돼 있음)를
+  그대로 썼다 - 새 색상 변수를 추가하지 않았다.
+- 기존에 각 화면마다 따로 있던 `<span class="status">{{ code }}</span>`
+  (무채색 pill, 파일마다 거의 동일한 CSS가 중복돼 있었음)를 전부
+  `<StatusBadge>`로 교체하고 중복 CSS를 지웠다: 문서/계획 편집 화면
+  헤더, 문서/계획 미리보기 다이얼로그, 문서 목록 패널, 계획 목록,
+  검색 결과, 문서 관계도 상세 패널.
+
+**검증**: `C:\CNW-test`(격리 테스트 스택, 포트 8765)에 미커밋 변경분을
+복사해 기동 후 브라우저로 왕복 확인 - 계획 하나를 만들어 draft에
+해당하는 초기 상태(`계획됨`, neutral 회색)를 본 뒤 `거부`(rejected)로
+전이시켜 빨간색 danger 배지로 바뀌는 것을, 문서 하나를 만들어
+`draft`(회색) → `approved`(초록 success)로 전이시켜 색이 바뀌는 것을
+확인했다. 검증 중 실시간 토스트("계획이 개정되었습니다"/"문서가
+개정되었습니다")도 함께 정상 동작하는 걸 재확인했다(이번 라운드
+변경과 무관, 기존 기능).
+
+**결론**: 문서/계획 편집·목록·미리보기 화면 전반에서 상태 텍스트가
+이제 색상으로도 구분된다. 아직 설계자의 커밋/푸시/배포 요청은 별도.

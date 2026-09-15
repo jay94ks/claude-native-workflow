@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
+import StatusBadge from "../components/StatusBadge.vue";
 
 const props = defineProps<{ id: string }>();
 const route = useRoute();
@@ -116,7 +117,7 @@ watch([query, scope, includeSource], load);
           <router-link :to="`/projects/${d.projectId}/documents/${d.trackingCode}`">
             <span class="project-badge">{{ d.projectName }}</span>
             <code>{{ d.trackingCode }}</code> {{ d.title }}
-            <span class="status">{{ d.statusCode }}</span>
+            <StatusBadge :code="d.statusCode" />
           </router-link>
           <p class="snippet">
             <template v-for="(part, i) in splitSnippet(d.snippet)" :key="i">
@@ -214,11 +215,6 @@ section {
 }
 .path {
   font-family: monospace;
-}
-.status {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  margin-left: 6px;
 }
 .snippet {
   margin: 6px 0 0;

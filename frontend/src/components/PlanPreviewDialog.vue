@@ -4,6 +4,7 @@ import { apiCall, ApiError } from "../api/client";
 import { usePlanDialogStore } from "../stores/planDialog";
 import { nextDialogZIndex } from "../dialogZIndex";
 import MarkdownBody from "./MarkdownBody.vue";
+import StatusBadge from "./StatusBadge.vue";
 
 interface PlanDetail {
   trackingCode: string;
@@ -53,7 +54,7 @@ watch(
       <template v-else-if="plan">
         <div class="header">
           <code>{{ plan.trackingCode }}</code>
-          <span class="status">{{ plan.status }}</span>
+          <StatusBadge :code="plan.status" />
         </div>
         <h2>{{ plan.title }}</h2>
         <MarkdownBody :body="plan.body" />
@@ -108,13 +109,6 @@ watch(
   background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
-}
-.status {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  background: var(--color-surface-hover);
-  padding: 2px 8px;
-  border-radius: 999px;
 }
 h2 {
   font-size: 18px;

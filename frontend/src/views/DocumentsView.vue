@@ -6,6 +6,7 @@ import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 import FolderSelectTree from "../components/FolderSelectTree.vue";
 import { UNFILED_SENTINEL } from "../utils/folderTree";
 import DocumentListPanel from "../components/DocumentListPanel.vue";
+import StatusBadge from "../components/StatusBadge.vue";
 import QuestionListPanel from "../components/QuestionListPanel.vue";
 import RelationGraphCanvas from "../components/RelationGraphCanvas.vue";
 import type { RelationGraphNode, RelationGraphEdge } from "../utils/relationGraph";
@@ -493,7 +494,8 @@ onMounted(async () => {
           <code>{{ doc.trackingCode }}</code> {{ doc.title }}
         </router-link>
         <span class="right">
-          <span class="muted">{{ docTypeLabel(doc.docTypeId) }} · {{ doc.statusCode }}</span>
+          <span class="muted">{{ docTypeLabel(doc.docTypeId) }}</span>
+          <StatusBadge :code="doc.statusCode" />
         </span>
       </li>
       <li v-if="recentDocuments.length === 0" class="muted">문서가 없습니다.</li>
@@ -691,7 +693,7 @@ onMounted(async () => {
             <template v-else-if="docGraphDetail">
               <div class="detail-header">
                 <code>{{ docGraphDetail.trackingCode }}</code>
-                <span class="status">{{ docGraphDetail.statusCode }}</span>
+                <StatusBadge :code="docGraphDetail.statusCode" />
               </div>
               <h3>{{ docGraphDetail.title }}</h3>
               <dl class="detail-fields">
@@ -939,13 +941,6 @@ onMounted(async () => {
   background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
-}
-.detail-header .status {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  background: var(--color-surface-hover);
-  padding: 2px 8px;
-  border-radius: 999px;
 }
 .graph-detail-panel h3 {
   font-size: 15px;

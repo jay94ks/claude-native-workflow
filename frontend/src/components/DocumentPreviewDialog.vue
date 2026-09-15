@@ -4,6 +4,7 @@ import { apiCall, ApiError } from "../api/client";
 import { useDocumentDialogStore } from "../stores/documentDialog";
 import { nextDialogZIndex } from "../dialogZIndex";
 import MarkdownBody from "./MarkdownBody.vue";
+import StatusBadge from "./StatusBadge.vue";
 
 interface DocumentDetail {
   trackingCode: string;
@@ -56,7 +57,7 @@ watch(
       <template v-else-if="doc">
         <div class="header">
           <code>{{ doc.trackingCode }}</code>
-          <span class="status">{{ doc.statusCode }}</span>
+          <StatusBadge :code="doc.statusCode" />
         </div>
         <h2>{{ doc.title }}</h2>
         <MarkdownBody :body="doc.body" />
@@ -114,13 +115,6 @@ watch(
   background: var(--color-surface-hover);
   padding: 2px 6px;
   border-radius: 4px;
-}
-.status {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  background: var(--color-surface-hover);
-  padding: 2px 8px;
-  border-radius: 999px;
 }
 h2 {
   font-size: 18px;

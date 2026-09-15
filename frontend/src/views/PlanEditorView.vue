@@ -7,6 +7,7 @@ import MarkdownBody from "../components/MarkdownBody.vue";
 import UserRef from "../components/UserRef.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
 import QAPanel from "../components/QAPanel.vue";
+import StatusBadge from "../components/StatusBadge.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useToastStore } from "../stores/toast";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
@@ -318,7 +319,7 @@ onUnmounted(() => disconnectRealtime?.());
           <select v-if="canWrite" :value="plan.status" :disabled="statusSaving" @change="changeStatus(($event.target as HTMLSelectElement).value)">
             <option v-for="s in statuses" :key="s.code" :value="s.code">{{ s.label }}</option>
           </select>
-          <span v-else class="status">{{ currentStatusLabel }}</span>
+          <StatusBadge v-else :code="plan.status" :label="currentStatusLabel" />
         </div>
       </div>
       <p v-if="statusError" class="error">{{ statusError }}</p>
@@ -443,13 +444,6 @@ h1 {
   font-size: 12px;
   background: var(--color-surface);
   color: var(--color-text);
-}
-.status {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  background: var(--color-surface-hover);
-  padding: 4px 10px;
-  border-radius: 999px;
 }
 .tabs {
   display: flex;

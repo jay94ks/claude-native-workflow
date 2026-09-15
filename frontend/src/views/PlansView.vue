@@ -5,6 +5,7 @@ import { apiCall, ApiError } from "../api/client";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import Pagination from "../components/Pagination.vue";
+import StatusBadge from "../components/StatusBadge.vue";
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -158,7 +159,7 @@ onMounted(async () => {
             <span class="title">{{ p.title }}</span>
           </div>
           <div class="row-meta">
-            <span class="status-chip">{{ statusLabel(p.status) }}</span>
+            <StatusBadge :code="p.status" :label="statusLabel(p.status)" />
             <span class="muted">{{ new Date(p.updatedAt).toLocaleString() }}</span>
           </div>
         </li>
@@ -262,13 +263,6 @@ onMounted(async () => {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
-}
-.status-chip {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  background: var(--color-surface-hover);
-  padding: 3px 8px;
-  border-radius: 999px;
 }
 .muted {
   color: var(--color-text-muted);

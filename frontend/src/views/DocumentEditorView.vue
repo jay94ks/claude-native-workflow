@@ -6,6 +6,7 @@ import MonacoEditor from "../components/MonacoEditor.vue";
 import MarkdownBody from "../components/MarkdownBody.vue";
 import UserRef from "../components/UserRef.vue";
 import QAPanel from "../components/QAPanel.vue";
+import StatusBadge from "../components/StatusBadge.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
 import { useFolderPickerStore } from "../stores/folderPicker";
@@ -649,7 +650,7 @@ onUnmounted(() => disconnectRealtime?.());
         </div>
         <div class="actions">
           <span v-if="doc.priority !== null" class="priority-badge">우선순위 {{ doc.priority }}</span>
-          <span class="status">{{ doc.statusCode }}</span>
+          <StatusBadge :code="doc.statusCode" />
         </div>
       </div>
   
@@ -906,13 +907,6 @@ h1 {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-.status {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  background: var(--color-surface-hover);
-  padding: 4px 10px;
-  border-radius: 999px;
 }
 .priority-badge {
   font-size: 12px;
