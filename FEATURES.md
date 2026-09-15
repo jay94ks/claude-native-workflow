@@ -404,8 +404,12 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   `docs question <trackingCode> <text>`만으로 자동 판별됨,
   `#plan-qa-target`).
 - **질의는 AI가 등록, 설계자는 답변만** - `kind`로 `answer`(자유
-  텍스트 답변)/`approval`(승인·거부만, 텍스트 대신 `--decision`)
-  구분.
+  텍스트 답변, `body` 필수)/`approval`(`--decision`으로 승인·거부를
+  확정하거나, 아직 결정 전이면 `--decision` 없이 텍스트(`body`)만으로도
+  답할 수 있다 - `decision`/`body` 중 최소 하나만 있으면 됨, 둘 다
+  없는 완전히 빈 답변만 거부됨) 구분. 질의 하나당 답변은 한 번뿐이라
+  (Answer는 questionId당 1건), "결정 전에 의견만" 답도 그 한 번을
+  씀 - 여러 턴을 주고받는 토론이 필요하면 메시지 채널이나 새 질의로.
 - 상태: `open`(질의 등록, 답변 대기) → `pending`(설계자 답변 완료,
   AI 확인 대기 - 종결 아님) → `resolved`(AI가 확인 완료 표시).
   확인 완료 표시는 CLI `question-ack-bulk`/MCP `question_ack_bulk`로

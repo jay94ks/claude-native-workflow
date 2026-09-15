@@ -206,8 +206,13 @@ targetType/targetKey로 다형화해 처리). 판단에 참고한 문서가 있�
 - 둘 다 `QU-XXXXXXXX` 추적 코드가 발급된다.
 
 **`kind`은 두 종류다**(기본값 `answer`) - **`answer`**(자유 텍스트
-답변이 필요한 "답변 요청")와 **`approval`**(승인/거부만 필요한 "승인
-요청" - 텍스트가 아니라 `--decision`으로 답한다).
+답변이 필요한 "답변 요청", `body` 필수)와 **`approval`**("승인
+요청" - `--decision`으로 승인/거부를 확정하거나, 아직 결정하기 전이면
+`--decision` 없이 답변 텍스트(`body`)만으로도 답할 수 있다 -
+`decision`/`body` 중 최소 하나만 있으면 되고 둘 다 없는 완전히 빈
+답변만 거부된다). 질의 하나당 답변은 한 번뿐이라("결정 전에 의견만"
+답도 그 한 번을 씀) 여러 턴을 주고받는 토론이 필요하면 메시지
+채널이나 새 질의로 이어간다.
 
 상태는 3단계다: **`open`**(질의 등록, 설계자 답변 대기) → **설계자가
 답변하면 `pending`**(종결이 아니라 "AI 확인 대기" - 이 상태에서 문서
@@ -216,10 +221,12 @@ targetType/targetKey로 다형화해 처리). 판단에 참고한 문서가 있�
 - `docs pending <projectId>` - `open`+`pending` 둘 다(미해결 전체,
   모든 대상 종류가 섞여서)를 보여준다. 각 행의 `status`/`targetType`로
   구분한다.
-- `docs reply <questionTrackingCode> [답변] [--decision
-  <approved|rejected>] [--note <text>]` - 설계자 답변, 상태를
-  `pending`으로 바꾼다. `kind=answer`면 답변 텍스트를, `kind=approval`
-  이면 `--decision`(+ 선택적 `--note` 메모)을 쓴다.
+- `docs reply <questionTrackingCode> [답변...] [--decision
+  <approved|rejected>]` - 설계자 답변, 상태를 `pending`으로 바꾼다.
+  `kind=answer`면 답변 텍스트(위치 인자)가 필수. `kind=approval`이면
+  `--decision`으로 승인/거부를 확정(답변 텍스트는 선택 메모로 같이
+  붙일 수 있음)하거나, 아직 결정 전이면 `--decision` 없이 답변
+  텍스트만으로도 낼 수 있다.
 - **`docs question ack <trackingCode>`** - `pending`을 `resolved`로
   전이(AI가 "확인했다"고 표시). **세션 시작 시 체크리스트의 2번 항목이
   바로 이것 - `pending` 상태를 방치하지 않는다.**
@@ -660,7 +667,7 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 대상의 질의/답변(문서/칸반 카드, 기본 active만) | `docs questions <trackingCode> [--status open\|pending\|resolved\|withdrawn\|active\|all]` | `question_list` |
 | 대상의 질의/답변(소스 코드 파일, 기본 active만) | `docs questions-source <projectId> <path> [--status ...]` | `question_list_source` |
 | 답변 대기 목록(open+pending, 전체 대상) | `docs pending <projectId>` | `pending_list` |
-| 답변 | `docs reply <questionTrackingCode> [answer] [--decision <approved\|rejected>] [--note <text>]` | `question_reply` |
+| 답변(approval도 --decision 없이 텍스트만으로 가능) | `docs reply <questionTrackingCode> [answer...] [--decision <approved\|rejected>]` | `question_reply` |
 | 질의 확인 완료 처리 | `docs question-ack <trackingCode>` | `question_ack` |
 | 질의 일괄 확인 완료 처리 | `docs question-ack-bulk <trackingCode...>` | `question_ack_bulk` |
 | 질의 철회 | `docs question-withdraw <trackingCode>` | `question_withdraw` |

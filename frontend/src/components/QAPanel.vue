@@ -204,6 +204,14 @@ async function decide(q: QuestionItem, decision: "approved" | "rejected") {
   await submitAnswer(q, { decision, body: note || undefined });
 }
 
+// 승인 요청도 아직 승인/거부를 확정하기 전에 의견만 먼저 남길 수 있게
+// 한다(설계자 지시) - decision 없이 body만 보낸다.
+async function replyOnly(q: QuestionItem) {
+  const body = (answerDrafts.value[q.trackingCode] ?? "").trim();
+  if (!body) return;
+  await submitAnswer(q, { body });
+}
+
 async function submitAnswer(q: QuestionItem, payload: { body?: string; decision?: string }) {
   answering.value = { ...answering.value, [q.trackingCode]: true };
   error.value = "";
@@ -361,10 +369,18 @@ onUnmounted(() => disconnect?.());
         </div>
         <template v-else-if="q.kind === 'approval'">
           <div v-if="canAnswer" class="approval-row">
-            <textarea v-model="answerDrafts[q.trackingCode]" rows="2" placeholder="메모(선택, 여러 줄 입력 가능)"></textarea>
+            <textarea v-model="answerDrafts[q.trackingCode]" rows="2" placeholder="메모(승인/거부 시 선택, 의견만 남길 땐 필수) - 여러 줄 입력 가능"></textarea>
             <div class="approval-actions">
               <button type="button" class="approve" :disabled="answering[q.trackingCode]" @click="decide(q, 'approved')">승인</button>
               <button type="button" class="reject" :disabled="answering[q.trackingCode]" @click="decide(q, 'rejected')">거부</button>
+              <button
+                type="button"
+                class="secondary"
+                :disabled="answering[q.trackingCode] || !(answerDrafts[q.trackingCode] ?? '').trim()"
+                @click="replyOnly(q)"
+              >
+                의견만 남기기(아직 미정)
+              </button>
             </div>
           </div>
         </template>
@@ -699,6 +715,14 @@ h2 {
   background: var(--color-danger);
   color: #fff;
   border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.approval-actions .secondary {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
   padding: 8px 16px;
   border-radius: 6px;
   font-weight: 600;

@@ -1494,7 +1494,7 @@ async function main() {
   tool(
     "question_reply",
     "질의에 답변",
-    "질의에 답변하면 상태가 pending으로 바뀌고(종결 아님 - AI 확인 대기), 문서 대상의 모든 질의가 open을 벗어나면 문서 상태도 자동 전이될 수 있다. kind=answer면 body, kind=approval이면 decision(+선택 body 메모)을 쓴다.",
+    "질의에 답변하면 상태가 pending으로 바뀌고(종결 아님 - AI 확인 대기), 문서 대상의 모든 질의가 open을 벗어나면 문서 상태도 자동 전이될 수 있다. kind=answer면 body가 필요하다. kind=approval이면 decision(+선택 body 메모)으로 승인/거부를 확정하거나, 아직 결정 전이면 decision 없이 body만으로도 답할 수 있다(둘 중 최소 하나 필요).",
     { questionTrackingCode: z.string(), body: z.string().optional(), decision: z.enum(["approved", "rejected"]).optional() },
     async (a) => call(`/api/questions/${a.questionTrackingCode}/answer`, { method: "POST", body: JSON.stringify({ body: a.body, decision: a.decision }) }),
   );

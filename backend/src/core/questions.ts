@@ -54,7 +54,7 @@ export interface QuestionDetail {
 }
 
 export interface AnswerDetail {
-  decision: string | null; // "approved" | "rejected" - kind="approval"일 때만
+  decision: string | null; // "approved" | "rejected" | null - kind="approval"이어도 body만으로 답했으면 null일 수 있다
   body: string | null;
   answeredBy: string;
   answeredAt: Date;
@@ -556,8 +556,14 @@ export async function answerQuestion(
   }
 
   if (question.kind === "approval") {
-    if (input.decision !== "approved" && input.decision !== "rejected") {
-      throw new Error("승인 요청에는 decision(approved|rejected)이 필요합니다");
+    // decision 없이 body만으로도 답할 수 있다(설계자 지시) - 승인/거부를
+    // 아직 확정하지 못했어도 의견/맥락만 먼저 남기고 싶을 수 있다.
+    // decision을 주긴 했는데 값이 잘못됐으면 그건 여전히 막는다.
+    if (input.decision !== undefined && input.decision !== "approved" && input.decision !== "rejected") {
+      throw new Error("decision을 지정하려면 approved/rejected 중 하나여야 합니다");
+    }
+    if (input.decision === undefined && (!input.body || !input.body.trim())) {
+      throw new Error("승인 요청에는 decision 또는 body(자유 답변) 중 최소 하나가 필요합니다");
     }
   } else if (!input.body || !input.body.trim()) {
     throw new Error("답변 요청에는 body(답변 내용)가 필요합니다");

@@ -1988,7 +1988,7 @@ program
 
 program
   .command("reply <questionTrackingCode> [answer...]")
-  .description("답변 요청(kind=answer)은 answer 텍스트로, 승인 요청(kind=approval)은 --decision으로 답한다")
+  .description("답변 요청(kind=answer)은 answer 텍스트로 답한다. 승인 요청(kind=approval)은 --decision으로 승인/거부를 확정하거나(answer 텍스트를 메모로 같이 붙일 수 있음), 아직 결정하기 전이면 --decision 없이 answer 텍스트만으로도 답할 수 있다(둘 중 최소 하나 필요)")
   .option("--decision <approved|rejected>", "승인 요청에 대한 결정")
   .action((questionTrackingCode, answerParts, opts) =>
     run(async () =>
