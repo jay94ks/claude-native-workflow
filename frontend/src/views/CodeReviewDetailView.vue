@@ -58,11 +58,50 @@ const diffError = ref("");
 // 심각도 내림차순(blocker가 맨 위) - 이 세션이 코드 리뷰에 쓰는
 // ReportFindings 도구의 "most-severe-first" 관례와 동일.
 const SEVERITY_RANK: Record<string, number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
-const sortedFindings = computed(() => {
-  if (!review.value) return [];
-  return [...review.value.findings].sort((a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9));
-});
 const diffFiles = computed<FileDiff[]>(() => parseUnifiedDiff(diffText.value));
+
+// diff와 발견 항목을 따로 나열하지 않고 파일 단위로 묶는다(설계자
+// 요청 - "코드 리뷰 단위를 파일 단위로 볼 수는 없나") - 파일 하나의
+// diff와 그 파일에 달린 finding을 나란히 보면서 검토할 수 있게.
+// 같은 파일이 이 범위 안 여러 커밋에서 바뀌었으면 diff 카드가
+// 여러 개일 수 있다(gitea.compareDiff가 커밋별 diff를 이어붙이는
+// 방식이라 - core/gitea.ts 참고) - 그 전부를 한 그룹에 묶는다.
+// finding이 가리키는 파일이 diff 목록에 없는 예외적인 경우(예: AI가
+// 범위 밖 파일을 언급)도 파일 목록 뒤에 별도 그룹으로 붙여 놓친 finding이
+// 없게 한다.
+interface FileGroup {
+  filePath: string;
+  diffs: FileDiff[];
+  findings: Finding[];
+}
+const fileGroups = computed<FileGroup[]>(() => {
+  if (!review.value) return [];
+  const order: string[] = [];
+  const diffsByPath = new Map<string, FileDiff[]>();
+  for (const f of diffFiles.value) {
+    const path = f.newPath !== "/dev/null" ? f.newPath : f.oldPath;
+    if (!diffsByPath.has(path)) {
+      diffsByPath.set(path, []);
+      order.push(path);
+    }
+    diffsByPath.get(path)!.push(f);
+  }
+  const findingsByPath = new Map<string, Finding[]>();
+  for (const finding of review.value.findings) {
+    if (!findingsByPath.has(finding.filePath)) findingsByPath.set(finding.filePath, []);
+    findingsByPath.get(finding.filePath)!.push(finding);
+  }
+  for (const path of findingsByPath.keys()) {
+    if (!diffsByPath.has(path)) order.push(path);
+  }
+  return order.map((filePath) => ({
+    filePath,
+    diffs: diffsByPath.get(filePath) ?? [],
+    findings: (findingsByPath.get(filePath) ?? [])
+      .slice()
+      .sort((a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9)),
+  }));
+});
 
 async function loadDiff(r: ReviewDetail) {
   diffLoading.value = true;
@@ -157,46 +196,49 @@ onUnmounted(() => disconnectRealtime?.());
       <p v-if="review.aiSummary" class="summary">{{ review.aiSummary }}</p>
 
       <section class="block">
-        <h2>변경 내용</h2>
+        <h2>파일별 변경 및 발견 항목 (발견 {{ review.findings.length }}건)</h2>
         <p v-if="diffError" class="error">{{ diffError }}</p>
         <p v-if="diffLoading">불러오는 중...</p>
-        <DiffFileList v-else-if="diffFiles.length > 0" :files="diffFiles" />
+        <div v-else-if="fileGroups.length > 0" class="file-groups">
+          <div v-for="group in fileGroups" :key="group.filePath" class="file-group">
+            <DiffFileList v-if="group.diffs.length > 0" :files="group.diffs" />
+            <div v-else class="no-diff">
+              <span class="f-location">{{ group.filePath }}</span>
+              <span class="muted">(이 범위의 diff에는 없는 파일)</span>
+            </div>
+            <ul v-if="group.findings.length > 0" class="finding-list nested">
+              <li v-for="f in group.findings" :key="f.id">
+                <div class="f-row">
+                  <StatusBadge :code="f.severity" />
+                  <span class="f-location"><template v-if="f.line">:{{ f.line }}</template></span>
+                  <StatusBadge :code="f.status" />
+                </div>
+                <p class="f-summary">{{ f.summary }}</p>
+                <p class="f-scenario">{{ f.failureScenario }}</p>
+                <p class="f-meta">
+                  <span>{{ f.category }}</span>
+                  <span v-if="f.verdict"> · {{ f.verdict }}</span>
+                  <span v-if="f.followUpRef"> · 후속: <TrackingCodeText :text="f.followUpRef" /></span>
+                </p>
+                <div v-if="canAct && f.status === 'open'" class="f-actions">
+                  <button type="button" :disabled="resolvingId === f.id" @click="resolveFinding(f.id, 'fixed')">해결됨</button>
+                  <button type="button" class="secondary" :disabled="resolvingId === f.id" @click="resolveFinding(f.id, 'wontfix')">
+                    보류
+                  </button>
+                  <button
+                    type="button"
+                    class="secondary"
+                    :disabled="resolvingId === f.id"
+                    @click="resolveFinding(f.id, 'false_positive')"
+                  >
+                    오탐
+                  </button>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
         <p v-else class="muted">변경된 파일이 없습니다.</p>
-      </section>
-
-      <section class="block">
-        <h2>발견 항목 ({{ review.findings.length }})</h2>
-        <ul v-if="sortedFindings.length > 0" class="finding-list">
-          <li v-for="f in sortedFindings" :key="f.id">
-            <div class="f-row">
-              <StatusBadge :code="f.severity" />
-              <span class="f-location">{{ f.filePath }}<template v-if="f.line">:{{ f.line }}</template></span>
-              <StatusBadge :code="f.status" />
-            </div>
-            <p class="f-summary">{{ f.summary }}</p>
-            <p class="f-scenario">{{ f.failureScenario }}</p>
-            <p class="f-meta">
-              <span>{{ f.category }}</span>
-              <span v-if="f.verdict"> · {{ f.verdict }}</span>
-              <span v-if="f.followUpRef"> · 후속: <TrackingCodeText :text="f.followUpRef" /></span>
-            </p>
-            <div v-if="canAct && f.status === 'open'" class="f-actions">
-              <button type="button" :disabled="resolvingId === f.id" @click="resolveFinding(f.id, 'fixed')">해결됨</button>
-              <button type="button" class="secondary" :disabled="resolvingId === f.id" @click="resolveFinding(f.id, 'wontfix')">
-                보류
-              </button>
-              <button
-                type="button"
-                class="secondary"
-                :disabled="resolvingId === f.id"
-                @click="resolveFinding(f.id, 'false_positive')"
-              >
-                오탐
-              </button>
-            </div>
-          </li>
-        </ul>
-        <p v-else class="muted">발견된 항목이 없습니다.</p>
       </section>
 
       <p v-if="deleteError" class="error">{{ deleteError }}</p>
@@ -256,10 +298,29 @@ h1 {
   font-size: 15px;
   margin: 0 0 10px;
 }
+.file-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.no-diff {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--color-surface);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+}
 .finding-list {
   list-style: none;
   padding: 0;
   margin: 0;
+}
+.finding-list.nested {
+  margin-top: 8px;
+  padding-left: 16px;
+  border-left: 2px solid var(--color-border-light);
 }
 .finding-list li {
   background: var(--color-surface);

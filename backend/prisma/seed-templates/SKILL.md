@@ -889,13 +889,23 @@ git publish-queue-done <projectId> <id>`로 완료를 보고한다 - 이
 **여러 파일을 스테이징해야 할 땐 `git add`/`git rm`을 파일마다 반복
 호출하지 않고 일괄 명령을 쓴다**(`#git-staging-bulk`) - 파일 수만큼
 CLI 프로세스 기동+HTTP 왕복이 누적되면 체감상 느려진다. `git
-add-bulk <projectId> <manifestFile>`(MCP `git_add_bulk`)은 로컬 JSON
-매니페스트(`[{"path": "...", "localFile": "..."}, ...]`, `docs
-relation add-bulk`와 같은 "로컬 파일 참조 배열" 관례)로 여러 파일을
-한 번에 스테이징하고, `git rm-bulk <projectId> <path...>`(MCP
-`git_rm_bulk`)는 여러 삭제를 경로 목록만으로 한 번에 스테이징한다.
-둘 다 항목별 결과(`{path, ok, error?}[]`)를 반환해 일부만 실패해도
-나머지는 계속 진행된다.
+add-bulk <projectId> <manifestFile>`은 로컬 JSON 매니페스트
+(`[{"path": "...", "localFile": "..."}, ...]`, `docs relation
+add-bulk`와 같은 "로컬 파일 참조 배열" 관례)로 여러 파일을 한 번에
+스테이징하고, `git rm-bulk <projectId> <path...>`(MCP `git_rm_bulk`)는
+여러 삭제를 경로 목록만으로 한 번에 스테이징한다. 항목별 결과
+(`{path, ok, error?}[]`)를 반환해 일부만 실패해도 나머지는 계속
+진행된다.
+
+**MCP `git_put`/`git_add`/`git_add_bulk`(각 항목)은 `content`
+대신 `localFile`(이 MCP 서버가 도는 머신의 로컬 경로)도 받는다** -
+정확히 하나만 지정. **한글처럼 밀도 높은 비-ASCII 텍스트가 많은
+파일은 항상 `localFile`을 우선 쓴다** - `content`로 넘기면 모델이
+파일 내용을 호출 시점에 토큰 단위로 다시 생성해야 하는데, 그 과정에서
+드물게 음절이 비슷한 다른 음절로 치환되는 게 실측 확인됐다(예:
+"옮김"→"옥김") - `localFile`은 서버가 디스크에서 직접 읽어 이 문제
+자체가 없다(PN-46EE061F, CLI `git add`/`add-bulk`가 항상 이렇게
+동작해온 것과 동일한 방식으로 MCP도 맞춘 것).
 
 **`git commit`은 항상 원자적이다** - 드리프트가 있어도 겹치지 않는
 변경이면 3-way 자동 병합해 한 커밋에 반영하지만, 같은 줄을 건드리는

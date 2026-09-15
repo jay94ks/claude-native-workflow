@@ -754,7 +754,13 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
 - **스테이징(git add/rm/status/restore/commit)** - 실제 git처럼 여러
   파일 변경을 모았다가 한 번에 커밋할 수 있다. `git add`/`git rm`이
   스테이징만 하고(아직 Gitea에 반영 안 됨) - CLI의 `git add`도 `git
-  put`과 같은 CRLF→LF 정규화를 거친다. `git status`가 스테이징된
+  put`과 같은 CRLF→LF 정규화를 거친다. MCP `git_put`/`git_add`/
+  `git_add_bulk`도 `content` 대신 `localFile`(이 MCP 서버가 도는
+  머신의 로컬 경로)을 받을 수 있어 CLI와 같은 방식으로 서버가 직접
+  읽는다 - 밀도 높은 한글 등 비-ASCII 텍스트가 많은 파일을 모델이
+  `content`로 직접 생성하다 드물게 음절이 손상되는 게 실측 확인돼
+  (PN-46EE061F) 추가됨, `content`/`localFile` 중 정확히 하나만 허용.
+  `git status`가 스테이징된
   각 항목의 현재 HEAD 대비 diff(문서 버전 비교와 같은 형식)와 그 사이
   드리프트 여부를 보여주고, `git restore`가 스테이징을 취소한다.
   `git commit`이 스테이징된 변경을 모아 **한 번에 하나의 Gitea 커밋**
@@ -1408,10 +1414,12 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   목록 + 새 리뷰 요청 폼(PR 번호 또는 브랜치 범위 직접 선택)이 여기
   있다. PR 상세 페이지에도 "리뷰(사후 검토)" 섹션이 있어 그
   PR의 리뷰 이력을 보고 "AI 리뷰 요청" 버튼으로 바로 요청할 수
-  있다. 리뷰 상세 화면(`/repo/reviews/:reviewId`)은 diff(파일별
-  +/- 라인, 기존 커밋 diff 뷰어 재사용)와 finding 목록(심각도
-  내림차순, 상태 배지, `followUpRef`는 클릭하면 PN/칸반 카드
-  다이얼로그가 바로 열림)을 보여주고, 설계자가 각 finding을
+  있다. 리뷰 상세 화면(`/projects/:id/code-review/:reviewId`)은 diff와
+  finding을 **파일 단위로 함께** 보여준다 - 파일의 diff 카드
+  바로 아래 그 파일에 달린 finding(심각도 내림차순, 상태 배지,
+  `followUpRef`는 클릭하면 PN/칸반 카드 다이얼로그가 바로 열림)이
+  붙어서 나온다. finding이 없는 변경 파일도 diff만 그대로 보여서
+  전체 변경 파일 목록을 훑어볼 수 있고, 설계자가 각 finding을
   fixed/wontfix/false_positive로 직접 트리아지할 수 있다. 다른
   세션이 CLI로 finding을 제출하면 보고 있는 화면이 실시간 토스트와
   함께 자동 갱신된다. findings 0건인 리뷰만 웹에서도 삭제(취소) 버튼이

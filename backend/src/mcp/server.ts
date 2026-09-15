@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -40,6 +41,28 @@ function errorResult(err: unknown) {
 
 async function call<T>(pathSuffix: string, init?: RequestInit): Promise<T> {
   return apiCall<T>(pathSuffix, init);
+}
+
+// git_put/git_add/git_add_bulk가 content를 그대로 받으면, 밀도 높은
+// 한글처럼 모델이 토큰 단위로 다시 "타이핑"해야 하는 텍스트에서 드물게
+// 음절이 유사한 다른 음절로 치환되는 게 실측 확인됐다(PN-46EE061F -
+// minicore 프로젝트에서 git_add_bulk로 7회 넘게 재현, CLI의 `docs git
+// add-bulk`(로컬 파일을 fs.readFileSync로 직접 읽어 보냄, 모델이 내용을
+// 생성할 필요가 없음)로는 즉시 깨끗했음). localFile을 주면 이 MCP
+// 서버가 CLI와 똑같은 방식으로 디스크에서 직접 읽어, 모델이 파일
+// 내용을 거치지 않게 한다 - content/localFile 중 정확히 하나만 허용.
+function resolveFileContent(content: unknown, localFile: unknown): string {
+  const hasContent = typeof content === "string";
+  const hasLocalFile = typeof localFile === "string";
+  if (hasContent === hasLocalFile) {
+    throw new Error("content와 localFile 중 정확히 하나만 지정해야 합니다");
+  }
+  if (hasLocalFile) {
+    // git put/add CLI와 같은 이유로 CRLF→LF 정규화(#git-path-separator와
+    // 같은 취지 - Windows에서 읽은 파일을 실제 git commit과 동일하게).
+    return fs.readFileSync(localFile as string, "utf-8").replace(/\r\n/g, "\n");
+  }
+  return content as string;
 }
 
 async function main() {
@@ -1759,13 +1782,14 @@ async function main() {
   tool(
     "git_put",
     "git 파일 저장",
-    "저장소에 파일을 커밋한다(있으면 갱신, 없으면 생성).",
-    { projectId: z.string(), path: z.string(), content: z.string(), message: z.string().optional() },
+    "저장소에 파일을 커밋한다(있으면 갱신, 없으면 생성). content 또는 localFile(이 MCP 서버가 도는 머신의 로컬 경로 - 디스크에서 직접 읽어 전송) 중 정확히 하나를 지정한다. 한글처럼 밀도 높은 비-ASCII 텍스트가 많은 파일은 localFile을 쓰면 모델이 내용을 다시 생성할 필요가 없어 더 안전하다(PN-46EE061F).",
+    { projectId: z.string(), path: z.string(), content: z.string().optional(), localFile: z.string().optional(), message: z.string().optional() },
     async (a) => {
+      const content = resolveFileContent(a.content, a.localFile);
       const qs = new URLSearchParams({ path: String(a.path) });
       return call(`/api/projects/${a.projectId}/git/file?${qs}`, {
         method: "PUT",
-        body: JSON.stringify({ content: a.content, message: a.message }),
+        body: JSON.stringify({ content, message: a.message }),
       });
     },
   );
@@ -1795,13 +1819,15 @@ async function main() {
   tool(
     "git_add",
     "git 파일 변경 스테이징",
-    "파일 변경을 스테이징한다(git add - 아직 커밋 안 됨).",
-    { projectId: z.string(), path: z.string(), content: z.string() },
-    async (a) =>
-      call(`/api/projects/${a.projectId}/git/staging/add`, {
+    "파일 변경을 스테이징한다(git add - 아직 커밋 안 됨). content 또는 localFile(이 MCP 서버가 도는 머신의 로컬 경로 - 디스크에서 직접 읽어 전송) 중 정확히 하나를 지정한다. 한글처럼 밀도 높은 비-ASCII 텍스트가 많은 파일은 localFile을 쓰면 모델이 내용을 다시 생성할 필요가 없어 더 안전하다(PN-46EE061F).",
+    { projectId: z.string(), path: z.string(), content: z.string().optional(), localFile: z.string().optional() },
+    async (a) => {
+      const content = resolveFileContent(a.content, a.localFile);
+      return call(`/api/projects/${a.projectId}/git/staging/add`, {
         method: "POST",
-        body: JSON.stringify({ path: a.path, content: a.content }),
-      }),
+        body: JSON.stringify({ path: a.path, content }),
+      });
+    },
   );
   tool(
     "git_rm",
@@ -1817,13 +1843,31 @@ async function main() {
   tool(
     "git_add_bulk",
     "git 파일 변경 일괄 스테이징",
-    "여러 (path, content) 항목을 한 번에 스테이징한다(git add 여러 개, 아직 커밋 안 됨) - 파일마다 git_add를 반복 호출하는 것보다 빠르다(항목 수만큼 왕복하지 않음). 항목별 결과({path, ok, error?}) 반환, 일부만 실패해도 나머지는 계속 진행.",
-    { projectId: z.string(), items: z.array(z.object({ path: z.string(), content: z.string() })) },
-    async (a) =>
-      call(`/api/projects/${a.projectId}/git/staging/add-bulk`, {
-        method: "POST",
-        body: JSON.stringify({ items: a.items }),
-      }),
+    "여러 파일을 한 번에 스테이징한다(git add 여러 개, 아직 커밋 안 됨) - 파일마다 git_add를 반복 호출하는 것보다 빠르다(항목 수만큼 왕복하지 않음). 각 항목은 content 또는 localFile(이 MCP 서버가 도는 머신의 로컬 경로 - 디스크에서 직접 읽어 전송) 중 정확히 하나를 지정한다. 한글처럼 밀도 높은 비-ASCII 텍스트가 많은 파일은 localFile을 쓰면 모델이 내용을 다시 생성할 필요가 없어 더 안전하다(PN-46EE061F). 항목별 결과({path, ok, error?}) 반환, 일부만 실패해도(localFile을 못 읽는 경우 포함) 나머지는 계속 진행.",
+    {
+      projectId: z.string(),
+      items: z.array(z.object({ path: z.string(), content: z.string().optional(), localFile: z.string().optional() })),
+    },
+    async (a) => {
+      const items = a.items as { path: string; content?: string; localFile?: string }[];
+      const resolved: { path: string; content: string }[] = [];
+      const localFailures: { path: string; ok: false; error: string }[] = [];
+      for (const item of items) {
+        try {
+          resolved.push({ path: item.path, content: resolveFileContent(item.content, item.localFile) });
+        } catch (err) {
+          localFailures.push({ path: item.path, ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+      const serverResults =
+        resolved.length > 0
+          ? await call<unknown[]>(`/api/projects/${a.projectId}/git/staging/add-bulk`, {
+              method: "POST",
+              body: JSON.stringify({ items: resolved }),
+            })
+          : [];
+      return [...serverResults, ...localFailures];
+    },
   );
   tool(
     "git_rm_bulk",

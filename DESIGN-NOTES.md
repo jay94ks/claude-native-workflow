@@ -9621,3 +9621,75 @@ CLI로 실제 정리도 정상 동작함을 재확인.
 동안의 code-review 관련 요청이 전부 200 OK인지 교차 확인.
 
 **결론**: 코드 리뷰가 저장소 관리와 나란한 독립 최상위 탭이 됐다.
+
+## 코드 리뷰 상세 화면 - diff와 발견 항목을 파일 단위로 묶기
+
+**배경**: 설계자 지시 - "코드 리뷰 단위를 파일 단위로 볼 수는 없나?".
+그동안 리뷰 상세 화면은 "변경 내용"(diff, 파일별 카드)과 "발견 항목"
+(finding, 심각도 내림차순 평평한 목록)을 완전히 분리된 두 섹션으로
+보여줘서, 특정 파일의 diff와 그 파일에 달린 finding을 나란히 보려면
+직접 파일 경로를 맞춰봐야 했다.
+
+**변경**: `CodeReviewDetailView.vue`에 `fileGroups` computed를
+추가해, diff에 등장하는 파일(순서 그대로) + finding에만 있고 diff엔
+없는 예외적인 파일(뒤에 추가)을 순회하며 각 파일의 diff 카드
+(`DiffFileList`, 그 파일에 커밋이 여러 개 걸쳐 있으면 카드도 여러
+개)와 그 파일의 finding(심각도 내림차순)을 한 그룹으로 묶어
+렌더링한다. "변경 내용"/"발견 항목 (N)" 두 섹션을 "파일별 변경 및
+발견 항목 (발견 N건)" 하나로 합쳤다 - finding이 하나도 없는 파일도
+diff만 그대로 보여서(파일 목록 자체를 훑어볼 수 있게), finding이
+diff 범위 밖 파일을 가리키는 예외 상황도 "(이 범위의 diff에는 없는
+파일)" 표시로 놓치지 않는다.
+
+**검증**: `C:\CNW-test`에서 브라우저로 확인 - (1) 기존 PR#1 리뷰(파일
+1개, finding 3개, 전부 같은 파일)가 하나의 그룹으로 올바르게 묶이는지
+(diff는 구 데이터라 없음 - "diff에는 없는 파일" 표시 정상 노출),
+(2) PR#3 리뷰(파일 1개, diff+finding 둘 다 있음)가 diff 카드 바로
+아래 그 finding이 붙어 나오는지, (3) 새로 파일 2개(fourth.js/fifth.js)
+짜리 PR을 만들어 fourth.js에만 finding 하나를 제출 - fifth.js는
+diff만(finding 없음), fourth.js는 diff+finding 둘 다 정상 렌더링되고
+트리아지 버튼도 그대로 동작하는지 확인. 콘솔 에러 없음.
+
+**결론**: 코드 리뷰 상세 화면이 파일 단위로 diff와 발견 항목을 함께
+볼 수 있게 됐다.
+
+## MCP git_put/git_add/git_add_bulk에 localFile 파라미터 추가
+
+**배경**: PN-46EE061F 구현. minicore-1f 세션이 재현·검증한 버그
+(git_add_bulk MCP로 한글 주석이 많은 대용량 파일을 스테이징하면
+음절이 결정론적으로 손상됨, CLI `docs git add-bulk`로는 완전히
+깨끗함 - DC-235312EF/PN-FD0616F6, minicore 프로젝트)의 원인 가설이
+"MCP 도구가 content를 모델이 호출 시점에 직접 생성해야 하는 구조"
+였고, 설계자가 이 라운드에서 구현을 지시했다.
+
+**구현**:
+- `backend/src/mcp/server.ts`에 `resolveFileContent(content,
+  localFile)` 헬퍼 추가 - `content`/`localFile` 중 정확히 하나만
+  허용(둘 다/둘 다 아님이면 명확한 에러), `localFile`이면 CLI의
+  `git add`/`add-bulk`와 완전히 같은 방식(`fs.readFileSync(path,
+  "utf-8").replace(/\r\n/g, "\n")`)으로 이 MCP 서버 프로세스가
+  직접 읽는다.
+- `git_put`/`git_add`/`git_add_bulk`(각 items 항목) 스키마에
+  `content: z.string().optional()` + `localFile: z.string().optional()`
+  로 변경(기존 `content` 필수 방식은 하위 호환 그대로 유지).
+- `git_add_bulk`는 항목별 결과(`{path, ok, error?}`) 반환 관례를
+  유지해야 해서, localFile 읽기 실패는 서버 왕복 없이 클라이언트
+  (MCP 프로세스) 단계에서 잡아 같은 모양의 실패 항목으로 만들고,
+  나머지 정상 항목만 서버에 보낸 뒤 두 결과를 합쳐 반환한다(한
+  항목의 로컬 파일 누락이 나머지 항목 처리를 막지 않음).
+
+**검증**: 컴파일된 MCP 서버(`dist/mcp/server.js`)를 stdio JSON-RPC로
+직접 띄워(브라우저로 조작할 UI가 없는 백엔드 전용 변경) `tools/list`로
+세 도구 스키마에 `localFile`이 실제로 노출되는지 확인 → `C:\CNW-test`
+(포트 8765)를 띄운 채 `tools/call`로 `git_add`를 `localFile`만 줘서
+호출 - 버그 재현 조건과 동일한 한글 텍스트("트램폴린이 rdi로 옮김",
+"이 값을 쓴다 - 곧 정리된다", "엉뚱한 방향으로") 담긴 로컬 파일을
+스테이징 → `docs git status`로 스테이징된 diff를 직접 조회해 전부
+글자 단위로 정확히 일치함을 확인(손상 없음). `content`와 `localFile`
+둘 다 준 경우 명확한 에러로 거부되는 것도 확인.
+
+**결론**: MCP `git_put`/`git_add`/`git_add_bulk`가 이제 로컬 파일을
+직접 읽어 전송할 수 있어, 밀도 높은 한글(또는 다른 비-ASCII) 텍스트를
+모델이 다시 생성하다 손상시킬 위험이 그 경로에서 사라졌다. SKILL.md
+(양쪽 사본)에 "비-ASCII 텍스트 많은 파일은 localFile 우선" 안내를
+추가하고 DB의 전역 템플릿도 재동기화했다.
