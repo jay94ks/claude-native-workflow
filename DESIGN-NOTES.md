@@ -8416,3 +8416,208 @@ OPTIONS`(6개 코드/라벨 상수) + `selectedStatusCode`/`statusPage`/
 **결론**: 의존도가 같은 계획들 사이에서 "최근에 손댄 것"이 아니라
 "먼저 만들어진 것"이 먼저 보인다 - 오래 방치된 계획이 계속 뒤로
 밀리지 않게 됐다.
+
+## 메시지에 origin("designer"|"ai") 자동 태깅 추가(`#message-origin-tagging`)
+
+**배경**: 설계자 지시 - "AI가 설계자에게 메시지를 보내는 경우(CLI나
+MCP로 흘러들어오는 메시지) 별도의 구분을 둬서 페이지에 모아둘 계획을
+세우자" → PN-E98F5EAA로 계획을 먼저 기록했고("명령의 이름은 바뀌지
+않아"라는 후속 지시로 새 명령 추가 안을 폐기, 자동 태깅으로 확정),
+이번 라운드에서 그 계획대로 구현했다.
+
+**설계**: `Message.origin`(기본값 `"designer"`)을 추가하고, CLI/MCP가
+공유하는 HTTP 클라이언트(`cli/apiclient.ts`의 `apiFetch()`) 한 곳에서
+모든 요청에 `X-Client-Kind: cli` 헤더를 자동으로 붙인다. 서버
+(`resolveMessageOrigin()`, `api/server.ts`)는 그 헤더 유무만으로
+`origin`을 판정한다 - 웹 프런트엔드(`frontend/src/api/client.ts`)는
+이 헤더를 붙이는 코드 경로가 아예 없어 자연히 `"designer"`로 남는다.
+`docs message send`/`message_send` 명령의 이름/인자는 전혀 바뀌지
+않는다(설계자 지시).
+
+**조사 중 발견**: `KanbanCard`가 이미 정확히 같은 `"ai"|"designer"`
+개념의 `origin` 필드를 갖고 있었다(`createKanbanCard()`,
+`core/kanban.ts`) - 다만 그쪽은 호출자가 매번 명시적으로 넘기는
+자기 신고 방식(`POST /kanban/cards`가 `origin` 필드를 그대로 받아
+`"ai"`/`"designer"` 둘 중 하나인지만 검증)이라 이번 Message의
+자동(헤더 기반) 방식과는 다르다 - 두 메커니즘이 서로 다른 이유는
+칸반 카드는 "누가 이 카드를 만들었나"를 스스로 밝히는 것이 자연스러운
+반면, 메시지는 설계자 요청 문구 자체("CLI나 MCP로 흘러들어오는")가
+이미 "어느 채널로 왔는가"를 방향의 정의로 삼고 있어 채널(호출 경로)
+자체에서 자동으로 뽑아내는 쪽이 더 안정적이기 때문(자기 신고는 까먹고
+다른 값을 넘길 여지가 있음). 향후 비슷한 요구가 또 나오면 이 두 개
+전례(자기 신고 vs 자동 채널 태깅) 중 상황에 맞는 쪽을 고르면 된다.
+
+**구현**:
+- 스키마(`prisma/schema.{postgres,mysql,sqlite}.prisma`) - `Message`에
+  `origin String @default("designer")` 추가.
+- `core/messages.ts` - `MessageOrigin` 타입, `sendMessage()`가 `origin`
+  파라미터를 받도록 확장, `ListMessagesOptions`/`buildMessageWhere()`/
+  `listMessages()`/`listMessagesPaged()`에 `origin` 필터 추가,
+  `MessagePublishEvent`/`waitForMessage()` 재구성 객체에도 `origin`
+  포함(EMQX로 직접 받는 경로도 완전한 모양 유지).
+- `cli/apiclient.ts` - `apiFetch()`가 모든 요청에 `X-Client-Kind: cli`
+  헤더 추가(CLI/MCP 공유이므로 한 곳에서 양쪽 다 커버). `waitForMessageDirect()`
+  의 로컬 `MessagePublishEvent` 인터페이스와 폴백 메시지 객체 생성부에도
+  `origin` 반영.
+- `api/server.ts` - `resolveMessageOrigin(req)` 헬퍼 추가, `POST
+  /projects/:id/messages`가 이 값을 `sendMessage()`에 전달. `GET
+  .../messages`/`.../messages/page` 둘 다 `origin` 쿼리 파라미터
+  통과. PR 오케스트레이션 함수(`mergePull`/`mergePullManually`/
+  `rejectPull`/`closePull`/`reopenPull`, `core/pullRequests.ts`)도
+  `origin: MessageOrigin` 파라미터를 추가로 받아 그 함수들이 보내는
+  진행 알림 메시지에도 실제 호출 경로(웹 vs CLI - 수동 머지는
+  docstring이 이미 "AI가 CLI로"도 명시하던 경로라 실제로 의미가 있음)를
+  반영하게 했다. `gitRepos.ts`(외부 저장소 자격증명 무효화/발행
+  실패 안내)와 `kanban.ts`(카드 생성 시 자동 알림, 이미 있던 칸반
+  자체의 `origin`을 그대로 재사용)의 시스템/설계자 트리거 알림은
+  `"designer"` 고정으로 안전하게 유지(오분류 방지).
+- CLI `docs message list`에 `--origin` 옵션, MCP `message_list`에
+  `origin` zod enum 파라미터 추가. `message send`/`message_send`
+  설명 문구에 자동 분류 동작을 명시(인자/이름은 그대로).
+- `frontend/src/views/MessagesView.vue` - 전체/설계자→AI/AI→설계자
+  서브탭(`originFilter`) 추가, AI 기원 메시지엔 작은 "AI" 배지 표시.
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc -b`(frontend) 클린. 격리된
+로컬 환경(스크래치 SQLite+디스포저블 Meilisearch+로컬 backend+
+`frontend-dev` 프리뷰)에서 실측 확인:
+- `curl`로 `X-Client-Kind` 헤더 없이/있이 각각 보내 `origin`이
+  `designer`/`ai`로 정확히 갈리는 것.
+- **실제 `docs` CLI**(`tsx src/cli/index.ts message send`, 시뮬레이션이
+  아니라 진짜 CLI 바이너리)로 보낸 메시지가 자동으로 `origin: "ai"`로
+  기록되는 것, `docs message list --origin ai`가 그 메시지만 정확히
+  거르는 것.
+- `GET .../messages`/`.../messages/page` 둘 다 `origin=designer`/
+  `origin=ai`/생략(전체) 세 경우 모두 실측 확인.
+- 브라우저(Chrome DevTools 아님, in-app 프리뷰)로 실제 로그인해
+  "메시지" 페이지에서 전체/설계자→AI/AI→설계자 서브탭 전환 시 목록이
+  정확히 갈리는 것, CLI로 보낸 메시지 2건엔 "AI" 배지가 붙고 웹
+  "전송" 버튼으로 보낸 메시지엔 배지가 안 붙는 것까지 눈으로 확인.
+- 구현 중 실수로 발견한 것: 스키마 파일만 고치고 `prisma generate`를
+  안 돌리면(캐시된 구버전 클라이언트) `Unknown argument origin` 런타임
+  에러가 난다 - 스키마 변경 후엔 항상 해당 드라이버의 클라이언트를
+  재생성해야 한다는 이 프로젝트의 일반 원칙을 다시 확인.
+
+**결론**: 설계자가 "CLI/MCP로 흘러들어오는 메시지"라고 부른 것이 이제
+실제로 `origin: "ai"`로 시스템에 기록되고, 웹 "메시지" 페이지에서
+그것만 따로 모아 볼 수 있다 - 새 명령 없이 기존 `message send`/
+`message_send`를 그대로 쓰면 자동으로 분류된다.
+
+## minicore 세션이 보고한 마찰 2건 조사 및 조치
+
+**배경**: 설계자 지시로 minicore 세션에 "다른 개선 아이디어 있는지"
+물어봤고, 두 가지 마찰을 보고받았다: (1) `document_list` MCP 도구의
+`status` 필터가 안 먹힌다, (2) `plan_new`가 생성 시점에 `status`를
+못 받아 사후 등록 시 `plan_new`→`plan_set`→`plan_status` 3콜이
+항상 필요하다.
+
+### 1. `document_list`의 상태 필터 미작동 - 실제 버그, 수정함(`#document-list-status-param-mismatch`)
+
+**조사**: REST(`GET /api/projects/:id/documents?statusCode=`)와
+CLI(`docs list --status`)의 실제 필터링 로직(`core/search.ts`의
+`buildFilter()` → Meilisearch `statusCode = "..."` 필터)은 실측
+확인 결과 정상 동작한다(`docs list <id> --status review` → 검토중
+문서만 17건 정확히 반환). 문제는 **MCP 도구 `document_list`의
+파라미터 이름이 `statusCode`였다는 것**(`mcp/server.ts`) - 반면
+CLI 플래그는 `--status`이고, `message_list`/`plan_list` 등 다른
+모든 MCP 도구는 전부 `status`를 쓴다(`docTypeId`처럼 실제 필드명을
+그대로 쓰는 관례와, `status`처럼 짧은 이름을 쓰는 관례가 도구마다
+갈려 있었는데 `document_list`만 후자를 어기고 있었음). MCP 도구
+정의의 zod 스키마가 `.strict()`가 아니라서, 호출자가 CLI와 똑같이
+`status`를 넘기면 **에러 없이 조용히 무시되고 필터 없이 전체가
+반환**된다 - 이게 정확히 minicore가 겪은 증상과 일치한다.
+
+**조치**: `mcp/server.ts`의 `document_list` 파라미터를 `statusCode`
+→ `status`로 변경(REST 쿼리 파라미터 이름 자체는 `statusCode`
+그대로 - MCP 레이어에서만 `a.status`를 받아 `statusCode` 쿼리로
+매핑). CLI(`docs list --status`)와 다른 MCP 도구들의 `status`
+관례에 맞춘 것 - 실제 필터링 로직은 손대지 않았다(원래도 정상
+동작했으므로).
+
+**검증**: `tsc --noEmit` 클린. REST/CLI 경로는 원래도 정상이었음을
+`docs list --status review`로 재확인(17건, 전부 `statusCode:
+"review"`).
+
+### 2. `plan_new`가 생성 시점에 status를 못 받는다는 보고 - 조사 결과 이미 지원되고 있었음(코드 변경 없음)
+
+**조사**: `core/plans.ts`의 `createPlan()`은 이미 `status?: string`
+파라미터를 받아 `initialStatus = status ?? "planned"`로 처리하고
+`assertValidStatus()`로 검증한다. `POST /api/projects/:id/plans`
+라우트도 `req.body.status`를 그대로 전달한다. CLI `docs plan new
+--status <code>`, MCP `plan_new`의 `status` zod enum 파라미터 모두
+이미 존재하고 REST까지 정확히 연결돼 있다.
+
+**실측 확인**: `docs plan new <projectId> "..." --body <file>
+--status completed`를 직접 호출해 생성 응답의 `"status":
+"completed"`를 확인(테스트용으로 만든 계획은 확인 후 바로
+`plan delete`로 정리). 즉 **이 기능은 코드상 버그가 없다** -
+`plan_new` 호출 시 `status`를 안 줬거나, minicore 세션이 쓰던
+MCP 서버 프로세스가 이 기능이 들어가기 이전의 오래된 빌드였을
+가능성이 높다(이번 라운드 초반에 이 저장소 자신의 전역 `docs`
+CLI 심볼릭 링크도 정확히 같은 이유로 낡은 `dist/`를 가리키고 있어
+`--origin` 옵션이 안 먹혔던 사례가 있었다 - 같은 유형의 문제로
+추정).
+
+**결론**: 실제 코드를 고친 것은 1번(`document_list` 파라미터 이름
+불일치)뿐이다. 2번은 조사 결과 이미 정상 동작하는 기능이라 코드
+변경 없이 "이미 지원됨, 재확인 요청" 답변으로 minicore에 회신한다.
+
+## 메시지함 스크롤 적용 + 문서/계획 본문의 PN- 계획 코드 클릭 지원(`#messages-list-scroll`, `#markdown-body-plan-link`)
+
+**배경**: 설계자가 메시지로 지시한 두 건 - (1) "메시지함에 메시지가
+너무 많을 때 흘러 넘치니, 스크롤과 페이징을 적용해", (2) "'계획'
+항목을 읽을때, 그리고 '문서'를 읽을 때 본문에 계획용 인용코드 `PN-`를
+눌렀을 때에도 해당 계획을 볼 수 있게 수정해".
+
+### 1. 메시지함 스크롤
+
+**조사**: `MessagesView.vue`는 이미 20개 단위 페이지네이션
+(`Pagination` 컴포넌트)을 갖추고 있었다 - 문제는 목록
+`<ul class="messages">`에 `max-height`/`overflow-y`가 없어, 한 페이지
+(최대 20건) 안에서도 메시지 본문이 길면 리스트 자체가 한없이 길어져
+페이지 전체가 스크롤되고 하단의 페이지네이션/전송 입력창이 화면
+밖으로 밀려났다.
+
+**구현**: `.messages`에 `max-height: 60vh; overflow-x: hidden;
+overflow-y: auto;` 추가(`overflow: hidden`이던 기존 선언은 모서리
+둥글기를 위한 것이라 `overflow-x: hidden`으로 유지) - 리스트 자체가
+내부 스크롤을 갖게 되어 페이지네이션/전송 폼이 항상 보이는 위치에
+고정된다.
+
+### 2. 문서/계획 본문의 `PN-` 클릭 지원
+
+**조사**: 메시지/코멘트 본문에 쓰는 `TrackingCodeText.vue`는 이미
+`PN-` 접두어를 `usePlanDialogStore().show()`로 분기하고 있었다
+(`#reserved-tracking-codes`, QU/KB/PN은 문서 타입 코드로 못 쓰게
+예약돼 있어 항상 그 셋을 가리킨다고 믿고 분기 가능). 반면 문서/계획
+본문 렌더링에 쓰는 `MarkdownBody.vue`(`PlanEditorView.vue`의 "보기"
+모드도 이 컴포넌트를 그대로 재사용)의 `onClick()`은 `KB-`/`QU-`만
+분기하고 `PN-`은 분기 없이 `else` 절(문서 다이얼로그)로 떨어져 계획
+코드를 클릭해도 아무 일도 안 일어나거나(문서 조회 실패로 조용히
+무시) 엉뚱한 다이얼로그가 뜰 상황이었다 - `TrackingCodeText.vue`
+쪽에서는 이미 고쳐져 있었지만 `MarkdownBody.vue`에는 그 수정이
+반영된 적이 없던 누락.
+
+**구현**: `MarkdownBody.vue`에 `usePlanDialogStore` import 추가,
+`onClick()`에 `else if (code.startsWith("PN-")) planDialog.show(code)`
+분기 추가(`TrackingCodeText.vue`와 완전히 같은 분기 순서/조건) - 이미
+전역에 마운트돼 있는 `PlanPreviewDialog.vue`가 그대로 반응하므로
+새 컴포넌트는 필요 없었다.
+
+**검증**: `vue-tsc -b` 클린. 격리된 로컬 환경(스크래치 SQLite+
+디스포저블 Meilisearch+로컬 backend+`frontend-dev` 프리뷰)에서
+실측 확인:
+- 메시지 25건을 CLI로 보낸 뒤 웹 "메시지" 페이지에서 목록에 세로
+  스크롤바가 생기고 페이지네이션/전송 입력창이 항상 보이는 것을
+  스크린샷으로 확인.
+- 계획 코드(`PN-...`)를 본문에 넣은 문서를 만들어 "보기" 화면에서
+  그 코드를 클릭 - 계획 미리보기 다이얼로그(제목/상태/본문/"전체
+  화면에서 열기" 링크)가 정확히 뜨는 것을 확인.
+- 계획 A의 본문에 계획 B의 코드를 넣고 계획 A의 "보기" 화면에서
+  그 코드를 클릭 - 계획 B의 미리보기가 뜨는 것까지 확인(문서 본문
+  뿐 아니라 계획 본문에서도 동작).
+
+**결론**: 메시지함은 아무리 쌓여도 페이지 레이아웃이 안 깨지고,
+문서·계획 어느 쪽 본문에서든 `PN-` 코드를 클릭하면 이제 정확히
+계획 미리보기가 뜬다 - `TrackingCodeText.vue`에는 이미 있던 분기가
+`MarkdownBody.vue`에 누락돼 있던 걸 맞춘 것뿐이라 새 백엔드 변경은
+없다.

@@ -234,7 +234,9 @@ h1 {
   margin: 0 0 14px;
   background: var(--color-surface);
   border-radius: 8px;
-  overflow: hidden;
+  max-height: 60vh;
+  overflow-x: hidden;
+  overflow-y: auto;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .messages li {
