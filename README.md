@@ -58,6 +58,20 @@ Knowledge Base)** 겸 문서/워크플로우 관리 시스템 - 단일 설치형
 [FEATURES.md](FEATURES.md)에 정리돼 있다 - 이 README는 소개까지만
 다루고, 기능 목록의 정본은 그쪽이다.
 
+## 화면 예시
+
+아래 스크린샷은 이 시스템으로 실제 관리되는 프로젝트(커널
+프로젝트 "minicore")에서 가져왔다.
+
+| | |
+|---|---|
+| ![프로젝트 홈 대시보드](images/project-home-dashboard.png) **프로젝트 홈** - 문서 상태 분포, 미처리 메시지/미답변 질의 수, 즐겨찾기 문서, 최근 활동을 한눈에 보여준다. | ![Claude Code 세션이 MCP 도구를 쓰는 모습](images/ai-session-using-mcp-tools.png) **Claude가 직접 CLI/MCP를 호출하는 모습** - 실제 Claude Code 세션이 `docs`/MCP 도구로 파일을 스테이징하는 실행 로그. |
+| ![문서 목록](images/documents-view.png) **문서 관리** - 폴더/상태별 조회/타입별 분류/리스트/추적 코드 조회 등 여러 방식으로 문서를 탐색한다. | ![질의/응답 기록](images/qa-answer-history.png) **질의/응답(Q&A)** - 클로드가 막히는 지점에서 질문을 등록하면 설계자가 답하고, 처리 완료까지 추적한다. |
+| ![계획 목록](images/plans-list.png) **계획(Plan)** - 지금 당장 처리하지 않고 따로 잡아둬야 하는 작업을 문서 체계와 별개로 추적한다(의존 관계 포함). | ![메시지 - 설계자/AI 자동 구분](images/messages-origin-filter.png) **인스턴스 메시징** - 설계자→AI 지시와 AI→설계자 알림이 자동으로 구분돼 필터링된다. |
+| ![문서간 관계 그래프](images/document-relation-graph.png) **문서간 관계 그래프** - 문서끼리의 참조 관계를 네트워크로 시각화한다. | ![코드 관계도](images/code-relation-graph.png) **코드 관계도(Code Relation Graph)** - 클로드가 코드를 탐색하며 스스로 기록한 "무엇이 어디서 왜 참조되는지"를 그래프로 남긴다. |
+| ![소스 코드 뷰어](images/source-code-viewer.png) **소스 코드 브라우징** - 연동된 git 저장소의 파일을 프로젝트 안에서 바로 읽고 편집한다. | ![변경 추적](images/change-tracking.png) **변경 추적** - git 커밋 로그와 문서 버전 이력(diff)을 한 화면에서 함께 확인한다. |
+| ![칸반 보드](images/kanban-board-card-detail.png) **칸반 보드** - 카드 상세에서 근거 문서, 질의/응답, 설계자 전용 코멘트까지 한 번에 다룬다. | ![프로젝트 설정](images/project-settings.png) **프로젝트 설정** - git 연동, 문서 타입 정의, 멤버 권한, CLAUDE.md/SKILL.md 템플릿 override를 관리한다. |
+
 ## 저장소 구조
 
 - **`main` 브랜치가 v2 구현**(이 README가 설명하는 것 - 단일 설치형,
