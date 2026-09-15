@@ -370,6 +370,74 @@ async function main() {
     async (a) => call(`/api/projects/${a.projectId}/git/pulls/${a.index}/reopen`, { method: "POST" }),
   );
 
+  // ---------------------------------------------------------------- 코드 리뷰(사후 검토) - 머지를 막는 게이트가 아니라 이미
+  // 반영된 코드를 돌아보는 기록. diff는 이미 있는 git_diff로 직접 읽는다
+  // (여기 전용 diff 도구는 없음).
+
+  const codeReviewFindingSchema = z.object({
+    filePath: z.string(),
+    line: z.number().optional(),
+    category: z.string(),
+    severity: z.enum(["blocker", "major", "minor", "nit"]),
+    summary: z.string(),
+    failureScenario: z.string(),
+    verdict: z.enum(["CONFIRMED", "PLAUSIBLE"]).optional(),
+  });
+
+  tool(
+    "code_review_request",
+    "코드 리뷰(사후 검토) 요청",
+    'PR 머지 알림 메시지를 보고 실제로 검토할 가치가 있다고 판단했을 때, 또는 임의 범위를 검토하고 싶을 때 부른다. prIndex만 주면 그 PR의 base/head 브랜치를 자동으로 찾는다 - 이미 pending/completed인 같은 head 리뷰가 있으면 그걸 그대로 재사용.',
+    { projectId: z.string(), prIndex: z.number().optional(), base: z.string().optional(), head: z.string().optional(), label: z.string() },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/code-review/request`, {
+        method: "POST",
+        body: JSON.stringify({ prIndex: a.prIndex, base: a.base, head: a.head, label: a.label }),
+      }),
+  );
+  tool("code_review_pending", "AI 분석 대기 중인 리뷰 목록", "status가 pending인 CodeReview 목록.", { projectId: z.string() }, async (a) =>
+    call(`/api/projects/${a.projectId}/git/code-review/pending`),
+  );
+  tool(
+    "code_review_list",
+    "코드 리뷰 이력 조회",
+    "상태 무관 최신순. prIndex를 주면 그 PR에 달린 리뷰만.",
+    { projectId: z.string(), prIndex: z.number().optional() },
+    async (a) => call(`/api/projects/${a.projectId}/git/code-review${a.prIndex !== undefined ? `?prIndex=${a.prIndex}` : ""}`),
+  );
+  tool("code_review_get", "코드 리뷰 상세", "지금까지의 finding 목록 포함.", { projectId: z.string(), reviewId: z.string() }, async (a) =>
+    call(`/api/projects/${a.projectId}/git/code-review/${a.reviewId}`),
+  );
+  tool(
+    "code_review_submit",
+    "코드 리뷰 결과 제출",
+    "findings 배열(+선택적 aiSummary)을 한 번에 제출해 리뷰를 완료 처리한다. severity가 blocker인 항목은 PN(실행 계획)이, major인 항목은 칸반 pending 컬럼 카드가 자동 생성된다(승인/변경요청 같은 게이트 개념은 없음 - 심각한 발견 자체가 추적 가능한 후속 작업이 된다).",
+    { projectId: z.string(), reviewId: z.string(), aiSummary: z.string().optional(), findings: z.array(codeReviewFindingSchema) },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/code-review/${a.reviewId}/submit`, {
+        method: "POST",
+        body: JSON.stringify({ aiSummary: a.aiSummary, findings: a.findings }),
+      }),
+  );
+  tool(
+    "code_review_resolve_finding",
+    "발견 항목 트리아지",
+    "status는 fixed/wontfix/false_positive 중 하나(open으로 되돌리는 것은 지원 안 함 - 필요하면 새 finding으로 다시 제출).",
+    { projectId: z.string(), findingId: z.string(), status: z.enum(["fixed", "wontfix", "false_positive"]) },
+    async (a) =>
+      call(`/api/projects/${a.projectId}/git/code-review/findings/${a.findingId}/resolve`, {
+        method: "POST",
+        body: JSON.stringify({ status: a.status }),
+      }),
+  );
+  tool(
+    "code_review_delete",
+    "코드 리뷰 삭제(취소)",
+    "발견 항목이 0건인 리뷰만 삭제할 수 있다 - 하나라도 있으면 거부된다(잡아낸 게 있으면 영구 보존).",
+    { projectId: z.string(), reviewId: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/git/code-review/${a.reviewId}`, { method: "DELETE" }),
+  );
+
   // ---------------------------------------------------------------- 팀/그룹/프로젝트
 
   tool(
@@ -1598,6 +1666,24 @@ async function main() {
     async (a: Record<string, unknown>) => {
       try {
         const diff = await apiCallText(`/api/projects/${a.projectId}/git/diff/${a.sha}`);
+        return { content: [{ type: "text" as const, text: diff }] };
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "git_compare",
+    {
+      title: "git range diff 조회",
+      description: "커밋 1건이 아니라 base..head 사이 전체 unified diff 원문 - 코드 리뷰(사후 검토, code_review_*)가 근거하는 조회.",
+      inputSchema: { projectId: z.string(), base: z.string(), head: z.string() },
+    },
+    async (a: Record<string, unknown>) => {
+      try {
+        const qs = new URLSearchParams({ base: String(a.base), head: String(a.head) });
+        const diff = await apiCallText(`/api/projects/${a.projectId}/git/compare?${qs}`);
         return { content: [{ type: "text" as const, text: diff }] };
       } catch (err) {
         return errorResult(err);

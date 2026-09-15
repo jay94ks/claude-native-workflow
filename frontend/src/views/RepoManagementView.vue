@@ -131,9 +131,12 @@ onMounted(async () => {
       <div class="section">
         <div class="pr-header">
           <h2>Pull Request</h2>
-          <button v-if="canCreatePr" type="button" @click="showCreateForm = !showCreateForm">
-            {{ showCreateForm ? "취소" : "PR 만들기" }}
-          </button>
+          <div class="pr-header-actions">
+            <router-link class="review-link" :to="`/projects/${id}/repo/reviews`">코드 리뷰</router-link>
+            <button v-if="canCreatePr" type="button" @click="showCreateForm = !showCreateForm">
+              {{ showCreateForm ? "취소" : "PR 만들기" }}
+            </button>
+          </div>
         </div>
 
         <form v-if="showCreateForm" class="create-form" @submit.prevent="createPull">
@@ -225,6 +228,16 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.pr-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pr-header-actions .review-link {
+  color: var(--color-primary);
+  font-size: 13px;
+  text-decoration: none;
 }
 .pr-header button {
   background: var(--color-primary);

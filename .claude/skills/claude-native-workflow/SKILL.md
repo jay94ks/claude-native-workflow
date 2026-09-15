@@ -684,6 +684,7 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 발행 대기열 조회 | `docs git publish-queue <projectId>` | `git_publish_queue` |
 | 발행 대기열 처리 완료 보고 | `docs git publish-queue-done <projectId> <id>` | `git_publish_queue_done` |
 | git 로그/diff/show | `docs git log/diff/show <projectId> [<sha>]` | `git_log`/`git_diff`/`git_show` |
+| 두 지점 사이 range diff(커밋 1건이 아니라 base..head 전체) | `docs git compare <projectId> <base> <head>` | `git_compare` |
 | 디렉터리 목록 | `docs git tree <projectId> [--path <p>] [--ref <r>]` | `git_tree` |
 | 파일 내용 조회 | `docs git cat <projectId> <path> [--ref <r>]` | `git_cat` |
 | 파일 부분 읽기(줄 범위) | `docs git read <projectId> <path> [--ref <r>] [--offset <n>] [--limit <n>]` | `git_read` |
@@ -759,6 +760,11 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | PR 진행 내역/메시지 | `docs pr timeline/messages <projectId> <index>` | `pr_timeline`/`pr_messages` |
 | PR 머지/수동 병합 완료(owner) | `docs pr merge <projectId> <index>` / `docs pr merge-manually <projectId> <index> <mergeCommitId>` | `pr_merge`/`pr_merge_manually` |
 | PR 거부/닫기/재오픈(editor+) | `docs pr reject/close/reopen <projectId> <index>` | `pr_reject`/`pr_close`/`pr_reopen` |
+| 코드 리뷰(사후 검토) 요청 - `--pr`만 주면 base/head 자동 조회 | `docs code-review request <projectId> (--pr <index> \| --base <ref> --head <ref>) --label <text>` | `code_review_request` |
+| 코드 리뷰 대기 목록/상세 | `docs code-review pending <projectId>` / `docs code-review get <projectId> <reviewId>` | `code_review_pending`/`code_review_get` |
+| 코드 리뷰 결과 제출(findings 배열, blocker→PN·major→칸반 카드 자동 생성) | `docs code-review submit <projectId> <reviewId> <file>` | `code_review_submit` |
+| 코드 리뷰 발견 항목 트리아지 | `docs code-review resolve-finding <projectId> <findingId> <fixed\|wontfix\|false_positive>` | `code_review_resolve_finding` |
+| 코드 리뷰 삭제(findings 0건일 때만) | `docs code-review delete <projectId> <reviewId>` | `code_review_delete` |
 
 ## 가이디드 마이그레이션(옛 파일 기반 프로젝트 옮기기)
 

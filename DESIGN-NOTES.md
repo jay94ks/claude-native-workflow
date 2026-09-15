@@ -9443,3 +9443,147 @@ in_review/scheduled/completed/rejected)가 웹 UI 여러 곳(문서/계획
 
 **결론**: 문서/계획 편집·목록·미리보기 화면 전반에서 상태 텍스트가
 이제 색상으로도 구분된다. 아직 설계자의 커밋/푸시/배포 요청은 별도.
+
+## 코드 리뷰(사후 검토) Phase 1 - 백엔드 + CLI/MCP 구현
+
+**배경**: SP-4158A77A로 설계한 코드 리뷰 기능의 구현을 설계자가 지시,
+규모가 커서 CLAUDE.md의 여러-Phase 절차대로 Plan Mode에서 Phase 1
+(백엔드+CLI/MCP, 웹 UI 없음)에 대한 상세 계획을 세우고 승인받은 뒤
+착수했다. Plan Mode 안에서 설계자가 세 번 더 정정(승인/변경요청 게이트
+개념 완전 제거, 메시지 채널 순수 사용 + "사소하면 무시" 안내, findings
+있는 리뷰는 삭제 불가)해 SP 본문도 함께 갱신했다.
+
+**구현**:
+- 신규 Prisma 모델 3개(`CodeReview`/`CodeReviewFinding`/
+  `CodeReviewComment`, 3개 스키마 파일 동일 반영) - `CodeReview`는
+  `baseRef`/`headRef`(브랜치명 또는 SHA 둘 다 받을 수 있어 `*Sha`가
+  아니라 `*Ref`로 명명), `triggeredBy`("merge-notice"|"manual"),
+  `status`(pending|completed). `CodeReviewComment`는 스키마만(Phase 2
+  UI 전용, 아직 API/CLI 없음).
+- `backend/src/core/codeReview.ts`(신규) - `requestReview`(같은
+  headRef 리뷰가 있으면 재사용, prIndex만 주면 Gitea에서 base/head
+  브랜치 자동 조회), `listPending`, `getReviewDetail`, `submitFindings`
+  (severity별 자동 후속 작업 - blocker→`plans.createPlan()`으로 PN,
+  major→`kanban.createKanbanCard()`로 "pending" 컬럼 카드,
+  `followUpRef`에 그 trackingCode 저장), `resolveFinding`(open→fixed/
+  wontfix/false_positive), `deleteReview`(**findings가 0건일 때만
+  허용** - 하나라도 있으면 명확한 에러로 거부, 영구 보존 원칙).
+- `core/pullRequests.ts`의 `mergePull()`/`mergePullManually()` 성공
+  경로에 알림 문구 한 줄 추가(`MERGE_REVIEW_NOTICE`) - "사소한
+  변경이면 무시해도 됩니다 - 중대한 변경으로 판단되면 ..."를 기존
+  머지 완료 메시지에 이어붙인다. **`CodeReview` 행은 여기서 전혀
+  만들지 않는다** - 사소한 머지마다 빈 행이 쌓이는 걸 막기 위해, 실제
+  검토 여부는 그 메시지를 읽은 AI/설계자가 `docs code-review
+  request`로 직접 판단해 시작한다.
+- `core/realtime.ts`의 `ChangeEvent.entity`에 `"codeReview"` 추가
+  (Phase 2 프론트 소비 전이라도 발행은 지금부터 - 다른 core 모듈과
+  같은 관례).
+- REST(`/api/projects/:projectId/git/code-review/*`, editor 이상 -
+  게이트가 아니라 owner 전용 액션 없음) + CLI(`docs code-review
+  request/pending/get/submit/resolve-finding/delete`) + MCP
+  (`code_review_*`) - CLI/MCP 1:1 대응 불변식 유지.
+- **검증 중 발견한 실제 버그**: 원래 계획은 "AI가 이미 있는 `docs git
+  diff <base>..<head>`로 diff를 본다"였는데, 실측해보니 그 명령은
+  커밋 1건 대 부모 비교(`gitea.getCommitDiff`)일 뿐 range diff가
+  아니었다 - 코드 리뷰의 전제 자체가 깨져 있던 셈. 추가로 Gitea 1.27의
+  `/compare/{base}...{head}` REST 엔드포인트도 `.diff`/`.patch`
+  접미사를 지원하지 않아(웹/API 라우트 둘 다 404, 컨테이너 안에서
+  직접 실측) range diff 원문을 안 준다는 것도 확인됨 - 그 엔드포인트가
+  주는 커밋 목록(JSON)을 오래된 순으로 정렬해 각 커밋의 검증된
+  `.diff`를 이어붙이는 방식(`gitea.compareDiff`)으로 우회 구현했다.
+  이 김에 코드 리뷰 전용이 아니라 §13 git 조회 계열 전체에
+  `docs git compare <projectId> <base> <head>`/MCP `git_compare`로
+  추가해뒀다(같은 필요가 다른 곳에서도 생길 수 있음).
+- **검증 중 발견한 실제 버그 2**: `mergePull()`에 알림 문구를 추가하는
+  편집에서 처음엔 기존 "머지되었습니다." 문구를 실수로 통째로 지우고
+  알림 문구로 바꿔버렸다(메시지가 "머지됐다"는 확인 없이 알림만 뜨는
+  상태) - 실제 머지 테스트로 발견해 바로잡음(현재: "머지되었습니다.
+  사소한 변경이면...").
+
+**검증**: `C:\CNW-test`(포트 8765)에 미커밋 변경분을 복사해 CLI로만
+왕복 확인. 이번 라운드에 처음으로 이 테스트 스택에 실제 Gitea
+관리자 계정/PAT를 발급해(`GITEA_ADMIN_USERNAME`/`GITEA_API_TOKEN` -
+전엔 비워둬서 git/PR 관련 기능은 애초에 테스트 못 하던 상태였음) 진짜
+저장소·브랜치·PR·머지 흐름까지 전부 실제로 돌려봤다: 브랜치 2개+PR
+2개 생성 → 머지 시 `CodeReview` 미생성 + 알림 메시지 확인 →
+`code-review request --pr`로 PR의 base/head 자동 조회 확인 → 같은
+head 재요청 시 기존 행 재사용(멱등) 확인 → findings 0건 리뷰 취소
+성공 → blocker/major/minor 섞인 findings 제출 → PN/칸반 카드 자동
+생성 + `followUpRef` 교차 확인 → findings 있는 리뷰 삭제 시도 시
+거부 확인 → `resolve-finding`으로 상태 전이 확인 → 잘못된 status
+값 거부 확인. 전부 기대한 그대로 동작.
+
+**결론**: 코드 리뷰(사후 검토) 백엔드가 CLI/MCP로 전 과정 동작한다.
+웹 UI(diff 뷰어, PR 상세 리뷰 섹션, 실시간 토스트)는 Phase 2로 남아
+있고, 착수는 설계자의 별도 요청을 기다린다.
+
+## 코드 리뷰(사후 검토) Phase 2 - 웹 UI 구현
+
+**배경**: Phase 1(DN-F911640F)에 이어 설계자가 Phase 2(웹 UI)까지
+진행한 뒤 커밋/배포/minicore 공지까지 한 번에 요청했다. 규모가 있어
+Plan Mode에서 상세 계획을 세우고 승인받은 뒤 착수했다.
+
+**착수 전 발견한 Phase 1 자체의 결함 2개**(범위 확장이 아니라 Phase 1이
+실제로는 덜 끝나 있었던 것 - UI를 그 위에 얹으면 바로 드러날 문제라
+먼저 고침):
+1. `requestReview()`가 `--pr`로 base/head를 채울 때 PR의 **브랜치
+   이름**(`headBranch`)을 dedup 키로 썼다 - 브랜치 이름은 새 커밋이
+   push돼도 안 바뀌어서, 같은 PR에 새 커밋 후 다시 요청해도 예전
+   완료된 리뷰를 그대로 돌려주는 버그였다(사실상 "새 커밋 후 다시
+   봐달라"는 핵심 시나리오가 막혀 있었음). `gitea.getPullRequest()`가
+   head/base의 SHA를 아예 안 파싱했던 게 원인(Gitea 원본 응답엔 있는
+   필드) - `gitea.ts`의 `PullRequestSummary`에 `headSha`/`baseSha`를
+   추가하고, `requestReview()`가 이제 SHA를 dedup 키로 쓴다. 검증
+   중 실제로 재현·확인됨(PR#1의 예전 리뷰가 "main"/브랜치 이름으로
+   저장돼 있어, main이 그 뒤 다른 PR 머지로 전진하자 diff가 빈
+   결과로 나오는 걸 직접 목격 - SHA로 새로 요청하니 정상 동작).
+2. PR에 달린 리뷰를 목록으로 조회할 방법이 없었다(`listPending`은
+   전역 pending만, `getReviewDetail`은 단건) - `listReviews(projectId,
+   prIndex?)` 추가(REST `GET .../code-review?prIndex=`, CLI `docs
+   code-review list`, MCP `code_review_list`). 1번을 SHA 기준으로
+   고치니 같은 PR도 새 커밋마다 새 행이 생겨 이 목록이 실제로 여러
+   건일 수 있게 됐다(자연스럽게 "리뷰 이력"이 복원됨).
+
+**웹 UI 구현**:
+- `frontend/src/views/CodeReviewListView.vue`(신규, 라우트
+  `repo/reviews`) - 프로젝트의 모든 리뷰 목록 + "새 리뷰 요청" 폼
+  (PR 번호 또는 브랜치 base/head 직접 선택, `RepoManagementView.vue`의
+  PR 생성 폼과 같은 톤).
+- `frontend/src/views/CodeReviewDetailView.vue`(신규, 라우트
+  `repo/reviews/:reviewId`) - diff(`docs git compare` 프록시 +
+  기존 `DiffFileList.vue`/`parseUnifiedDiff` 재사용 - 새 diff 렌더러
+  안 만듦), finding 목록(심각도 내림차순 정렬), 트리아지 버튼(fixed/
+  wontfix/false_positive), `followUpRef`는 `TrackingCodeText`로
+  자동 링크(PN/KB 다이얼로그가 그대로 열림 - 커스텀 링크 로직 없음),
+  삭제 버튼(findings 0건일 때만 노출), 실시간 토스트(`event.entity
+  === "codeReview" && event.id === reviewId`일 때 리로드 - 이
+  이벤트는 trackingCode가 없고 id가 바로 reviewId라 문서/계획보다
+  오히려 매칭이 더 단순함).
+- `PullRequestDetailView.vue`에 "리뷰(사후 검토)" 섹션 추가(그 PR의
+  리뷰 이력 + "AI 리뷰 요청" 버튼 - prIndex만 넘기면 서버가 base/head
+  를 자동으로 채움).
+- `RepoManagementView.vue`에 "코드 리뷰" 진입 링크 추가.
+- `frontend/src/realtime.ts`의 `ChangeEvent.entity`에 `"codeReview"`
+  추가(백엔드는 Phase 1부터 이미 발행 중이었음 - 프론트 타입만 이제
+  따라잡음), `frontend/src/statusTone.ts`에 severity(blocker/major/
+  minor/nit)와 finding 상태(open/fixed/wontfix/false_positive) 톤
+  추가(기존 draft/pending 등과 문자열 충돌 없음 확인) - `CodeReview.status`
+  (pending/completed)는 기존 pending→warning/completed→success 키를
+  그대로 재사용.
+
+**검증**: `C:\CNW-test`에 미커밋 변경분을 복사해 브라우저로 실제
+조작(Phase 1이 만든 Gitea 저장소/PR을 이어서 사용, 추가로 PR#3 새로
+생성). "AI 리뷰 요청" 클릭 → 리뷰 상세 이동 → diff 렌더링(파일별
++/- 라인까지) 확인 → CLI로 finding 제출 후 자동 리로드(실시간 구독
+동작 확인) → 웹에서 트리아지 버튼 클릭으로 상태 전이(open→fixed)
+확인 → "코드 리뷰" 목록/새 리뷰 요청 폼(브랜치 범위 모드)으로 임의
+범위 리뷰 생성 확인 → 네트워크 로그로 모든 code-review 관련 요청이
+200 OK인지 교차 확인. 삭제 버튼은 `window.confirm()`이 자동화 브라우저
+환경에서 걸려 UI 클릭으로 최종 확인은 못 했지만(취소로 처리됨), 삭제
+API 자체(0건 허용/유건 거부)는 Phase 1에서 이미 CLI로 검증됐고 이번에
+CLI로 실제 정리도 정상 동작함을 재확인.
+
+**결론**: 코드 리뷰(사후 검토) 기능이 백엔드+CLI/MCP+웹 UI까지 전부
+동작한다. Phase 1의 숨은 dedup 버그도 이번에 같이 고쳐져, PR에 새
+커밋이 쌓일 때마다 리뷰를 다시 요청하는 핵심 시나리오가 실제로
+동작한다.

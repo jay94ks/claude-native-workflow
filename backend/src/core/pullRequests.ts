@@ -18,6 +18,14 @@ function prTag(index: number): string {
   return `[PR#${index}] `;
 }
 
+// 코드 리뷰(사후 검토)는 머지를 막는 게이트가 아니라 이미 반영된
+// 코드를 돌아보는 기록이라(core/codeReview.ts), 머지 시점에 CodeReview
+// 행을 자동으로 만들지 않는다 - 사소한 머지마다 빈 행이 쌓이는 걸
+// 막기 위해, 메시지로만 알리고 실제로 검토할 가치가 있는지는 AI가
+// 판단해 "docs code-review request"를 직접 부르게 한다(설계자 지시).
+const MERGE_REVIEW_NOTICE =
+  '사소한 변경이면 무시해도 됩니다 - 중대한 변경으로 판단되면 "docs code-review request"로 사후 검토를 남겨주세요.';
+
 export interface PullRequestDetail extends gitea.PullRequestSummary {
   disposition: "merged" | "rejected" | null;
   lastMergeError: string | null;
@@ -81,7 +89,7 @@ export async function mergePull(projectId: string, index: number, actingUserId: 
   try {
     await gitea.mergePullRequest(target, index, actingToken);
     await upsertMeta(projectId, index, { disposition: "merged", lastMergeError: null });
-    await sendMessage(projectId, actingUserId, `${prTag(index)}머지되었습니다.`, origin);
+    await sendMessage(projectId, actingUserId, `${prTag(index)}머지되었습니다. ${MERGE_REVIEW_NOTICE}`, origin);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await upsertMeta(projectId, index, { lastMergeError: message });
@@ -97,7 +105,12 @@ export async function mergePullManually(projectId: string, index: number, mergeC
   const target = await requireGiteaWorkingRef(projectId);
   await gitea.mergePullRequestManually(target, index, mergeCommitId, actingToken);
   await upsertMeta(projectId, index, { disposition: "merged", lastMergeError: null });
-  await sendMessage(projectId, actingUserId, `${prTag(index)}수동 병합이 완료 처리되었습니다(commit: ${mergeCommitId.slice(0, 8)}).`, origin);
+  await sendMessage(
+    projectId,
+    actingUserId,
+    `${prTag(index)}수동 병합이 완료 처리되었습니다(commit: ${mergeCommitId.slice(0, 8)}). ${MERGE_REVIEW_NOTICE}`,
+    origin,
+  );
 }
 
 export async function rejectPull(projectId: string, index: number, actingUserId: string | null, origin: MessageOrigin, actingToken?: string): Promise<void> {

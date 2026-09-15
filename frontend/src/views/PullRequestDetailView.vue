@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 import MarkdownBody from "../components/MarkdownBody.vue";
 import PullRequestTimeline from "../components/PullRequestTimeline.vue";
+import StatusBadge from "../components/StatusBadge.vue";
+
+const router = useRouter();
 
 const props = defineProps<{ id: string; index: string }>();
 
@@ -49,12 +53,19 @@ interface MessageItem {
   body: string;
   createdAt: string;
 }
+interface ReviewSummary {
+  id: string;
+  label: string;
+  status: string;
+  createdAt: string;
+}
 
 const pr = ref<PullRequestDetail | null>(null);
 const commits = ref<PullRequestCommit[]>([]);
 const comments = ref<PullRequestComment[]>([]);
 const timeline = ref<TimelineEntry[]>([]);
 const messages = ref<MessageItem[]>([]);
+const reviews = ref<ReviewSummary[]>([]);
 const loading = ref(true);
 const error = ref("");
 
@@ -64,17 +75,38 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    [pr.value, commits.value, comments.value, timeline.value, messages.value] = await Promise.all([
+    [pr.value, commits.value, comments.value, timeline.value, messages.value, reviews.value] = await Promise.all([
       apiCall<PullRequestDetail>(basePath()),
       apiCall<PullRequestCommit[]>(`${basePath()}/commits`),
       apiCall<PullRequestComment[]>(`${basePath()}/comments`),
       apiCall<TimelineEntry[]>(`${basePath()}/timeline`),
       apiCall<MessageItem[]>(`${basePath()}/messages`),
+      apiCall<ReviewSummary[]>(`/projects/${props.id}/git/code-review?prIndex=${props.index}`),
     ]);
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "PR을 불러오지 못했습니다";
   } finally {
     loading.value = false;
+  }
+}
+
+// ---------------------------------------------------------------- 코드 리뷰(사후 검토) 요청
+const requestingReview = ref(false);
+const reviewError = ref("");
+
+async function requestReview() {
+  requestingReview.value = true;
+  reviewError.value = "";
+  try {
+    const result = await apiCall<{ id: string }>(`/projects/${props.id}/git/code-review/request`, {
+      method: "POST",
+      body: JSON.stringify({ prIndex: Number(props.index), label: `PR#${props.index} 사후 검토` }),
+    });
+    router.push(`/projects/${props.id}/repo/reviews/${result.id}`);
+  } catch (err) {
+    reviewError.value = err instanceof ApiError ? err.message : "리뷰 요청에 실패했습니다";
+  } finally {
+    requestingReview.value = false;
   }
 }
 
@@ -266,6 +298,26 @@ onMounted(load);
         <h2>진행 내역</h2>
         <PullRequestTimeline :entries="timeline" />
       </section>
+
+      <section class="block">
+        <div class="review-header">
+          <h2>리뷰(사후 검토)</h2>
+          <button v-if="canAct" type="button" class="secondary" :disabled="requestingReview" @click="requestReview">
+            {{ requestingReview ? "요청 중..." : "AI 리뷰 요청" }}
+          </button>
+        </div>
+        <p v-if="reviewError" class="error">{{ reviewError }}</p>
+        <ul v-if="reviews.length > 0" class="list reviews">
+          <li v-for="r in reviews" :key="r.id">
+            <router-link :to="`/projects/${id}/repo/reviews/${r.id}`" class="review-link">
+              <span class="body-text">{{ r.label }}</span>
+              <StatusBadge :code="r.status" />
+            </router-link>
+            <span class="at">{{ new Date(r.createdAt).toLocaleString() }}</span>
+          </li>
+        </ul>
+        <p v-else class="muted">아직 리뷰가 없습니다. 중대한 변경이라면 "AI 리뷰 요청"으로 남겨보세요.</p>
+      </section>
     </template>
   </section>
 </template>
@@ -382,6 +434,35 @@ h1 {
   font-size: 15px;
   margin: 0 0 10px;
 }
+.review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.review-header h2 {
+  margin: 0;
+}
+.review-header button {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.review-header button:disabled {
+  opacity: 0.6;
+}
+.review-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  color: var(--color-text);
+  text-decoration: none;
+}
 .list {
   list-style: none;
   padding: 0;
@@ -399,6 +480,11 @@ h1 {
   border-bottom: none;
 }
 .list.commits li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.list.reviews li {
   display: flex;
   align-items: center;
   gap: 10px;

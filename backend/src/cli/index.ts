@@ -645,6 +645,91 @@ prCmd
     run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/pulls/${index}/reopen`, { method: "POST" }))),
   );
 
+// ---------------------------------------------------------------- 코드 리뷰(사후 검토) - 머지를 막는 게이트가 아니라 이미 반영된
+// 코드를 돌아보는 기록이다(core/codeReview.ts). diff는 리뷰 요청에
+// 딸려있는 base/head를 "docs git compare <projectId> <base> <head>"에
+// 그대로 넘겨 읽는다.
+const codeReviewCmd = program.command("code-review").description("코드 리뷰(사후 검토) - PR/브랜치를 머지 이후 돌아보고 발견(finding)을 남긴다");
+
+codeReviewCmd
+  .command("request <projectId>")
+  .description('요청 - "--pr"만 주면 그 PR의 head/base 브랜치를 자동으로 찾는다, 임의 범위를 보려면 --base/--head 직접 지정. diff는 "docs git compare"로 확인')
+  .option("--pr <index>", "이 PR과 연관지어 요청(base/head 생략 시 PR의 브랜치를 그대로 씀)")
+  .option("--base <ref>", "비교 기준 브랜치/커밋")
+  .option("--head <ref>", "비교 대상 브랜치/커밋")
+  .requiredOption("--label <text>", "사람이 읽을 대상 설명 - \"PR#12 머지\", \"main 최근 7일\" 등")
+  .action((projectId, opts) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/code-review/request`, {
+          method: "POST",
+          body: JSON.stringify({
+            prIndex: opts.pr !== undefined ? Number(opts.pr) : undefined,
+            base: opts.base,
+            head: opts.head,
+            label: opts.label,
+          }),
+        }),
+      ),
+    ),
+  );
+
+codeReviewCmd
+  .command("pending <projectId>")
+  .description("AI 분석 대기 중인 리뷰 목록")
+  .action((projectId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/code-review/pending`))));
+
+codeReviewCmd
+  .command("list <projectId>")
+  .description("리뷰 이력 조회(상태 무관, 최신순) - --pr을 주면 그 PR에 달린 것만")
+  .option("--pr <index>")
+  .action((projectId, opts) =>
+    run(async () => {
+      const qs = opts.pr !== undefined ? `?prIndex=${Number(opts.pr)}` : "";
+      printJson(await apiCall(`/api/projects/${projectId}/git/code-review${qs}`));
+    }),
+  );
+
+codeReviewCmd
+  .command("get <projectId> <reviewId>")
+  .action((projectId, reviewId) => run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/code-review/${reviewId}`))));
+
+codeReviewCmd
+  .command("submit <projectId> <reviewId> <file>")
+  .description('로컬 JSON 파일({ aiSummary?, findings: [...] })을 제출한다 - findings 항목: filePath/line?/category/severity(blocker|major|minor|nit)/summary/failureScenario/verdict?. blocker는 PN, major는 칸반 카드가 자동 생성된다')
+  .action((projectId, reviewId, file) =>
+    run(async () => {
+      const payload = JSON.parse(fs.readFileSync(path.resolve(file), "utf-8"));
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/code-review/${reviewId}/submit`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }),
+      );
+    }),
+  );
+
+codeReviewCmd
+  .command("resolve-finding <projectId> <findingId> <status>")
+  .description("status는 fixed|wontfix|false_positive 중 하나")
+  .action((projectId, findingId, status) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/git/code-review/findings/${findingId}/resolve`, {
+          method: "POST",
+          body: JSON.stringify({ status }),
+        }),
+      ),
+    ),
+  );
+
+codeReviewCmd
+  .command("delete <projectId> <reviewId>")
+  .description("발견 항목이 0건인 리뷰만 삭제(취소) 가능 - 하나라도 있으면 거부됨")
+  .action((projectId, reviewId) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/git/code-review/${reviewId}`, { method: "DELETE" }))),
+  );
+
 // ---------------------------------------------------------------- 팀/그룹/프로젝트
 
 program
@@ -2142,6 +2227,16 @@ gitCmd
 gitCmd
   .command("diff <projectId> <sha>")
   .action((projectId, sha) => run(async () => console.log(await apiCallText(`/api/projects/${projectId}/git/diff/${sha}`))));
+
+gitCmd
+  .command("compare <projectId> <base> <head>")
+  .description("커밋 하나가 아니라 base..head 사이 전체 diff - 코드 리뷰(사후 검토)가 근거하는 명령")
+  .action((projectId, base, head) =>
+    run(async () => {
+      const qs = new URLSearchParams({ base, head });
+      console.log(await apiCallText(`/api/projects/${projectId}/git/compare?${qs}`));
+    }),
+  );
 
 gitCmd
   .command("blame <projectId> <path>")

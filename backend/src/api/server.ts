@@ -288,6 +288,15 @@ import {
   reopenPull,
   listMessagesForPullRequest,
 } from "../core/pullRequests.js";
+import {
+  requestReview as requestCodeReview,
+  listPending as listPendingCodeReviews,
+  listReviews as listCodeReviews,
+  getReviewDetail as getCodeReviewDetail,
+  submitFindings as submitCodeReviewFindings,
+  resolveFinding as resolveCodeReviewFinding,
+  deleteReview as deleteCodeReview,
+} from "../core/codeReview.js";
 import { paginateInMemory } from "../core/pagination.js";
 import {
   createPushHookPrompt,
@@ -4042,6 +4051,22 @@ app.get(
   }),
 );
 
+// 브랜치/커밋 이름은 "/"를 포함할 수 있어(예: feature/x) 경로
+// 파라미터로 못 받는다 - 쿼리 파라미터로 받는다(#git-path-separator와
+// 별개 이유, 그쪽은 파일 경로 얘기).
+app.get(
+  "/api/projects/:projectId/git/compare",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { base, head } = req.query as { base?: string; head?: string };
+    if (!base || !head) { res.status(400).json({ error: "base/head가 필요합니다" }); return; }
+    const target = await requireGiteaWorkingRef(req.params.projectId);
+    const diff = await gitea.compareDiff(target, base, head);
+    res.type("text/plain").send(diff);
+  }),
+);
+
 app.get(
   "/api/projects/:projectId/git/blame",
   authenticate,
@@ -4588,6 +4613,84 @@ app.post(
   asyncRoute(async (req, res) => {
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
     await reopenPull(req.params.projectId, Number(req.params.index), req.userId!, resolveMessageOrigin(req), actingToken);
+    res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- 코드 리뷰(사후 검토) - core/codeReview.ts 참고. 머지 게이트가
+// 아니라 기록이라 owner 전용 액션이 없다 - 조회는 viewer, 요청/제출/
+// 트리아지/삭제는 전부 editor 이상.
+
+app.post(
+  "/api/projects/:projectId/git/code-review/request",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { prIndex, base, head, label } = req.body as { prIndex?: number; base?: string; head?: string; label?: string };
+    if (!label?.trim()) { res.status(400).json({ error: "label이 필요합니다" }); return; }
+    res.json(await requestCodeReview(req.params.projectId, { prIndex, base, head, label: label.trim() }, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/code-review/pending",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await listPendingCodeReviews(req.params.projectId));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/code-review",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const prIndex = req.query.prIndex !== undefined ? Number(req.query.prIndex) : undefined;
+    res.json(await listCodeReviews(req.params.projectId, prIndex));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/git/code-review/:reviewId",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json(await getCodeReviewDetail(req.params.reviewId));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/code-review/:reviewId/submit",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { aiSummary, findings } = req.body as { aiSummary?: string; findings?: unknown };
+    if (!Array.isArray(findings)) { res.status(400).json({ error: "findings 배열이 필요합니다" }); return; }
+    res.json(
+      await submitCodeReviewFindings(req.params.projectId, req.params.reviewId, { aiSummary, findings: findings as never }, req.userId!),
+    );
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/git/code-review/findings/:findingId/resolve",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    const { status } = req.body as { status?: string };
+    if (!status) { res.status(400).json({ error: "status가 필요합니다" }); return; }
+    await resolveCodeReviewFinding(req.params.findingId, status, req.userId!);
+    res.json({ ok: true });
+  }),
+);
+
+app.delete(
+  "/api/projects/:projectId/git/code-review/:reviewId",
+  authenticate,
+  requireProjectRole("editor"),
+  asyncRoute(async (req, res) => {
+    await deleteCodeReview(req.params.projectId, req.params.reviewId);
     res.json({ ok: true });
   }),
 );

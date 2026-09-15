@@ -714,9 +714,14 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   확인/발행)은 전혀 안 끊긴다 - 웹 UI에 Payload URL/Secret이 담긴
   수동 등록 안내가 바로 뜬다(README.md "로컬/사설 서버에 설치한 경우"
   절 참고).
-- **git log/diff/show/tree/file/blame 등 조회**(자체 호스팅·외부
-  연동 둘 다, 작업 저장소 기준) - `git blame`만 Gitea REST API 자체
-  한계로 미지원.
+- **git log/diff/show/tree/file/blame/compare 등 조회**(자체 호스팅·
+  외부 연동 둘 다, 작업 저장소 기준) - `git blame`만 Gitea REST API
+  자체 한계로 미지원. `compare`(`docs git compare <base> <head>`)는
+  `diff`가 커밋 1건 대 부모만 비교하는 것과 달리 두 지점(브랜치/커밋)
+  사이 전체 변경을 본다 - Gitea REST가 range diff 원문을 직접 안
+  줘서(커밋 목록 JSON만), 그 목록의 각 커밋 `.diff`를 오래된 순으로
+  이어붙여 구현했다(코드 리뷰 §26이 근거하는 조회이자, 일반 git 조회
+  계열의 일부).
 - **파일 저장/삭제**(CLI/MCP, 작업 저장소 기준) - `git put`(있으면
   갱신, 없으면 생성)과 그 대칭인 `git delete`(커밋으로 기록)를 둘 다
   지원한다. 없는 파일을 삭제하려는 시도는 명확한 에러로 실패하고,
@@ -1353,3 +1358,58 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   프로젝트의 선택(minicore는 자신의 CLAUDE.md에 "`docs/` 폴더는 예외 -
   공개용 사본은 커밋한다"고 명시해두고 씀 - GitHub에서 로그인 없이
   설계 문서를 읽을 수 있게 하려는 목적).
+
+## 26. 코드 리뷰 (사후 검토)
+
+- **사후 검토(post-hoc), 머지 게이트 아님** - PR/브랜치를 머지하기
+  전에 승인/변경요청을 받는 구조가 아니라, 이미 반영된 코드를 나중에
+  돌아보고 발견(finding)을 남기는 기록이다. 머지 자체는 리뷰 상태와
+  무관하게 언제든 가능(게이팅 없음).
+- **트리거** - PR이 머지되면(`mergePull`/`mergePullManually`) 이
+  시스템의 일반 메시지 채널로 "사소한 변경이면 무시해도 됩니다 -
+  중대한 변경으로 판단되면 `docs code-review request`로 사후 검토를
+  남겨주세요"라는 알림만 온다(`CodeReview` 행은 자동으로 안 만들어짐
+  - 사소한 머지마다 빈 행이 쌓이는 걸 방지). 그 알림을 본 AI/설계자가
+  실제로 검토할 가치가 있다고 판단하면 `docs code-review request`로
+  직접 시작한다. `--pr <index>`만 주면 그 PR의 base/head 브랜치를
+  자동으로 찾고, 임의 범위(브랜치/커밋)를 `--base`/`--head`로 직접
+  지정할 수도 있다. 같은 대상(headRef)에 대한 중복 요청은 기존 행을
+  그대로 재사용(멱등).
+- **diff 열람** - `docs git compare <projectId> <base> <head>`/MCP
+  `git_compare`(§13 git 조회 계열, 코드 리뷰 전용이 아니라 범용) -
+  커밋 하나짜리 `docs git diff`와 달리 두 지점 사이 전체 변경을
+  본다. Gitea REST의 `/compare` 엔드포인트가 range diff 원문을
+  직접 안 줘서(JSON 커밋 목록만), 각 커밋의 검증된 `.diff`를 오래된
+  순으로 이어붙이는 방식으로 구현돼 있다.
+- **제출과 자동 후속 작업** - `docs code-review submit`으로 findings
+  배열(+선택적 총평)을 한 번에 제출한다. finding은 category/severity
+  (blocker/major/minor/nit)/summary/failureScenario/verdict로 구성
+  (이 세션 자신이 코드 리뷰에 쓰는 `ReportFindings` 도구 스키마와
+  동일). **severity가 blocker면 PN(실행 계획)이, major면 칸반
+  "pending" 컬럼 카드가 자동 생성**돼 `followUpRef`에 그 trackingCode가
+  남는다(승인/변경요청 게이트가 없는 대신, 심각한 발견 자체가 추적
+  가능한 작업이 된다) - minor/nit는 기록만.
+- **트리아지** - `docs code-review resolve-finding <findingId>
+  <status>`로 각 finding을 fixed/wontfix/false_positive로 전이한다
+  (open으로 되돌리는 것은 지원 안 함).
+- **삭제(취소/정리)** - `docs code-review delete`는 **findings가
+  0건인 리뷰만** 지울 수 있다 - 하나라도 있으면 명확한 에러로 거부된다
+  (잡아낸 게 있으면 그 기록은 영구 보존).
+- **CLI/MCP 1:1 대응** - `docs code-review request/pending/get/
+  submit/resolve-finding/delete` ↔ MCP `code_review_request/
+  pending/get/submit/resolve_finding/delete`. REST는
+  `/api/projects/:projectId/git/code-review/*`(조회는 viewer, 요청/
+  제출/트리아지/삭제는 editor 이상 - 게이트가 아니라 owner 전용
+  액션이 없다).
+- **웹 UI**(Phase 2) - 저장소 관리 탭의 "코드 리뷰" 링크(`/repo/reviews`)로
+  전체 목록 + 새 리뷰 요청 폼(PR 번호 또는 브랜치 범위 직접 선택)에
+  들어간다. PR 상세 페이지에도 "리뷰(사후 검토)" 섹션이 있어 그
+  PR의 리뷰 이력을 보고 "AI 리뷰 요청" 버튼으로 바로 요청할 수
+  있다. 리뷰 상세 화면(`/repo/reviews/:reviewId`)은 diff(파일별
+  +/- 라인, 기존 커밋 diff 뷰어 재사용)와 finding 목록(심각도
+  내림차순, 상태 배지, `followUpRef`는 클릭하면 PN/칸반 카드
+  다이얼로그가 바로 열림)을 보여주고, 설계자가 각 finding을
+  fixed/wontfix/false_positive로 직접 트리아지할 수 있다. 다른
+  세션이 CLI로 finding을 제출하면 보고 있는 화면이 실시간 토스트와
+  함께 자동 갱신된다. findings 0건인 리뷰만 웹에서도 삭제(취소) 버튼이
+  뜬다.

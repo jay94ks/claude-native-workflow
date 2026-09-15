@@ -58,6 +58,13 @@ const router = createRouter({
           component: () => import("../views/PullRequestDetailView.vue"),
           props: true,
         },
+        { path: "repo/reviews", name: "repo-review-list", component: () => import("../views/CodeReviewListView.vue"), props: true },
+        {
+          path: "repo/reviews/:reviewId",
+          name: "repo-review-detail",
+          component: () => import("../views/CodeReviewDetailView.vue"),
+          props: true,
+        },
         {
           path: "relations",
           name: "project-relations",

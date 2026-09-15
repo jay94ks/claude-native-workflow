@@ -529,6 +529,40 @@ export async function getCommitDiff(target: GiteaRepoRef, sha: string): Promise<
   return res.text();
 }
 
+interface CompareCommit {
+  sha: string;
+  commit: { message: string };
+}
+
+// getCommitDiff는 커밋 하나 대 그 부모만 비교한다 - 코드 리뷰(사후
+// 검토, core/codeReview.ts)처럼 임의의 두 지점(브랜치/커밋) 사이
+// 전체를 한 번에 봐야 할 때는 이 range diff가 필요하다.
+//
+// 실측 확인(Gitea 1.27.3): `/compare/{base}...{head}`는 API/웹 라우트
+// 둘 다 `.diff`/`.patch` 접미사를 지원하지 않는다(둘 다 404 - commit
+// 하나짜리 `.diff`와 달리 range diff 원문을 직접 안 준다) - 대신 그
+// 엔드포인트가 돌려주는 커밋 목록(JSON)을 받아, 각 커밋의 이미 검증된
+// `.diff`를 오래된 순서로 이어붙인다. 같은 줄을 여러 커밋이 건드리면
+// 병합된 net diff가 아니라 커밋별로 각각 나오지만(스쿼시된 단일 diff가
+// 아님), PR을 커밋 단위로 리뷰하는 건 자연스러운 방식이라 문제 없음.
+//
+// 경로의 base/head는 그대로 이어붙인다(URL-인코딩하지 않음) - 브랜치
+// 이름에 슬래시가 있어도(`feature/x`) Gitea가 이 와일드카드 경로를
+// 그대로 받아 "..." 기준으로 파싱하는 걸 실측 확인했고, encodeURIComponent로
+// "/"를 "%2F"로 바꾸면 오히려 이 경로에서 그대로 안 풀려 깨진다.
+export async function compareDiff(target: GiteaRepoRef, base: string, head: string): Promise<string> {
+  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/compare/${base}...${head}`);
+  const json = (await res.json()) as { commits: CompareCommit[] };
+  const chronological = [...json.commits].reverse(); // Gitea는 최신순으로 주므로 오래된 순으로 뒤집는다
+  const parts = await Promise.all(
+    chronological.map(async (c) => {
+      const diff = await getCommitDiff(target, c.sha);
+      return `=== commit ${c.sha} - ${c.commit.message.trim()} ===\n${diff}`;
+    }),
+  );
+  return parts.join("\n\n");
+}
+
 // Gitea REST API에는 blame 엔드포인트가 없다(swagger.v1.json에 "blame"을
 // 포함하는 경로가 전혀 없음 - 1.27 기준 직접 확인) - 웹 UI의 blame
 // 페이지(HTML)도 이 배포 환경에서는 RepoAssignment 단계에서 404가 나서
@@ -1007,6 +1041,12 @@ export interface PullRequestSummary {
   authorUsername: string;
   headBranch: string;
   baseBranch: string;
+  // 코드 리뷰(사후 검토, core/codeReview.ts)가 dedup 키/diff 대상을
+  // 브랜치 이름이 아니라 정확한 커밋에 고정하려고 쓴다 - 브랜치 이름은
+  // 새 커밋이 push돼도 안 바뀌어서 "새 커밋 후 다시 리뷰해달라"는
+  // 요청이 예전 완료된 리뷰를 그대로 돌려주는 버그가 있었다.
+  headSha: string;
+  baseSha: string;
   merged: boolean;
   createdAt: string;
 }
@@ -1017,8 +1057,8 @@ interface RawGiteaPullRequest {
   body: string | null;
   state: string;
   user?: { login: string } | null;
-  head?: { ref: string } | null;
-  base?: { ref: string } | null;
+  head?: { ref: string; sha: string } | null;
+  base?: { ref: string; sha: string } | null;
   merged?: boolean;
   created_at: string;
 }
@@ -1032,6 +1072,8 @@ function toPullRequestSummary(pr: RawGiteaPullRequest): PullRequestSummary {
     authorUsername: pr.user?.login ?? "?",
     headBranch: pr.head?.ref ?? "",
     baseBranch: pr.base?.ref ?? "",
+    headSha: pr.head?.sha ?? "",
+    baseSha: pr.base?.sha ?? "",
     merged: !!pr.merged,
     createdAt: pr.created_at,
   };

@@ -19,6 +19,16 @@ const STATUS_TONES: Record<string, StatusTone> = {
   scheduled: "purple",
   completed: "success",
   rejected: "danger",
+  // CodeReviewFinding.severity/status (backend/src/core/codeReview.ts) -
+  // CodeReview.status는 위 pending/completed를 그대로 재사용.
+  blocker: "danger",
+  major: "warning",
+  minor: "info",
+  nit: "neutral",
+  open: "warning",
+  fixed: "success",
+  wontfix: "neutral",
+  false_positive: "purple",
 };
 
 export function statusTone(code: string): StatusTone {
