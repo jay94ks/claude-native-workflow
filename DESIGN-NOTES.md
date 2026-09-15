@@ -8621,3 +8621,85 @@ overflow-y: auto;` 추가(`overflow: hidden`이던 기존 선언은 모서리
 계획 미리보기가 뜬다 - `TrackingCodeText.vue`에는 이미 있던 분기가
 `MarkdownBody.vue`에 누락돼 있던 걸 맞춘 것뿐이라 새 백엔드 변경은
 없다.
+
+## 세션 구분 + 동시 작업 등록(WorkClaim) 구현(`#multi-session-workclaim`)
+
+**배경**: 설계자 지시 - "같은 계정으로 여러 세션을 가동하려고해.
+서로를 구분할 수 있도록 서로 세션 네임 목록을 유지하고, 마지막
+활동 시간을 기록하게 만들어. 그리고, 현재 작업중인 것들을 DB에
+등록해서 동시성 이슈가 발생하지 않게끔 설계안을 작성해줘." → 조사 후
+SP-976DD4ED에 설계를 정리하고 AskUserQuestion으로 4가지 열린
+질문(CLI 세션 상관관계/notices 범위/클레임 생성 시점/웹 UI 노출
+여부)을 확정받은 뒤 이번 라운드에서 그대로 구현했다.
+
+**구현**: SP-976DD4ED "구현 스케치" 8단계를 그대로 따랐다.
+1. 스키마 - `Session`(id=세션ID, userId, name, clientKind,
+   lastSeenAt), `WorkClaim`(sessionId, projectId, targetType,
+   targetKey, claimedAt) 3개 드라이버 스키마 파일 동일 반영.
+2. `cli/apiclient.ts` - `apiFetch()`가 모든 요청에 `X-Session-Id`
+   헤더 자동 부착(`CNW_SESSION_NAME` 환경변수 우선, 없으면 프로세스당
+   1회 랜덤 생성) - `#message-origin-tagging`의 `X-Client-Kind`
+   패턴 그대로 재사용.
+3. `middleware/auth.ts` - `X-Session-Id`가 있는 요청마다 `Session`
+   upsert(하트비트, 60초 스로틀).
+4. `core/sessions.ts`(신규) - `touchSession`/`listSessions`/
+   `renameSession`/`claimWork`/`releaseWork`/`listWorkClaims`/
+   `findConflictNotices`(대상 + 1단계 링크까지 확장).
+5. `api/server.ts` - 문서 저장/전이, 계획 수정/상태변경 라우트가
+   저장 직전 `findConflictNotices()`를 호출해 `withNotices()`(여러
+   출처의 notices를 합치도록 확장)로 경고를 얹음. 세션/작업 클레임
+   REST 라우트 6개 신설.
+6. CLI(`session list/rename`, `work claim/release/list`)/MCP
+   (`session_list/rename`, `work_claim/release/list`) 명령·도구 추가.
+7. SKILL.md(+배포 템플릿)에 "세션 / 동시 작업 등록" 절 추가 - 특히
+   설계자가 답변에서 제안한 "세션별 MEMORY" 아이디어를 **Claude
+   세션 자신의 스크래치패드**(대화 하나에만 귀속, 컨텍스트 압축에도
+   유지됨)에 `cnw-session.json`을 기록/재사용하는 관례로 구체화해
+   문서화 - CNW 쪽에 새 메커니즘 없이 SKILL.md 지침만으로 CLI
+   단독 반복 호출을 하나의 세션으로 묶는다.
+8. 웹 UI - `SessionsCard.vue`(신규, "내 정보" 화면에 `ApiKeysCard`와
+   같은 카드 패턴으로 배치, 세션 목록+본인 세션 이름 변경) +
+   `ProjectHomeView.vue`에 "지금 작업 중" 패널(대상 클릭 시 문서/
+   계획/소스 파일로 이동).
+
+**검증 중 발견하고 고친 버그**: `touchSession()`을 처음엔
+"요청을 막으면 안 된다"는 이유로 fire-and-forget(await 안 함)으로
+설계했는데, 격리 환경 실측 중 **같은 요청 안에서 방금 등록한
+세션을 곧장 이어 쓰는 흐름이 경합으로 깨지는 걸 직접 재현** -
+`session rename`을 그 세션의 첫 호출 직후 곧바로 부르면 "세션을
+찾을 수 없습니다"로 실패했다(하트비트 upsert가 route 핸들러의
+조회보다 늦게 커밋됨). `middleware/auth.ts`가 `touchSessionIfPresent`
+를 반드시 await하도록 수정 - 이미 있는 60초 스로틀 덕에 대부분의
+요청은 DB 왕복 없이 즉시 반환되므로 await해도 다른 라우트가 이미
+하는 `getMemberRole()` 등과 다를 바 없는 비용이다. 두 번째로,
+`notices` 문구 앞에 직접 "⚠ "를 붙였다가 CLI/MCP의 notices 프롤로그
+출력기가 이미 그 기호를 붙인다는 걸 뒤늦게 확인해 중복 표시(`⚠ ⚠
+...`)를 발견·제거했다(`permissions.ts`의 기존 notice 문구도 자체
+접두어가 없다는 걸 이번에 확인). 세 번째로, 새 세션의 기본
+`name`을 `id.slice(0, 8)`로 잘랐더니 `CNW_SESSION_NAME`으로 사람이
+직접 정한 짧은 이름까지 뭉개져(`session-A` → `session-`) 알아보기
+어려워지는 걸 확인해, 기본 이름을 세션 id 전체로 바꿨다(랜덤
+UUID라도 자르지 않는 편이 최소한 서로 다른 세션임은 확실히
+구분됨 - `docs session rename`으로 나중에 더 짧게 바꾸는 건 여전히
+가능).
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc -b`(frontend) 클린.
+격리된 로컬 환경(스크래치 SQLite+디스포저블 Meilisearch+로컬
+backend+`frontend-dev` 프리뷰)에서 실측 확인:
+- 세션마다 새 프로세스면 서로 다른 랜덤 ID가 생기는 것, 같은
+  `CNW_SESSION_NAME`을 준 여러 호출은 하나의 세션으로 합쳐지는 것.
+- 세션 A가 문서를 클레임한 뒤 세션 B가 같은 문서를 저장하면
+  `notices`에 경고가 뜨되 저장 자체는 그대로 성공하는 것(락 아님).
+- 문서 A를 문서 B에 링크하고 세션 A가 B를 클레임한 상태에서 세션
+  B가 A를 저장하면 "연결된 document B" 경고가 뜨는 것(1단계 링크
+  확장 확인).
+- `work release` 후 `work list`에서 클레임이 사라지는 것.
+- 웹 UI "내 정보" 화면의 "내 세션" 카드에서 실제 세션 목록이
+  보이고 이름 변경이 실시간으로 반영되는 것, 프로젝트 홈의 "지금
+  작업 중" 패널이 살아있는 클레임만 정확히 보여주고(해제한 클레임은
+  안 보임) 대상 클릭 시 문서로 이동하는 것까지 브라우저로 확인.
+
+**결론**: 같은 계정으로 여러 Claude 세션을 동시에 띄워도 이제
+서로의 존재와 마지막 활동을 볼 수 있고, "지금 뭘 작업 중인지"를
+명시적으로 알려 겹치는 작업을 사전에 눈치챌 수 있다 - 하드 락이
+아니므로 세션이 죽어도 다른 세션의 작업을 막지 않는다.

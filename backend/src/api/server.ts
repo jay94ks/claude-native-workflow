@@ -301,6 +301,7 @@ import {
 } from "../core/pushHookPrompts.js";
 import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages, editMessage, deleteMessage, ackMessage, completeMessage, type MessageOrigin } from "../core/messages.js";
 import { checkConnect, checkAcl, ensureEmqxAuthConfigured, getOrCreateMqttCredential } from "../core/emqxAuth.js";
+import { listSessions, renameSession, claimWork, releaseWork, listWorkClaims, findConflictNotices, type WorkTargetType } from "../core/sessions.js";
 
 const app = express();
 // nginx 리버스 프록시 뒤에서 실행된다(#gitea-nginx-lockdown) - req.protocol/
@@ -1730,8 +1731,16 @@ app.get(
 // 이미 겪은 것과 같은 원인). resolveEffectivePermission()으로
 // read/write/delete를 확인하고, 오버라이드가 적용됐으면 notices 배열에
 // 안내 배너를 얹는다(없으면 필드 생략 - 평소엔 노이즈 없음).
-function withNotices<T extends object>(payload: T, notice: string | null): T & { notices?: string[] } {
-  return notice ? { ...payload, notices: [notice] } : payload;
+function withNotices<T extends object>(payload: T, ...noticeSources: (string | string[] | null | undefined)[]): T & { notices?: string[] } {
+  const notices = noticeSources.flatMap((n) => (n ? (Array.isArray(n) ? n : [n]) : []));
+  return notices.length ? { ...payload, notices } : payload;
+}
+
+/** X-Session-Id 헤더 값(있으면) - 세션 자신의 클레임은 충돌 경고에서
+ * 제외할 때 쓴다(#multi-session-workclaim). */
+function resolveSessionId(req: AuthedRequest): string | undefined {
+  const value = req.headers["x-session-id"];
+  return typeof value === "string" && value ? value : undefined;
 }
 
 app.get(
@@ -1802,7 +1811,8 @@ app.put(
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
     const { body } = req.body as { body?: string };
     if (body === undefined) { res.status(400).json({ error: "body가 필요합니다" }); return; }
-    res.json(withNotices(await saveDocumentBody(req.params.trackingCode, body, req.userId!), perm.notice));
+    const conflictNotices = await findConflictNotices(doc.projectId, "document", req.params.trackingCode, resolveSessionId(req));
+    res.json(withNotices(await saveDocumentBody(req.params.trackingCode, body, req.userId!), perm.notice, conflictNotices));
   }),
 );
 
@@ -1869,7 +1879,8 @@ app.post(
     if (!perm.write) { res.status(403).json({ error: "이 문서에 대한 쓰기 권한이 없습니다" }); return; }
     const { toStatusCode } = req.body as { toStatusCode?: string };
     if (!toStatusCode) { res.status(400).json({ error: "toStatusCode가 필요합니다" }); return; }
-    res.json(withNotices(await transitionDocumentStatus(req.params.trackingCode, toStatusCode), perm.notice));
+    const conflictNotices = await findConflictNotices(doc.projectId, "document", req.params.trackingCode, resolveSessionId(req));
+    res.json(withNotices(await transitionDocumentStatus(req.params.trackingCode, toStatusCode), perm.notice, conflictNotices));
   }),
 );
 
@@ -3011,7 +3022,8 @@ app.put(
     const role = await getMemberRole(projectId, req.userId!);
     if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
     const { title, body } = req.body as { title?: string; body?: string };
-    res.json(await updatePlan(req.params.trackingCode, { title, body }));
+    const conflictNotices = await findConflictNotices(projectId, "plan", req.params.trackingCode, resolveSessionId(req));
+    res.json(withNotices(await updatePlan(req.params.trackingCode, { title, body }), conflictNotices));
   }),
 );
 
@@ -3025,7 +3037,8 @@ app.put(
     if (!roleSatisfies(role, "editor")) { res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" }); return; }
     const { status } = req.body as { status?: string };
     if (!status) { res.status(400).json({ error: "status가 필요합니다" }); return; }
-    res.json(await setPlanStatus(req.params.trackingCode, status));
+    const conflictNotices = await findConflictNotices(projectId, "plan", req.params.trackingCode, resolveSessionId(req));
+    res.json(withNotices(await setPlanStatus(req.params.trackingCode, status), conflictNotices));
   }),
 );
 
@@ -3734,6 +3747,68 @@ app.get(
     const page = Number(req.query.page ?? 1);
     const pageSize = Number(req.query.pageSize ?? 20);
     res.json(await listMessagesPaged(req.params.projectId, { status, origin, page, pageSize }));
+  }),
+);
+
+// ---------------------------------------------------------------- 세션/동시 작업 등록 (SP-976DD4ED, #multi-session-workclaim)
+// 계정 전체 스코프(프로젝트에 안 묶임) - CLI/MCP가 공유하는 apiFetch()가
+// 자동으로 붙이는 X-Session-Id 헤더로 middleware/auth.ts가 이미
+// Session 행을 하트비트 갱신해두므로, 여기 조회 라우트들은 그 값을
+// 읽기만 한다.
+
+app.get(
+  "/api/sessions",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const sinceMinutes = req.query.minutes !== undefined ? Number(req.query.minutes) : undefined;
+    res.json(await listSessions(req.userId!, sinceMinutes));
+  }),
+);
+
+app.put(
+  "/api/sessions/:id/name",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { name } = req.body as { name?: string };
+    if (!name) { res.status(400).json({ error: "name이 필요합니다" }); return; }
+    res.json(await renameSession(req.params.id, req.userId!, name));
+  }),
+);
+
+app.get(
+  "/api/projects/:projectId/work-claims",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const aliveMinutes = req.query.minutes !== undefined ? Number(req.query.minutes) : undefined;
+    res.json(await listWorkClaims(req.params.projectId, aliveMinutes));
+  }),
+);
+
+app.post(
+  "/api/projects/:projectId/work-claims",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { targetType, targetKey } = req.body as { targetType?: WorkTargetType; targetKey?: string };
+    const sessionId = resolveSessionId(req);
+    if (!sessionId) { res.status(400).json({ error: "X-Session-Id 헤더가 필요합니다 - 이 명령을 사용하는 클라이언트는 자동으로 붙입니다" }); return; }
+    if (!targetType || !targetKey) { res.status(400).json({ error: "targetType/targetKey가 필요합니다" }); return; }
+    res.json(await claimWork(sessionId, req.params.projectId, targetType, targetKey));
+  }),
+);
+
+app.delete(
+  "/api/projects/:projectId/work-claims",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const { targetType, targetKey } = req.body as { targetType?: WorkTargetType; targetKey?: string };
+    const sessionId = resolveSessionId(req);
+    if (!sessionId) { res.status(400).json({ error: "X-Session-Id 헤더가 필요합니다" }); return; }
+    if (!targetType || !targetKey) { res.status(400).json({ error: "targetType/targetKey가 필요합니다" }); return; }
+    await releaseWork(sessionId, req.params.projectId, targetType, targetKey);
+    res.json({ ok: true });
   }),
 );
 

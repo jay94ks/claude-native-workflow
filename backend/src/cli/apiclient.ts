@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import mqtt from "mqtt";
 
 // concept 브랜치 tier3의 docs3 CLI와 같은 패턴 - CLI는 순수 REST
@@ -86,6 +87,23 @@ async function refreshAccessToken(apiBase: string, creds: StoredCredentials): Pr
   }
 }
 
+// 세션 식별값 - 환경변수 CNW_SESSION_NAME이 있으면 그대로 쓰고(같은
+// 셸/같은 Claude 대화에서 여러 docs 호출을 하나의 세션으로 묶고
+// 싶을 때), 없으면 이 프로세스가 뜬 동안만 쓰는 랜덤 값을 1회
+// 생성해 재사용한다(SP-976DD4ED, #multi-session-workclaim). MCP
+// 서버는 대화 하나당 프로세스 하나로 오래 떠 있어 이 값이 자연히
+// 안정적인 세션 하나가 되고, `docs` CLI 단독 반복 호출은 매번 새
+// 프로세스라 호출마다 새 값이 생긴다 - 그걸 하나로 묶고 싶은 Claude
+// 세션은 스크래치패드에 기록해둔 이름을 CNW_SESSION_NAME으로 넘기는
+// 관례를 따른다(SKILL.md 참고). credentials.json에는 안 둔다 - 그
+// 파일은 머신당 하나라 여러 세션이 공유해버려 구분 용도로 못 쓴다.
+let cachedSessionId: string | null = null;
+function currentSessionId(): string {
+  if (process.env.CNW_SESSION_NAME) return process.env.CNW_SESSION_NAME;
+  if (!cachedSessionId) cachedSessionId = randomUUID();
+  return cachedSessionId;
+}
+
 async function apiFetch(pathSuffix: string, init?: RequestInit): Promise<Response> {
   const creds = loadCredentials();
   const apiBase = process.env.CNW_API_BASE ?? creds?.api_base;
@@ -97,8 +115,14 @@ async function apiFetch(pathSuffix: string, init?: RequestInit): Promise<Respons
   // 완전히 별개 코드라 이 헤더를 붙일 길이 없다. 서버는 이 헤더 유무로
   // 메시지의 origin(designer/ai)을 자동 판정한다(#message-origin-tagging,
   // core/messages.ts의 MessageOrigin 참고) - CLI/MCP 명령 자체는 아무
-  // 인자도 늘지 않는다.
-  const headers: Record<string, string> = { "Content-Type": "application/json", "X-Client-Kind": "cli", ...(init?.headers as Record<string, string> ?? {}) };
+  // 인자도 늘지 않는다. X-Session-Id도 같은 자리에서 자동으로 붙는다
+  // (세션 목록/동시 작업 등록 - 위 currentSessionId() 참고).
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Client-Kind": "cli",
+    "X-Session-Id": currentSessionId(),
+    ...(init?.headers as Record<string, string> ?? {}),
+  };
   const token = creds?.api_key ?? creds?.access_token;
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${apiBase}${pathSuffix}`, { ...init, headers });

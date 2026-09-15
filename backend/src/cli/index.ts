@@ -2522,6 +2522,60 @@ messageCmd
   .description("처리중 → 기록으로 표시(ack 없이 불러도 자동으로 ack까지 됨, 이미 기록이면 그대로)")
   .action((id) => run(async () => printJson(await apiCall(`/api/messages/${id}/complete`, { method: "PUT" }))));
 
+// ---------------------------------------------------------------- 세션/동시 작업 등록 (SP-976DD4ED, #multi-session-workclaim)
+// 계정 전체 스코프 - 같은 계정으로 여러 Claude 세션을 동시에 띄울 때
+// 서로를 구분하고(X-Session-Id 헤더는 apiFetch()가 이미 자동으로
+// 붙임, 이 명령들은 새 인자를 요구하지 않음) "지금 뭘 작업 중인지"를
+// 광고판처럼 등록해 다른 세션에 알린다 - 락이 아니라 경고용(WorkClaim
+// 이 있어도 실제 저장/전이는 그대로 진행되고, 관련 mutation 응답의
+// notices에 경고만 뜬다).
+
+const sessionCmd = program.command("session").description("같은 계정의 다른 Claude 세션 목록/이름(SP-976DD4ED)");
+sessionCmd
+  .command("list")
+  .option("--minutes <n>", "최근 이 분(minute) 안에 활동한 세션만(생략하면 전체)")
+  .description("내 계정의 세션 목록 - 이름/클라이언트 종류/마지막 활동 시각")
+  .action((opts) => {
+    const qs = opts.minutes ? `?minutes=${encodeURIComponent(opts.minutes)}` : "";
+    return run(async () => printJson(await apiCall(`/api/sessions${qs}`)));
+  });
+sessionCmd
+  .command("rename <sessionId> <name>")
+  .description("내 세션(본인 소유만) 이름을 바꾼다 - 다른 세션 이름은 못 바꿈")
+  .action((sessionId, name) =>
+    run(async () => printJson(await apiCall(`/api/sessions/${sessionId}/name`, { method: "PUT", body: JSON.stringify({ name }) }))),
+  );
+
+const workCmd = program.command("work").description("현재 작업 중인 대상 등록(WorkClaim) - 락 아님, 경고용(SP-976DD4ED)");
+workCmd
+  .command("claim <projectId> <targetType> <targetKey>")
+  .description("targetType: document|plan|sourceFile - 이 대상을 지금 작업 중이라고 등록(명시적으로 부를 때만 생김)")
+  .action((projectId, targetType, targetKey) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/work-claims`, { method: "POST", body: JSON.stringify({ targetType, targetKey }) }),
+      ),
+    ),
+  );
+workCmd
+  .command("release <projectId> <targetType> <targetKey>")
+  .description("claim 해제(작업이 끝났거나 더 이상 유효하지 않을 때)")
+  .action((projectId, targetType, targetKey) =>
+    run(async () =>
+      printJson(
+        await apiCall(`/api/projects/${projectId}/work-claims`, { method: "DELETE", body: JSON.stringify({ targetType, targetKey }) }),
+      ),
+    ),
+  );
+workCmd
+  .command("list <projectId>")
+  .option("--minutes <n>", "이 분(minute) 안에 활동한 세션의 클레임만(기본 30분)")
+  .description("이 프로젝트에서 지금 살아있는 세션들이 뭘 작업 중인지")
+  .action((projectId, opts) => {
+    const qs = opts.minutes ? `?minutes=${encodeURIComponent(opts.minutes)}` : "";
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/work-claims${qs}`)));
+  });
+
 // ---------------------------------------------------------------- 검색 엔진 장애 대응 큐 (관리자 전용)
 
 const searchQueueCmd = program.command("search-queue").description("Meilisearch 장애 시 밀린 색인 동기화 큐(관리자 전용)");

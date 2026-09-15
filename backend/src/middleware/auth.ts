@@ -3,10 +3,32 @@ import { verifyAccessToken, isSuperAdmin } from "../core/auth.js";
 import { getMemberRole, roleSatisfies } from "../core/members.js";
 import { verifyApiKeySecret, API_KEY_PREFIX } from "../core/apiKeys.js";
 import { runWithKeyScope, getActiveKeyScope, type KeyScope } from "../core/requestScope.js";
+import { touchSession } from "../core/sessions.js";
 
 export interface AuthedRequest extends Request {
   userId?: string;
   username?: string;
+}
+
+/** X-Session-Id 헤더가 있으면 그 세션의 마지막 활동 시각을 갱신한다
+ * (SP-976DD4ED, #multi-session-workclaim) - 헤더가 없으면(웹 UI 등)
+ * 조용히 아무 것도 안 한다. **반드시 await한다** - fire-and-forget으로
+ * 뒀더니 같은 요청 안에서 방금 막 등록한 세션을 바로 이어서 쓰는
+ * 경로(예: 세션 등록 직후 곧장 work_claim/session_rename을 부르는
+ * 흐름)가 "세션을 찾을 수 없습니다"로 실패하는 실제 경합을 실측으로
+ * 발견(격리 환경 테스트 중) - touchSession() 자체가 스로틀돼 있어
+ * (core/sessions.ts의 HEARTBEAT_THROTTLE_MS) 대부분의 요청에서는
+ * DB 왕복 없이 즉시 반환되므로, 매번 await해도 다른 라우트가 이미
+ * 하는 getMemberRole() 등의 DB 조회와 다를 바 없는 비용이다.
+ * 실패해도 요청 자체는 막지 않는다(인증과는 무관한 부가 기능). */
+async function touchSessionIfPresent(req: Request, userId: string): Promise<void> {
+  const sessionId = req.headers["x-session-id"];
+  if (typeof sessionId !== "string" || !sessionId) return;
+  // X-Client-Kind는 지금 CLI/MCP가 공유하는 apiFetch() 하나가 항상
+  // "cli"로 붙인다(#message-origin-tagging) - 둘을 더 세분화할
+  // 신호가 아직 없어 그 값을 그대로 옮겨 담는다.
+  const clientKind = typeof req.headers["x-client-kind"] === "string" ? req.headers["x-client-kind"] : "cli";
+  await touchSession(sessionId, userId, clientKind).catch(() => {});
 }
 
 /** Bearer 토큰이 API 키 포맷(cnwk_...)이면 해시 조회로 검증하고, 그
@@ -31,6 +53,7 @@ export async function authenticate(req: AuthedRequest, res: Response, next: Next
         return;
       }
       req.userId = result.userId;
+      await touchSessionIfPresent(req, result.userId);
       // admin 계정은 스코프가 좁혀진 API 키를 쓰더라도 그 스코프를
       // 무시하고 전체 접근을 허용한다(설계자 확정 - 최고 관리자는
       // 완전 우회). unrestricted로 치환하는 것만으로 이 요청 안에서
@@ -47,6 +70,7 @@ export async function authenticate(req: AuthedRequest, res: Response, next: Next
     const payload = verifyAccessToken(token);
     req.userId = payload.sub;
     req.username = payload.username;
+    await touchSessionIfPresent(req, payload.sub);
     runWithKeyScope({ type: "unrestricted" }, next);
   } catch {
     res.status(401).json({ error: "유효하지 않거나 만료된 토큰입니다" });

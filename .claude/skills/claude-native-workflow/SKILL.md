@@ -334,6 +334,55 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 가벼운 응답에는 만들지 않는다 - 실제로 코드나 문서가 바뀐 라운드
 단위로 판단한다.
 
+## 세션 / 동시 작업 등록 (같은 계정으로 여러 Claude 세션을 띄울 때)
+
+같은 계정으로 CLI/MCP를 동시에 여러 개 띄우면(여러 Claude Code 대화,
+또는 사람과 AI가 동시에 작업) 서로를 구분하고 "지금 뭘 작업 중인지"를
+광고판처럼 등록해 동시성 충돌을 줄일 수 있다(SP-976DD4ED,
+`#multi-session-workclaim`). **락이 아니다** - 다른 세션이 같은
+대상에 클레임을 걸어놔도 저장/전이 자체는 그대로 진행되고, 응답의
+`notices`에 경고만 붙는다(규칙 6이 이미 말하는 "응답의 notices를
+확인하고 지시대로 행동한다"는 관례를 그대로 씀).
+
+**세션 식별은 자동이다** - CLI/MCP가 공유하는 HTTP 클라이언트가 모든
+요청에 `X-Session-Id` 헤더를 자동으로 붙인다(기존 명령에 인자가 늘지
+않음). 값은 환경변수 `CNW_SESSION_NAME`이 있으면 그걸 쓰고, 없으면
+프로세스가 뜬 동안만 쓰는 랜덤 값을 생성한다. **MCP 서버는 대화
+하나당 프로세스 하나로 오래 떠 있어 이 값이 자연히 안정적인 세션
+하나가 되지만, `docs` CLI는 호출마다 새 프로세스라 매번 새 값이
+생긴다** - 같은 대화 안의 여러 `docs` 호출을 하나의 세션으로 묶고
+싶으면 다음 관례를 따른다:
+
+> **CNW 작업을 시작할 때** 스크래치패드 디렉터리에
+> `cnw-session.json`(`{"sessionId": "...", "name": "..."}`)이 있으면
+> 그 값을 읽어 이후 이번 작업에서 부르는 모든 `docs` 명령 앞에
+> `CNW_SESSION_NAME=<name>`을 붙인다. 파일이 없으면 이번 작업 성격을
+> 담은 이름을 하나 정해(예: 지금 하는 일을 짧게 표현) 그 파일에 써두고
+> 동일하게 사용한다 - 스크래치패드는 이 대화 하나에만 귀속되고 다른
+> 동시 세션과 겹치지 않으며, 컨텍스트 압축을 겪어도 그대로 남는다.
+
+명령:
+- `docs session list [--minutes <n>]`/`session_list` - 내 계정의
+  세션 목록(이름/클라이언트 종류/마지막 활동 시각). 생략하면 전체.
+- `docs session rename <sessionId> <name>`/`session_rename` - 본인
+  세션만 이름을 바꿀 수 있다.
+- `docs work claim <projectId> <targetType> <targetKey>`/`work_claim`
+  (`targetType`: `document`/`plan`/`sourceFile`) - 이 대상을 지금
+  작업 중이라고 등록한다. **명시적으로 불러야만 생긴다** - 단순히
+  `docs get`으로 조회만 해서는 자동으로 안 생김.
+- `docs work release <projectId> <targetType> <targetKey>`/
+  `work_release` - 클레임 해제(작업이 끝났을 때 부르는 게 좋음 -
+  안 불러도 세션이 하트비트를 멈추면 자동으로 stale 취급되긴 함).
+- `docs work list <projectId> [--minutes <n>]`/`work_list` - 이
+  프로젝트에서 지금 살아있는 세션들이 뭘 작업 중인지.
+
+문서/계획 저장(`docs save`/`plan set`)·전이(`docs transition`/
+`plan status`)에서 *다른* 세션이 같은 대상(또는 링크로 1단계
+연결된 대상 - 문서↔문서 링크, 계획↔문서 근거, 문서↔소스 파일 연결)
+을 작업 중이면 응답 `notices`에 경고가 붙는다 - 겹치는 작업이면
+`docs message send`로 그 세션에(또는 설계자에게) 조율 메시지를
+보내는 걸 권장한다.
+
 ## 계획 (별도 계획 체크리스트)
 
 Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립
@@ -624,6 +673,11 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 메시지 삭제 | `docs message delete <id>` | `message_delete` |
 | 메시지 처리 시작(대기→처리중) | `docs message ack <id>` | `message_ack` |
 | 메시지 처리 완료(처리중→기록) | `docs message complete <id>` | `message_complete` |
+| 내 세션 목록 | `docs session list [--minutes <n>]` | `session_list` |
+| 내 세션 이름 변경(본인 소유만) | `docs session rename <sessionId> <name>` | `session_rename` |
+| 작업 중 등록(WorkClaim, 락 아님) | `docs work claim <projectId> <targetType> <targetKey>` | `work_claim` |
+| 작업 중 등록 해제 | `docs work release <projectId> <targetType> <targetKey>` | `work_release` |
+| 이 프로젝트의 현재 작업 현황 | `docs work list <projectId> [--minutes <n>]` | `work_list` |
 | 검색 동기화 큐 상태(Meilisearch 장애 시, 관리자 전용) | `docs search-queue status` | `search_queue_status` |
 | 검색 동기화 큐 수동 드레인(관리자 전용) | `docs search-queue drain` | `search_queue_drain` |
 | 마이그레이션 후보 스캔 | `docs migrate scan <sourceDir>` | `migrate_scan` |

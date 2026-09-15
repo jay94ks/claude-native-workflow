@@ -53,10 +53,21 @@ interface ProjectDashboard {
   kanbanColumns: KanbanColumnCount[];
   activity: ActivityItem[];
 }
+// 같은 계정의 다른 Claude 세션이 지금 뭘 작업 중인지(SP-976DD4ED,
+// #multi-session-workclaim) - 락이 아니라 광고판이라 그냥 조회만.
+interface WorkClaimItem {
+  id: string;
+  sessionId: string;
+  sessionName: string;
+  targetType: string;
+  targetKey: string;
+  claimedAt: string;
+}
 
 const pending = ref<PendingQuestion[]>([]);
 const favoriteDocuments = ref<FavoriteDocument[]>([]);
 const dashboard = ref<ProjectDashboard | null>(null);
+const workClaims = ref<WorkClaimItem[]>([]);
 const loading = ref(true);
 const error = ref("");
 
@@ -64,10 +75,11 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [pendingResult, favorites, dashboardResult] = await Promise.all([
+    const [pendingResult, favorites, dashboardResult, claims] = await Promise.all([
       apiCall<{ questions: PendingQuestion[] }>(`/projects/${props.id}/pending`).catch(() => ({ questions: [] })),
       apiCall<FavoriteDocumentPage>(`/projects/${props.id}/documents/favorites/page?page=1&pageSize=5`).catch(() => ({ items: [] })),
       apiCall<ProjectDashboard>(`/projects/${props.id}/dashboard`).catch(() => null),
+      apiCall<WorkClaimItem[]>(`/projects/${props.id}/work-claims`).catch(() => []),
     ]);
     // "pending"(설계자 답변 완료, AI 확인 대기)은 AI가 처리할 몫이라
     // 설계자 화면엔 노이즈로 안 얹는다 - "open"(설계자가 지금 답해야
@@ -75,11 +87,19 @@ async function load() {
     pending.value = pendingResult.questions.filter((q) => q.status === "open");
     favoriteDocuments.value = favorites.items;
     dashboard.value = dashboardResult;
+    workClaims.value = claims;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "정보를 불러오지 못했습니다";
   } finally {
     loading.value = false;
   }
+}
+
+function workClaimHref(c: WorkClaimItem): string | null {
+  if (c.targetType === "document") return `/projects/${props.id}/documents/${c.targetKey}`;
+  if (c.targetType === "plan") return `/projects/${props.id}/plans/${c.targetKey}`;
+  if (c.targetType === "sourceFile") return `/projects/${props.id}/source?path=${encodeURIComponent(c.targetKey)}`;
+  return null;
 }
 
 function openQuestionTarget(q: PendingQuestion) {
@@ -105,6 +125,19 @@ onMounted(load);
       <span class="chip">미답변 질의 {{ dashboard.openQuestionsCount }}</span>
       <span v-for="c in dashboard.kanbanColumns" :key="c.columnId" class="chip">{{ c.columnName }} {{ c.count }}</span>
     </div>
+  </section>
+
+  <section v-if="!loading && workClaims.length > 0">
+    <h2>지금 작업 중</h2>
+    <ul class="list">
+      <li v-for="c in workClaims" :key="c.id">
+        <router-link v-if="workClaimHref(c)" :to="workClaimHref(c)!">
+          <code>{{ c.targetType }}</code> {{ c.targetKey }}
+        </router-link>
+        <span v-else><code>{{ c.targetType }}</code> {{ c.targetKey }}</span>
+        <span class="right muted">{{ c.sessionName }} · {{ new Date(c.claimedAt).toLocaleString() }}</span>
+      </li>
+    </ul>
   </section>
 
   <section v-if="!loading && dashboard && dashboard.staleDocuments.length > 0">

@@ -1200,3 +1200,45 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   <trackingCode...>`·`plan depend-bulk <dependsOnTrackingCode>
   <trackingCode...>`(같은 값을 여러 계획에 한 번에 적용, 문서
   `bulk-transition`과 같은 관례 - 항목별 결과 반환).
+
+## 24. 세션 / 동시 작업 등록
+
+- 같은 계정으로 CLI/MCP를 동시에 여러 개 띄웠을 때 서로를 구분하고
+  "지금 뭘 작업 중인지"를 광고판처럼 등록해 동시성 충돌을 줄이는
+  기능(SP-976DD4ED, `#multi-session-workclaim`). **락이 아니다** -
+  다른 세션이 같은 대상에 클레임을 걸어놔도 실제 저장/전이는 그대로
+  진행되고, 관련 응답의 `notices`에 경고만 붙는다.
+- **세션 식별은 자동**이다 - CLI/MCP가 공유하는 HTTP 클라이언트가
+  모든 요청에 `X-Session-Id` 헤더를 자동으로 붙인다(기존 명령에
+  인자가 늘지 않음). 값은 환경변수 `CNW_SESSION_NAME`이 있으면 그걸
+  쓰고, 없으면 프로세스가 뜬 동안만 쓰는 랜덤 값을 생성한다 - MCP
+  서버는 대화 하나당 프로세스 하나로 오래 떠 있어 이 값이 자연히
+  안정적인 세션 하나가 되지만, `docs` CLI는 호출마다 새 프로세스라
+  매번 새 값이 생긴다(여러 호출을 하나의 세션으로 묶고 싶으면
+  `CNW_SESSION_NAME`을 직접 지정 - Claude 세션은 스크래치패드에
+  기록해두고 재사용하는 관례를 따름, SKILL.md 참고).
+- 인증 미들웨어가 `X-Session-Id`가 있는 요청마다 그 세션의
+  `lastSeenAt`을 자동으로 갱신한다(60초 스로틀 - 매 요청마다 DB에
+  쓰지 않음). 이 하트비트는 요청을 막지 않기 위해서가 아니라
+  오히려 **반드시 await**한다 - 세션을 처음 쓴 바로 그 요청 안에서
+  곧장 `work claim`/`session rename`을 이어 부르는 흐름이 실패하지
+  않게 하기 위함(스로틀 덕에 대부분의 요청은 DB 왕복 없이 즉시
+  반환됨).
+- CLI: `docs session list [--minutes <n>]`/`docs session rename
+  <sessionId> <name>`(본인 소유 세션만), `docs work claim/release
+  <projectId> <targetType> <targetKey>`(`targetType`:
+  `document`/`plan`/`sourceFile`, 명시적으로 불러야만 생김)/`docs
+  work list <projectId> [--minutes <n>]`. MCP:
+  `session_list`/`session_rename`/`work_claim`/`work_release`/
+  `work_list`. REST: `GET/PUT /api/sessions[...]`, `GET/POST/DELETE
+  /api/projects/:projectId/work-claims`.
+- 문서 저장(`docs save`)/전이(`docs transition`), 계획 수정(`plan
+  set`)/상태 변경(`plan status`)에서 *다른* 세션이 같은 대상 또는
+  **1단계 링크**로 연결된 대상(문서↔문서 링크 양방향, 계획↔문서
+  근거, 문서↔소스 파일 연결)에 살아있는 클레임을 갖고 있으면 응답
+  `notices`에 경고 문구가 붙는다 - 저장 자체는 막지 않는다. 전이적
+  (2단계 이상) 확장은 하지 않는다.
+- 웹 UI: "내 정보" 화면에 "내 세션" 카드(세션 이름/클라이언트 종류/
+  마지막 활동 시각, 본인 세션 이름 변경 가능) - `ApiKeysCard`와 같은
+  카드 패턴. 프로젝트 홈 대시보드에 "지금 작업 중" 패널(세션 이름 +
+  대상 + 클레임 시각, 대상 클릭 시 해당 문서/계획/소스 파일로 이동).
