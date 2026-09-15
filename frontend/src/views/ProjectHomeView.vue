@@ -188,6 +188,9 @@ onMounted(load);
         <router-link v-if="q.targetType === 'document'" :to="`/projects/${id}/documents/${q.targetKey}`">
           <code>{{ q.trackingCode }}</code> {{ q.targetLabel }} - {{ q.text }}
         </router-link>
+        <router-link v-else-if="q.targetType === 'plan'" :to="`/projects/${id}/plans/${q.targetKey}`">
+          <code>{{ q.trackingCode }}</code> {{ q.targetLabel }} - {{ q.text }}
+        </router-link>
         <router-link v-else-if="q.targetType === 'source'" :to="`/projects/${id}/source?path=${encodeURIComponent(q.targetKey)}`">
           <code>{{ q.trackingCode }}</code> {{ q.targetLabel }} - {{ q.text }}
         </router-link>

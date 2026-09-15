@@ -9084,3 +9084,58 @@ SQLite에서 실제 흐름을 끝까지 재현:
 방식으로 AI가 질의를 걸고 설계자가 답변할 수 있게 됐다 - 새 명령/
 API 시그니처 없이 기존 트래킹 코드 기반 다형화 설계를 그대로 확장한
 것뿐이라 CLI/MCP 사용법은 바뀌지 않는다.
+
+## 계획 편집 화면의 질의/답변을 "보기"/"질의·답변" 탭으로 분리
+
+**배경**: 설계자 지시 - "계획의 질의/답변도 문서에서처럼 '계획' 탭내
+하위 탭으로 떼어내줘." 직전 라운드(DN-FD49A772)에서 계획 편집
+화면에 `QAPanel`을 "선행 조건" 섹션 바로 아래 인라인으로 붙였는데,
+문서 편집 화면(`DocumentEditorView.vue`)은 이미 "보기"/"챕터"/
+"질의·답변" 탭으로 분리돼 있어 두 화면의 구조가 어긋나 있었다.
+
+**설계**: `DocumentEditorView.vue`의 탭 패턴(`activeTab` ref + `.tabs`
+버튼 바 + `v-if`/`v-else` 템플릿 분기, 같은 CSS)을 그대로
+`PlanEditorView.vue`에 옮겼다 - "보기" 탭에 기존 본문 보기/편집,
+"관련 문서", "선행 조건" 섹션을 전부 몰아넣고, "질의/답변" 탭에
+`QAPanel` 하나만 둔다. 문서 화면처럼 트래킹코드가 바뀌면(다른
+계획으로 이동) `activeTab`을 "보기"로 초기화하는 `watch`도 그대로
+맞춰 넣었다(문서 화면의 "Vue Router가 컴포넌트 인스턴스를 재사용해
+URL만 바뀌고 화면은 안 바뀌던" 버그 방지 관례와 동일한 이유).
+
+**구현**: `frontend/src/views/PlanEditorView.vue` - `activeTab` ref
+(`"view" | "qa"`) 추가, `.tabs` 버튼 바 추가(문서 화면과 동일한
+`.tabs`/`.tabs button`/`.tabs button.active` CSS 그대로 복사),
+본문/관련 문서/선행 조건 섹션을 `activeTab === 'view'` 블록으로,
+`QAPanel`을 `v-else` 블록으로 이동. `trackingCode` watch에
+`activeTab.value = "view"` 초기화 추가.
+
+**검증 중 발견하고 고친 회귀 버그**: 검증차 웹 UI를 직접 열어보다가
+설계자가 "홈 화면의 답변 대기 질문 목록에서 항목을 눌러도 이동이
+안 된다"고 보고 - 조사해보니 `ProjectHomeView.vue`의 "답변 대기 질문"
+목록이 `QuestionDialog.vue`/`QAPanel.vue`와는 별개로 자기만의
+`targetType` 분기(`document`/`source`는 `router-link`, 나머지는
+`openQuestionTarget()` 버튼)를 갖고 있었는데, 그 함수가
+`kanbanCard`만 처리하고 있어 지난 라운드에 `plan`을 추가할 때 이
+세 번째 지점을 놓쳤던 것 - `plan`이면 아무 반응 없는 버튼으로
+조용히 떨어졌다(에러도 안 남, 발견하기 어려운 종류의 누락). 문서/
+소스 코드와 같은 방식으로 실제 페이지로 이동하는 게 계획에도 더
+자연스럽다고 판단해(계획도 문서처럼 전용 페이지가 있음 - 칸반
+카드처럼 다이얼로그로 열 이유가 없음) `<router-link
+:to="/projects/:id/plans/:trackingCode">` 분기를 추가했다(`openQuestionTarget()`은
+그대로 kanbanCard 전용으로 유지).
+
+**검증**: `vue-tsc -b` 클린. 프로덕션에 임시 계획+질의를 실제로
+만들어(검증 후 삭제) 브라우저로 3가지 확인:
+1. 계획 편집 화면에 "보기"/"질의/답변" 두 탭이 뜨고, 기본은 "보기"
+   (질의/답변 내용이 안 보임), "질의/답변" 탭을 누르면 그 계획의
+   `QAPanel`이 정확히 뜨는 것.
+2. 프로젝트 홈 "답변 대기 질문" 목록에 계획 대상 질문이 실제
+   `<a href="/projects/:id/plans/:trackingCode">` 링크로 뜨고,
+   클릭하면 실제로 그 계획 편집 화면으로 이동하는 것(수정 전엔
+   버튼이었고 클릭해도 아무 반응 없었음 - 재현 확인).
+
+**결론**: 계획 편집 화면이 이제 문서 편집 화면과 같은 탭 구조를
+쓴다. 이번 검증 과정에서 지난 라운드가 놓쳤던 "홈 화면 답변 대기
+목록" 회귀까지 같이 발견·수정했다 - `targetType` 분기가 세 곳
+(QAPanel/QuestionDialog/ProjectHomeView)에 흩어져 있어 새 대상을
+추가할 때 놓치기 쉽다는 게 이번에 실측으로 확인된 교훈.

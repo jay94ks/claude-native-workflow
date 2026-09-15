@@ -13,6 +13,7 @@ import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
 const entityPicker = useEntityPickerStore();
+const activeTab = ref<"view" | "qa">("view");
 
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
 const canWrite = ref(false);
@@ -255,6 +256,7 @@ async function remove() {
 watch(
   () => props.trackingCode,
   () => {
+    activeTab.value = "view";
     mode.value = "read";
     saveMessage.value = "";
     titleError.value = "";
@@ -295,55 +297,63 @@ onMounted(async () => {
       </div>
       <p v-if="statusError" class="error">{{ statusError }}</p>
 
-      <p v-if="error" class="error">{{ error }}</p>
-      <p v-if="saveMessage" class="saved">{{ saveMessage }}</p>
-
-      <div v-if="canWrite" class="toolbar">
-        <span class="spacer"></span>
-        <button v-if="mode === 'read'" class="secondary" @click="startEdit">편집</button>
-        <button class="danger" :disabled="deleting" @click="remove">{{ deleting ? "삭제 중..." : "삭제" }}</button>
+      <div class="tabs">
+        <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
+        <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
       </div>
-      <p v-if="deleteError" class="error">{{ deleteError }}</p>
 
-      <template v-if="mode === 'read'">
-        <MarkdownBody :body="plan.body" class="body-view" />
+      <template v-if="activeTab === 'view'">
+        <p v-if="error" class="error">{{ error }}</p>
+        <p v-if="saveMessage" class="saved">{{ saveMessage }}</p>
+
+        <div v-if="canWrite" class="toolbar">
+          <span class="spacer"></span>
+          <button v-if="mode === 'read'" class="secondary" @click="startEdit">편집</button>
+          <button class="danger" :disabled="deleting" @click="remove">{{ deleting ? "삭제 중..." : "삭제" }}</button>
+        </div>
+        <p v-if="deleteError" class="error">{{ deleteError }}</p>
+
+        <template v-if="mode === 'read'">
+          <MarkdownBody :body="plan.body" class="body-view" />
+        </template>
+        <template v-else>
+          <MonacoEditor v-model="body" language="markdown" class="editor" />
+          <div class="edit-actions">
+            <button :disabled="saving" @click="saveBody">{{ saving ? "저장 중..." : "저장" }}</button>
+            <button type="button" class="secondary" @click="cancelEdit">취소</button>
+          </div>
+        </template>
+
+        <section class="refs-section">
+          <h2>관련 문서</h2>
+          <p v-if="refsError" class="error">{{ refsError }}</p>
+          <ul v-if="plan.refs.length > 0" class="refs-list">
+            <li v-for="code in plan.refs" :key="code">
+              <TrackingCodeText :text="code" />
+              <button v-if="canWrite" type="button" class="remove-btn" :disabled="refsUpdating" @click="removeRef(code)">해제</button>
+            </li>
+          </ul>
+          <p v-else class="muted">관련 문서가 없습니다.</p>
+          <button v-if="canWrite" type="button" class="secondary" :disabled="refsUpdating" @click="pickRefs">+ 관련 문서 선택</button>
+        </section>
+
+        <section class="refs-section">
+          <h2>선행 조건</h2>
+          <p class="hint">이 계획을 시작하기 전에 먼저 끝나야 하는 다른 계획들.</p>
+          <p v-if="depsError" class="error">{{ depsError }}</p>
+          <ul v-if="plan.dependencies.length > 0" class="refs-list">
+            <li v-for="code in plan.dependencies" :key="code">
+              <TrackingCodeText :text="code" />
+              <button v-if="canWrite" type="button" class="remove-btn" :disabled="depsUpdating" @click="removeDependency(code)">해제</button>
+            </li>
+          </ul>
+          <p v-else class="muted">선행 조건이 없습니다.</p>
+          <button v-if="canWrite" type="button" class="secondary" :disabled="depsUpdating" @click="pickDependencies">+ 선행 조건 선택</button>
+        </section>
       </template>
       <template v-else>
-        <MonacoEditor v-model="body" language="markdown" class="editor" />
-        <div class="edit-actions">
-          <button :disabled="saving" @click="saveBody">{{ saving ? "저장 중..." : "저장" }}</button>
-          <button type="button" class="secondary" @click="cancelEdit">취소</button>
-        </div>
+        <QAPanel :project-id="plan.projectId" target-type="plan" :target-key="plan.trackingCode" />
       </template>
-
-      <section class="refs-section">
-        <h2>관련 문서</h2>
-        <p v-if="refsError" class="error">{{ refsError }}</p>
-        <ul v-if="plan.refs.length > 0" class="refs-list">
-          <li v-for="code in plan.refs" :key="code">
-            <TrackingCodeText :text="code" />
-            <button v-if="canWrite" type="button" class="remove-btn" :disabled="refsUpdating" @click="removeRef(code)">해제</button>
-          </li>
-        </ul>
-        <p v-else class="muted">관련 문서가 없습니다.</p>
-        <button v-if="canWrite" type="button" class="secondary" :disabled="refsUpdating" @click="pickRefs">+ 관련 문서 선택</button>
-      </section>
-
-      <section class="refs-section">
-        <h2>선행 조건</h2>
-        <p class="hint">이 계획을 시작하기 전에 먼저 끝나야 하는 다른 계획들.</p>
-        <p v-if="depsError" class="error">{{ depsError }}</p>
-        <ul v-if="plan.dependencies.length > 0" class="refs-list">
-          <li v-for="code in plan.dependencies" :key="code">
-            <TrackingCodeText :text="code" />
-            <button v-if="canWrite" type="button" class="remove-btn" :disabled="depsUpdating" @click="removeDependency(code)">해제</button>
-          </li>
-        </ul>
-        <p v-else class="muted">선행 조건이 없습니다.</p>
-        <button v-if="canWrite" type="button" class="secondary" :disabled="depsUpdating" @click="pickDependencies">+ 선행 조건 선택</button>
-      </section>
-
-      <QAPanel :project-id="plan.projectId" target-type="plan" :target-key="plan.trackingCode" />
     </div>
   </template>
 </template>
@@ -410,6 +420,27 @@ h1 {
   background: var(--color-surface-hover);
   padding: 4px 10px;
   border-radius: 999px;
+}
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 16px;
+  overflow-x: auto;
+}
+.tabs button {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.tabs button.active {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
 }
 .toolbar {
   display: flex;

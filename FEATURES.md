@@ -422,12 +422,15 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   소스 코드 대상은 이 개념 자체가 없음).
 - 웹 UI(`QAPanel.vue`) - 문서 에디터의 [질의/응답] 탭, 소스 코드
   화면, 칸반 카드 다이얼로그, **계획(Plan) 편집 화면**(`PlanEditorView.vue`,
-  "선행 조건" 섹션 아래)에서 등록/답변/승인·거부 가능(CLI 없이도
-  전체 워크플로우 가능) - 네 대상 모두 같은 `QAPanel.vue` 컴포넌트를
-  그대로 재사용(대상별 분기 없이 `target-type`/`target-key` prop만
-  다르게 줌). 어디서든 `QU-XXXXXXXX` 코드를 클릭했을 때 뜨는
-  `QuestionDialog.vue`의 "대상 열기"도 계획 대상이면 계획 미리보기
-  다이얼로그(`usePlanDialogStore`)를 연다.
+  문서 편집 화면과 같은 방식으로 "보기"/"질의/답변" 탭으로 분리)에서
+  등록/답변/승인·거부 가능(CLI 없이도 전체 워크플로우 가능) - 네
+  대상 모두 같은 `QAPanel.vue` 컴포넌트를 그대로 재사용(대상별 분기
+  없이 `target-type`/`target-key` prop만 다르게 줌). 어디서든
+  `QU-XXXXXXXX` 코드를 클릭했을 때 뜨는 `QuestionDialog.vue`의
+  "대상 열기"도 계획 대상이면 계획 미리보기 다이얼로그
+  (`usePlanDialogStore`)를 연다. **프로젝트 홈의 "답변 대기 질문"
+  목록도 계획 대상을 정확히 처리한다**(`ProjectHomeView.vue`, 문서/
+  소스 코드와 같은 방식으로 실제 페이지 링크 - 칸반 카드만 다이얼로그).
 - **대상별 질의/답변 목록은 기본적으로 이미 처리된 질의를 뺀다** -
   `docs questions`/`docs questions-source`/MCP `question_list`/
   `question_list_source`/웹 `QAPanel.vue`의 기본 응답은 `message
