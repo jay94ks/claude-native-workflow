@@ -301,7 +301,7 @@ import {
 } from "../core/pushHookPrompts.js";
 import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages, editMessage, deleteMessage, ackMessage, completeMessage, type MessageOrigin } from "../core/messages.js";
 import { checkConnect, checkAcl, ensureEmqxAuthConfigured, getOrCreateMqttCredential } from "../core/emqxAuth.js";
-import { listSessions, renameSession, claimWork, releaseWork, listWorkClaims, findConflictNotices, type WorkTargetType } from "../core/sessions.js";
+import { listSessions, listProjectSessions, renameSession, claimWork, releaseWork, listWorkClaims, findConflictNotices, type WorkTargetType } from "../core/sessions.js";
 
 const app = express();
 // nginx 리버스 프록시 뒤에서 실행된다(#gitea-nginx-lockdown) - req.protocol/
@@ -3782,6 +3782,20 @@ app.get(
   asyncRoute(async (req, res) => {
     const aliveMinutes = req.query.minutes !== undefined ? Number(req.query.minutes) : undefined;
     res.json(await listWorkClaims(req.params.projectId, aliveMinutes));
+  }),
+);
+
+// "이 프로젝트에서 어떤 설계자의 어떤 세션이 활동 중인지" 전체 목록
+// (설계자 지시) - 프로젝트 홈의 미리보기 + "더보기" → 이 라우트를
+// 페이지네이션과 함께 쓰는 별도 화면.
+app.get(
+  "/api/projects/:projectId/sessions/page",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    res.json(await listProjectSessions(req.params.projectId, page, pageSize));
   }),
 );
 

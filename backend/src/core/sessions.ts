@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { paginateInMemory, type Page } from "./pagination.js";
 
 // 같은 계정으로 여러 Claude 세션을 동시에 띄울 때 서로를 구분하고
 // "지금 뭘 작업 중인지"를 광고판처럼 등록해 동시성 충돌을 줄인다
@@ -71,6 +72,23 @@ export async function listSessions(userId: string, sinceMinutes?: number): Promi
   const db = getDb();
   const where = { userId, ...(sinceMinutes !== undefined ? { lastSeenAt: { gte: aliveSince(sinceMinutes) } } : {}) };
   return db.session.findMany({ where, orderBy: { lastSeenAt: "desc" } });
+}
+
+/** "이 프로젝트에서 어떤 설계자의 어떤 세션이 활동 중인지"(설계자
+ * 지시, 프로젝트 홈 "더보기" → 전체 목록 페이지) - WorkClaim을 한
+ * 번이라도 남긴 적 있는 세션들을 계정(User)과 함께, 최근 활동순으로
+ * 보여준다. WorkClaim은 프로젝트에 묶여 있지만 Session 자체는 계정
+ * 전체 스코프라 두 단계로 조회한다: 이 프로젝트의 distinct
+ * sessionId 목록 → 그 세션들을 lastSeenAt 역순으로 조회 후 메모리에서
+ * 페이지네이션(#project-dashboard의 paginateInMemory와 같은 이유 -
+ * 세션 개수는 애초에 그 프로젝트 멤버 수 규모라 적음). */
+export async function listProjectSessions(projectId: string, page: number, pageSize: number): Promise<Page<SessionDetail>> {
+  const db = getDb();
+  const claimSessions = await db.workClaim.findMany({ where: { projectId }, select: { sessionId: true }, distinct: ["sessionId"] });
+  const sessionIds = claimSessions.map((c: { sessionId: string }) => c.sessionId);
+  if (sessionIds.length === 0) return paginateInMemory([], page, pageSize);
+  const sessions = await db.session.findMany({ where: { id: { in: sessionIds } }, orderBy: { lastSeenAt: "desc" } });
+  return paginateInMemory(sessions, page, pageSize);
 }
 
 /** 본인 세션만 이름을 바꿀 수 있다(다른 세션 이름을 마음대로 못

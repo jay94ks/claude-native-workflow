@@ -23,6 +23,7 @@ const router = createRouter({
         { path: "messages", name: "project-messages", component: () => import("../views/MessagesView.vue"), props: true },
         { path: "comments", name: "project-comments", component: () => import("../views/RecentCommentsView.vue"), props: true },
         { path: "activity", name: "project-activity", component: () => import("../views/ProjectActivityView.vue"), props: true },
+        { path: "sessions", name: "project-sessions", component: () => import("../views/ProjectSessionsView.vue"), props: true },
         { path: "search", name: "project-search", component: () => import("../views/SearchResultsView.vue"), props: true },
         {
           path: "documents",

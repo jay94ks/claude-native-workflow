@@ -1914,6 +1914,16 @@ async function main() {
     async (a) => call(`/api/sessions/${a.sessionId}/name`, { method: "PUT", body: JSON.stringify({ name: a.name }) }),
   );
   tool(
+    "project_sessions_list",
+    "이 프로젝트에서 활동한 세션 목록",
+    "이 프로젝트에서 WorkClaim을 남긴 적 있는 세션들을 어떤 설계자의 어떤 세션인지와 함께, 최근 활동순으로 페이지네이션 조회한다.",
+    { projectId: z.string(), page: z.number().optional(), pageSize: z.number().optional() },
+    async (a) => {
+      const qs = new URLSearchParams({ page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+      return call(`/api/projects/${a.projectId}/sessions/page?${qs}`);
+    },
+  );
+  tool(
     "work_claim",
     "작업 중 등록(WorkClaim)",
     "targetType(document/plan/sourceFile)+targetKey 대상을 지금 작업 중이라고 등록한다 - 명시적으로 부를 때만 생기고, 락이 아니라 다른 세션에게 보이는 광고판일 뿐이다(실제 저장/전이를 막지 않음).",

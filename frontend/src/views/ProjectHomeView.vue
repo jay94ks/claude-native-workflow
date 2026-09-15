@@ -63,11 +63,25 @@ interface WorkClaimItem {
   targetKey: string;
   claimedAt: string;
 }
+// "이 프로젝트에서 어떤 설계자의 어떤 세션이 활동 중인지"(설계자
+// 지시) - 위 workClaims(무엇을 하는지)와 달리 세션/계정 자체가
+// 관심사라 별도 섹션으로 둔다.
+interface SessionItem {
+  id: string;
+  userId: string;
+  name: string;
+  clientKind: string;
+  lastSeenAt: string;
+}
+interface SessionPage {
+  items: SessionItem[];
+}
 
 const pending = ref<PendingQuestion[]>([]);
 const favoriteDocuments = ref<FavoriteDocument[]>([]);
 const dashboard = ref<ProjectDashboard | null>(null);
 const workClaims = ref<WorkClaimItem[]>([]);
+const sessions = ref<SessionItem[]>([]);
 const loading = ref(true);
 const error = ref("");
 
@@ -75,11 +89,12 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [pendingResult, favorites, dashboardResult, claims] = await Promise.all([
+    const [pendingResult, favorites, dashboardResult, claims, sessionPage] = await Promise.all([
       apiCall<{ questions: PendingQuestion[] }>(`/projects/${props.id}/pending`).catch(() => ({ questions: [] })),
       apiCall<FavoriteDocumentPage>(`/projects/${props.id}/documents/favorites/page?page=1&pageSize=5`).catch(() => ({ items: [] })),
       apiCall<ProjectDashboard>(`/projects/${props.id}/dashboard`).catch(() => null),
       apiCall<WorkClaimItem[]>(`/projects/${props.id}/work-claims`).catch(() => []),
+      apiCall<SessionPage>(`/projects/${props.id}/sessions/page?page=1&pageSize=5`).catch(() => ({ items: [] })),
     ]);
     // "pending"(설계자 답변 완료, AI 확인 대기)은 AI가 처리할 몫이라
     // 설계자 화면엔 노이즈로 안 얹는다 - "open"(설계자가 지금 답해야
@@ -88,6 +103,7 @@ async function load() {
     favoriteDocuments.value = favorites.items;
     dashboard.value = dashboardResult;
     workClaims.value = claims;
+    sessions.value = sessionPage.items;
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : "정보를 불러오지 못했습니다";
   } finally {
@@ -136,6 +152,19 @@ onMounted(load);
         </router-link>
         <span v-else><code>{{ c.targetType }}</code> {{ c.targetKey }}</span>
         <span class="right muted">{{ c.sessionName }} · {{ new Date(c.claimedAt).toLocaleString() }}</span>
+      </li>
+    </ul>
+  </section>
+
+  <section v-if="!loading && sessions.length > 0">
+    <div class="section-header">
+      <h2>활동 세션</h2>
+      <router-link :to="`/projects/${id}/sessions`">더보기</router-link>
+    </div>
+    <ul class="list">
+      <li v-for="s in sessions" :key="s.id">
+        <span><UserRef :user-id="s.userId" /> {{ s.name }}</span>
+        <span class="right muted">{{ s.clientKind }} · {{ new Date(s.lastSeenAt).toLocaleString() }}</span>
       </li>
     </ul>
   </section>

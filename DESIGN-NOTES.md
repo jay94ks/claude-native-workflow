@@ -8703,3 +8703,71 @@ backend+`frontend-dev` 프리뷰)에서 실측 확인:
 서로의 존재와 마지막 활동을 볼 수 있고, "지금 뭘 작업 중인지"를
 명시적으로 알려 겹치는 작업을 사전에 눈치챌 수 있다 - 하드 락이
 아니므로 세션이 죽어도 다른 세션의 작업을 막지 않는다.
+
+## 프로젝트별 "활동 세션" 목록 + 페이지네이션 전체 화면 추가(`#multi-session-workclaim` 후속)
+
+**배경**: 설계자가 메시지로 지시(SP-976DD4ED를 인용) - "프로젝트
+별로 어떤 설계자의 어떤 세션이 활동중인지도 볼 수 있는 인터페이스를
+프로젝트의 `홈`에 추가해줘. 다른 섹션처럼 `더보기`버튼이 있어서
+그걸 누르면 별도의 페이지에서 전체 목록을 페이지네이션과 함께
+보여주면 돼." 앞선 라운드에서 만든 "지금 작업 중"(WorkClaim 대상
+중심) 패널과는 관점이 달라 - 이번엔 세션/계정 자체가 중심이다.
+
+**설계**: `Session`은 계정 전체 스코프라 프로젝트와 직접 연결이
+없다 - 대신 `WorkClaim`이 이미 세션↔프로젝트를 잇고 있으므로,
+"이 프로젝트에서 WorkClaim을 한 번이라도 남긴 세션들"을 그 세션의
+최근 활동순으로 보여주는 방식으로 풀었다(새 스키마 불필요, 기존
+데이터만 다르게 조회). 세션 개수는 그 프로젝트 멤버 수 규모라
+많지 않을 것으로 보고, distinct sessionId 목록을 먼저 뽑은 뒤
+`paginateInMemory()`(#project-dashboard에서 이미 쓰던 헬퍼)로
+메모리에서 자르는 가벼운 2단계 조회를 택했다 - "즐겨찾기 문서"/
+"최근 활동" 섹션과 같은 미리보기(최대 5건)+"더보기" 관례를 그대로
+따랐지만, 설계자가 명시적으로 "페이지네이션과 함께"를 요구해
+`ProjectActivityView.vue`식 "큰 limit 하나"가 아니라 실제
+`Pagination.vue` 컴포넌트를 쓰는 새 화면(`ProjectSessionsView.vue`)
+으로 만들었다.
+
+**구현**:
+- `core/sessions.ts`: `listProjectSessions(projectId, page,
+  pageSize)` 추가 - `WorkClaim`에서 distinct `sessionId` 조회 →
+  `Session`을 `lastSeenAt` 역순으로 조회 → `paginateInMemory()`.
+- `api/server.ts`: `GET /api/projects/:projectId/sessions/page`
+  추가(`requireProjectRole("viewer")`).
+- CLI `docs session project <projectId> [--page] [--count]`, MCP
+  `project_sessions_list` 추가.
+- `frontend/src/views/ProjectSessionsView.vue`(신규) - `UserRef`+
+  세션 이름/클라이언트 종류/마지막 활동 시각 목록 + `Pagination.vue`.
+  라우트 `/projects/:id/sessions` 신설(최상위 탭에는 안 넣음 -
+  "더보기"로만 진입, `/activity`와 같은 패턴).
+- `ProjectHomeView.vue`: "활동 세션" 섹션(미리보기 5건 + "더보기"
+  링크) 추가 - 기존 "지금 작업 중"(WorkClaim 대상 중심) 섹션과
+  별개로 둠(관점이 다름 - 무엇을 하는지 vs 누가 있는지).
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc -b`(frontend) 클린.
+격리된 로컬 환경에서 세션 두 개(하나는 프로젝트에 WorkClaim을
+남김, 하나는 다른 곳에서만 활동)를 만들어 `docs session project
+<projectId>`가 클레임을 남긴 세션만 정확히 거르는 것을 확인,
+브라우저로 프로젝트 홈의 "활동 세션" 미리보기와 "더보기" →
+`/projects/:id/sessions` 전체 페이지 둘 다 실제로 렌더링되는 것까지
+확인.
+
+**결론**: 프로젝트 홈에서 "지금 이 프로젝트에 관여한 세션이 누구
+것인지" 한눈에 보고, "더보기"로 전체 이력을 페이지네이션과 함께
+훑어볼 수 있게 됐다 - 새 스키마 없이 기존 WorkClaim 데이터를
+세션 중심으로 다시 본 것뿐이다.
+
+## 부록: 격리 테스트 중 실수로 프로덕션 CLI 자격증명을 덮어씀(발견·복구)
+
+이번 라운드 검증 중, 격리 환경용 `docs auth login` 호출 하나에
+`HOME`/`USERPROFILE` 환경변수 오버라이드를 빠뜨려 **이 컴퓨터의
+전역 `~/.claude-native-workflow/credentials.json`(운영 CNW를
+가리키던 진짜 자격증명)이 스크래치 격리 서버(`localhost:8760`)
+주소/토큰으로 덮어써졌다** - 그 뒤 격리 서버를 정리(컨테이너/프로세스
+종료)하자 전역 `docs` 명령이 전부 "fetch failed"로 실패하기
+시작했다. `docs auth login --api http://localhost:8763 --username
+admin --password 12345678`로 즉시 재로그인해 정상 복구했다(운영
+관리자 비밀번호가 여전히 초기값이라 바로 해결됐지만, 바뀌어
+있었다면 사람 개입이 필요했을 사고). 재발 방지: 격리 테스트용 CLI
+호출은 예외 없이 매번 `HOME`/`USERPROFILE`을 스크래치 디렉터리로
+오버라이드해야 한다는 걸 이번에 실수로 재확인 - 앞으로도 이 원칙을
+빠뜨리지 않도록 각별히 주의.

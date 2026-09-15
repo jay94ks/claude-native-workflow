@@ -2545,6 +2545,15 @@ sessionCmd
   .action((sessionId, name) =>
     run(async () => printJson(await apiCall(`/api/sessions/${sessionId}/name`, { method: "PUT", body: JSON.stringify({ name }) }))),
   );
+sessionCmd
+  .command("project <projectId>")
+  .option("--page <n>", "페이지 번호(1부터, 기본 1)")
+  .option("--count <n>", "페이지당 개수(기본 20)")
+  .description("이 프로젝트에서 활동한 적 있는 세션들 - 어떤 설계자의 어떤 세션인지, 최근 활동순")
+  .action((projectId, opts) => {
+    const qs = new URLSearchParams({ page: opts.page ?? "1", pageSize: opts.count ?? "20" });
+    return run(async () => printJson(await apiCall(`/api/projects/${projectId}/sessions/page?${qs}`)));
+  });
 
 const workCmd = program.command("work").description("현재 작업 중인 대상 등록(WorkClaim) - 락 아님, 경고용(SP-976DD4ED)");
 workCmd

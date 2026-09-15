@@ -1225,13 +1225,16 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   않게 하기 위함(스로틀 덕에 대부분의 요청은 DB 왕복 없이 즉시
   반환됨).
 - CLI: `docs session list [--minutes <n>]`/`docs session rename
-  <sessionId> <name>`(본인 소유 세션만), `docs work claim/release
-  <projectId> <targetType> <targetKey>`(`targetType`:
-  `document`/`plan`/`sourceFile`, 명시적으로 불러야만 생김)/`docs
-  work list <projectId> [--minutes <n>]`. MCP:
-  `session_list`/`session_rename`/`work_claim`/`work_release`/
-  `work_list`. REST: `GET/PUT /api/sessions[...]`, `GET/POST/DELETE
-  /api/projects/:projectId/work-claims`.
+  <sessionId> <name>`(본인 소유 세션만)/`docs session project
+  <projectId> [--page <n>] [--count <n>]`(이 프로젝트에서 활동한
+  세션들 - 어떤 설계자의 어떤 세션인지, 최근 활동순 페이지네이션),
+  `docs work claim/release <projectId> <targetType> <targetKey>`
+  (`targetType`: `document`/`plan`/`sourceFile`, 명시적으로
+  불러야만 생김)/`docs work list <projectId> [--minutes <n>]`. MCP:
+  `session_list`/`session_rename`/`project_sessions_list`/
+  `work_claim`/`work_release`/`work_list`. REST: `GET/PUT
+  /api/sessions[...]`, `GET /api/projects/:projectId/sessions/page`,
+  `GET/POST/DELETE /api/projects/:projectId/work-claims`.
 - 문서 저장(`docs save`)/전이(`docs transition`), 계획 수정(`plan
   set`)/상태 변경(`plan status`)에서 *다른* 세션이 같은 대상 또는
   **1단계 링크**로 연결된 대상(문서↔문서 링크 양방향, 계획↔문서
@@ -1242,3 +1245,7 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   마지막 활동 시각, 본인 세션 이름 변경 가능) - `ApiKeysCard`와 같은
   카드 패턴. 프로젝트 홈 대시보드에 "지금 작업 중" 패널(세션 이름 +
   대상 + 클레임 시각, 대상 클릭 시 해당 문서/계획/소스 파일로 이동).
+  프로젝트 홈에 "활동 세션" 미리보기(최대 5건, `WorkClaim`을 남긴
+  적 있는 세션만 대상 - 계정 전체 세션이 아님)도 있고, "더보기"를
+  누르면 `/projects/:id/sessions`에서 페이지네이션과 함께 전체
+  목록을 본다(설계자 지시).

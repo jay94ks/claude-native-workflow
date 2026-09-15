@@ -366,6 +366,11 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
   세션 목록(이름/클라이언트 종류/마지막 활동 시각). 생략하면 전체.
 - `docs session rename <sessionId> <name>`/`session_rename` - 본인
   세션만 이름을 바꿀 수 있다.
+- `docs session project <projectId> [--page <n>] [--count <n>]`/
+  `project_sessions_list` - 이 프로젝트에서 `work claim`을 남긴 적
+  있는 세션들을 어떤 설계자의 어떤 세션인지와 함께, 최근 활동순으로
+  페이지네이션 조회한다(웹 UI 프로젝트 홈 "활동 세션" 더보기와 같은
+  데이터).
 - `docs work claim <projectId> <targetType> <targetKey>`/`work_claim`
   (`targetType`: `document`/`plan`/`sourceFile`) - 이 대상을 지금
   작업 중이라고 등록한다. **명시적으로 불러야만 생긴다** - 단순히
@@ -675,6 +680,7 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 메시지 처리 완료(처리중→기록) | `docs message complete <id>` | `message_complete` |
 | 내 세션 목록 | `docs session list [--minutes <n>]` | `session_list` |
 | 내 세션 이름 변경(본인 소유만) | `docs session rename <sessionId> <name>` | `session_rename` |
+| 이 프로젝트에서 활동한 세션 목록 | `docs session project <projectId> [--page <n>] [--count <n>]` | `project_sessions_list` |
 | 작업 중 등록(WorkClaim, 락 아님) | `docs work claim <projectId> <targetType> <targetKey>` | `work_claim` |
 | 작업 중 등록 해제 | `docs work release <projectId> <targetType> <targetKey>` | `work_release` |
 | 이 프로젝트의 현재 작업 현황 | `docs work list <projectId> [--minutes <n>]` | `work_list` |
