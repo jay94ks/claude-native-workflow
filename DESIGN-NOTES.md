@@ -8386,3 +8386,33 @@ OPTIONS`(6개 코드/라벨 상수) + `selectedStatusCode`/`statusPage`/
 **결론**: CLI/REST에만 있던 상태 필터를 웹에서도 "문서 분류" 탭과
 같은 손에 익은 방식으로 쓸 수 있게 됐다 - 새 백엔드 엔드포인트
 없이 이미 있던 쿼리 파라미터를 그대로 노출한 가벼운 변경이다.
+
+## `docs plan list`/MCP `plan_list`(및 bulk-export) 기본 정렬의 tie-break을 오래된 순으로 변경(`#plan-list-dependency-sort`)
+
+**배경**: 설계자 지시 - "계획 목록의 반환 순서를 의존성 적은 순 + 오래된
+순으로 바꿔줘." `#plan-list-dependency-sort` 라운드에서 기본 정렬을
+의존도(선행 조건 개수) 오름차순으로 바꾸면서 개수가 같은 계획들끼리는
+예전 기본값이던 `updatedAt: desc`(최근 수정순)로 tie-break했는데,
+이번 지시로 그 tie-break 기준 자체를 `createdAt: asc`(오래된 순)로
+바꿨다 - 의존도가 같다면 먼저 등록된 계획이 먼저 처리 대상이 되게.
+
+**설계**: `sort=dependencyCount:asc`(기본값) 하나의 의미만 바뀐다 -
+`sort=updatedAt:desc`로 예전 방식을 요청하는 경로, 웹 UI
+(`PlansView.vue`)가 그 경로를 명시적으로 쓰는 것은 이전 라운드
+그대로 영향받지 않는다.
+
+**구현**: `core/plans.ts`의 `planOrderBy()`에서 기본 분기의 두 번째
+정렬 키를 `{ updatedAt: "desc" }`에서 `{ createdAt: "asc" }`로 한 줄
+교체 - `PlanSortKey` 타입/`DEFAULT_PLAN_SORT`/CLI·MCP 옵션 표면은
+변경 없음(같은 `dependencyCount:asc` 키의 세부 동작만 바뀜).
+
+**검증**: `tsc --noEmit`(backend) 클린. 이미 검증된 Prisma 관계 집계
+정렬(`dependencies: { _count: "asc" }`) 위에 표준 스칼라 필드 정렬
+(`createdAt: "asc"`, 이 코드베이스의 `documentFavorites.ts`/
+`folders.ts`에서도 쓰는 흔한 패턴)을 얹은 것뿐이라 별도 격리 환경
+기동 없이 타입 검증 + 코드 검토로 충분하다고 판단했다 - 실제 CNW
+프로젝트에는 계획이 1건뿐이라 다건 tie-break을 실측할 데이터도 없다.
+
+**결론**: 의존도가 같은 계획들 사이에서 "최근에 손댄 것"이 아니라
+"먼저 만들어진 것"이 먼저 보인다 - 오래 방치된 계획이 계속 뒤로
+밀리지 않게 됐다.

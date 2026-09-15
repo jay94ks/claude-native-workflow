@@ -343,7 +343,8 @@ Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립
 **`plan list`/`plan_list`(및 `plan bulk-export`/`plan_export`)는
 기본으로 의존도(선행 조건 개수)가 가장 낮은 순으로 정렬된다**
 (`#plan-list-dependency-sort`) - 지금 바로 시작할 수 있는 계획이
-위로 오게(개수가 같으면 최근 수정순으로 묶임). 예전 방식(최근
+위로 오게(개수가 같으면 오래된 순으로 묶임 - 먼저 등록된 계획이
+먼저 처리 대상이 되게). 예전 방식(최근
 수정순)이 필요하면 `--sort updatedAt:desc`(CLI)/
 `sort:"updatedAt:desc"`(MCP)를 준다. 웹 UI "계획" 탭은 이 기본값
 변경과 무관하게 여전히 최근 수정순이다.

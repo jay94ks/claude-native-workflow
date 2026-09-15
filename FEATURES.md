@@ -1160,8 +1160,9 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
 - **목록 기본 정렬은 의존도(선행 조건 개수)가 가장 낮은 순**
   (`docs plan list`/`plan_list`, `docs plan bulk-export`/`plan_export`,
   `#plan-list-dependency-sort`) - 지금 바로 시작할 수 있는(선행 조건이
-  없거나 적은) 계획이 위로 온다(개수가 같으면 최근 수정순으로
-  묶임). `--sort updatedAt:desc`(CLI)/`sort:"updatedAt:desc"`(MCP)로
+  없거나 적은) 계획이 위로 온다(개수가 같으면 오래된 순으로
+  묶임 - 먼저 등록된 계획이 먼저 처리 대상이 되게). `--sort
+  updatedAt:desc`(CLI)/`sort:"updatedAt:desc"`(MCP)로
   예전 방식(최근 수정순)으로 되돌릴 수 있다. **웹 UI "계획" 탭은
   여전히 최근 수정순 그대로**(`sort=updatedAt:desc`를 명시적으로
   넘김) - 이 기본값 변경은 CLI/MCP에만 적용된다.

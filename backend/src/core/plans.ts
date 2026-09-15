@@ -61,8 +61,9 @@ const PLAN_INCLUDE = { refs: true, dependencies: { include: { dependsOn: { selec
 
 // 목록 기본 정렬 - "의존도(선행 조건 개수)가 가장 낮은 순"으로 고정한다
 // (설계자 지시, #plan-list-dependency-sort) - 지금 바로 시작할 수
-// 있는(선행 조건이 없거나 적은) 계획이 위로 오게. 개수가 같으면 예전
-// 기본값이던 최근 수정순으로 묶는다(tie-break). 웹 UI(PlansView.vue)는
+// 있는(선행 조건이 없거나 적은) 계획이 위로 오게. 개수가 같으면
+// 오래된 순으로 묶는다(tie-break, 설계자 지시로 최근 수정순에서 변경 -
+// 먼저 등록된 계획이 먼저 처리 대상이 되게). 웹 UI(PlansView.vue)는
 // 예전 그대로의 "최근 수정순"을 원해 `sort=updatedAt:desc`를 명시적으로
 // 넘긴다 - CLI/MCP가 sort를 안 넘기면 이 새 기본값을 그대로 받는다.
 export type PlanSortKey = "dependencyCount:asc" | "updatedAt:desc";
@@ -70,7 +71,7 @@ const DEFAULT_PLAN_SORT: PlanSortKey = "dependencyCount:asc";
 
 function planOrderBy(sort: PlanSortKey) {
   if (sort === "updatedAt:desc") return [{ updatedAt: "desc" as const }];
-  return [{ dependencies: { _count: "asc" as const } }, { updatedAt: "desc" as const }];
+  return [{ dependencies: { _count: "asc" as const } }, { createdAt: "asc" as const }];
 }
 
 function toPlanDetail(row: PlanRow): PlanDetail {
