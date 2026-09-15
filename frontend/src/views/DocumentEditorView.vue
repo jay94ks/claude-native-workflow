@@ -16,7 +16,7 @@ const router = useRouter();
 const entityPicker = useEntityPickerStore();
 const targetPanelDialog = useTargetPanelDialogStore();
 const folderPicker = useFolderPickerStore();
-const activeTab = ref<"view" | "chapters" | "qa">("view");
+const activeTab = ref<"view" | "chapters" | "qa" | "qa-history">("view");
 
 // 메시지로 지시는 문서 자체 권한이 아니라 프로젝트 editor 이상(백엔드
 // POST .../messages가 requireProjectRole("editor")) - 편집/저장/삭제/
@@ -632,6 +632,7 @@ onMounted(load);
         <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
         <button :class="{ active: activeTab === 'chapters' }" @click="openChapterTab">챕터</button>
         <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
+        <button :class="{ active: activeTab === 'qa-history' }" @click="activeTab = 'qa-history'">답변 기록</button>
         <span class="spacer"></span>
         <button
           type="button"
@@ -823,8 +824,11 @@ onMounted(load);
           </div>
         </div>
       </template>
-      <template v-else>
+      <template v-else-if="activeTab === 'qa'">
         <QAPanel :project-id="id" target-type="document" :target-key="trackingCode" @status-transitioned="refreshStatus" />
+      </template>
+      <template v-else>
+        <QAPanel :project-id="id" target-type="document" :target-key="trackingCode" history-only />
       </template>
     </div>
   </template>

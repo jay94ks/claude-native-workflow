@@ -13,7 +13,7 @@ import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
 const entityPicker = useEntityPickerStore();
-const activeTab = ref<"view" | "qa">("view");
+const activeTab = ref<"view" | "qa" | "qa-history">("view");
 
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
 const canWrite = ref(false);
@@ -300,6 +300,7 @@ onMounted(async () => {
       <div class="tabs">
         <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
         <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
+        <button :class="{ active: activeTab === 'qa-history' }" @click="activeTab = 'qa-history'">답변 기록</button>
       </div>
 
       <template v-if="activeTab === 'view'">
@@ -351,8 +352,11 @@ onMounted(async () => {
           <button v-if="canWrite" type="button" class="secondary" :disabled="depsUpdating" @click="pickDependencies">+ 선행 조건 선택</button>
         </section>
       </template>
-      <template v-else>
+      <template v-else-if="activeTab === 'qa'">
         <QAPanel :project-id="plan.projectId" target-type="plan" :target-key="plan.trackingCode" />
+      </template>
+      <template v-else>
+        <QAPanel :project-id="plan.projectId" target-type="plan" :target-key="plan.trackingCode" history-only />
       </template>
     </div>
   </template>

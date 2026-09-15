@@ -18,8 +18,12 @@ const props = withDefaults(
      * 선택지를 그 자리에 바로 보여준다. 페이지에 직접 박혀있으면(문서
      * [질의/답변] 탭) false - "제안 목록" 버튼 뒤 별도 다이얼로그로. */
     inDialog?: boolean;
+    /** true면 "답변 기록" 탭 전용 읽기 전용 뷰 - resolved만 보여주고
+     * 새 질문 등록 폼은 숨긴다(프로젝트 전체 "답변 대기"/"답변 기록"
+     * 서브탭과 같은 관례를 대상 하나 단위로 그대로 적용). */
+    historyOnly?: boolean;
   }>(),
-  { inDialog: false },
+  { inDialog: false, historyOnly: false },
 );
 const emit = defineEmits<{ statusTransitioned: [statusCode: string] }>();
 
@@ -78,6 +82,11 @@ const page = ref(1);
 const totalPages = ref(1);
 const pageSize = 20;
 const searchQuery = ref("");
+// 대상 전용 페이지(문서/계획)는 "질의/답변"/"답변 기록" 탭으로
+// 분리됐지만(historyOnly prop), 탭 구조가 없는 다이얼로그 컨텍스트
+// (소스 코드/칸반 카드 - inDialog)는 여전히 이 체크박스로 처리된
+// 질의를 토글해서 본다 - 이번 지시가 "문서와 계획"으로 범위를
+// 한정했으므로 그 두 대상만 탭으로 옮기고 나머지는 기존 방식 유지.
 const showProcessed = ref(false);
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -104,7 +113,8 @@ const listPath = () => {
   qs.set("page", String(page.value));
   qs.set("pageSize", String(pageSize));
   if (searchQuery.value.trim()) qs.set("q", searchQuery.value.trim());
-  if (showProcessed.value) qs.set("status", "all");
+  if (props.historyOnly) qs.set("status", "resolved");
+  else if (showProcessed.value) qs.set("status", "all");
   if (props.targetType === "source") {
     qs.set("path", props.targetKey);
     return `/projects/${props.projectId}/questions/source/page?${qs}`;
@@ -273,8 +283,10 @@ onUnmounted(() => disconnect?.());
 
 <template>
   <section class="panel">
-    <h2>질의/답변</h2>
-    <p class="hint">질의는 AI(클로드)가 등록하고, 설계자가 답변한다. 최신순으로 표시된다.</p>
+    <h2>{{ historyOnly ? "답변 기록" : "질의/답변" }}</h2>
+    <p class="hint">
+      {{ historyOnly ? "AI가 확인 완료로 표시한(처리 완료) 질의 기록이다. 최신순으로 표시된다." : "질의는 AI(클로드)가 등록하고, 설계자가 답변한다. 최신순으로 표시된다." }}
+    </p>
     <input
       v-model="searchQuery"
       type="text"
@@ -282,7 +294,7 @@ onUnmounted(() => disconnect?.());
       placeholder="질의/답변 내용 검색..."
       @input="onSearchInput"
     />
-    <label class="processed-toggle">
+    <label v-if="inDialog && !historyOnly" class="processed-toggle">
       <input type="checkbox" v-model="showProcessed" @change="onToggleProcessed" />
       처리된 질의(처리 완료/철회됨) 포함
     </label>
@@ -361,10 +373,10 @@ onUnmounted(() => disconnect?.());
           <button type="submit" :disabled="answering[q.trackingCode]">답변</button>
         </form>
       </li>
-      <li v-if="questions.length === 0" class="muted">아직 질문이 없습니다.</li>
+      <li v-if="questions.length === 0" class="muted">{{ historyOnly ? "아직 처리된 질의가 없습니다." : "아직 질문이 없습니다." }}</li>
     </ul>
     <Pagination :page="page" :total-pages="totalPages" @update:page="goToPage" />
-    <form v-if="canAnswer" class="ask-row" @submit.prevent="askQuestion">
+    <form v-if="canAnswer && !historyOnly" class="ask-row" @submit.prevent="askQuestion">
       <textarea v-model="newQuestion" rows="2" placeholder="새 질문 등록... (여러 줄 입력 가능)"></textarea>
       <div class="ask-controls">
         <select v-model="newKind">

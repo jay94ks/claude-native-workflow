@@ -437,7 +437,13 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   list`의 `active` 관례와 동일하게 `open`+`pending`만 보여주고
   `resolved`/`withdrawn`은 뺀다. 전체 이력이 필요하면 CLI/MCP는
   `--status all`(또는 `open`/`pending`/`resolved`/`withdrawn` 개별
-  지정), 웹은 QAPanel의 "처리된 질의 포함" 체크박스로 켠다.
+  지정). 웹은 대상마다 다르다 - **문서/계획 편집 화면은 "질의/답변"
+  탭 옆에 전용 "답변 기록" 탭**이 있어 그 탭이 곧 `resolved`만 보여주는
+  읽기 전용 뷰다(`QAPanel`에 `history-only` prop만 다르게 준 같은
+  컴포넌트 재사용 - 새 질문 등록 폼은 숨김). 반면 **탭 구조가 없는
+  다이얼로그 대상(소스 코드/칸반 카드)은 여전히 "처리된 질의 포함"
+  체크박스**로 같은 패널 안에서 전환한다(`status=all`, `withdrawn`도
+  같이 보임 - "답변 기록" 탭에는 없는 차이).
 - **질의 자신의 추적코드(`QU-XXXXXXXX`)를 문서 본문/코멘트/메시지/
   다른 질의 본문 등 어디서 클릭해도 전용 미리보기(`QuestionDialog.vue`)가
   뜬다** - 종류/상태/본문/참고 문서/제안 선택지/답변(승인·거부·본문)을
