@@ -4,6 +4,7 @@ import { apiCall, ApiError } from "../api/client";
 import { useQuestionDialogStore } from "../stores/questionDialog";
 import { useDocumentDialogStore } from "../stores/documentDialog";
 import { useKanbanCardDialogStore } from "../stores/kanbanCardDialog";
+import { usePlanDialogStore } from "../stores/planDialog";
 import { nextDialogZIndex } from "../dialogZIndex";
 import UserRef from "./UserRef.vue";
 import TrackingCodeText from "./TrackingCodeText.vue";
@@ -21,7 +22,7 @@ interface QuestionOptionItem {
 interface QuestionDetail {
   trackingCode: string;
   projectId: string;
-  targetType: "document" | "source" | "kanbanCard";
+  targetType: "document" | "source" | "kanbanCard" | "plan";
   targetKey: string;
   kind: string; // answer | approval
   text: string;
@@ -35,6 +36,7 @@ interface QuestionDetail {
 const dialog = useQuestionDialogStore();
 const documentDialog = useDocumentDialogStore();
 const kanbanDialog = useKanbanCardDialogStore();
+const planDialog = usePlanDialogStore();
 const question = ref<QuestionDetail | null>(null);
 const loading = ref(false);
 const error = ref("");
@@ -71,6 +73,7 @@ function openTarget(): void {
   if (!question.value) return;
   if (question.value.targetType === "document") documentDialog.show(question.value.targetKey);
   else if (question.value.targetType === "kanbanCard") kanbanDialog.show(question.value.targetKey);
+  else if (question.value.targetType === "plan") planDialog.show(question.value.targetKey);
   // targetType "source"는 별도 미리보기 다이얼로그가 없어 생략(소스
   // 코드 화면으로 직접 이동해야 함 - 이 다이얼로그의 범위 밖).
 }

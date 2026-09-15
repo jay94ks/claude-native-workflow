@@ -191,15 +191,15 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 ## 질의/답변(Question/Answer) 루프 — AI가 묻고 설계자가 답한다
 
 **질의는 클로드(AI)가 등록하는 것이고, 설계자는 답변만 한다.** 대상은
-문서/칸반 카드/소스 코드 파일 셋 중 하나다(다른 종류의 코멘트/질의
-대상이 늘어도 명령 시그니처는 안 바뀐다 - 서버가 targetType/targetKey로
-다형화해 처리). 판단에 참고한 문서가 있으면 `--refs`로 구조적으로
-태깅한다.
+문서/칸반 카드/소스 코드 파일/계획(Plan) 넷 중 하나다(다른 종류의
+코멘트/질의 대상이 늘어도 명령 시그니처는 안 바뀐다 - 서버가
+targetType/targetKey로 다형화해 처리). 판단에 참고한 문서가 있으면
+`--refs`로 구조적으로 태깅한다.
 
-- 문서/칸반 카드 대상: `docs question <trackingCode> <질문 내용>
+- 문서/칸반 카드/계획 대상: `docs question <trackingCode> <질문 내용>
   [--kind <approval|answer>] [--refs <code1,code2,...>]` - 대상 자신의
-  추적 코드(`XX-XXXXXXXX`/`KB-XXXXXXXX`)만으로 서버가 대상 종류를
-  자동 판별한다.
+  추적 코드(`XX-XXXXXXXX`/`KB-XXXXXXXX`/`PN-XXXXXXXX`)만으로 서버가
+  대상 종류를 자동 판별한다.
 - 소스 코드 파일 대상(추적 코드가 없는 대상): `docs question-source
   <projectId> <path> <질문 내용> [--kind <approval|answer>]
   [--refs <codes>]`.

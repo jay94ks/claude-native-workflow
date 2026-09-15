@@ -6,6 +6,7 @@ import MonacoEditor from "../components/MonacoEditor.vue";
 import MarkdownBody from "../components/MarkdownBody.vue";
 import UserRef from "../components/UserRef.vue";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
+import QAPanel from "../components/QAPanel.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
@@ -341,6 +342,8 @@ onMounted(async () => {
         <p v-else class="muted">선행 조건이 없습니다.</p>
         <button v-if="canWrite" type="button" class="secondary" :disabled="depsUpdating" @click="pickDependencies">+ 선행 조건 선택</button>
       </section>
+
+      <QAPanel :project-id="plan.projectId" target-type="plan" :target-key="plan.trackingCode" />
     </div>
   </template>
 </template>

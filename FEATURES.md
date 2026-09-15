@@ -398,8 +398,11 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
 
 ## 8. 질의/응답 (Q&A) - AI가 묻고 설계자가 답한다
 
-- 대상은 문서/칸반 카드/소스 코드 파일 세 가지(`targetType`/
-  `targetKey`로 다형화 - 대상이 늘어도 명령 시그니처는 안 바뀜).
+- 대상은 문서/칸반 카드/소스 코드 파일/계획(Plan) 네 가지(`targetType`/
+  `targetKey`로 다형화 - 대상이 늘어도 명령 시그니처는 안 바뀜, 계획도
+  트래킹 코드(`PN-XXXXXXXX`)가 전역 유일이라 문서/칸반 카드와 똑같이
+  `docs question <trackingCode> <text>`만으로 자동 판별됨,
+  `#plan-qa-target`).
 - **질의는 AI가 등록, 설계자는 답변만** - `kind`로 `answer`(자유
   텍스트 답변)/`approval`(승인·거부만, 텍스트 대신 `--decision`)
   구분.
@@ -418,8 +421,13 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   허용된 다음 상태가 있을 경우 - 모호하면 자동 전이 안 함, 칸반 카드/
   소스 코드 대상은 이 개념 자체가 없음).
 - 웹 UI(`QAPanel.vue`) - 문서 에디터의 [질의/응답] 탭, 소스 코드
-  화면, 칸반 카드 다이얼로그에서 등록/답변/승인·거부 가능(CLI 없이도
-  전체 워크플로우 가능).
+  화면, 칸반 카드 다이얼로그, **계획(Plan) 편집 화면**(`PlanEditorView.vue`,
+  "선행 조건" 섹션 아래)에서 등록/답변/승인·거부 가능(CLI 없이도
+  전체 워크플로우 가능) - 네 대상 모두 같은 `QAPanel.vue` 컴포넌트를
+  그대로 재사용(대상별 분기 없이 `target-type`/`target-key` prop만
+  다르게 줌). 어디서든 `QU-XXXXXXXX` 코드를 클릭했을 때 뜨는
+  `QuestionDialog.vue`의 "대상 열기"도 계획 대상이면 계획 미리보기
+  다이얼로그(`usePlanDialogStore`)를 연다.
 - **대상별 질의/답변 목록은 기본적으로 이미 처리된 질의를 뺀다** -
   `docs questions`/`docs questions-source`/MCP `question_list`/
   `question_list_source`/웹 `QAPanel.vue`의 기본 응답은 `message
@@ -1189,6 +1197,11 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   계획 자기 자신을 목록에서 제외한다(`excludeKeys`). 메시지/코멘트/
   문서 본문 등에 등장하는 `PN-XXXXXXXX` 코드를 클릭하면 미리보기
   다이얼로그가 뜬다(질의/칸반 카드 코드와 같은 방식).
+- **계획 편집 화면에 질의/답변 섹션이 있다**("선행 조건" 아래,
+  §8 `#plan-qa-target` 참고) - `docs question <trackingCode>`로
+  계획에도 문서/칸반 카드와 똑같이 질의를 걸고 답변받을 수 있다
+  (코멘트는 대상이 아님 - 설계자 전용 채널이라 지금까지도 CLI/MCP
+  자체가 없음, §9).
 - **목록 기본 정렬은 의존도(선행 조건 개수)가 가장 낮은 순**
   (`docs plan list`/`plan_list`, `docs plan bulk-export`/`plan_export`,
   `#plan-list-dependency-sort`) - 지금 바로 시작할 수 있는(선행 조건이

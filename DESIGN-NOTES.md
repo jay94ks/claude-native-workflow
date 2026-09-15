@@ -9018,3 +9018,69 @@ Node `http` 서버로 export 응답을 흉내, `CNW_API_BASE`로 가리킴)으�
 캐시를 git으로 커밋해 쓰는 프로젝트에서 매 동기화마다 전체 파일이
 diff/커밋에 잡히던 낭비가 사라졌고, `index.md`의 "최종 수정" 열이
 그 판단 근거를 겸해 별도 상태 파일이 필요 없다.
+
+## 계획(Plan)에도 질의/답변 기능 추가
+
+**배경**: 설계자 지시 - "계획 페이지에도 질문/답변 기능을 붙혀줘."
+Q&A는 원래 `targetType`(`document`|`kanbanCard`|`source`)로 다형화된
+설계라 새 대상을 추가하는 비용이 낮을 것으로 예상하고 조사한 대로,
+실제로 대부분 서버 로직이 이미 문자열 기반 분기라 손댈 곳이 적었다.
+
+**설계**: `Plan`도 `Document`/`KanbanCard`처럼 트래킹 코드(`PN-XXXXXXXX`)
+가 전역 유일이므로, 기존 `resolveTargetByTrackingCode()`(코드 자체
+만으로 프로젝트/대상 종류를 역산해 CLI의 2-인자 시그니처를 그대로
+유지하는 함수)에 세 번째 분기로 얹었다 - `docs question <trackingCode>
+<text>`의 인자/이름이 전혀 안 바뀐다. 이 함수는 `POST/GET /api/questions`
+뿐 아니라 `POST/GET /api/comments`에서도 공유되는데, 코멘트 쪽은
+`core/comments.ts`가 **완전히 별도의** `assertTargetExists()`를 갖고
+있어 `targetType: "plan"`을 몰라 안전하게 거부한다(에러로 실패,
+조용한 기능 확장 없음) - 코멘트에 계획을 추가하는 건 이번 지시
+범위 밖이라 의도적으로 손대지 않았다.
+
+**구현**:
+- `core/questions.ts`:
+  - `QuestionTargetType`에 `"plan"` 추가.
+  - `assertTargetExists()`에 plan 분기 추가(`getPlanProjectId()`로
+    존재+프로젝트 일치 확인).
+  - `resolveTargetByTrackingCode()`에 plan 분기 추가(반환 타입도
+    `"plan"` 포함하도록 확장).
+  - **리팩터링**: `listPendingQuestions`/`listPendingQuestionsPaged`/
+    `listResolvedQuestionsPaged`/`listMyPendingQuestionsPaged` 네
+    함수가 각자 똑같이 갖고 있던 "targetType별로 사람이 읽을 제목을
+    구해온다" 블록(`if document ... else if kanbanCard ...`)을
+    `resolveTargetLabel()` 헬퍼 하나로 뽑아 4곳 전부 그 호출로
+    교체 - plan 분기를 네 곳에 따로 안 넣어도 되게.
+  - `answerQuestion()`의 문서 자동 전이 로직은 원래도
+    `targetType === "document"`로만 조건부라 plan은 자연히 그 로직을
+    타지 않는다(칸반 카드/소스 코드와 동일하게 "전이 개념 없음").
+- 프런트: `QAPanel.vue`/`QuestionDialog.vue`의 `targetType` prop
+  유니온에 `"plan"` 추가(로직 자체는 이미 `targetType === "source"`
+  분기 하나만 있고 나머지는 전부 공통 경로라 추가 분기 불필요).
+  `QuestionDialog.vue`의 "대상 열기"에 plan 분기 추가
+  (`usePlanDialogStore().show()` - 문서/칸반 카드와 같은 패턴).
+  `PlanEditorView.vue`에 `<QAPanel :project-id="plan.projectId"
+  target-type="plan" :target-key="plan.trackingCode" />`를 "선행
+  조건" 섹션 아래에 추가.
+- CLI/MCP 명령 자체는 시그니처 변경이 없다(`docs question`/
+  `docs questions`/MCP `question_add`/`question_list` 등 전부 이미
+  트래킹 코드 기반 제네릭 경로라 plan을 몰라도 되던 코드가 이제
+  plan도 정확히 처리함).
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc -b`(frontend) 클린. 격리
+SQLite에서 실제 흐름을 끝까지 재현:
+1. 계획 생성 → `resolveTargetByTrackingCode(PN-...)`가
+   `{targetType: "plan"}`을 정확히 반환.
+2. `docs question`이 쓰는 `addQuestionByTrackingCode()`로 그 계획에
+   질의 등록 → 성공, `targetType: "plan"`으로 저장됨.
+3. `listQuestions("plan", trackingCode)`로 그 질의 정확히 1건 조회.
+4. `listPendingQuestions()`의 `targetLabel`이 계획 제목으로 정확히
+   해석됨(리팩터링한 `resolveTargetLabel` 검증 겸함).
+5. 답변(`answerQuestion`) → 확인 완료(`acknowledgeQuestion`) →
+   `resolved` 상태로 정확히 전이.
+6. 존재하지 않는 `PN-` 코드로 질의를 걸면 "대상을 찾을 수 없습니다"로
+   안전하게 거부됨(가짜로 성공하지 않음).
+
+**결론**: 계획(Plan) 페이지에서도 문서/칸반 카드와 완전히 동일한
+방식으로 AI가 질의를 걸고 설계자가 답변할 수 있게 됐다 - 새 명령/
+API 시그니처 없이 기존 트래킹 코드 기반 다형화 설계를 그대로 확장한
+것뿐이라 CLI/MCP 사용법은 바뀌지 않는다.

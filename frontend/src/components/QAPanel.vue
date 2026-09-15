@@ -12,7 +12,7 @@ import Pagination from "./Pagination.vue";
 const props = withDefaults(
   defineProps<{
     projectId: string;
-    targetType: "document" | "source" | "kanbanCard";
+    targetType: "document" | "source" | "kanbanCard" | "plan";
     targetKey: string;
     /** 이미 다이얼로그 안(TargetPanelDialog/KanbanCardDialog)이면 true -
      * 선택지를 그 자리에 바로 보여준다. 페이지에 직접 박혀있으면(문서

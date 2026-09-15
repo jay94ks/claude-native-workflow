@@ -3,13 +3,35 @@ import { withTrackingCode } from "./tracking.js";
 import { allowedNextStatuses } from "./docTypes.js";
 import { resyncDocumentIndex, getDocument } from "./documents.js";
 import { getKanbanCardByTrackingCode } from "./kanban.js";
+import { getPlanProjectId, getPlanByTrackingCode } from "./plans.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
 import { isSuperAdmin } from "./auth.js";
 import { paginate, type Page } from "./pagination.js";
 
 const QUESTION_TYPE_CODE = "QU";
 
-export type QuestionTargetType = "document" | "source" | "kanbanCard";
+export type QuestionTargetType = "document" | "source" | "kanbanCard" | "plan";
+
+/** listPendingQuestions(Paged)/listResolvedQuestionsPaged/
+ * listMyPendingQuestionsPaged 네 곳이 똑같이 쓰던 "targetType별로 사람이
+ * 읽을 제목을 구해온다" 로직을 한 곳으로 뽑았다 - plan 대상 추가 때
+ * 네 곳을 따로 고치지 않도록. 대상을 못 찾으면(삭제됨 등) targetKey를
+ * 그대로 라벨로 둔다(기존 동작 그대로). */
+async function resolveTargetLabel(targetType: string, targetKey: string): Promise<string> {
+  if (targetType === "document") {
+    const doc = await getDocument(targetKey);
+    return doc?.title ?? targetKey;
+  }
+  if (targetType === "kanbanCard") {
+    const card = await getKanbanCardByTrackingCode(targetKey);
+    return card?.title ?? targetKey;
+  }
+  if (targetType === "plan") {
+    const plan = await getPlanByTrackingCode(targetKey);
+    return plan?.title ?? targetKey;
+  }
+  return targetKey;
+}
 export type QuestionKind = "approval" | "answer";
 
 export interface QuestionOptionDetail {
@@ -45,6 +67,9 @@ async function assertTargetExists(projectId: string, targetType: string, targetK
   } else if (targetType === "kanbanCard") {
     const card = await getKanbanCardByTrackingCode(targetKey);
     if (!card || card.projectId !== projectId) throw new Error(`대상 카드를 찾을 수 없습니다: ${targetKey}`);
+  } else if (targetType === "plan") {
+    const planProjectId = await getPlanProjectId(targetKey);
+    if (!planProjectId || planProjectId !== projectId) throw new Error(`대상 계획을 찾을 수 없습니다: ${targetKey}`);
   } else if (targetType !== "source") {
     throw new Error(`알 수 없는 대상 종류입니다: ${targetType}`);
   }
@@ -122,19 +147,21 @@ export async function addQuestion(
   };
 }
 
-/** document/kanbanCard는 둘 다 트래킹 코드가 전역 유일이라, 대상의
+/** document/kanbanCard/plan은 셋 다 트래킹 코드가 전역 유일이라, 대상의
  * 트래킹 코드 하나만으로 프로젝트/대상 종류를 역산할 수 있다 - CLI의
  * 기존 2-인자 시그니처(`docs question <trackingCode> <text>`)를 안 깨고
  * 대상 종류를 자동 판별하는 데 쓴다. source 파일은 트래킹 코드가 없어
  * 이 경로로 못 들어오고 별도 진입점(addQuestion 직접 호출)을 쓴다. */
 export async function resolveTargetByTrackingCode(
   trackingCode: string,
-): Promise<{ projectId: string; targetType: "document" | "kanbanCard" } | null> {
+): Promise<{ projectId: string; targetType: "document" | "kanbanCard" | "plan" } | null> {
   const db = getDb();
   const doc = await db.document.findUnique({ where: { trackingCode } });
   if (doc) return { projectId: doc.projectId, targetType: "document" };
   const card = await db.kanbanCard.findUnique({ where: { trackingCode } });
   if (card) return { projectId: card.projectId, targetType: "kanbanCard" };
+  const planProjectId = await getPlanProjectId(trackingCode);
+  if (planProjectId) return { projectId: planProjectId, targetType: "plan" };
   return null;
 }
 
@@ -287,14 +314,7 @@ export async function listPendingQuestions(projectId: string): Promise<PendingQu
   });
   const results: PendingQuestion[] = [];
   for (const r of rows) {
-    let targetLabel = r.targetKey;
-    if (r.targetType === "document") {
-      const doc = await getDocument(r.targetKey);
-      if (doc) targetLabel = doc.title;
-    } else if (r.targetType === "kanbanCard") {
-      const card = await getKanbanCardByTrackingCode(r.targetKey);
-      if (card) targetLabel = card.title;
-    }
+    const targetLabel = await resolveTargetLabel(r.targetType, r.targetKey);
     results.push({
       trackingCode: r.trackingCode,
       projectId: r.projectId,
@@ -340,14 +360,7 @@ export async function listPendingQuestionsPaged(
   );
   const items: PendingQuestion[] = [];
   for (const r of result.items) {
-    let targetLabel = r.targetKey;
-    if (r.targetType === "document") {
-      const doc = await getDocument(r.targetKey);
-      if (doc) targetLabel = doc.title;
-    } else if (r.targetType === "kanbanCard") {
-      const card = await getKanbanCardByTrackingCode(r.targetKey);
-      if (card) targetLabel = card.title;
-    }
+    const targetLabel = await resolveTargetLabel(r.targetType, r.targetKey);
     items.push({
       trackingCode: r.trackingCode,
       projectId: r.projectId,
@@ -397,14 +410,7 @@ export async function listResolvedQuestionsPaged(
   );
   const items: PendingQuestion[] = [];
   for (const r of result.items) {
-    let targetLabel = r.targetKey;
-    if (r.targetType === "document") {
-      const doc = await getDocument(r.targetKey);
-      if (doc) targetLabel = doc.title;
-    } else if (r.targetType === "kanbanCard") {
-      const card = await getKanbanCardByTrackingCode(r.targetKey);
-      if (card) targetLabel = card.title;
-    }
+    const targetLabel = await resolveTargetLabel(r.targetType, r.targetKey);
     items.push({
       trackingCode: r.trackingCode,
       projectId: r.projectId,
@@ -476,14 +482,7 @@ export async function listMyPendingQuestionsPaged(
   const projectNameById = new Map<string, string>();
   const items: MyPendingQuestion[] = [];
   for (const r of result.items) {
-    let targetLabel = r.targetKey;
-    if (r.targetType === "document") {
-      const doc = await getDocument(r.targetKey);
-      if (doc) targetLabel = doc.title;
-    } else if (r.targetType === "kanbanCard") {
-      const card = await getKanbanCardByTrackingCode(r.targetKey);
-      if (card) targetLabel = card.title;
-    }
+    const targetLabel = await resolveTargetLabel(r.targetType, r.targetKey);
     if (!projectNameById.has(r.projectId)) {
       const project = await db.project.findUnique({ where: { id: r.projectId }, select: { name: true } });
       projectNameById.set(r.projectId, project?.name ?? r.projectId);
