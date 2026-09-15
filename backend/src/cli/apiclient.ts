@@ -92,7 +92,13 @@ async function apiFetch(pathSuffix: string, init?: RequestInit): Promise<Respons
   if (!apiBase) {
     throw new Error("API 주소를 모릅니다 - 먼저 `docs login --api <서버 주소> ...`로 로그인하세요");
   }
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> ?? {}) };
+  // X-Client-Kind: cli는 CLI/MCP가 공유하는 이 클라이언트 하나에서만
+  // 붙인다 - 웹 프런트엔드(frontend/src/api/client.ts)는 이 파일과
+  // 완전히 별개 코드라 이 헤더를 붙일 길이 없다. 서버는 이 헤더 유무로
+  // 메시지의 origin(designer/ai)을 자동 판정한다(#message-origin-tagging,
+  // core/messages.ts의 MessageOrigin 참고) - CLI/MCP 명령 자체는 아무
+  // 인자도 늘지 않는다.
+  const headers: Record<string, string> = { "Content-Type": "application/json", "X-Client-Kind": "cli", ...(init?.headers as Record<string, string> ?? {}) };
   const token = creds?.api_key ?? creds?.access_token;
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${apiBase}${pathSuffix}`, { ...init, headers });
@@ -182,6 +188,7 @@ interface MessagePublishEvent {
   id: string;
   authorId: string | null;
   body: string;
+  origin: string;
   createdAt: string;
 }
 
@@ -251,7 +258,7 @@ export async function waitForMessageDirect(projectId: string, totalTimeoutSec: n
           timedOut: false,
           message:
             matched ??
-            { id: event.id, projectId, authorId: event.authorId, body: event.body, createdAt: event.createdAt, deliveredAt: null },
+            { id: event.id, projectId, authorId: event.authorId, body: event.body, origin: event.origin, createdAt: event.createdAt, deliveredAt: null },
         });
       } catch {
         finishViaPolling();

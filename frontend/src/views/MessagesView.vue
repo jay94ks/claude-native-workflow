@@ -18,6 +18,7 @@ interface MessageItem {
   id: string;
   authorId: string | null;
   body: string;
+  origin: "designer" | "ai";
   deliveredAt: string | null;
   ackedAt: string | null;
   completedAt: string | null;
@@ -33,6 +34,7 @@ interface MessagePage {
 
 const PAGE_SIZE = 20;
 const tab = ref<"pending" | "processing" | "delivered">("pending");
+const originFilter = ref<"all" | "designer" | "ai">("all");
 const messages = ref<MessageItem[]>([]);
 const loading = ref(true);
 const error = ref("");
@@ -51,6 +53,7 @@ async function load() {
   try {
     // markDelivered는 안 보낸다 - 웹에서 보는 건 "AI가 읽음"으로 안 침.
     const qs = new URLSearchParams({ status: tab.value, page: String(page.value), pageSize: String(PAGE_SIZE) });
+    if (originFilter.value !== "all") qs.set("origin", originFilter.value);
     const result = await apiCall<MessagePage>(`/projects/${props.id}/messages/page?${qs}`);
     messages.value = result.items;
     totalPages.value = result.totalPages;
@@ -149,6 +152,10 @@ watch(tab, () => {
   page.value = 1;
   load();
 });
+watch(originFilter, () => {
+  page.value = 1;
+  load();
+});
 watch(page, load);
 </script>
 
@@ -158,6 +165,11 @@ watch(page, load);
     <button :class="{ active: tab === 'pending' }" @click="tab = 'pending'">대기</button>
     <button :class="{ active: tab === 'processing' }" @click="tab = 'processing'">처리중</button>
     <button :class="{ active: tab === 'delivered' }" @click="tab = 'delivered'">기록</button>
+  </div>
+  <div class="tabs origin-tabs">
+    <button :class="{ active: originFilter === 'all' }" @click="originFilter = 'all'">전체</button>
+    <button :class="{ active: originFilter === 'designer' }" @click="originFilter = 'designer'">설계자→AI</button>
+    <button :class="{ active: originFilter === 'ai' }" @click="originFilter = 'ai'">AI→설계자</button>
   </div>
   <p v-if="error" class="error">{{ error }}</p>
   <p v-if="loading" class="muted">불러오는 중...</p>
@@ -171,6 +183,7 @@ watch(page, load);
       <template v-else>
         <UserRef v-if="m.authorId" :user-id="m.authorId" />
         <span v-else class="system">system</span>
+        <span v-if="m.origin === 'ai'" class="origin-badge">AI</span>
         <span class="body"><TrackingCodeText :text="m.body" /></span>
         <span class="at">{{ new Date(m.createdAt).toLocaleString() }}</span>
         <button v-if="tab === 'pending'" class="manage-btn" @click="ack(m)">처리 시작</button>
@@ -238,6 +251,18 @@ h1 {
 .system {
   font-weight: 600;
   color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.origin-tabs {
+  margin-top: -8px;
+}
+.origin-badge {
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
   flex-shrink: 0;
 }
 .body {

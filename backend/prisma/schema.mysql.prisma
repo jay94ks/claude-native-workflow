@@ -588,6 +588,7 @@ model Message {
   projectId   String
   authorId    String? // null이면 시스템 브로드캐스트
   body        String    @db.LongText
+  origin      String    @default("designer") // "designer" | "ai" - 호출이 CLI/MCP(공유 apiFetch()가 X-Client-Kind: cli 헤더를 붙임)로 왔는지 웹인지로 서버가 자동 판정(#message-origin-tagging), 기존 행은 전부 designer로 남음
   deliveredAt DateTime?
   ackedAt     DateTime? // null="대기", 있으면 AI가 명시적으로 ack해 "처리중"
   completedAt DateTime? // 있으면 "기록"(ackedAt도 같이 채워짐)

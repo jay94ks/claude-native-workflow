@@ -2463,6 +2463,7 @@ const messageCmd = program.command("message").description("인스턴스 메시�
 messageCmd
   .command("list <projectId>")
   .option("--status <s>", "pending|processing|delivered|active|all(기본 active - 기록/완료된 메시지는 빼고 아직 처리 안 끝난 것만)")
+  .option("--origin <o>", "designer|ai - 생략하면 방향 구분 없이 전체(#message-origin-tagging, CLI/MCP로 보낸 메시지는 자동으로 ai)")
   .option(
     "--page <n>",
     "페이지 번호(1부터) - --count와 함께 줘야 페이지네이션 응답(total 포함)을 받는다, 생략하면 기존처럼 전체 배열. 주의: 페이지네이션 응답에선 deliveredAt 자동 갱신이 안 됨(웹 화면과 공유하는 라우트라 markDelivered 미지원)",
@@ -2476,15 +2477,18 @@ messageCmd
     const status = opts.status ?? "active";
     const paged = opts.page !== undefined || opts.count !== undefined;
     if (paged) {
-      const qs = new URLSearchParams({ status, page: opts.page ?? "1", pageSize: opts.count ?? "20" });
+      const qs = new URLSearchParams({ status, page: opts.page ?? "1", pageSize: opts.count ?? "20", ...(opts.origin ? { origin: opts.origin } : {}) });
       return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages/page?${qs}`)));
     }
-    const qs = new URLSearchParams({ markDelivered: "true", status });
+    const qs = new URLSearchParams({ markDelivered: "true", status, ...(opts.origin ? { origin: opts.origin } : {}) });
     return run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages?${qs}`)));
   });
-messageCmd.command("send <projectId> <body...>").action((projectId, bodyParts) =>
-  run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages`, { method: "POST", body: JSON.stringify({ body: bodyParts.join(" ") }) }))),
-);
+messageCmd
+  .command("send <projectId> <body...>")
+  .description("이 명령으로 보낸 메시지는 origin이 자동으로 ai로 기록된다(#message-origin-tagging - CLI는 항상 X-Client-Kind: cli를 붙이는 공유 클라이언트를 거침)")
+  .action((projectId, bodyParts) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/messages`, { method: "POST", body: JSON.stringify({ body: bodyParts.join(" ") }) }))),
+  );
 messageCmd
   .command("wait <projectId>")
   .option("--timeout <sec>", "전체 대기 시간(초) - EMQX 직접 구독이 가능하면 그걸로 대기하고, 안 되면 10초 단위 HTTP 폴링으로 자동 폴백", "60")

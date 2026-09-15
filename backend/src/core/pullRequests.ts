@@ -1,7 +1,7 @@
 import { getDb } from "./db.js";
 import * as gitea from "./gitea.js";
 import { requireGiteaWorkingRef } from "./gitRepos.js";
-import { sendMessage } from "./messages.js";
+import { sendMessage, type MessageOrigin } from "./messages.js";
 
 // PR 오케스트레이션 - Gitea 호출 + PullRequestMeta 갱신 + 진행 메시지
 // 발송을 한 동작으로 묶는다. gitea.ts(순수 API 바인딩, DB 접근 0)나
@@ -76,16 +76,16 @@ export async function listPullRequestsForProject(
   return summaries.map((s) => toDetail(s, metaByIndex.get(s.index) ?? null));
 }
 
-export async function mergePull(projectId: string, index: number, actingUserId: string | null, actingToken?: string): Promise<void> {
+export async function mergePull(projectId: string, index: number, actingUserId: string | null, origin: MessageOrigin, actingToken?: string): Promise<void> {
   const target = await requireGiteaWorkingRef(projectId);
   try {
     await gitea.mergePullRequest(target, index, actingToken);
     await upsertMeta(projectId, index, { disposition: "merged", lastMergeError: null });
-    await sendMessage(projectId, actingUserId, `${prTag(index)}머지되었습니다.`);
+    await sendMessage(projectId, actingUserId, `${prTag(index)}머지되었습니다.`, origin);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await upsertMeta(projectId, index, { lastMergeError: message });
-    await sendMessage(projectId, actingUserId, `${prTag(index)}자동 머지에 실패했습니다 - 수동 병합이 필요합니다: ${message}`);
+    await sendMessage(projectId, actingUserId, `${prTag(index)}자동 머지에 실패했습니다 - 수동 병합이 필요합니다: ${message}`, origin);
     throw err; // 라우트가 에러를 그대로 전달, 프론트가 실패를 계기로 수동 병합 안내 배너를 켠다
   }
 }
@@ -93,18 +93,18 @@ export async function mergePull(projectId: string, index: number, actingUserId: 
 /** 자동 머지가 실패한 뒤(위 mergePull의 lastMergeError 경로), 로컬에서
  * 직접(또는 AI가 CLI로) 충돌을 해결해 push한 커밋을 Gitea에 "수동으로
  * 병합됨"으로 기록시킨다(요구사항 4번 핵심 메커니즘). */
-export async function mergePullManually(projectId: string, index: number, mergeCommitId: string, actingUserId: string | null, actingToken?: string): Promise<void> {
+export async function mergePullManually(projectId: string, index: number, mergeCommitId: string, actingUserId: string | null, origin: MessageOrigin, actingToken?: string): Promise<void> {
   const target = await requireGiteaWorkingRef(projectId);
   await gitea.mergePullRequestManually(target, index, mergeCommitId, actingToken);
   await upsertMeta(projectId, index, { disposition: "merged", lastMergeError: null });
-  await sendMessage(projectId, actingUserId, `${prTag(index)}수동 병합이 완료 처리되었습니다(commit: ${mergeCommitId.slice(0, 8)}).`);
+  await sendMessage(projectId, actingUserId, `${prTag(index)}수동 병합이 완료 처리되었습니다(commit: ${mergeCommitId.slice(0, 8)}).`, origin);
 }
 
-export async function rejectPull(projectId: string, index: number, actingUserId: string | null, actingToken?: string): Promise<void> {
+export async function rejectPull(projectId: string, index: number, actingUserId: string | null, origin: MessageOrigin, actingToken?: string): Promise<void> {
   const target = await requireGiteaWorkingRef(projectId);
   await gitea.setPullRequestState(target, index, "closed", actingToken);
   await upsertMeta(projectId, index, { disposition: "rejected" });
-  await sendMessage(projectId, actingUserId, `${prTag(index)}거부되었습니다.`);
+  await sendMessage(projectId, actingUserId, `${prTag(index)}거부되었습니다.`, origin);
 }
 
 /** 요구사항 6: Close는 상태 불문 닫되, Merge/Reject 둘 다 명시적으로
@@ -112,26 +112,26 @@ export async function rejectPull(projectId: string, index: number, actingUserId:
  * merged/rejected가 확정된 PR은 프론트에서 Close 버튼 자체를 숨기므로
  * (머지된 PR은 Gitea에서도 이미 closed) 여기서는 그 경우를 별도로
  * 막지 않는다. */
-export async function closePull(projectId: string, index: number, actingUserId: string | null, actingToken?: string): Promise<void> {
+export async function closePull(projectId: string, index: number, actingUserId: string | null, origin: MessageOrigin, actingToken?: string): Promise<void> {
   const target = await requireGiteaWorkingRef(projectId);
   const meta = await getMeta(projectId, index);
   await gitea.setPullRequestState(target, index, "closed", actingToken);
   if (!meta?.disposition) {
     await upsertMeta(projectId, index, { disposition: "rejected" });
-    await sendMessage(projectId, actingUserId, `${prTag(index)}닫혔습니다(머지/거부가 선택되지 않아 거부로 처리됨).`);
+    await sendMessage(projectId, actingUserId, `${prTag(index)}닫혔습니다(머지/거부가 선택되지 않아 거부로 처리됨).`, origin);
   } else {
-    await sendMessage(projectId, actingUserId, `${prTag(index)}닫혔습니다.`);
+    await sendMessage(projectId, actingUserId, `${prTag(index)}닫혔습니다.`, origin);
   }
 }
 
 /** 요구사항 5: 거부돼도 이후 커밋으로 결국 Accept에 닿을 수 있어야
  * 한다 - 다시 열면 disposition을 지워 다음 mergePull() 호출이 자연스럽게
  * "merged"로 덮어쓸 수 있게 한다. */
-export async function reopenPull(projectId: string, index: number, actingUserId: string | null, actingToken?: string): Promise<void> {
+export async function reopenPull(projectId: string, index: number, actingUserId: string | null, origin: MessageOrigin, actingToken?: string): Promise<void> {
   const target = await requireGiteaWorkingRef(projectId);
   await gitea.setPullRequestState(target, index, "open", actingToken);
   await upsertMeta(projectId, index, { disposition: null, lastMergeError: null });
-  await sendMessage(projectId, actingUserId, `${prTag(index)}다시 열렸습니다.`);
+  await sendMessage(projectId, actingUserId, `${prTag(index)}다시 열렸습니다.`, origin);
 }
 
 export async function listMessagesForPullRequest(projectId: string, index: number) {

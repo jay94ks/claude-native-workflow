@@ -716,7 +716,7 @@ async function destroyInvalidCredential(gitCredentialId: string, triggeringProje
         triggeringProjectId === undefined || row.projectId === triggeringProjectId
           ? "GitHub/GitLab 자격증명이 더 이상 유효하지 않아 외부 연동이 자동으로 해제되고 자체 호스팅으로 전환됐습니다 - 계속 외부 저장소를 쓰려면 새 자격증명으로 다시 연동하세요."
           : "이 프로젝트가 쓰던 GitHub/GitLab 자격증명이 다른 프로젝트에서 무효로 확인돼 함께 자동 해제되고 자체 호스팅으로 전환됐습니다 - 계속 외부 저장소를 쓰려면 새 자격증명으로 다시 연동하세요.";
-      await sendMessage(row.projectId, null, reason);
+      await sendMessage(row.projectId, null, reason, "designer");
     } else {
       await db.projectGitRepo.update({ where: { projectId: row.projectId }, data: { gitCredentialId: null } });
     }
@@ -787,6 +787,7 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
         `강제로 덮어쓰면 그 변경이 사라지므로 안전하게 대기열에 올렸습니다.\n\n` +
         `"docs git sync-proposal ${projectId} --out <dir>"로 변경 제안을 확인해 직접 반영하거나 충돌을 해소한 뒤, ` +
         `"docs git publish-queue-done ${projectId} ${entry.id}"로 완료를 보고하세요 - 그래야 "동기화" 버튼이 다시 활성화됩니다.`,
+      "designer",
     );
     return { status: "queued", queueEntryId: entry.id };
   }
@@ -840,6 +841,7 @@ async function queuePublishFailure(projectId: string, errorMessage: string): Pro
     `외부 저장소 동기화(발행)에 실패했습니다: ${errorMessage}\n\n` +
       `"docs git sync-proposal ${projectId} --out <dir>"로 변경 제안을 확인해 직접 반영하거나 충돌을 해소한 뒤, ` +
       `"docs git publish-queue-done ${projectId} ${entry.id}"로 완료를 보고하세요 - 그래야 "동기화" 버튼이 다시 활성화됩니다.`,
+    "designer",
   );
   return { status: "queued", queueEntryId: entry.id };
 }

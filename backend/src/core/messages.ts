@@ -4,11 +4,21 @@ import { realtimePublish, projectMessagesTopic, projectChangesTopic, type Change
 import { isSuperAdmin } from "./auth.js";
 import { getMemberRole } from "./members.js";
 
+// "designer"(웹에서 옴) | "ai"(CLI/MCP에서 옴) - 호출자가 명시적으로
+// 알리는 게 아니라, 공유 HTTP 클라이언트(cli/apiclient.ts의
+// apiFetch())가 모든 요청에 X-Client-Kind: cli 헤더를 자동으로 붙이고
+// 서버가 그 유무만으로 판정한다(#message-origin-tagging, 설계자 지시 -
+// 새 CLI/MCP 명령을 만들지 않고 기존 message send/message_send 그대로
+// 자동 태깅). 웹 프런트엔드(frontend/src/api/client.ts)는 이 헤더를
+// 붙이는 코드가 없어 자연히 "designer"로 남는다.
+export type MessageOrigin = "designer" | "ai";
+
 export interface MessageDetail {
   id: string;
   projectId: string;
   authorId: string | null;
   body: string;
+  origin: string; // "designer" | "ai" - MessageOrigin 참고, DB 행 그대로 반환하므로 QuestionDetail.status와 같은 이유로 string(Prisma 생성 타입과의 캐스팅 마찰 회피)
   deliveredAt: Date | null;
   ackedAt: Date | null;
   completedAt: Date | null;
@@ -24,17 +34,19 @@ interface MessagePublishEvent {
   id: string;
   authorId: string | null;
   body: string;
+  origin: string;
   createdAt: string;
 }
 
-export async function sendMessage(projectId: string, authorId: string | null, body: string): Promise<MessageDetail> {
+export async function sendMessage(projectId: string, authorId: string | null, body: string, origin: MessageOrigin): Promise<MessageDetail> {
   if (!body) throw new Error("body가 필요합니다");
   const db = getDb();
-  const row = await db.message.create({ data: { projectId, authorId, body } });
+  const row = await db.message.create({ data: { projectId, authorId, body, origin } });
   const event: MessagePublishEvent = {
     id: row.id,
     authorId: row.authorId,
     body: row.body,
+    origin: row.origin,
     createdAt: row.createdAt.toISOString(),
   };
   await realtimePublish(projectMessagesTopic(projectId), event);
@@ -138,6 +150,7 @@ export async function completeMessage(id: string, requesterId: string): Promise<
 
 export interface ListMessagesOptions {
   status?: "pending" | "processing" | "delivered" | "active" | "all";
+  origin?: MessageOrigin;
   markDelivered?: boolean;
 }
 
@@ -153,22 +166,25 @@ export interface ListMessagesOptions {
  * deliveredAt=now()로 갱신하고, 반환 객체에도 그대로 반영한다(웹
  * UI는 이 플래그를 안 보내므로 읽어도 안 바뀐다). */
 /** listMessages/listMessagesPaged/countMessages 셋이 똑같이 쓰는
- * status→where 변환 - 한 곳에서만 바뀌면 되게 뽑아둠. */
-function buildMessageWhere(projectId: string, status: ListMessagesOptions["status"]) {
+ * status/origin→where 변환 - 한 곳에서만 바뀌면 되게 뽑아둠. origin을
+ * 안 주면(undefined) 방향 구분 없이 전체를 본다(기존 CLI/MCP 호출부와
+ * 100% 호환). */
+function buildMessageWhere(projectId: string, status: ListMessagesOptions["status"], origin?: MessageOrigin) {
+  const base = { projectId, ...(origin ? { origin } : {}) };
   return status === "pending"
-    ? { projectId, ackedAt: null }
+    ? { ...base, ackedAt: null }
     : status === "processing"
-      ? { projectId, ackedAt: { not: null }, completedAt: null }
+      ? { ...base, ackedAt: { not: null }, completedAt: null }
       : status === "delivered"
-        ? { projectId, completedAt: { not: null } }
+        ? { ...base, completedAt: { not: null } }
         : status === "active"
-          ? { projectId, completedAt: null }
-          : { projectId };
+          ? { ...base, completedAt: null }
+          : base;
 }
 
 export async function listMessages(projectId: string, opts: ListMessagesOptions = {}): Promise<MessageDetail[]> {
   const db = getDb();
-  const where = buildMessageWhere(projectId, opts.status);
+  const where = buildMessageWhere(projectId, opts.status, opts.origin);
   const rows = await db.message.findMany({ where, orderBy: { createdAt: "asc" } });
 
   if (opts.markDelivered) {
@@ -198,10 +214,10 @@ export interface MessagePage {
  * CLI/MCP가 쓰는 listMessages()는 그대로 둔다. */
 export async function listMessagesPaged(
   projectId: string,
-  opts: { status?: "pending" | "processing" | "delivered" | "active" | "all"; page: number; pageSize: number },
+  opts: { status?: "pending" | "processing" | "delivered" | "active" | "all"; origin?: MessageOrigin; page: number; pageSize: number },
 ): Promise<MessagePage> {
   const db = getDb();
-  const where = buildMessageWhere(projectId, opts.status);
+  const where = buildMessageWhere(projectId, opts.status, opts.origin);
   const safePage = Math.max(1, opts.page);
   const [items, total] = await Promise.all([
     db.message.findMany({
@@ -303,6 +319,7 @@ export async function waitForMessage(projectId: string, timeoutSec: number): Pro
             projectId,
             authorId: event.authorId,
             body: event.body,
+            origin: event.origin,
             deliveredAt: null,
             ackedAt: null,
             completedAt: null,

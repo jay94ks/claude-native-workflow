@@ -1816,10 +1816,11 @@ async function main() {
   tool(
     "message_list",
     "인스턴스 메시지 목록",
-    "그 프로젝트의 메시지 기록을 조회한다 - 조회 자체는 상태(대기/처리중/기록)를 안 바꾼다(읽음은 message_ack와 별개 축). status로 pending(대기)/processing(처리중)/delivered(기록)/active(대기+처리중, 기록 제외)/all 필터 가능 - 생략하면 기본 active(아직 처리 안 끝난 것만, 이미 완료된 기록은 안 보냄 - 전체 이력이 필요하면 all을 명시). page/pageSize를 주면 페이지네이션 응답(total 포함)을 받는다 - 단, 이 경우 웹 화면과 공유하는 라우트라 deliveredAt 자동 갱신은 안 됨. 생략하면 기존처럼 전체 배열 + deliveredAt 자동 갱신.",
+    "그 프로젝트의 메시지 기록을 조회한다 - 조회 자체는 상태(대기/처리중/기록)를 안 바꾼다(읽음은 message_ack와 별개 축). status로 pending(대기)/processing(처리중)/delivered(기록)/active(대기+처리중, 기록 제외)/all 필터 가능 - 생략하면 기본 active(아직 처리 안 끝난 것만, 이미 완료된 기록은 안 보냄 - 전체 이력이 필요하면 all을 명시). origin으로 designer(웹에서 옴)/ai(CLI/MCP에서 옴) 필터도 가능(#message-origin-tagging) - 생략하면 방향 구분 없이 전체. page/pageSize를 주면 페이지네이션 응답(total 포함)을 받는다 - 단, 이 경우 웹 화면과 공유하는 라우트라 deliveredAt 자동 갱신은 안 됨. 생략하면 기존처럼 전체 배열 + deliveredAt 자동 갱신.",
     {
       projectId: z.string(),
       status: z.enum(["pending", "processing", "delivered", "active", "all"]).optional(),
+      origin: z.enum(["designer", "ai"]).optional(),
       page: z.number().optional(),
       pageSize: z.number().optional(),
     },
@@ -1827,15 +1828,19 @@ async function main() {
       const status = a.status ?? "active";
       const paged = a.page !== undefined || a.pageSize !== undefined;
       if (paged) {
-        const qs = new URLSearchParams({ status: String(status), page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20) });
+        const qs = new URLSearchParams({ status: String(status), page: String(a.page ?? 1), pageSize: String(a.pageSize ?? 20), ...(a.origin ? { origin: String(a.origin) } : {}) });
         return call(`/api/projects/${a.projectId}/messages/page?${qs}`);
       }
-      const qs = new URLSearchParams({ markDelivered: "true", status: String(status) });
+      const qs = new URLSearchParams({ markDelivered: "true", status: String(status), ...(a.origin ? { origin: String(a.origin) } : {}) });
       return call(`/api/projects/${a.projectId}/messages?${qs}`);
     },
   );
-  tool("message_send", "인스턴스 메시지 전송", "같은 프로젝트의 다른 세션/설계자에게 메시지를 남긴다.", { projectId: z.string(), body: z.string() }, async (a) =>
-    call(`/api/projects/${a.projectId}/messages`, { method: "POST", body: JSON.stringify({ body: a.body }) }),
+  tool(
+    "message_send",
+    "인스턴스 메시지 전송",
+    "같은 프로젝트의 다른 세션/설계자에게 메시지를 남긴다. 이 도구로 보낸 메시지는 origin이 자동으로 ai로 기록된다(#message-origin-tagging - MCP는 항상 X-Client-Kind: cli를 붙이는 공유 클라이언트를 거치므로, 이 도구를 부르는 것 자체가 이미 AI가 설계자에게 보내는 것으로 분류됨).",
+    { projectId: z.string(), body: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/messages`, { method: "POST", body: JSON.stringify({ body: a.body }) }),
   );
   tool(
     "message_wait",

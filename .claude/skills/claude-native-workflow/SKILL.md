@@ -257,6 +257,16 @@ team-admin-add/team-admin-remove/team-admins <teamId> [<userId>]`.
 보낸다 - 별도 API는 없고 관례일 뿐이지만, 웹 UI가 이 패턴의 추적
 코드를 자동으로 클릭 가능한 링크로 렌더링한다.
 
+**메시지에는 `origin`("designer"|"ai")이 자동으로 붙는다**
+(`#message-origin-tagging`) - CLI/MCP로 보내면(`message send`/
+`message_send`, 명령 이름/인자는 그대로) 항상 `"ai"`로, 웹 UI
+"전송" 버튼으로 보내면 `"designer"`로 자동 분류된다(호출자가 값을
+넘길 필요 없음 - CLI/MCP가 공유하는 HTTP 클라이언트가 요청마다
+자동으로 붙이는 헤더로 서버가 판정). `docs message list`/
+`message_list`에 `--origin`/`origin` 필터가 있다(생략하면 방향
+구분 없이 전체) - 웹 UI "메시지" 탭에도 전체/설계자→AI/AI→설계자
+서브탭으로 노출된다.
+
 ## CLI/MCP에 의도적으로 없는 기능 (완전성 원칙의 예외)
 
 아래 항목들은 "누락"이 아니라 설계상 CLI/MCP 표면에 전혀 없다:
@@ -606,7 +616,7 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 템플릿 변경 이력 조회 | `docs template revisions <filename> [--project\|--group\|--team <id>]` | `template_revisions` |
 | 훅 프롬프트 생성/목록/수정/삭제 | `docs hook create/list/update/delete` | `hook_create/list/update/delete` |
 | 훅 대기열 조회/처리 | `docs hook queue/ack/done` | `hook_queue_list`/`hook_ack`/`hook_done` |
-| 메시지 목록(읽으면 기록 전환) | `docs message list <projectId> [--status <s>]` | `message_list` |
+| 메시지 목록(읽으면 기록 전환) | `docs message list <projectId> [--status <s>] [--origin designer\|ai]` | `message_list` |
 | 메시지 전송 | `docs message send <projectId> <body...>` | `message_send` |
 | 새 메시지 대기(블로킹) | `docs message wait <projectId> [--timeout <초>]` | `message_wait` |
 | 최근 메시지(비파괴, 장애 복구용) | `docs message recent <projectId> [--limit <n>]` | `message_recent` |

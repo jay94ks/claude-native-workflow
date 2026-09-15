@@ -219,7 +219,7 @@ export async function createKanbanCard(
   } satisfies ChangeEvent);
 
   if (origin === "designer") {
-    await sendMessage(projectId, createdBy, `[${row.trackingCode}] ${title}`);
+    await sendMessage(projectId, createdBy, `[${row.trackingCode}] ${title}`, "designer");
   }
 
   return toCardDetail({ ...row, columnName: column.name, docRefs: refs.map((trackingCode) => ({ trackingCode })) });

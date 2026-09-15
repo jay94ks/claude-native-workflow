@@ -299,7 +299,7 @@ import {
   acknowledgeQueueEntry,
   completeQueueEntry,
 } from "../core/pushHookPrompts.js";
-import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages, editMessage, deleteMessage, ackMessage, completeMessage } from "../core/messages.js";
+import { sendMessage, listMessages, listMessagesPaged, waitForMessage, listRecentMessages, editMessage, deleteMessage, ackMessage, completeMessage, type MessageOrigin } from "../core/messages.js";
 import { checkConnect, checkAcl, ensureEmqxAuthConfigured, getOrCreateMqttCredential } from "../core/emqxAuth.js";
 
 const app = express();
@@ -3627,14 +3627,24 @@ function notImplemented(feature: string, phase: string) {
 
 // ---------------------------------------------------------------- 인스턴스 메시징 (Phase 4)
 
+// CLI/MCP는 둘 다 backend/src/cli/apiclient.ts의 apiFetch() 하나를
+// 공유하고, 그 함수가 모든 요청에 X-Client-Kind: cli를 자동으로 붙인다
+// (설계자 지시 - 새 명령을 만들지 않고 기존 message send/message_send
+// 그대로 자동 태깅, #message-origin-tagging). 웹 프런트엔드는 이
+// 헤더를 붙이는 코드 경로가 없으므로 자연히 "designer"로 남는다.
+function resolveMessageOrigin(req: AuthedRequest): MessageOrigin {
+  return req.headers["x-client-kind"] === "cli" ? "ai" : "designer";
+}
+
 app.get(
   "/api/projects/:projectId/messages",
   authenticate,
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const status = req.query.status as "pending" | "processing" | "delivered" | "active" | "all" | undefined;
+    const origin = req.query.origin as MessageOrigin | undefined;
     const markDelivered = req.query.markDelivered === "true";
-    res.json(await listMessages(req.params.projectId, { status, markDelivered }));
+    res.json(await listMessages(req.params.projectId, { status, origin, markDelivered }));
   }),
 );
 
@@ -3645,7 +3655,7 @@ app.post(
   asyncRoute(async (req, res) => {
     const { body } = req.body as { body?: string };
     if (!body) { res.status(400).json({ error: "body가 필요합니다" }); return; }
-    res.json(await sendMessage(req.params.projectId, req.userId!, body));
+    res.json(await sendMessage(req.params.projectId, req.userId!, body, resolveMessageOrigin(req)));
   }),
 );
 
@@ -3720,9 +3730,10 @@ app.get(
   requireProjectRole("viewer"),
   asyncRoute(async (req, res) => {
     const status = req.query.status as "pending" | "processing" | "delivered" | "active" | "all" | undefined;
+    const origin = req.query.origin as MessageOrigin | undefined;
     const page = Number(req.query.page ?? 1);
     const pageSize = Number(req.query.pageSize ?? 20);
-    res.json(await listMessagesPaged(req.params.projectId, { status, page, pageSize }));
+    res.json(await listMessagesPaged(req.params.projectId, { status, origin, page, pageSize }));
   }),
 );
 
@@ -4366,7 +4377,7 @@ app.post(
   requireProjectRole("owner"),
   asyncRoute(async (req, res) => {
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await mergePull(req.params.projectId, Number(req.params.index), req.userId!, actingToken);
+    await mergePull(req.params.projectId, Number(req.params.index), req.userId!, resolveMessageOrigin(req), actingToken);
     res.json({ ok: true });
   }),
 );
@@ -4437,7 +4448,7 @@ app.post(
     const { mergeCommitId } = req.body as { mergeCommitId?: string };
     if (!mergeCommitId?.trim()) { res.status(400).json({ error: "mergeCommitId가 필요합니다" }); return; }
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await mergePullManually(req.params.projectId, Number(req.params.index), mergeCommitId.trim(), req.userId!, actingToken);
+    await mergePullManually(req.params.projectId, Number(req.params.index), mergeCommitId.trim(), req.userId!, resolveMessageOrigin(req), actingToken);
     res.json({ ok: true });
   }),
 );
@@ -4448,7 +4459,7 @@ app.post(
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await rejectPull(req.params.projectId, Number(req.params.index), req.userId!, actingToken);
+    await rejectPull(req.params.projectId, Number(req.params.index), req.userId!, resolveMessageOrigin(req), actingToken);
     res.json({ ok: true });
   }),
 );
@@ -4459,7 +4470,7 @@ app.post(
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await closePull(req.params.projectId, Number(req.params.index), req.userId!, actingToken);
+    await closePull(req.params.projectId, Number(req.params.index), req.userId!, resolveMessageOrigin(req), actingToken);
     res.json({ ok: true });
   }),
 );
@@ -4470,7 +4481,7 @@ app.post(
   requireProjectRole("editor"),
   asyncRoute(async (req, res) => {
     const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await reopenPull(req.params.projectId, Number(req.params.index), req.userId!, actingToken);
+    await reopenPull(req.params.projectId, Number(req.params.index), req.userId!, resolveMessageOrigin(req), actingToken);
     res.json({ ok: true });
   }),
 );

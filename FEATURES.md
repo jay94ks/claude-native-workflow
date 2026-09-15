@@ -518,6 +518,20 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   자동 폴백한다(느리지만 계속 동작 - fail-soft).
 - `message recent`는 상태를 바꾸지 않는 순수 조회 - 시스템 다운 후
   재접속 시 "마지막에 무슨 일이 있었는지" 확인용, 반복 호출해도 안전.
+- **origin("designer"|"ai")** - 이 메시지가 웹에서 왔는지 CLI/
+  MCP에서 왔는지 자동 분류한다(#message-origin-tagging, 설계자
+  지시). CLI/MCP가 공유하는 HTTP 클라이언트(`cli/apiclient.ts`의
+  `apiFetch()`)가 모든 요청에 `X-Client-Kind: cli` 헤더를 자동으로
+  붙이고, 서버는 그 유무만으로 판정한다 - 호출자가 명시적으로 알릴
+  필요가 없고, `message send`/`message_send` 명령 자체의 이름/인자는
+  바뀌지 않는다. 웹 프런트엔드는 이 헤더를 붙이는 코드 경로가 없어
+  자연히 designer로 남는다. `message list`/`message_list`와 웹
+  "메시지" 탭 둘 다 이 값으로 필터링 가능(`--origin`/`origin`
+  쿼리 파라미터, 웹은 전체/설계자→AI/AI→설계자 서브탭) - 생략하면
+  방향 구분 없이 전체. 기존(이 필드 추가 이전) 메시지는 전부
+  designer로 남는다. PR 머지/거부/닫기/재오픈, 칸반 카드 자동 알림도
+  같은 방식으로 자동 분류된다 - 외부 저장소 동기화 충돌 등 authorId가
+  null인 시스템 브로드캐스트는 origin이 designer로 고정.
 - 문서 에디터의 "메시지로 지시" 버튼은 그 문서의 추적 코드를 자동으로
   본문에 병기(editor 이상만 노출).
 - 시스템(비인간) 발신 메시지도 지원(`authorId: null`) - 예: 외부
