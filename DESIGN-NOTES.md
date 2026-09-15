@@ -8861,3 +8861,111 @@ resolved/withdrawn 질의를 하나씩 만들어 `listQuestions`/
 **결론**: 세션 목록이 더 이상 무한정 쌓이지 않는다 - 1시간 넘게
 하트비트가 없으면 자동으로 없어지고, 동시성 경고(`notices`)는
 원래도 30분 TTL로 별도 관리돼 있어 이번 변경의 영향을 받지 않는다.
+
+## 연관 문서/연관된 소스 코드 목록 스크롤 적용
+
+**배경**: 설계자 지시 - "연관 문서 목록과 연관된 소스 코드 목록이
+길어지면 높이를 제한하여 스크롤 되도록 만들어줘." `DocumentEditorView.vue`의
+세 섹션("연관 문서"의 "이 문서가 링크한 문서"/"이 문서를 링크한 문서"
+두 목록, "연관된 소스 코드", "연관 브랜치")이 전부 같은 `.source-list`
+클래스를 쓰는데 높이 제한이 없어, 링크/연결이 많은 문서는 목록
+자체가 한없이 길어져 편집 화면 전체가 늘어졌다 - `#messages-list-scroll`
+(DN-DCA78E23)에서 메시지함에 이미 적용했던 것과 같은 문제.
+
+**설계**: 세 섹션이 클래스를 공유하지만 설계자 지시는 "연관 문서"와
+"연관된 소스 코드" 두 목록만 지목했다("연관 브랜치"는 제외) - 클래스를
+전역으로 바꾸는 대신 `.source-list.scrollable` 모디파이어를 그 두
+섹션의 `<ul>`에만 추가해 "연관 브랜치" 목록은 그대로 뒀다. 값
+(`max-height: 280px; overflow-x: hidden; overflow-y: auto;`)은
+`#messages-list-scroll`의 `.messages`(60vh, 페이지 전체가 이 하나뿐인
+목록)와 같은 패턴이되, 여긴 한 화면에 여러 섹션이 같이 있는 문맥이라
+뷰포트 비율(vh) 대신 고정 px로 더 작게 잡았다.
+
+**구현**: `frontend/src/views/DocumentEditorView.vue` - `doc.linksOut`/
+`doc.backlinks`/`sourceLinks` 세 `<ul>`에 `scrollable` 클래스 추가,
+`.source-list.scrollable { max-height: 280px; overflow-x: hidden;
+overflow-y: auto; }` 규칙 추가(`branchLinks` `<ul>`은 그대로 `source-list`만).
+
+**검증**: `vue-tsc -b` 클린. 로컬 `frontend-dev`(vite) 프리뷰를
+프로덕션 백엔드(`localhost:8763`)에 임시로 붙여(검증 후 원복) 실제
+소스 링크 12개가 걸린 DN-421FA258 문서를 열어 자바스크립트로
+`scrollHeight`(594px) > `clientHeight`(280px)로 스크롤이 실제로 생기는
+것을 확인, 링크가 2개뿐인 "연관 문서"는 그대로(스크롤 없음), "연관
+브랜치" 섹션엔 `scrollable` 클래스가 안 붙은 것도 DOM 조회로 확인.
+
+**결론**: 링크/연결이 많이 쌓인 문서를 열어도 "연관 문서"/"연관된
+소스 코드" 목록이 화면을 무한정 늘리지 않고 각자 280px 안에서
+스크롤된다 - "연관 브랜치"는 지시 범위 밖이라 그대로 뒀다.
+
+## 작업 폴더 문서 캐시(`docs cache sync/clean`) 신설
+
+**배경**: 설계자 지시 - "작업 폴더 내에 문서 캐시를 생성하고 삭제하는
+등 동기화하는 명령을 CLI/MCP/SKILL.md에 추가하자. 사용사례는 minicore의
+docs 폴더를 참고해." minicore-1f 세션에 실제 구조를 물어 확인했다:
+저장소 루트 `docs/` 폴더에 문서 하나당 `<trackingCode>.md` 파일(제목
+헤딩 + "손대지 마세요" 경고와 트래킹코드/상태/updatedAt을 담은 HTML
+주석 + 본문), `docs/index.md`(전체 목록 표) - 자체 스크립트
+(`scripts/export-cnw-docs.mjs`, `docs list`→각 `docs get`→파일 쓰기)로
+직접 구현해 쓰고 있었고, 삭제된 문서의 캐시 파일도 그 스크립트가
+정리했다. CNW 문서 변경 시마다(배치로 모아서) 재실행 후 커밋 -
+CLAUDE.md에 "`docs/` 폴더는 로컬 스크래치 사본 커밋 금지 규칙의
+예외"라고 명시해뒀다고 확인.
+
+**설계**: minicore가 직접 짠 스크립트와 완전히 같은 결과물 포맷을
+CNW 자신의 1급 명령으로 승격했다 - 매 프로젝트가 똑같은 스크립트를
+새로 짤 필요가 없게. `docs migrate scan/apply`(파일→DB)의 정확히 반대
+방향이라 이름/구조도 대칭으로 맞췄다(`docs cache sync/clean`,
+`cli/cache.ts` 신규 - `migrate.ts`와 같이 CLI/MCP가 공유하는 순수
+REST 클라이언트 모듈, core를 직접 안 부름). 매번 전체를 다시 받아
+덮어쓰는 방식(증분 diff 없음)을 택해 별도 상태 파일이 필요 없게
+했다 - `dir` 안에 이미 있는 `XX-XXXXXXXX.md` 패턴 파일 목록 자체가
+"지난 동기화 결과"를 대신하므로, 이번에 못 받은 트래킹코드는 그냥
+지우면 된다. "정본은 DB, 캐시는 읽기 전용 사본"이라는 이 저장소의
+문서 조회 원칙(line 142 주석 - "조회는 Meilisearch를 거친다")도
+그대로 유지 - 캐시 export도 새 DB 직접 쿼리를 만들지 않고 기존
+`listDocumentsFromIndexPaged()`(색인 경유) 위에 얹었다.
+
+**구현**:
+- `core/documents.ts` - `listDocumentsForExport(projectId)` 추가.
+  `listDocuments()`와 똑같이 `listDocumentsFromIndexPaged()`를 쓰지만
+  `toDocumentSummary()`로 body를 벗기지 않는다(1000건 상한 에러도
+  동일 유지).
+- `api/server.ts` - `GET /api/projects/:projectId/documents/export`
+  신설(viewer 권한) - `{ items: [...] }`로 본문 포함 전체 문서 반환.
+  AI 채팅 컨텍스트에 그대로 노출되는 일반 `docs list`/`docs get`과
+  달리, 이 응답은 CLI/MCP 호출부가 로컬 파일로만 쓰고 그대로
+  echo하지 않는 걸 전제.
+- `cli/cache.ts`(신규) - `syncDocumentCache(projectId, dir)`(export
+  라우트 호출 → `dir/<trackingCode>.md` 전체 재작성 + `dir/index.md`
+  재생성 → `dir` 안의 `XX-XXXXXXXX.md` 패턴 파일 중 이번에 못 받은
+  것 삭제)/`cleanDocumentCache(dir)`(그 패턴 + `index.md`만 지움 -
+  디렉터리 자체나 무관 파일은 안 건드림, "다른 용도로 같이 쓰는
+  폴더를 잘못 가리켜도 안전"하게).
+- CLI `docs cache sync <projectId> [dir]`(기본 `docs`)/`docs cache
+  clean [dir]`, MCP `cache_sync`/`cache_clean` 추가(`cli/index.ts`/
+  `mcp/server.ts` 둘 다 `cli/cache.ts`를 그대로 공유 - `migrate.ts`
+  공유 패턴과 동일).
+- FEATURES.md/SKILL.md(+배포 템플릿)에 새 §25/절 추가, FT-27B3A587
+  신설.
+
+**검증**: `tsc --noEmit`(backend) 클린. `listDocumentsForExport()`는
+`listDocuments()`와 똑같은 검증된 경로(`listDocumentsFromIndexPaged`)
+라 별도 재검증 없이 재사용만 확인. `cli/cache.ts`의 로컬 파일 로직은
+가짜 export 응답을 돌려주는 순수 Node `http` 서버(포트 18760, CNW
+스택 없음)를 세워 `CNW_API_BASE`로 가리키게 하고 격리 스크래치 디렉터리에서
+직접 검증:
+- 1차 sync: 문서 2건 → `<trackingCode>.md` 2개 + `index.md` 생성,
+  파일 내용(제목 헤딩+HTML 주석 메타데이터+본문)이 설계한 포맷대로
+  나오는 것 확인.
+- 이후 디렉터리에 "고아" 파일(`QU-99999999.md`, 이번 응답엔 없는
+  트래킹코드)과 무관한 파일(`README.md`)을 수동으로 만들어두고 2차
+  sync 실행 - 고아 파일만 정확히 삭제되고 `README.md`는 안 건드리는
+  것 확인.
+- `cache clean` 실행 - 캐시 파일(`SP-*.md`/`DN-*.md`/`index.md`)만
+  지워지고 `README.md`는 남는 것 확인.
+
+**결론**: minicore가 직접 짜야 했던 export 스크립트가 이제 CNW의
+1급 명령(`docs cache sync`/`docs cache clean`, MCP 동일)이 됐다 -
+어떤 프로젝트든 같은 명령으로 작업 폴더에 문서를 파일로 내려받아
+GitHub 등에서 로그인 없이 읽거나 로컬 grep에 쓸 수 있고, git 커밋
+여부는 여전히 각 프로젝트의 선택(CNW가 강제하지 않음).

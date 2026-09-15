@@ -4,6 +4,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { apiCall, apiCallText, saveCredentials, loadCredentials, clearCredentials, credentialsPath, waitForMessageDirect, detectCurrentGitBranch } from "./apiclient.js";
 import { scanDirectory, applyManifest } from "./migrate.js";
+import { syncDocumentCache, cleanDocumentCache } from "./cache.js";
 
 const program = new Command();
 program.name("docs").description("claude-native-workflow v2 문서 워크플로우 CLI").version("0.1.0");
@@ -2615,5 +2616,17 @@ migrateCmd
   .command("apply <projectId> <manifestFile>")
   .description("검토·수정한 매니페스트를 실제로 반영")
   .action((projectId, manifestFile) => run(async () => printJson(await applyManifest(projectId, manifestFile))));
+
+const cacheCmd = program.command("cache").description("작업 폴더에 문서를 파일로 내려받아두는 로컬 캐시(#document-cache-export)");
+
+cacheCmd
+  .command("sync <projectId> [dir]")
+  .description("이 프로젝트의 전체 문서를 dir(기본 docs)에 trackingCode.md 파일+index.md로 내려쓰고, 삭제된 문서의 캐시 파일은 정리한다 - 정본은 항상 DB, 이 캐시는 읽기 전용 사본")
+  .action((projectId, dir) => run(async () => printJson(await syncDocumentCache(projectId, dir ?? "docs"))));
+
+cacheCmd
+  .command("clean [dir]")
+  .description("dir(기본 docs) 안에서 이 명령이 만든 것으로 알아볼 수 있는 캐시 파일만 지운다(디렉터리 자체나 무관한 파일은 안 건드림)")
+  .action((dir) => run(async () => printJson(cleanDocumentCache(dir ?? "docs"))));
 
 program.parse();

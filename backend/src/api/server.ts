@@ -95,6 +95,7 @@ import {
   listDocumentsPaged,
   type DocumentSortKey,
   listRecentDocuments,
+  listDocumentsForExport,
   searchProjectDocuments,
   searchProjectDocumentsPaged,
   saveDocumentBody,
@@ -1589,6 +1590,19 @@ app.get(
         req.query.statusCode as string | undefined,
       ),
     );
+  }),
+);
+
+// `docs cache sync`(로컬 문서 캐시 내보내기, `#document-cache-export`)
+// 전용 - body가 포함된 전체 문서를 한 번에 돌려준다(위 목록 라우트는
+// #document-list-lightweight로 본문을 뺌). 응답을 그대로 AI 컨텍스트에
+// 남기지 않고 로컬 파일로 쓰는 CLI/MCP 호출부에서만 쓰는 걸 전제한다.
+app.get(
+  "/api/projects/:projectId/documents/export",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    res.json({ items: await listDocumentsForExport(req.params.projectId) });
   }),
 );
 

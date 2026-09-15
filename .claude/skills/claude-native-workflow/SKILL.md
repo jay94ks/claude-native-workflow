@@ -703,6 +703,8 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 검색 동기화 큐 수동 드레인(관리자 전용) | `docs search-queue drain` | `search_queue_drain` |
 | 마이그레이션 후보 스캔 | `docs migrate scan <sourceDir>` | `migrate_scan` |
 | 마이그레이션 반영 | `docs migrate apply <projectId> <manifestFile>` | `migrate_apply` |
+| 문서 캐시 동기화(작업 폴더 로컬 사본) | `docs cache sync <projectId> [dir]` | `cache_sync` |
+| 문서 캐시 정리 | `docs cache clean [dir]` | `cache_clean` |
 | 칸반 분류 목록 | `docs kanban-columns <projectId>` | `kanban_columns` |
 | 칸반 카드 생성(+근거 문서) | `docs kanban-card-new <projectId> <columnId> <title> [--body <t>] [--refs <codes>]` | `kanban_card_new` |
 | 칸반 카드 목록 | `docs kanban-cards <projectId> [--column <columnId>]` | `kanban_cards` |
@@ -759,6 +761,29 @@ API 호출 없음). **이 출력을 바로 apply에 넘기지 않는다** - 먼�
 재생성하지 않고 `alreadyApplied`로만 보고된다 - 실패한 항목만 자동으로
 다시 시도된다. 다만 이미 반영된 항목의 링크는 재실행 시 다시 확인하지
 않는다(그 항목 자신이 재생성될 때만 링크도 다시 만들어짐).
+
+## 문서 캐시(작업 폴더 로컬 사본, 위 마이그레이션의 반대 방향)
+
+`docs cache sync <projectId> [dir]`(MCP `cache_sync`, `dir` 기본
+`docs`)는 이 프로젝트의 전체 문서를 DB에서 다시 받아 `dir/
+<trackingCode>.md` 파일로 덮어쓰고(제목 헤딩 + "손으로 편집하지
+마세요"/트래킹코드/상태/`updatedAt`을 알리는 HTML 주석 + 본문),
+`dir/index.md`(추적코드-제목-상태 표)도 새로 만든다 - **정본은 항상
+DB**, 이 캐시 파일들은 읽기 전용 사본이라 직접 고치지 않는다. 삭제됐거나
+다른 프로젝트로 옮겨진 문서의 캐시 파일은 이번에 못 받았으면 자동으로
+정리된다(별도 상태 파일 없이 `dir` 안의 `XX-XXXXXXXX.md` 패턴 파일
+목록 자체로 판단 - 매번 전체 재수신+덮어쓰기, 증분 diff 아님).
+`docs cache clean [dir]`(MCP `cache_clean`)은 `dir` 안에서 `sync`가
+만든 걸로 알아볼 수 있는 파일(그 패턴 + `index.md`)만 지운다 -
+디렉터리 자체나 무관한 파일은 안 건드린다.
+
+**용도**: GitHub 등에서 CNW 로그인 없이도 설계 문서를 읽을 수 있게
+하거나(공개 저장소를 관리하는 프로젝트가 채택), 로컬 grep/오프라인
+참고용으로 쓴다. **CNW는 이 캐시를 git에 커밋할지 강제하지 않는다** -
+"로컬 스크래치 사본은 git 커밋 금지"(규칙 2)의 예외로 커밋해 공개
+사본으로 쓸지는 그 프로젝트의 CLAUDE.md가 정한다(채택했다면 문서를
+바꿀 때마다 - 매번 즉시든 몇 건 모아서 배치로든 - `docs cache
+sync`를 다시 실행하고 커밋해야 캐시가 DB보다 뒤처지지 않는다).
 
 ## git 저장소 연결(3가지 방식) + 동기화(발행)
 

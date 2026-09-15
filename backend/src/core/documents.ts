@@ -221,6 +221,21 @@ export async function listDocuments(projectId: string, docTypeId?: string, statu
   return hits.map(toDocumentSummary);
 }
 
+/** `docs cache sync`(로컬 문서 캐시 내보내기, `#document-cache-export`)
+ * 전용 - listDocuments()와 똑같이 색인을 거치지만(본문 조회는 항상
+ * Meilisearch를 거친다는 기존 원칙 유지, line 142 주석 참고) body를
+ * 그대로 남긴다(toDocumentSummary로 벗기지 않음) - 캐시 파일 하나하나가
+ * 본문 자체이기 때문에 이번만은 DocumentSummary가 아니라 전체가
+ * 필요하다. 1000건 초과 시 에러로 거부하는 안전장치는 listDocuments와
+ * 동일하게 유지.*/
+export async function listDocumentsForExport(projectId: string): Promise<SearchableDocument[]> {
+  const { hits, total } = await listDocumentsFromIndexPaged({ projectId, limit: 1000, offset: 0 });
+  if (total > 1000) {
+    throw new Error(`이 프로젝트에는 문서가 ${total}건 있어 한 번에 캐시로 내보낼 수 없습니다(최대 1000건).`);
+  }
+  return hits;
+}
+
 /** 홈 대시보드 "최근 변경 문서" + 그 "더보기" 전체 목록 둘 다 이걸
  * 쓴다(limit만 다르게 호출) - 변경(updatedAt) 순 정렬. */
 export async function listRecentDocuments(projectId: string, limit = 5): Promise<SearchableDocument[]> {

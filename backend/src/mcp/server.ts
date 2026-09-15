@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { apiCall, apiCallText, loadCredentials, waitForMessageDirect, detectCurrentGitBranch } from "../cli/apiclient.js";
 import { scanDirectory, applyManifest } from "../cli/migrate.js";
+import { syncDocumentCache, cleanDocumentCache } from "../cli/cache.js";
 
 // cli/index.ts의 모든 명령을 1:1로 미러링한다("CLI/MCP 명령어 완전성"
 // 원칙 - 대칭이 깨지면 어느 한쪽에서만 되는 동작이 생긴다). CLI와 마찬가지로
@@ -2015,6 +2016,23 @@ async function main() {
     "검토·수정을 마친 로컬 매니페스트 파일(manifestFile)을 읽어 문서/링크를 실제로 생성한다.",
     { projectId: z.string(), manifestFile: z.string() },
     async (a) => applyManifest(String(a.projectId), String(a.manifestFile)),
+  );
+
+  // ---------------------------------------------------------------- 문서 캐시(작업 폴더 로컬 사본, #document-cache-export)
+
+  tool(
+    "cache_sync",
+    "문서 캐시 동기화",
+    "이 프로젝트의 전체 문서를 로컬 dir(기본 docs)에 trackingCode.md 파일 + index.md(전체 목록 표)로 내려쓰고, 삭제된 문서의 캐시 파일은 정리한다. 정본은 항상 CNW DB고 이 캐시는 읽기 전용 사본(GitHub 등에서 로그인 없이 문서를 읽거나 로컬 grep/오프라인 참고용) - 매번 전체를 다시 받아 덮어쓴다.",
+    { projectId: z.string(), dir: z.string().optional() },
+    async (a) => syncDocumentCache(String(a.projectId), String(a.dir ?? "docs")),
+  );
+  tool(
+    "cache_clean",
+    "문서 캐시 정리",
+    "로컬 dir(기본 docs) 안에서 cache_sync가 만든 것으로 알아볼 수 있는 캐시 파일(trackingCode.md 패턴 + index.md)만 지운다 - 디렉터리 자체나 무관한 파일은 건드리지 않는다.",
+    { dir: z.string().optional() },
+    async (a) => cleanDocumentCache(String(a.dir ?? "docs")),
   );
 
   const transport = new StdioServerTransport();

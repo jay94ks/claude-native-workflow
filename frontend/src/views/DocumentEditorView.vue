@@ -709,7 +709,7 @@ onMounted(load);
         <section class="source-links">
           <h2>연관 문서</h2>
           <p class="related-doc-group-label">이 문서가 링크한 문서</p>
-          <ul v-if="doc.linksOut.length > 0" class="source-list">
+          <ul v-if="doc.linksOut.length > 0" class="source-list scrollable">
             <li v-for="link in doc.linksOut" :key="link.trackingCode">
               <button type="button" class="source-path" @click="openRelatedDocument(link.trackingCode)">
                 {{ link.trackingCode }} · {{ link.title }}
@@ -718,7 +718,7 @@ onMounted(load);
           </ul>
           <p v-else class="muted">없음</p>
           <p class="related-doc-group-label">이 문서를 링크한 문서</p>
-          <ul v-if="doc.backlinks.length > 0" class="source-list">
+          <ul v-if="doc.backlinks.length > 0" class="source-list scrollable">
             <li v-for="link in doc.backlinks" :key="link.trackingCode">
               <button type="button" class="source-path" @click="openRelatedDocument(link.trackingCode)">
                 {{ link.trackingCode }} · {{ link.title }}
@@ -731,7 +731,7 @@ onMounted(load);
         <section class="source-links">
           <h2>연관된 소스 코드</h2>
           <p v-if="sourceLinksError" class="error">{{ sourceLinksError }}</p>
-          <ul v-if="sourceLinks.length > 0" class="source-list">
+          <ul v-if="sourceLinks.length > 0" class="source-list scrollable">
             <li v-for="link in sourceLinks" :key="link.id">
               <button type="button" class="source-path" @click="openSourceFile(link.filePath)">{{ link.filePath }}</button>
               <button v-if="doc.perm.write" type="button" class="remove-btn" @click="removeSourceLink(link.id)">해제</button>
@@ -1068,6 +1068,11 @@ button:disabled {
 }
 .source-list li:last-child {
   border-bottom: none;
+}
+.source-list.scrollable {
+  max-height: 280px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .source-path {
   background: none;
