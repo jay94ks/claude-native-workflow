@@ -2770,6 +2770,37 @@ searchQueueCmd
   .description("큐를 즉시 일괄 재처리 - 워커 주기를 기다리지 않고 바로 비우고 싶을 때")
   .action(() => run(async () => printJson(await apiCall("/api/admin/search-queue/drain", { method: "POST" }))));
 
+// ---------------------------------------------------------------- 사용 모니터링(#usage-monitoring)
+// "어떤 요청/명령/흐름이 자주 목격되는지" - 어떤 기능을 유지/보완/
+// 수정/추가할지 판단하는 용도. raw route가 아니라 CLI/MCP 명령
+// 이름으로 라벨링돼 나온다(매핑 없는 라우트는 raw로 그대로).
+
+const monitoringCmd = program.command("monitoring").description("사용 통계(명령 빈도 + 연이은 패턴) - 어떤 기능을 유지/보완/추가할지 판단하는 용도");
+
+monitoringCmd
+  .command("stats <projectId>")
+  .description("이 프로젝트의 명령 사용 빈도 + 연이은 패턴(A 다음 B) 통계")
+  .option("--limit <n>", "상위 몇 건까지(기본 20)")
+  .option("--all", "전체(제한 없이)")
+  .action((projectId, opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({ limit: opts.all ? "100000" : (opts.limit ?? "20") });
+      printJson(await apiCall(`/api/projects/${projectId}/monitoring/stats?${qs}`));
+    }),
+  );
+
+monitoringCmd
+  .command("stats-all")
+  .description("설치 전체 통계(모든 프로젝트 합산) - superAdmin 전용")
+  .option("--limit <n>", "상위 몇 건까지(기본 20)")
+  .option("--all", "전체(제한 없이)")
+  .action((opts) =>
+    run(async () => {
+      const qs = new URLSearchParams({ limit: opts.all ? "100000" : (opts.limit ?? "20") });
+      printJson(await apiCall(`/api/monitoring/stats?${qs}`));
+    }),
+  );
+
 // ---------------------------------------------------------------- 가이디드 마이그레이션 (Phase 6)
 
 const migrateCmd = program.command("migrate").description("파일 기반(concept 스타일) 프로젝트를 DB로 옮기기");

@@ -51,6 +51,7 @@ watch(() => props.id, load);
       <router-link :to="`/projects/${id}/relations`">관계도</router-link>
       <router-link :to="`/projects/${id}/changes`">변경 추적</router-link>
       <router-link :to="`/projects/${id}/kanban`">칸반 보드</router-link>
+      <router-link :to="`/projects/${id}/monitoring`">모니터링</router-link>
       <router-link :to="`/projects/${id}/settings`">설정</router-link>
       <router-link :to="`/projects/${id}/keys`">키 관리</router-link>
     </nav>

@@ -85,6 +85,12 @@ const router = createRouter({
           props: true,
           meta: { fullWidth: true },
         },
+        {
+          path: "monitoring",
+          name: "monitoring",
+          component: () => import("../views/MonitoringView.vue"),
+          props: true,
+        },
         { path: "settings", name: "project-settings", component: () => import("../views/ProjectSettingsView.vue"), props: true },
         { path: "keys", name: "project-keys", component: () => import("../views/ProjectKeysView.vue"), props: true },
       ],

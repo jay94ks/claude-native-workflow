@@ -740,6 +740,8 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 이 프로젝트의 현재 작업 현황 | `docs work list <projectId> [--minutes <n>]` | `work_list` |
 | 검색 동기화 큐 상태(Meilisearch 장애 시, 관리자 전용) | `docs search-queue status` | `search_queue_status` |
 | 검색 동기화 큐 수동 드레인(관리자 전용) | `docs search-queue drain` | `search_queue_drain` |
+| 사용 모니터링(이 프로젝트의 명령 빈도 + 연이은 패턴, CLI/MCP 명령 이름으로 라벨링) | `docs monitoring stats <projectId> [--limit <n>] [--all]` | `monitoring_stats` |
+| 사용 모니터링(설치 전체 합산, 관리자 전용) | `docs monitoring stats-all [--limit <n>] [--all]` | `monitoring_stats_all` |
 | 마이그레이션 후보 스캔 | `docs migrate scan <sourceDir>` | `migrate_scan` |
 | 마이그레이션 반영 | `docs migrate apply <projectId> <manifestFile>` | `migrate_apply` |
 | 문서 캐시 동기화(작업 폴더 로컬 사본) | `docs cache sync <projectId> [dir]` | `cache_sync` |

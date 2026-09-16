@@ -1529,3 +1529,49 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   이미 있으면 새로 만들지 않고 그 메시지에 이어붙인다(짧은 시간에
   의견이 여러 번 달려도 메시지가 하나로 누적됨). DC가 아닌 문서나
   계획 대상에는 영향 없음.
+
+## 28. 사용 모니터링
+
+- **목적** - "CNW로 어떤 요청/명령/흐름이 자주 목격되는지"를 보고
+  어떤 기능을 유지/보완/수정/추가할지 판단하는 용도(설계자 지시) -
+  SKILL.md 등 지침 문서와 나란히 두고 비교하기 좋게, raw HTTP
+  method+route가 아니라 **CLI/MCP 명령 이름**으로 라벨링돼 나온다
+  (`core/monitoringRegistry.ts`의 작은 정적 매핑 - 문서/계획/의견/
+  코멘트/질의/코드리뷰/메시지/칸반/검색 등 핵심 영역 우선, 전체
+  라우트를 다 담지는 않음 - 매핑이 없으면 raw `METHOD routePattern`
+  으로 그대로 표시돼 기능이 죽지 않는다).
+- **집계 방식 - 카운터, 시계열 아님** - 원자적 raw 로그가 아니라
+  "지금까지 누적 총건수" 스냅숏만 다룬다(설계자 확인) - 무한정
+  쌓이는 로그 테이블 정리/보존 정책이 필요 없다. 전역 Express
+  미들웨어 하나가 `res.on("finish")`로 응답이 끝난 뒤
+  `req.route?.path`(파라미터화된 경로 패턴)를 읽어 집계 - 각 라우트를
+  일일이 안 건드림. **미인증 요청(webhook, 로그인/가입 등)은 기록
+  안 함** - "AI/설계자가 CNW를 통해 쓰는 요청"이라는 취지.
+- **"연이은 패턴"(A 다음 B)** - 같은 세션(`X-Session-Id` 헤더, 없으면
+  userId)의 직전 호출이 5분 이내면 전이로 집계. **CLI가 새 프로세스를
+  띄울 때마다(`CNW_SESSION_NAME` 환경변수 없이) 세션 id가 매번
+  새로 생성돼, 그 사이엔 전이가 안 잡힌다** - 실제 Claude Code
+  세션처럼 그 환경변수가 세션 동안 고정돼 있는 정상적인 사용에서는
+  문제없이 이어진다(검증 중 이 차이를 실측으로 확인).
+- **주의: 트래킹코드 기반 단건 라우트는 설치 전체 집계에만 잡힌다** -
+  `GET /api/documents/:trackingCode`(`docs get`)처럼 경로에
+  `:projectId`가 없는 라우트는 프로젝트별 통계에는 안 잡히고 설치
+  전체(superAdmin) 통계에만 잡힌다(완벽한 매핑보다 미들웨어 하나로
+  무침습을 우선한 절충 - 설계 단계에서 이미 감수한 트레이드오프,
+  검증 중 재확인). `docs get`/`docs plan get`처럼 실제로 자주 쓰이는
+  명령이 프로젝트별 화면에는 안 보일 수 있다는 뜻 - 필요해지면
+  트래킹코드→projectId 역조회를 추가하는 걸 별도 계획으로 고려.
+- **조회 권한** - 프로젝트 멤버는 viewer 이상이면 자기 프로젝트
+  통계를(`GET /api/projects/:projectId/monitoring/stats`), superAdmin
+  은 설치 전체 통계도(`GET /api/monitoring/stats`, 그 외 계정은 403).
+- **CLI/MCP** - `docs monitoring stats <projectId> [--limit <n>]
+  [--all]` / `docs monitoring stats-all [--limit <n>] [--all]` ↔ MCP
+  `monitoring_stats`/`monitoring_stats_all`.
+- **웹 UI** - 프로젝트 탭 바에 "모니터링" - 명령 사용 빈도 표(명령/
+  MCP/출처/횟수/마지막 호출) + 연이은 패턴 표(이전 명령/다음 명령/
+  횟수), 조회만(편집 없음). superAdmin에게는 "설치 전체(모든 프로젝트
+  합산)" 체크박스가 추가로 보임.
+- **새 명령을 만들 때 `monitoringRegistry.ts`도 같이 갱신** - SKILL.md
+  갱신과 같은 라운드에(CLAUDE.md "CLAUDE.md/SKILL.md 동기화" 규칙
+  확장) - 안 해도 기능이 죽지는 않지만(raw route로 표시) 대시보드가
+  명령 이름으로 안 보이게 됨.

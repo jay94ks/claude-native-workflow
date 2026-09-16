@@ -9963,3 +9963,63 @@ pending`을 스스로 주기적으로 확인해야 했다. 설계자 요청: DC 
 상태 전이+메시지로 자동 안내되게 됐고, 이 과정에서 실제 행위자가
 없는 시스템 자동 알림 전체가 `notice`라는 일관된 표식을 갖게 됐다
 (기존에 부정확하게 "designer"로 붙어 있던 세 곳도 같이 바로잡음).
+
+## 사용 모니터링(명령 빈도 + 연이은 패턴) 신규
+
+**배경**: 설계자가 "CNW로 어떤 요청/명령/흐름이 자주 목격되는지"
+확인할 수 있는 모니터링 기능을 요청했다 - 명령 사용 패턴을 보고
+어떤 기능을 유지/보완/수정/변경/추가할지 판단하려는 목적이고,
+SKILL.md 같은 지침 문서와 나란히 두고 비교 분석하려 한다. 그래서
+화면에는 raw HTTP method+route가 아니라 CLI/MCP 명령 이름으로
+보여야 한다(설계자 확인 - 자동 불일치 탐지까지는 아니고, 명령 이름
+기반 대시보드면 충분). 로깅/통계 인프라가 지금까지 전혀 없어서
+완전히 새로 만들었다.
+
+**설계 결정**: 깊이는 횟수+"A 다음 B" 연이은 패턴까지, 시간축은
+시계열 아닌 현재 누적 총건수 스냅숏만, 조회 권한은 프로젝트 멤버는
+자기 프로젝트를(viewer 이상)/superAdmin은 설치 전체도, 표시는 raw
+route가 아니라 CLI/MCP 명령 이름(작은 매핑 레지스트리
+`core/monitoringRegistry.ts` - SKILL.md "명령 요약" 표의 핵심
+영역만 옮겨 적어 채움, 매핑 없으면 raw로 표시). 후킹은 전역 Express
+미들웨어 하나(`res.on("finish")`로 `req.route?.path` 읽음) - 각
+라우트를 일일이 안 건드림, 미인증 요청은 기록 안 함(전부 설계자
+확인).
+
+**구현 중 발견·수정한 실측 이슈**:
+- **Prisma가 nullable 필드를 복합 unique `where`에 못 받음** - 당초
+  `projectId: String?`(경로에 `:projectId` 없는 라우트는 null)로
+  설계했는데, `upsert()`의 복합 unique key에 `null`을 넘기면
+  `PrismaClientValidationError`가 실제로 발생(`docs get` 같은
+  라우트가 통계에서 조용히 빠지는 형태로 드러남 - 응답 자체는
+  정상이라 디버그 로그로 원인 확정). `projectId: String`(nullable
+  아님) + `""`를 "no project" sentinel로 쓰는 방식으로 해결.
+- **트래킹코드 기반 단건 라우트는 프로젝트별 집계에 안 잡힘** -
+  `:projectId`가 경로에 없는 라우트(`docs get` 등)는 sentinel로
+  설치 전체 집계에만 들어간다 - 설계 단계의 트레이드오프지만 실제로
+  자주 쓰는 명령이 프로젝트 화면엔 안 보일 수 있다는 걸 재확인,
+  FT에 명확히 기록(범위는 이번엔 안 넓힘).
+- **연이은 패턴은 세션 id가 호출 간에 유지돼야 잡힘** - CLI가
+  `CNW_SESSION_NAME` 없이 매번 새 프로세스로 호출되면 매 호출이
+  다른 "세션"으로 취급돼 전이가 하나도 안 잡힌다 - 그 환경변수를
+  고정하면(실제 Claude Code 세션과 동일 조건) 정확히 잡힘.
+
+**구현**: 스키마 3종에 `RequestStat`/`RequestTransitionStat` 신규,
+`core/monitoringRegistry.ts`(명령 이름 매핑)+`core/monitoring.ts`
+(카운터 upsert + 인메모리 세션별 직전 호출 추적으로 5분 이내 전이
+판단, 프로젝트별/설치 전체 조회), REST 2개(`GET .../monitoring/stats`
+viewer 이상, `GET /api/monitoring/stats` superAdmin 전용), CLI
+`monitoring stats/stats-all`, MCP `monitoring_stats`/
+`monitoring_stats_all`, 웹 `MonitoringView.vue`(프로젝트 탭 바에
+"모니터링" 추가, 명령 빈도/연이은 패턴 두 표, superAdmin에게만
+"설치 전체" 체크박스).
+
+**검증**: `C:\CNW-test`에서 CLI 반복 호출로 카운트/라벨 정확성
+확인, `CNW_SESSION_NAME` 고정 후 두 명령 연속 호출로 전이 확인,
+viewer/superAdmin 권한 게이팅 확인, 브라우저 "모니터링" 탭에서
+표가 뜨고(웹 세션 자신의 페이지 탐색 흐름까지 전이로 잡히는 것도
+확인) 콘솔 에러 없음 확인.
+
+**결론**: 설계자가 앞으로 SKILL.md 등 지침 문서와 실제 사용 패턴을
+나란히 비교하며 어떤 CNW 기능을 다음에 손볼지 판단할 수 있는
+도구가 생겼다 - 다만 트래킹코드 단건 라우트가 프로젝트별 화면에
+안 잡힌다는 한계는 명확히 알아두고 써야 한다.

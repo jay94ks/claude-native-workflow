@@ -161,6 +161,7 @@ import {
   type OpinionListFilter,
 } from "../core/opinions.js";
 import { getRefsStatus, getRefsStatusSourceProjectId } from "../core/refsStatus.js";
+import { recordRequest, getMonitoringStats } from "../core/monitoring.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates, listTemplateRevisions, listTemplateRevisionsPaged } from "../core/templates.js";
 import { MeiliSearchRequestError } from "meilisearch";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
@@ -354,6 +355,27 @@ function asyncRoute(
     fn(req as AuthedRequest, res).catch(next);
   };
 }
+
+// #usage-monitoring - "어떤 요청/명령이 자주 쓰이는지" 통계를 위한
+// 전역 후킹. 각 라우트를 일일이 안 건드리려고 res.on("finish")로
+// 응답이 끝난 뒤 req.route?.path(Express가 매칭한 파라미터화된 경로
+// 패턴)를 읽는다 - 이 미들웨어가 라우트 등록보다 먼저 걸려 있어도
+// req.route는 응답이 끝나는 시점엔 이미 채워져 있고, req.userId도
+// 같은 이유로(그 사이 authenticate가 채움) 안전하다. **req.userId가
+// 없으면(webhook, 로그인/가입 등 미인증 요청) 기록하지 않는다** -
+// "AI/설계자가 CNW를 통해 쓰는 요청"이라는 취지에 자연히 맞다.
+app.use((req: AuthedRequest, res: Response, next: NextFunction) => {
+  res.on("finish", () => {
+    const routePattern = req.route?.path;
+    if (typeof routePattern !== "string" || !req.userId) return;
+    const projectId = typeof req.params?.projectId === "string" ? req.params.projectId : null;
+    const origin = resolveMessageOrigin(req);
+    const sessionId = req.headers["x-session-id"];
+    const transitionKey = typeof sessionId === "string" && sessionId ? sessionId : req.userId;
+    recordRequest(req.method, routePattern, projectId, origin, transitionKey).catch(() => {});
+  });
+  next();
+});
 
 // ---------------------------------------------------------------- 인증
 
@@ -770,6 +792,19 @@ app.post(
   requireSuperAdmin,
   asyncRoute(async (_req, res) => {
     res.json(await drainSearchSyncQueue());
+  }),
+);
+
+// #usage-monitoring - 설치 전체 통계(superAdmin 전용, projectId
+// 구분 없이 모든 프로젝트 합산). 프로젝트별 통계는 아래
+// /api/projects/:projectId/monitoring/stats 참고(viewer 이상).
+app.get(
+  "/api/monitoring/stats",
+  authenticate,
+  requireSuperAdmin,
+  asyncRoute(async (req, res) => {
+    const limit = Number(req.query.limit ?? 20);
+    res.json(await getMonitoringStats(null, limit));
   }),
 );
 
@@ -1741,6 +1776,18 @@ app.get(
       ...docHits.map((h) => ({ kind: "document" as const, trackingCode: h.trackingCode, title: h.title, statusCode: h.statusCode })),
       ...planHits.map((p) => ({ kind: "plan" as const, trackingCode: p.trackingCode, title: p.title, statusCode: p.status })),
     ]);
+  }),
+);
+
+// #usage-monitoring - 이 프로젝트의 사용 통계(요청 패턴 빈도 + 연이은
+// 패턴). 설치 전체 통계는 /api/monitoring/stats(superAdmin 전용) 참고.
+app.get(
+  "/api/projects/:projectId/monitoring/stats",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const limit = Number(req.query.limit ?? 20);
+    res.json(await getMonitoringStats(req.params.projectId, limit));
   }),
 );
 

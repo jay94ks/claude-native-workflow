@@ -556,6 +556,44 @@ model Opinion {
   @@index([targetType, targetKey])
 }
 
+// ---------------------------------------------------------------- 사용 모니터링(요청 빈도 + 연이은 패턴)
+// 원자적 raw 로그가 아니라 카운터 - "지금까지 누적 총건수" 스냅숏만
+// 다룬다는 설계 결정과 일치(시계열 아님) - 무한정 쌓이는 로그 테이블
+// 정리/보존 정책이 필요 없다. projectId가 ""(sentinel, 경로에
+// :projectId가 없는 라우트)인 행은 설치 전체 집계에만 잡히고 프로젝트별
+// 집계에는 안 잡힌다 - 완벽한 매핑보다 미들웨어 하나로 무침습을 우선한
+// 절충. Project로의 FK 관계는 의도적으로 안 건다(단순 분석용 카운터라
+// 프로젝트가 삭제돼도 잔여 행이 남는 걸 감수 - cascade 정리 배선은
+// 과한 엔지니어링). projectId를 null이 아니라 빈 문자열로 두는 이유는
+// 아래 모델의 필드 주석 참고(Prisma 실측 제약).
+model RequestStat {
+  id           String   @id @default(cuid())
+  projectId    String // ""(sentinel) = "no project"(설치 전체 전용 라우트) - Prisma가 nullable 필드를 복합 unique where에 못 써서(PrismaClientValidationError 실측 확인) null 대신 빈 문자열 사용
+  routePattern String
+  method       String
+  origin       String // "designer" | "ai"
+  count        Int      @default(0)
+  lastSeenAt   DateTime @default(now())
+
+  @@unique([projectId, routePattern, method, origin])
+  @@index([projectId])
+}
+
+// "A 다음 B" 연이은 패턴 - 직전 호출이 뭐였는지는 DB에 안 남기고
+// 모듈 전역 인메모리 Map으로만 추적(재시작하면 리셋 - 스냅숏 성격과
+// 일치, 영속화 불필요). 여기 집계되는 건 그 추적으로 "전이"라고
+// 판단된 것의 최종 카운트뿐.
+model RequestTransitionStat {
+  id          String @id @default(cuid())
+  projectId   String // 위와 같은 이유로 ""(sentinel) = "no project"
+  fromPattern String
+  toPattern   String
+  count       Int    @default(0)
+
+  @@unique([projectId, fromPattern, toPattern])
+  @@index([projectId])
+}
+
 // ---------------------------------------------------------------- git push 훅 프롬프트 자동화
 
 model PushHookPrompt {
