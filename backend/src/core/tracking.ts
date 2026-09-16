@@ -81,6 +81,22 @@ export async function withTrackingCode<T extends { id: string }>(
   );
 }
 
+// frontend/src/components/TrackingCodeText.vue의 TRACKING_CODE_RE와
+// 같은 패턴 - 프론트는 렌더링 시 자동 링크에, 여기서는 refs-status
+// (SP-47F91774)가 본문에서 참조된 추적 코드를 찾을 때 쓴다.
+const TRACKING_CODE_RE = /\b[A-Z]{2}-[0-9A-F]{8}\b/g;
+
+/** 본문에서 추적 코드를 모두 찾아 중복 제거한 배열로 반환한다.
+ * excludeCode를 주면(보통 본문 소유자 자신의 코드) 그 코드는 뺀다
+ * (문서가 자기 자신의 트래킹 코드를 예시로 언급하는 경우 등). */
+export function extractTrackingCodes(body: string, excludeCode?: string): string[] {
+  const found = new Set<string>();
+  for (const m of body.matchAll(TRACKING_CODE_RE)) {
+    if (m[0] !== excludeCode) found.add(m[0]);
+  }
+  return [...found];
+}
+
 export interface TrackingCodeLookup {
   code: string;
   projectId: string;

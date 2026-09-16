@@ -454,6 +454,13 @@ Document/DocType/DocStatus 체계와 완전히 별도로 관리되는 독립
 `sort:"updatedAt:desc"`(MCP)를 준다. 웹 UI "계획" 탭은 이 기본값
 변경과 무관하게 여전히 최근 수정순이다.
 
+**`plan list`/`plan_list`는 기본으로 본문을 뺀 요약만 반환한다**
+(문서 목록과 같은 관례, SP-2D04DB3C) - 목록을 훑을 때마다 매 항목의
+전체 본문(가끔 긴 개정 이력 포함)까지 실려 오지 않게. 본문이 필요하면
+`--full`(CLI)/`full:true`(MCP)로 전체를 받거나 `plan get`으로 이어서
+조회한다. **`bulk-export`/`plan_export`는 영향 없음** - 내보내기는
+본문이 항상 필요해서 그대로 전체 반환.
+
 **작업 중 스스로 판단해 기록한다** - 코드 관계도/칸반 카드와 같은
 원칙: 설계자가 시켜서가 아니라, 지금 처리할 일이 아니라고 판단되면
 (범위 밖 발견, 후속 확인 필요, 설계자 결정이 필요한 더 큰 작업 등)
@@ -637,6 +644,8 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 문서 조회(본문+linksOut/backlinks) | `docs get <trackingCode>` | `document_get` |
 | 문서 목록 | `docs list <projectId>` | `document_list` |
 | 검색 | `docs search <projectId> <query> [--page <n>] [--count <n>] [--lines <n>] [--codes-only]` | `document_search` |
+| 문서+계획 통합 검색(kind/trackingCode/title/statusCode만, 본문 없음) | `docs search-all <projectId> <query>` | `search_all` |
+| 참조 추적 코드 상태 요약(문서/계획/칸반 카드 본문에 언급된 코드들의 현재 title/status) | `docs refs-status <trackingCode>` | `refs_status` |
 | 본문 갱신 | `docs save <trackingCode> <file>` | `document_save` |
 | 본문 부분 치환(str_replace) | `docs patch <trackingCode> <oldStr> <newStr> [--replace-all]` | `document_patch` |
 | 본문 일괄 부분 치환(로컬 JSON 파일) | `docs patch-batch <file>` | `document_patch_batch`(items 배열을 직접 전달) |
@@ -741,7 +750,7 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 칸반 카드 상세 | `docs kanban-card-get <trackingCode>` | `kanban_card_get` |
 | 칸반 카드 이동 | `docs kanban-card-move <trackingCode> <toColumnId> [--index <n>]` | `kanban_card_move` |
 | 계획 생성(+관련 문서/선행 조건) | `docs plan new <projectId> <title> --body <file> [--status <code>] [--refs <codes>] [--depends-on <codes>]` | `plan_new` |
-| 계획 목록(기본 정렬: 의존도 낮은 순) | `docs plan list <projectId> [--status <code>] [--q <text>] [--page <n>] [--count <n>] [--sort <key>]` | `plan_list` |
+| 계획 목록(기본 정렬: 의존도 낮은 순, 기본 본문 제외 - `--full`로 전체) | `docs plan list <projectId> [--status <code>] [--q <text>] [--page <n>] [--count <n>] [--sort <key>] [--full]` | `plan_list`(`full?: boolean`) |
 | 계획 상태 코드 목록(고정값) | `docs plan statuses` | `plan_statuses` |
 | 계획 상세 | `docs plan get <trackingCode>` | `plan_get` |
 | 계획 제목/본문 수정 | `docs plan set <trackingCode> [--title <t>] [--body <file>]` | `plan_set` |

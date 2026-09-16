@@ -1209,6 +1209,18 @@ program
   );
 
 program
+  .command("search-all <projectId> <query>")
+  .description("문서(전문 검색)+계획(부분 일치)을 한 번에 훑는다 - 각 항목 kind(document|plan)/trackingCode/title/statusCode만 반환(본문 없음, 필요하면 get/plan get으로 이어서 조회)")
+  .action((projectId, query) =>
+    run(async () => printJson(await apiCall(`/api/projects/${projectId}/search-all?${new URLSearchParams({ q: query })}`))),
+  );
+
+program
+  .command("refs-status <trackingCode>")
+  .description("이 문서/계획/칸반 카드 본문에 언급된 모든 추적 코드의 현재 title/status를 한 번에 모아 본다(\"완료된 계획이 아직 미구현으로 언급됨\" 같은 불일치 탐지용) - 대상을 못 찾은 코드는 title/status가 null로 표시됨")
+  .action((trackingCode) => run(async () => printJson(await apiCall(`/api/refs-status/${trackingCode}`))));
+
+program
   .command("save <trackingCode> <file>")
   .description("문서 본문을 덮어쓰고 버전 이력을 남긴다 - 응답에 본문은 없음(호출자가 이미 보낸 내용), updatedAt으로 저장 여부만 확인, 본문이 필요하면 get/read/grep으로 이어서 조회한다")
   .action((trackingCode, file) =>
@@ -1736,12 +1748,13 @@ planCmd
 
 planCmd
   .command("list <projectId>")
-  .description("이 프로젝트의 계획 목록 - 기본 정렬은 의존도(선행 조건 개수)가 가장 낮은 순(지금 바로 시작할 수 있는 계획이 위로)")
+  .description("이 프로젝트의 계획 목록(기본 본문 제외 - 문서 목록과 같은 관례, --full로 전체) - 기본 정렬은 의존도(선행 조건 개수)가 가장 낮은 순(지금 바로 시작할 수 있는 계획이 위로)")
   .option("--status <code>", "상태로 제한")
   .option("--q <text>", "제목/본문 검색어")
   .option("--page <n>", "페이지 번호(1부터, 기본 1)")
   .option("--count <n>", "페이지당 개수(기본 20)")
   .option("--sort <key>", "dependencyCount:asc(기본) 또는 updatedAt:desc")
+  .option("--full", "본문까지 포함(기본은 요약만 - 본문이 필요하면 이 플래그 또는 plan get으로 이어서 조회)")
   .action((projectId, opts) =>
     run(async () => {
       const qs = new URLSearchParams({
@@ -1750,6 +1763,7 @@ planCmd
         page: opts.page ?? "1",
         pageSize: opts.count ?? "20",
         ...(opts.sort ? { sort: opts.sort } : {}),
+        ...(opts.full ? { full: "true" } : {}),
       });
       printJson(await apiCall(`/api/projects/${projectId}/plans?${qs}`));
     }),

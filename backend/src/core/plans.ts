@@ -89,6 +89,17 @@ function toPlanDetail(row: PlanRow): PlanDetail {
   };
 }
 
+// listDocuments()의 DocumentSummary(본문 제외)와 같은 이유(SP-2D04DB3C) -
+// 목록을 훑을 때 매 항목의 전체 본문(가끔 매우 긴 개정 이력 포함)까지
+// 실려 오면 페이지를 여러 번 넘기는 스캔에서 컨텍스트 소모가 크다.
+// 본문이 필요하면 `plan get`으로 이어서 조회한다.
+export type PlanSummary = Omit<PlanDetail, "body">;
+
+function toPlanSummary(row: PlanRow): PlanSummary {
+  const { body: _body, ...rest } = toPlanDetail(row);
+  return rest;
+}
+
 async function assertDocumentsExist(refTrackingCodes: string[]): Promise<void> {
   const db = getDb();
   for (const ref of refTrackingCodes) {
@@ -191,10 +202,23 @@ export async function getPlanProjectId(trackingCode: string): Promise<string | n
   return row?.projectId ?? null;
 }
 
+// includeBody 기본값 false(요약) - SP-2D04DB3C "안 A": 문서 목록
+// (listDocuments)과 일관되게 목록은 본문 제외가 기본, 필요하면
+// includeBody:true(CLI --full/MCP full)로 전체를 받는다. 오버로드로
+// 반환 타입을 옵션 값에 맞춰 좁힌다(둘 다 true/false 리터럴이 아닌
+// 일반 boolean으로 호출하면 아래 유니온 시그니처로 떨어짐).
 export async function listPlansPaged(
   projectId: string,
-  opts: { status?: string; q?: string; page: number; pageSize: number; sort?: PlanSortKey },
-): Promise<Page<PlanDetail>> {
+  opts: { status?: string; q?: string; page: number; pageSize: number; sort?: PlanSortKey; includeBody: true },
+): Promise<Page<PlanDetail>>;
+export async function listPlansPaged(
+  projectId: string,
+  opts: { status?: string; q?: string; page: number; pageSize: number; sort?: PlanSortKey; includeBody?: false },
+): Promise<Page<PlanSummary>>;
+export async function listPlansPaged(
+  projectId: string,
+  opts: { status?: string; q?: string; page: number; pageSize: number; sort?: PlanSortKey; includeBody?: boolean },
+): Promise<Page<PlanDetail> | Page<PlanSummary>> {
   const db = getDb();
   const q = opts.q?.trim();
   const where = {
@@ -209,7 +233,7 @@ export async function listPlansPaged(
     opts.page,
     opts.pageSize,
   );
-  return { ...result, items: result.items.map(toPlanDetail) };
+  return { ...result, items: opts.includeBody ? result.items.map(toPlanDetail) : result.items.map(toPlanSummary) };
 }
 
 /** listPlansPaged와 달리 페이지 없이 조건에 맞는 계획 전체를 한 번에

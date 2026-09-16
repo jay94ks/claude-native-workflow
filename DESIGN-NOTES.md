@@ -9862,3 +9862,61 @@ CNW 코드 결함이 아니라 이 환경에서 curl로 직접 테스트할 때�
 채널이 나란히 생겼다 - `CodeReviewComment`까지 포함하면 이 시스템
 전반에 "AI가 참고해야 하는 채널"이라는 한 가지 패턴이 세 곳(코드
 리뷰/문서/계획)에 일관되게 자리잡았다.
+
+## 문서 검토 세션 피드백 3건 반영 - 계획 목록 경량화/통합 검색/참조 상태 요약
+
+**배경**: minicore-f8(CNW 파이프라인 문서 검토 세션)이 이번 세션에서
+겪은 병목 3건을 전달해왔다: (1) "완료된 계획이 참조 문서에 아직
+미구현으로 남아있는" 패턴 탐지에 stale 항목 절반 이상이 해당됐는데
+본문에 언급된 추적 코드를 일일이 다시 조회해 대조해야 함(가장 큰
+병목), (2) 문서 검색(`docs search`)과 계획 검색(`plan list --q`)이
+따로라 특정 키워드를 언급하는 "모든 곳"을 찾으려면 두 번 호출해야
+함, (3) `plan list(status=completed)` 74건을 페이지당 8개씩 순회하며
+매번 전체 본문(긴 개정 이력 포함)이 실려 와 컨텍스트 소모가 컸음.
+설계자 요청으로 세 가지를 각각 SP 문서로 설계안을 만들어 승인받았다
+(SP-2D04DB3C/SP-4187EBE7/SP-47F91774).
+
+**구현**:
+- **계획 목록 경량화(안 A, SP-2D04DB3C)** - `core/plans.ts`에
+  `PlanSummary`(`PlanDetail`에서 `body` 제외) 추가, `listPlansPaged`
+  가 기본으로 이걸 반환(오버로드로 `includeBody:true`면 기존
+  `PlanDetail` 반환). REST `GET .../plans?full=true`, CLI `plan list
+  --full`, MCP `plan_list`에 `full?: boolean`. **`listAllPlans`
+  (`bulk-export`/`plan_export`가 씀)는 그대로 뒀다** - SP 문서엔
+  bulk-export도 함께 경량화하는 것처럼 적었지만, 내보내기 본연의
+  목적(백업/재이전)상 본문이 항상 필요해서 실제로는 그 함수만 원래
+  동작 유지 - 구현 중 바로잡은 지점.
+- **통합 검색(SP-4187EBE7)** - 계획용 Meilisearch 인덱스는 새로 안
+  만들고(계획은 프로젝트당 보통 소수), `GET /api/projects/:id/
+  search-all`에서 기존 `searchProjectDocuments`(Meilisearch)와
+  `listAllPlans({q})`(Prisma 부분 일치)를 `Promise.all`로 동시 호출해
+  `{kind, trackingCode, title, statusCode}`만 뽑아 합친 배열로 반환
+  (본문은 안 줌 - SP 문서는 "합쳐 반환"이라고만 적었는데, 구현하면서
+  기존 `docs search`처럼 무겁게 두지 않고 처음부터 경량 응답으로
+  설계). CLI `docs search-all`, MCP `search_all`. 기존 `docs search`
+  (문서 전용)는 그대로 유지.
+- **참조 추적 코드 상태 요약(SP-47F91774)** - `core/tracking.ts`에
+  `extractTrackingCodes(body, excludeCode?)`(프론트
+  `TrackingCodeText.vue`의 정규식을 서버로 옮김) 추가. 새 파일
+  `core/refsStatus.ts`: source(문서/계획/칸반 카드, 각 테이블의 전역
+  unique trackingCode를 순서대로 시도해 찾음 - `questions.ts`의
+  `resolveTargetByTrackingCode`와 같은 이유로 REST 라우트가 projectId
+  를 미리 몰라도 됨)의 본문에서 코드를 모두 찾아, 각각을
+  `lookupTrackingCode`(중앙 레지스트리)로 타입 판별 후 그 타입의
+  기존 조회 함수로 title/status만 병렬 조회. 대상을 못 찾은 코드는
+  `which`/`title`/`status`가 `null`로 조용히 채워지고 나머지는 계속
+  진행. REST `GET /api/refs-status/:trackingCode`, CLI `docs
+  refs-status <trackingCode>`, MCP `refs_status`.
+
+**검증**: `C:\CNW-test`에서 (1) `plan list` 기본/`--full` 응답의
+필드 차이 확인, (2) 문서+계획에 같은 키워드를 넣고 `search-all`이
+둘 다 한 번에 반환하는지 확인, (3) 계획을 `completed`로 바꾼 뒤 그
+계획을 "아직 미구현"이라고 언급하는 문서를 만들어 `refs-status`가
+실제로 그 불일치(문서의 서술과 다른 실제 상태 `completed`)를 그대로
+드러내는지 확인, 존재하지 않는 코드를 언급했을 때 `null`로 조용히
+처리되고 나머지 조회가 막히지 않는지도 확인 - 전부 정상.
+
+**결론**: 세 가지 다 리뷰/검토 작업의 실제 병목을 줄이는 도구다 -
+특히 refs-status는 "문서가 서술하는 상태 vs 실제 상태"의 불일치를
+발견하는 데 걸리는 시간을 코드 하나씩 대조하던 것에서 한 번의 호출로
+줄였다.

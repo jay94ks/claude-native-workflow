@@ -819,6 +819,20 @@ async function main() {
       return call(`/api/projects/${a.projectId}/search?${qs}`);
     },
   );
+  tool(
+    "search_all",
+    "문서+계획 통합 검색",
+    "문서(Meilisearch 전문 검색)와 계획(부분 일치)을 한 번에 훑는다 - 각 항목 kind(document|plan)/trackingCode/title/statusCode만 반환(본문 없음, 필요하면 document_get/plan_get으로 이어서 조회). 특정 키워드/추적코드를 언급하는 곳을 문서/계획 양쪽에서 찾을 때 document_search+plan_list를 따로 두 번 안 불러도 된다.",
+    { projectId: z.string(), query: z.string() },
+    async (a) => call(`/api/projects/${a.projectId}/search-all?${new URLSearchParams({ q: a.query as string })}`),
+  );
+  tool(
+    "refs_status",
+    "참조 추적 코드 상태 요약",
+    "이 문서/계획/칸반 카드 본문에 언급된 모든 추적 코드의 현재 title/status를 한 번에 모아 본다(\"완료된 계획이 아직 미구현으로 언급됨\" 같은 불일치를 매번 하나씩 다시 조회하지 않고 찾을 때) - 대상을 못 찾은 코드는 title/status가 null.",
+    { trackingCode: z.string() },
+    async (a) => call(`/api/refs-status/${a.trackingCode}`),
+  );
   tool("document_save", "문서 본문 갱신", "문서 본문을 덮어쓰고 버전 이력을 남긴다. 응답에 본문은 없음(호출자가 이미 보낸 내용), updatedAt으로 저장 여부만 확인 - 본문이 필요하면 document_get/document_read/document_grep으로 이어서 조회.", { trackingCode: z.string(), body: z.string() }, async (a) =>
     call(`/api/documents/${a.trackingCode}`, { method: "PUT", body: JSON.stringify({ body: a.body }) }),
   );
@@ -1257,7 +1271,7 @@ async function main() {
   tool(
     "plan_list",
     "계획 목록",
-    "이 프로젝트의 계획 목록(페이지네이션) - status/q로 제한 가능. 기본 정렬은 의존도(선행 조건 개수)가 가장 낮은 순(지금 바로 시작할 수 있는 계획이 위로) - sort:\"updatedAt:desc\"로 예전 방식(최근 수정순)으로 바꿀 수 있다.",
+    "이 프로젝트의 계획 목록(페이지네이션, 기본 본문 제외 요약만 - full:true로 전체, 본문이 필요하면 plan_get으로 이어서 조회해도 됨) - status/q로 제한 가능. 기본 정렬은 의존도(선행 조건 개수)가 가장 낮은 순(지금 바로 시작할 수 있는 계획이 위로) - sort:\"updatedAt:desc\"로 예전 방식(최근 수정순)으로 바꿀 수 있다.",
     {
       projectId: z.string(),
       status: z.string().optional(),
@@ -1265,6 +1279,7 @@ async function main() {
       page: z.number().optional(),
       pageSize: z.number().optional(),
       sort: z.enum(["dependencyCount:asc", "updatedAt:desc"]).optional(),
+      full: z.boolean().optional(),
     },
     async (a) => {
       const qs = new URLSearchParams({
@@ -1273,6 +1288,7 @@ async function main() {
         page: String(a.page ?? 1),
         pageSize: String(a.pageSize ?? 20),
         ...(a.sort ? { sort: String(a.sort) } : {}),
+        ...(a.full ? { full: "true" } : {}),
       });
       return call(`/api/projects/${a.projectId}/plans?${qs}`);
     },

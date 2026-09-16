@@ -636,6 +636,23 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   `--codes-only`(본문/메타 없이 trackingCode 배열만 반환, 페이지네이션
   응답이면 `items`만 문자열 배열로 축소)로 필요한 만큼만 받을 수
   있다. CLI/MCP 둘 다 지원.
+- **문서+계획 통합 검색(`docs search-all`/`search_all`)** - 특정
+  키워드/추적코드를 언급하는 "모든 곳"을 찾을 때 문서(Meilisearch
+  전문 검색)와 계획(제목/본문 부분 일치)을 한 번의 호출로 같이 훑는다
+  (계획은 프로젝트당 보통 소수라 별도 Meilisearch 인덱스는 안 만듦).
+  각 항목은 `kind`("document" | "plan")/`trackingCode`/`title`/
+  `statusCode`만 반환(본문 없음 - 필요하면 `docs get`/`docs plan get`
+  으로 이어서 조회). 기존 `docs search`(문서 전용)는 그대로 유지.
+- **참조 추적 코드 상태 요약(`docs refs-status <trackingCode>`/
+  `refs_status`)** - 문서/계획/칸반 카드 본문에 언급된 모든 추적
+  코드(`XX-XXXXXXXX`)를 정규식으로 찾아, 각각의 현재 title/status를
+  한 번에 모아 보여준다("완료된 계획이 참조 문서에 아직 미구현으로
+  남아있는" 불일치를 코드 하나씩 다시 조회하지 않고 찾을 때 씀).
+  대상을 못 찾은 코드(삭제됨 등)는 조용히 `which`/`title`/`status`가
+  `null`로 표시되고 나머지 조회는 계속 진행된다. 문서/계획/칸반
+  카드가 전부 `withTrackingCode()`로 등록되는 중앙 레지스트리
+  (`core/tracking.ts`)를 그대로 재사용해 새 매핑 없이 어떤 프리픽스든
+  판별한다.
 
 ## 13. git 저장소 연동 + 동기화(제안/발행) + 브랜치/PR 관리
 
@@ -1263,6 +1280,13 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   예전 방식(최근 수정순)으로 되돌릴 수 있다. **웹 UI "계획" 탭은
   여전히 최근 수정순 그대로**(`sort=updatedAt:desc`를 명시적으로
   넘김) - 이 기본값 변경은 CLI/MCP에만 적용된다.
+- **목록(`docs plan list`/`plan_list`)은 기본으로 본문을 뺀 요약만
+  반환**(SP-2D04DB3C, 문서 목록(§6)과 같은 관례로 통일) -
+  `--full`(CLI)/`full:true`(MCP)를 주면 예전처럼 본문 포함 전체를
+  받는다. 본문이 필요하면 이 플래그 대신 `docs plan get`으로 이어서
+  조회해도 된다. **`bulk-export`/`plan_export`는 영향 없음** - 내보내기
+  본연의 목적(백업/재이전)상 본문이 항상 필요하므로 그대로 전체
+  반환.
 - **bulk 명령**(웹 UI 없음, CLI/MCP 전용) - `plan bulk-export
   <projectId> <outFile> [--status] [--q]`(조건에 맞는 전체를 페이지
   상한 없이 로컬 JSON 파일로, MCP `plan_export`는 파일 저장 없이

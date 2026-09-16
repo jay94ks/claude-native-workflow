@@ -160,6 +160,7 @@ import {
   getOpinionProjectId,
   type OpinionListFilter,
 } from "../core/opinions.js";
+import { getRefsStatus, getRefsStatusSourceProjectId } from "../core/refsStatus.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates, listTemplateRevisions, listTemplateRevisionsPaged } from "../core/templates.js";
 import { MeiliSearchRequestError } from "meilisearch";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
@@ -1718,6 +1719,48 @@ app.get(
   }),
 );
 
+// SP-4187EBE7 - 문서(Meilisearch 전문 검색)와 계획(Prisma 부분 일치,
+// #plan-list-dependency-sort 주석대로 계획은 프로젝트당 보통 소수라
+// 별도 Meilisearch 인덱스를 새로 만들 만큼 크지 않음)를 한 번에
+// 훑고 싶을 때 쓰는 메타 검색 - 기존 /search(문서 전용)는 그대로
+// 두고(이미 익숙하게 쓰는 세션들의 기본 응답 모양을 안 바꿈) 새
+// 엔드포인트만 추가한다. 정렬은 종류별로 묶어서(문서 먼저, Meilisearch
+// 관련도 순 그대로 → 계획 이어붙임) - 서로 다른 검색 엔진의 점수를
+// 하나로 인터리빙하는 건 범위 밖.
+app.get(
+  "/api/projects/:projectId/search-all",
+  authenticate,
+  requireProjectRole("viewer"),
+  asyncRoute(async (req, res) => {
+    const q = (req.query.q as string | undefined) ?? "";
+    const [docHits, planHits] = await Promise.all([
+      searchProjectDocuments(req.params.projectId, q),
+      listAllPlans(req.params.projectId, { q }),
+    ]);
+    res.json([
+      ...docHits.map((h) => ({ kind: "document" as const, trackingCode: h.trackingCode, title: h.title, statusCode: h.statusCode })),
+      ...planHits.map((p) => ({ kind: "plan" as const, trackingCode: p.trackingCode, title: p.title, statusCode: p.status })),
+    ]);
+  }),
+);
+
+// SP-47F91774 - source(문서/계획/칸반 카드) 본문에 언급된 모든 추적
+// 코드의 현재 title/status를 한 번에 모아 본다("완료된 계획이 참조
+// 문서에 반영 안 됨" 패턴을 눈으로 하나씩 대조하던 걸 대체). 프로젝트
+// 경로 파라미터가 없다 - questions.ts의 resolveTargetByTrackingCode와
+// 같은 이유로 trackingCode만으로 대상과 그 프로젝트를 알아낸다.
+app.get(
+  "/api/refs-status/:trackingCode",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getRefsStatusSourceProjectId(req.params.trackingCode);
+    if (!projectId) { res.status(404).json({ error: "대상을 찾을 수 없습니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
+    res.json(await getRefsStatus(req.params.trackingCode));
+  }),
+);
+
 // 사이드바 다중 스코프 검색(웹 전용) - CLI/MCP는 위 단일 프로젝트
 // /search를 그대로 쓰고, 이 라우트는 AI가 아니라 설계자의 브라우징
 // 편의 기능이라 완전성 원칙 대상이 아니다. scope가 "team"인데 앵커
@@ -2995,15 +3038,15 @@ app.get(
   asyncRoute(async (req, res) => {
     const status = req.query.status as string | undefined;
     const q = req.query.q as string | undefined;
-    res.json(
-      await listPlansPaged(req.params.projectId, {
-        status,
-        q,
-        page: Number(req.query.page ?? 1),
-        pageSize: Number(req.query.pageSize ?? 20),
-        sort: req.query.sort as PlanSortKey | undefined,
-      }),
-    );
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
+    const sort = req.query.sort as PlanSortKey | undefined;
+    // 기본은 본문 제외(요약, SP-2D04DB3C) - ?full=true면 기존처럼 전체.
+    if (req.query.full === "true") {
+      res.json(await listPlansPaged(req.params.projectId, { status, q, page, pageSize, sort, includeBody: true }));
+    } else {
+      res.json(await listPlansPaged(req.params.projectId, { status, q, page, pageSize, sort }));
+    }
   }),
 );
 
