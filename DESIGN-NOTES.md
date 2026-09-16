@@ -10172,3 +10172,63 @@ webhook으로 staleness가 서고 다음 조회가 정확히 최신을 반영함
 "영구 상태를 읽기와 쓰기가 동시에 건드릴 수 있다"는, 매번 새로
 클론하던 이전 설계에는 없던 새로운 동시성 버그 클래스를 실제로
 겪고 고쳤다는 점이 이번 라운드의 핵심 교훈이다.
+
+## docs git publish를 Gitea push-mirror 대신 직접 es-git push로 전환
+
+앞선 두 라운드에서 `docs git commit`/git 읽기 경로를 es-git 기반
+영구 로컬 클론으로 옮겼다. `docs git publish`만 아직 Gitea의 "push
+mirror"(비동기, 폴링 확인)에 의존 중이었는데, 설계자 지시("publish도
+es-git으로 마저 옮겨볼까")로 전환했다. 핵심 발견: 기존 발행 전 사전
+확인(pull-mirror 새로고침 + `commitExistsInRepo`)은 **Gitea의 push
+mirror가 항상 강제 동기화하기 때문에 필요했던 우회책**(BR-3CAF6DBC
+실제 사고 - 외부가 독자적으로 앞서갔는데 강제 push해 외부 커밋이
+사라짐)이었다 - es-git으로 직접 일반(비강제) push하면 fast-forward가
+아닐 때 git 자신이 서버 사이드에서 원자적으로 거부하므로, 그 사전
+확인 왕복(최대 20초 폴링 포함) 자체를 통째로 없앨 수 있었다.
+
+**구현**: `core/gitExec.ts`에 `pushToExternal()` 추가 - work 영구
+클론의 "origin" 옆에 "external"이라는 두 번째 remote로 같은 로컬
+히스토리를 직접 push(별도 클론 없음). 일반(비강제) push, 실패를
+`isNonFastForward()`로 "diverged"/"failed"로 분류해 결과 타입으로
+반환. es-git Remote 객체엔 URL 변경/삭제 메서드가 없어(실측 확인)
+`repo.config().setString("remote.external.url", ...)`로 config를
+직접 고쳐써 토큰 최신화(`git remote set-url`과 동치) - Gitea REST의
+PATCH 미지원 때문에 매번 지우고 새로 만들던 예전 방식이 필요 없어짐.
+`core/gitRepos.ts`의 `publishToExternalRepo()`는 사전 확인 전체를
+제거하고 push 결과로 대체 - `PublishResult`/`GitSyncQueueEntry`
+계약은 그대로 유지(CLI/MCP/웹 무변경). 죽은 코드(`configurePushMirror`/
+`deletePushMirror`/`getPushMirrorStatus`/`triggerPushMirrorSync`/
+`waitForPushMirrorOutcome`) 제거 - pull-mirror 방향 함수들은
+sync-status가 계속 써서 유지.
+
+**구현 중 발견·수정한 실측 버그 2건**:
+- **영구 클론이 얕은(depth:1) 클론이라 완전히 새로운 외부 저장소로
+  push하면 조용히 실패**(에러 없이!) - Gitea가 HTTP 200을 주고
+  pre-receive 훅도 통과하는데 실제로는 오브젝트/ref를 하나도 못
+  받는 걸 실측으로 발견(대상 저장소가 완전히 비어있음 - 얕은 경계
+  커밋이 push 협상에 필요한 전체 그래프를 못 보내는 것으로 추정).
+  가장 위험한 종류의 버그(성공처럼 보이는 실패) - `pushToExternal()`
+  이 로컬 클론이 얕은지(`.git/shallow` 존재) 감지해 필요할 때만
+  전체 히스토리로 깊게 만든 뒤(재fetch) push하도록 수정, 읽기/쓰기
+  hot path의 기존 얕은 클론 동작은 안 건드림.
+- **`isNonFastForward()`가 실제 es-git 에러 문구를 못 잡던 버그** -
+  "fast-forward"(하이픈 포함) 매칭이 실제 libgit2 에러의
+  "code=NotFastForward"(하이픈 없음)를 놓쳐 진짜 divergence 거부를
+  "diverged"가 아니라 "failed"로 잘못 분류할 뻔함(실제 divergence
+  재현 테스트로 발견) - "fastforward"/"not present locally" 문구도
+  같이 잡도록 수정, `docs git commit`의 충돌 재시도 로직도 같이 씀.
+
+**검증**: 실제 GitHub/GitLab 없이 같은 Gitea 인스턴스 안에 "외부"
+역할을 할 두 번째 저장소를 만들어 검증(es-git push는 호스트 무관).
+정상 발행이 전체 파일까지 정확히 반영됨을 확인, **BR-3CAF6DBC를
+직접 재현**(외부에 CNW를 거치지 않은 독립 커밋을 만든 뒤 재발행
+시도) - non-fast-forward로 정확히 거부되고 그 외부 전용 커밋이
+실제로 안 사라지고 그대로 남아있음을 `git log`로 확인, 같은 사고가
+이제 구조적으로 불가능함을 실측 증명.
+
+**결론**: publish도 이제 Gitea의 비동기 push-mirror/폴링을 거치지
+않고 직접 git push하며, 안전성은 사전 확인이 아니라 git 자신의
+fast-forward 강제(더 안전, 경쟁 조건 없음)로 보장한다 - 다만 이
+라운드에서 얕은 클론의 push 실패가 "에러 없이 조용히 실패"하는
+형태로 나타난다는 걸 실측으로 처음 확인했다는 점을 향후 이 영구
+클론 인프라를 다른 용도로 확장할 때도 기억해둘 필요가 있다.

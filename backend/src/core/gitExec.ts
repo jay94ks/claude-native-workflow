@@ -67,8 +67,8 @@ function remoteUrlFor(apiBaseUrl: string, target: GiteaRepoRef): string {
 }
 
 /** Gitea PAT을 URL에 basic-auth 자격증명으로 박아넣는다(username은
- * 아무 값이나 - Gitea는 password 자리의 PAT만 본다, 기존
- * configurePushMirror()로 이미 확인된 관례) - es-git의
+ * 아무 값이나 - Gitea는 password 자리의 PAT만 본다, #git-publish-
+ * direct-push 이전 push mirror 코드로 이미 확인된 관례) - es-git의
  * `fetch.credential`/`clone options.fetch.credential`을 시도해봤지만
  * 실제로는 clone 단계에서 "remote authentication required but no
  * callback set"로 실패하는 걸 실측 확인(es-git 0.7.0의 실제 동작,
@@ -94,7 +94,19 @@ function errorMessage(err: unknown): string {
  * 그 외 실패(인증/네트워크/디스크 등)는 재시도하지 않고 즉시 전파. */
 function isNonFastForward(err: unknown): boolean {
   const msg = errorMessage(err).toLowerCase();
-  return msg.includes("non-fast-forward") || msg.includes("fast-forward") || msg.includes("rejected") || msg.includes("stale info");
+  // 실측으로 실제 es-git 에러 문구 확인(#git-publish-direct-push 검증
+  // 중 발견 - 원래 있던 "fast-forward"(하이픈 포함) 매칭이 실제 libgit2
+  // 에러의 "code=NotFastForward"(하이픈 없는 한 단어)를 못 잡아 진짜
+  // divergence 거부를 "diverged"가 아니라 "failed"로 잘못 분류하던
+  // 버그) - "commits that are not present locally"도 같이 잡는다.
+  return (
+    msg.includes("non-fast-forward") ||
+    msg.includes("fast-forward") ||
+    msg.includes("fastforward") ||
+    msg.includes("rejected") ||
+    msg.includes("stale info") ||
+    msg.includes("not present locally")
+  );
 }
 
 /** 변경할 파일 경로가 로컬 클론 루트 밖을 가리키지 않는지 심층 방어로
@@ -407,6 +419,81 @@ export async function applyChanges(
   checkEmpty: () => Promise<boolean>,
 ): Promise<ApplyResult> {
   return withWriteLock(projectId, () => attempt(projectId, apiBaseUrl, target, changes, message, identity, checkEmpty, 1));
+}
+
+export type PushExternalResult =
+  | { status: "pushed"; commitSha: string }
+  | { status: "diverged"; message: string }
+  | { status: "failed"; message: string };
+
+/** work(내부 Gitea) 영구 클론에 "external"이라는 두 번째 remote를
+ * 추가/재사용해 외부(GitHub/GitLab) 저장소로 직접 push한다
+ * (#git-publish-direct-push) - 별도 클론 없이 이미 있는 로컬 커밋
+ * 히스토리를 그대로 쓴다. **일반(비강제) push** - Gitea의 push
+ * mirror처럼 항상 강제 동기화하지 않으므로, fast-forward가 아니면
+ * git 자신이 서버 사이드에서 원자적으로 거부한다(BR-3CAF6DBC가 막던
+ * "외부가 독자적으로 앞서간 상태를 감지 못하고 강제 push해 외부
+ * 커밋이 사라지는" 사고가 이제 구조적으로 불가능 - 예전의 사전 확인
+ * 왕복이 이 안전성을 흉내내려던 우회책이었을 뿐).
+ *
+ * es-git의 Remote 객체에는 URL을 바꾸거나 remote를 지우는 메서드가
+ * 없어서(실측 확인 - findRemote/createRemote만 있음), 토큰이 매번
+ * 최신인지 보장하려고(자격증명 회전/OAuth 갱신 가능성) 이미 있는
+ * remote면 `repo.config().setString("remote.external.url", ...)`로
+ * git config를 직접 고쳐쓴다(`git remote set-url`과 동치) - 지우고
+ * 새로 만드는 방식(Gitea REST push mirror가 PATCH 미지원이라 어쩔 수
+ * 없이 쓰던 방식)이 필요 없다. */
+export async function pushToExternal(
+  projectId: string,
+  apiBaseUrl: string,
+  workTarget: GiteaRepoRef,
+  externalRepoUrl: string,
+  externalToken: string,
+  identity: GitIdentity,
+  checkEmpty: () => Promise<boolean>,
+): Promise<PushExternalResult> {
+  return withWriteLock(projectId, async () => {
+    const entry = await getOrCreateEntry(projectId, apiBaseUrl, workTarget, identity, checkEmpty);
+    if (staleByProject.has(projectId)) {
+      staleByProject.delete(projectId);
+      await resyncToRemote(entry, identity).catch((err) => {
+        console.error(`pushToExternal(${projectId}) - staleness 갱신 실패(기존 로컬 상태로 계속 진행):`, err);
+      });
+    }
+
+    // 영구 클론은 읽기/쓰기 hot path를 빠르게 하려고 얕은(depth:1)
+    // 클론이다(#git-persistent-local-clone) - 그 상태 그대로 완전히
+    // 새로운 외부 저장소로 push하면 Gitea가 200 OK를 주면서도 실제로는
+    // 오브젝트/ref를 하나도 못 받는 걸 실측으로 발견(로컬 역사가
+    // 얕은 경계 커밋이라 push 협상에 필요한 전체 그래프를 못 보내는
+    // 것으로 추정 - 에러 없이 조용히 실패해 특히 위험). publish는
+    // 읽기/쓰기만큼 빈번하지 않으므로, 이 경로에서만 필요할 때(얕은
+    // 상태일 때만) 전체 히스토리로 깊게 만든 뒤 진행한다.
+    if (fs.existsSync(path.join(entry.dir, ".git", "shallow"))) {
+      await entry.repo.getRemote("origin").fetch([entry.branch], { fetch: { depth: 2147483647 } });
+    }
+
+    const externalUrl = withCredentials(externalRepoUrl, externalToken);
+    let remote = entry.repo.findRemote("external");
+    if (!remote) {
+      remote = entry.repo.createRemote("external", externalUrl);
+    } else {
+      entry.repo.config().setString("remote.external.url", externalUrl);
+      remote = entry.repo.findRemote("external")!;
+    }
+
+    try {
+      await remote.push([`refs/heads/${entry.branch}:refs/heads/${entry.branch}`], {
+        credential: { type: "Plain", password: externalToken },
+      });
+    } catch (err) {
+      if (isNonFastForward(err)) return { status: "diverged", message: errorMessage(err) };
+      return { status: "failed", message: errorMessage(err) };
+    }
+
+    const commitSha = entry.repo.revparseSingle(`refs/heads/${entry.branch}`);
+    return { status: "pushed", commitSha };
+  });
 }
 
 // ---------------------------------------------------------------- 읽기

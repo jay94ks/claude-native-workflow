@@ -893,6 +893,19 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   push 없이 명확한 충돌 에러로 끝난다. mirror 저장소(외부 연동
   프로젝트의 읽기 전용 사본, sync-status/제안 비교용)는 대응하는
   영구 클론이 없어 그대로 Gitea REST를 쓴다.
+- **`docs git publish`(외부 GitHub/GitLab 발행)도 같은 영구 클론에서
+  직접 push한다**(#git-publish-direct-push) - Gitea의 "push mirror"
+  기능(비동기 트리거+폴링)을 거치지 않고, work 영구 클론의 "origin"
+  옆에 "external"이라는 두 번째 remote로 일반(비강제) push한다.
+  Gitea의 push mirror는 항상 강제 동기화라(BR-3CAF6DBC 실제 사고 -
+  외부가 독자적으로 앞선 상태를 그대로 강제 push해 외부 커밋이
+  사라짐) 예전엔 push 전에 별도로 fast-forward 가능 여부를 미리
+  확인해야 했지만, 일반 push는 fast-forward가 아니면 git 자신이
+  서버 사이드에서 원자적으로 거부하므로 그 사전 확인 자체가 필요
+  없어졌다(경쟁 조건도 없음). 실패는 fast-forward 불가("diverged" -
+  대기열에 올리고 "동기화" 안내)와 그 외 실패("push_failed")로
+  구분해 기존과 같은 안내 메시지로 처리 - `PublishResult`/
+  `GitSyncQueueEntry` 계약은 그대로라 CLI/MCP/웹 어느 쪽도 안 바뀜.
 
 ## 14. git push 훅 자동화 (대기열)
 

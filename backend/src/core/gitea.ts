@@ -40,8 +40,11 @@ export function apiBaseUrl(): string {
 
 /** git commit 저작자/push 인증을 위한 관리자 신원 - actingUserId가
  * 없거나(웹훅 등) 그 설계자가 아직 Gitea 토큰이 없는 과도기 상태일 때
- * 폴백(core/gitExec.ts 전용, #git-direct-exec). */
-function adminGitIdentity(): { name: string; email: string; token: string } {
+ * 폴백(core/gitExec.ts 전용, #git-direct-exec). gitRepos.ts의
+ * publishToExternalRepo()도 재사용(#git-publish-direct-push) - 발행은
+ * 특정 설계자 귀속 개념이 없어(어느 설계자가 "발행" 버튼을 눌렀는지와
+ * 무관하게 work의 현재 상태를 그대로 내보냄) 관리자 신원 고정. */
+export function adminGitIdentity(): { name: string; email: string; token: string } {
   const { owner, token } = config();
   return { name: owner, email: `${owner}@users.noreply.claude-native-workflow.local`, token };
 }
@@ -242,80 +245,6 @@ export async function getMirrorUpdatedAt(target: GiteaRepoRef): Promise<string |
   const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}`);
   const json = (await res.json()) as { mirror_updated?: string };
   return json.mirror_updated ?? null;
-}
-
-// ---------------------------------------------------------------- Push Mirror (외부 저장소 동기화/발행)
-// pull-mirror(forceMirrorSync/getMirrorUpdatedAt)와 정반대 방향 - 이
-// 저장소(work)의 커밋을 외부 저장소로 실제 push한다. Gitea 자체 기능을
-// 그대로 위임한다(설계자 확정 - git 프로토콜/GitHub·GitLab 커밋 API를
-// 직접 다루지 않음). **정확한 API 경로/응답 필드명은 실제 Gitea
-// 인스턴스의 /api/swagger로 재확인 - 버전별로 조금씩 다를 수 있다.**
-
-export interface PushMirrorStatus {
-  remoteAddress: string;
-  lastError: string | null;
-  lastUpdate: string | null;
-  // Gitea가 붙이는 내부 원격 이름(예: "remote_mirror_VYCZJRgJUX") -
-  // deletePushMirror()의 {name} 경로 인자로 필요하다.
-  remoteName: string;
-}
-
-/** work 저장소에 push mirror를 등록한다(이미 있으면 Gitea가 중복
- * 에러를 던짐 - 호출부가 getPushMirrorStatus로 먼저 존재를 확인해야
- * 한다). username/token은 자격증명에서 복호화한 값을 그대로 전달. */
-export async function configurePushMirror(
-  target: GiteaRepoRef,
-  remoteAddress: string,
-  username: string,
-  token: string,
-): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/push_mirrors`, {
-    method: "POST",
-    body: JSON.stringify({
-      remote_address: remoteAddress,
-      remote_username: username,
-      remote_password: token,
-      // interval이 없으면 Gitea가 빈 문자열을 time.ParseDuration에 넘겨
-      // 400으로 거부한다(실측 확인, BR-AD6197A6) - "0"은 Go에서 단위 없이도
-      // 유효한 특수값으로 파싱되고, 이 시스템은 triggerPushMirrorSync()로
-      // 수동 트리거만 쓰므로 주기적 자동 동기화 자체가 필요 없다.
-      interval: "0",
-      sync_on_commit: false,
-    }),
-  });
-}
-
-/** 등록된 push mirror의 즉시 동기화를 큐에 넣는다(pull-mirror의
- * forceMirrorSync와 마찬가지로 비동기 - 완료 여부는
- * getPushMirrorStatus()의 lastUpdate/lastError로 폴링해 확인). */
-export async function triggerPushMirrorSync(target: GiteaRepoRef): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/push_mirrors-sync`, { method: "POST" });
-}
-
-/** 등록된 push mirror 목록(이 시스템은 저장소당 하나만 등록하므로
- * 첫 번째만 본다) - lastError가 있으면 마지막 동기화가 실패한 것
- * (자격증명에 push 권한이 없는 경우 등), null이면 성공. */
-export async function getPushMirrorStatus(target: GiteaRepoRef): Promise<PushMirrorStatus | null> {
-  const res = await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/push_mirrors`);
-  const json = (await res.json()) as { remote_address: string; remote_name: string; last_error?: string; last_update?: string }[];
-  if (json.length === 0) return null;
-  const first = json[0];
-  return {
-    remoteAddress: first.remote_address,
-    lastError: first.last_error?.trim() ? first.last_error : null,
-    lastUpdate: first.last_update ?? null,
-    remoteName: first.remote_name,
-  };
-}
-
-/** 등록된 push mirror를 삭제한다 - Gitea REST에는 push mirror의
- * 자격증명만 갱신하는 PATCH가 없다(실측으로 swagger 확인: `/push_mirrors`
- * 는 GET/POST, `/push_mirrors/{name}`은 GET/DELETE뿐). 그래서 자격증명이
- * 바뀔 수 있는 상황(재연동, #credential-lifecycle의 OAuth 토큰 자동
- * 갱신)마다 매번 삭제 후 configurePushMirror로 새로 만드는 방식으로
- * "갱신"을 흉내낸다(#stale-push-mirror-credentials). */
-export async function deletePushMirror(target: GiteaRepoRef, remoteName: string): Promise<void> {
-  await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}/push_mirrors/${remoteName}`, { method: "DELETE" });
 }
 
 export interface FullTreeEntry {

@@ -9,7 +9,7 @@ import { registerWebhook, detectProvider, validateCredential } from "./externalG
 import { resyncCollaboratorGrantsForProject } from "./members.js";
 import { sendMessage } from "./messages.js";
 import { resolveCredentialTokenById as resolveCredentialToken } from "./gitCredentials.js";
-import { dropPersistentRepo } from "./gitExec.js";
+import { dropPersistentRepo, pushToExternal } from "./gitExec.js";
 
 export { GitAuthRequiredError };
 export type { GiteaRepoRef };
@@ -741,37 +741,36 @@ async function destroyInvalidCredential(gitCredentialId: string, triggeringProje
   });
 }
 
-/** 완료 감지 지연을 줄이려고 짧은 간격(500ms)으로 촘촘히 확인한다
- * (설계자 피드백 - "publish가 너무 오래 걸린다": 실제 동기화 자체는
- * 보통 몇 초면 끝나는데 예전엔 1초 간격으로만 확인해 그만큼 헛되이
- * 더 기다리고 있었다) - 총 대기 상한(20초)은 그대로. */
-async function waitForPushMirrorOutcome(target: GiteaRepoRef, previousUpdate: string | null): Promise<gitea.PushMirrorStatus | null> {
-  const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline) {
-    await sleep(500);
-    const status = await gitea.getPushMirrorStatus(target);
-    if (status?.lastError) return status;
-    if (status?.lastUpdate && status.lastUpdate !== previousUpdate) return status;
-  }
-  return await gitea.getPushMirrorStatus(target);
-}
-
+/** 자격증명 오류 시 자동 강등(설계자 지시) - push를 실제로 시도하기
+ * 전에 토큰이 아직 유효한지 먼저 확인한다. 무효면 unlinkExternalRepo로
+ * self_hosted로 자동 전환(work 저장소는 그대로 보존)하고, 프로젝트에
+ * 안내 메시지를 남긴 뒤 호출자에게도 명확한 에러로 구분해 알린다.
+ * 자격증명 자체도 이미 확인된 대로 무효라 재사용할 수 없으므로
+ * destroyInvalidCredential()로 완전히 파기한다(설계자 지시,
+ * #credential-lifecycle). 여기 도달하기 전에 resolveCredentialTokenById
+ * (gitCredentials.ts)가 이미 만료 임박/지난 OAuth 토큰의 자동 갱신을
+ * 먼저 시도했으므로, 이 분기는 갱신이 불가능했거나(refresh_token
+ * 없음/만료) 실패한 "진짜로 죽은" 자격증명만 걸러낸다. push
+ * 메커니즘과 무관한 별개 관심사라 #git-publish-direct-push 전환과
+ * 상관없이 그대로 유지.
+ *
+ * push 자체는 #git-publish-direct-push - work의 영구 로컬 클론
+ * (core/gitExec.ts)에서 es-git으로 외부 저장소에 직접 일반(비강제)
+ * push한다. 예전엔 Gitea의 push mirror가 항상 강제 동기화하는 것
+ * 때문에(BR-3CAF6DBC 실측 확인 - "fast-forward 안 되면 그냥
+ * 실패한다"는 가정과 달리 강제 동기화라 외부에만 있던 커밋이 경고
+ * 없이 사라지는 실제 데이터 손실이 있었음) push 전에 별도로
+ * mirror를 새로고침해 fast-forward 가능 여부를 미리 확인해야 했지만,
+ * 일반 push는 fast-forward가 아니면 git 자신이 서버 사이드에서
+ * 원자적으로 거부하므로 그 사전 확인 자체가 필요 없어졌다(경쟁
+ * 조건도 없어짐 - 사전 확인과 실제 push 사이에 외부가 또 바뀔 수
+ * 있던 이전 설계의 약점도 자연히 해소). */
 export async function publishToExternalRepo(projectId: string, gitCredentialId: string): Promise<PublishResult> {
   const repo = await getProjectGitRepo(projectId);
   if (!repo || repo.provider !== "external_linked") {
     throw new Error("외부 저장소 연동(external_linked) 프로젝트에서만 발행할 수 있습니다");
   }
 
-  // 자격증명 오류 시 자동 강등(설계자 지시) - push를 실제로 시도하기
-  // 전에 토큰이 아직 유효한지 먼저 확인한다. 무효면 unlinkExternalRepo로
-  // self_hosted로 자동 전환(work 저장소는 그대로 보존)하고, 프로젝트에
-  // 안내 메시지를 남긴 뒤 호출자에게도 명확한 에러로 구분해 알린다.
-  // 자격증명 자체도 이미 확인된 대로 무효라 재사용할 수 없으므로
-  // destroyInvalidCredential()로 완전히 파기한다(설계자 지시,
-  // #credential-lifecycle). 여기 도달하기 전에 resolveCredentialTokenById
-  // (gitCredentials.ts)가 이미 만료 임박/지난 OAuth 토큰의 자동 갱신을
-  // 먼저 시도했으므로, 이 분기는 갱신이 불가능했거나(refresh_token
-  // 없음/만료) 실패한 "진짜로 죽은" 자격증명만 걸러낸다.
   if (!(await validateExternalCredential(projectId, gitCredentialId))) {
     await destroyInvalidCredential(gitCredentialId, projectId);
     throw new Error("자격증명이 더 이상 유효하지 않아 외부 연동이 자동으로 해제되고 자체 호스팅으로 전환되었습니다");
@@ -780,22 +779,20 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
   const token = await resolveCredentialToken(gitCredentialId);
   if (!token) throw new Error(`자격증명을 찾을 수 없습니다: ${gitCredentialId}`);
 
-  const workTarget = workRef(projectId);
+  const identity = gitea.adminGitIdentity();
+  const result = await pushToExternal(
+    projectId,
+    gitea.apiBaseUrl(),
+    workRef(projectId),
+    repo.repoUrl,
+    token,
+    identity,
+    () => checkEmptyWorkRepo(projectId),
+  );
 
-  // force-push 전에 외부가 이 시스템이 모르는 사이 독자적으로 앞서가지
-  // 않았는지 확인한다(BR-3CAF6DBC 실측 확인 - Gitea의 push mirror는
-  // "fast-forward 안 되면 그냥 실패한다"는 원래 설계 가정과 달리 항상
-  // 강제 동기화라, 외부에만 있던 커밋이 경고 없이 통째로 사라지는 실제
-  // 데이터 손실이 있었다). mirror를 최신으로 새로고침한 뒤, 그 HEAD가
-  // work의 커밋 객체 DB에도 있는지 확인 - work는 이 시스템의 commit()이
-  // 항상 같은 브랜치를 앞으로만 진행시키므로(강제 재작성 없음), 있으면
-  // work가 외부의 현재 상태를 그대로 포함하는(fast-forward 안전) 상태
-  // 라는 뜻이다. mirror가 아직 커밋이 없으면(막 연동된 빈 저장소) 보호할
-  // 기존 이력이 없으므로 안전하게 통과시킨다.
-  const mirrorTarget = mirrorRef(projectId);
-  await refreshMirrorAndWait(mirrorTarget);
-  const mirrorHeadSha = await gitea.getHeadCommitSha(mirrorTarget);
-  if (mirrorHeadSha && !(await gitea.commitExistsInRepo(workTarget, mirrorHeadSha))) {
+  if (result.status === "pushed") return { status: "synced" };
+
+  if (result.status === "diverged") {
     const db = getDb();
     const entry = await db.gitSyncQueueEntry.create({
       data: { projectId, status: "pending", reason: "diverged" },
@@ -812,42 +809,18 @@ export async function publishToExternalRepo(projectId: string, gitCredentialId: 
     return { status: "queued", queueEntryId: entry.id };
   }
 
-  // Gitea REST는 push mirror 자격증명만 갱신하는 API가 없다(PATCH
-  // 미지원, gitea.deletePushMirror 주석 참고) - 자격증명이 재연동으로
-  // 바뀌었거나 #credential-lifecycle의 OAuth 자동 갱신으로 조용히
-  // 회전됐을 수 있으므로, 기존 등록이 있으면 지우고 매번 현재 토큰으로
-  // 새로 만든다(#stale-push-mirror-credentials - 실측으로 발견: minicore
-  // 재연동 후에도 Gitea에는 예전 죽은 토큰이 그대로 남아있어 매번 같은
-  // 422로 계속 실패했다).
-  const existing = await gitea.getPushMirrorStatus(workTarget);
-  if (existing) {
-    await gitea.deletePushMirror(workTarget, existing.remoteName);
-  }
-  // push mirror의 "username"은 대부분의 PAT 기반 인증(GitHub/GitLab)에서
-  // 실질적으로 무시된다 - 토큰을 그대로 재사용한다.
-  await gitea.configurePushMirror(workTarget, repo.repoUrl, token, token);
-  try {
-    await gitea.triggerPushMirrorSync(workTarget);
-  } catch (err) {
-    // 원래는 "트리거는 항상 성공하고, 실제 push 실패는 lastError로
-    // 비동기 확인된다"고 가정했었는데(설계 주석 그대로), 인증 실패처럼
-    // 빠르게 드러나는 오류는 트리거 호출 자체가 동기적으로 예외를
-    // 던지는 걸 실측으로 확인(#push-mirror-sync-trigger-error - 422
-    // "error occurred when syncing push mirrors"). 이것도 같은 대기열
-    // 경로로 우아하게 처리한다 - 원본 raw 예외를 호출부에 그대로
-    // 흘려보내지 않음.
-    return queuePublishFailure(projectId, err instanceof Error ? err.message : String(err));
-  }
-  // 위에서 항상 삭제 후 새로 만들었으므로(자격증명 신선도 보장) 이
-  // 시점의 push mirror는 항상 lastUpdate가 없는 상태에서 시작한다 -
-  // 예전(삭제된) 레코드의 lastUpdate와 비교할 필요가 없다.
-  const result = await waitForPushMirrorOutcome(workTarget, null);
+  return queuePublishFailure(projectId, result.message);
+}
 
-  if (!result?.lastError) {
-    return { status: "synced" };
-  }
-
-  return queuePublishFailure(projectId, result.lastError);
+/** gitExec.pushToExternal()의 checkEmpty 콜백 - work 저장소가 커밋
+ * 0개인 빈 저장소인지 REST로 직접 확인한다(#git-direct-exec와 같은
+ * 이유 - clone 실패를 추측하지 않음). `gitea.getFullTree`는 이제
+ * 영구 클론에 위임하므로 순환을 피하려면 REST 전용 경로가 필요한데,
+ * gitea.ts 바깥(gitRepos.ts)에서는 그 private 함수에 접근할 수 없어
+ * `getHeadCommitSha`(REST, 커밋 0개면 null)로 대신 확인한다. */
+async function checkEmptyWorkRepo(projectId: string): Promise<boolean> {
+  const sha = await gitea.getHeadCommitSha(workRef(projectId));
+  return sha === null;
 }
 
 async function queuePublishFailure(projectId: string, errorMessage: string): Promise<PublishResult> {
