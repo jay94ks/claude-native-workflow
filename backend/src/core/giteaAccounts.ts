@@ -135,6 +135,24 @@ export async function getGiteaAccessToken(userId: string): Promise<string | null
   return decryptSecret(user.giteaAccessTokenEncrypted);
 }
 
+/** git commit 저작자(name/email) + push 인증(token) - core/gitExec.ts
+ * 전용(#git-direct-exec). 토큰이 아직 없으면(과도기 상태) null - 호출부가
+ * 관리자 신원으로 폴백한다(기존 putFileContent()의 "actingToken 없으면
+ * 관리자 토큰" 폴백과 같은 판단, 여기서는 신원 전체를 폴백). email은
+ * ensureGiteaAccountForUser()가 계정 생성 시 쓰는 것과 정확히 같은
+ * 폴백 표현식을 재사용 - 실제 이메일이 없으면 DB에 저장되지 않고
+ * 그때그때 재계산되므로 여기서도 똑같이 계산해야 한다. */
+export async function resolveGitAuthorIdentity(userId: string): Promise<{ name: string; email: string; token: string } | null> {
+  const db = getDb();
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user?.giteaAccessTokenEncrypted || !user.giteaUsername) return null;
+  return {
+    name: user.nickname || user.username,
+    email: user.email || `${user.giteaUsername}@users.noreply.claude-native-workflow.local`,
+    token: decryptSecret(user.giteaAccessTokenEncrypted),
+  };
+}
+
 /** 프로필 화면 "재발급" 버튼 전용 - 기존 Gitea PAT이 있으면 지우고
  * 새로 발급해 저장한 뒤 평문을 딱 한 번 반환한다(호출부가 이 반환값을
  * 응답에 그대로 실어 보내고, DB에는 계속 암호화된 채로만 남는다 -

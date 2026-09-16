@@ -165,7 +165,7 @@ import { recordRequest, getMonitoringStats } from "../core/monitoring.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates, listTemplateRevisions, listTemplateRevisionsPaged } from "../core/templates.js";
 import { MeiliSearchRequestError } from "meilisearch";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
-import { backfillProjectSourceIndex, syncSourceFileOnSave, syncSourceFileOnDelete } from "../core/sourceIndex.js";
+import { backfillProjectSourceIndex, syncSourceFileOnSave, syncSourceFileOnDelete, syncSourceFilesForCommit } from "../core/sourceIndex.js";
 import { getSearchSyncQueueStatus, drainSearchSyncQueue } from "../core/searchSyncQueue.js";
 import {
   resolveEffectivePermission,
@@ -4352,11 +4352,10 @@ app.put(
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const { content, message } = req.body as { content?: string; message?: string };
     if (content === undefined) { res.status(400).json({ error: "content가 필요합니다" }); return; }
-    // 커밋이 실제로 이 요청을 보낸 설계자 신원으로 귀속되도록, 그
-    // 설계자의 Gitea PAT를 구해 넘긴다 - 아직 없으면(과도기 상태)
-    // putFileContent()가 관리자 토큰으로 폴백한다.
-    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await gitea.putFileContent(req.params.projectId, target, filePath, content, message || `docs: update ${filePath}`, actingToken);
+    // 커밋이 실제로 이 요청을 보낸 설계자 신원으로 귀속되도록 userId를
+    // 넘긴다 - putFileContent()가 그 설계자의 git 저작자 신원을 구해
+    // 커밋하고(없으면 관리자 신원으로 폴백).
+    await gitea.putFileContent(req.params.projectId, target, filePath, content, message || `docs: update ${filePath}`, req.userId);
     await syncSourceFileOnSave(req.params.projectId, filePath, content);
     res.json({ ok: true });
   }),
@@ -4371,10 +4370,9 @@ app.delete(
     const filePath = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
     const { message } = (req.body ?? {}) as { message?: string };
-    // put과 같은 원칙 - 커밋이 요청을 보낸 설계자 신원으로 귀속되도록 그
-    // 설계자의 Gitea PAT를 구해 넘긴다(없으면 관리자 토큰으로 폴백).
-    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    await gitea.deleteFileContent(req.params.projectId, target, filePath, message || `docs: delete ${filePath}`, actingToken);
+    // put과 같은 원칙 - 커밋이 요청을 보낸 설계자 신원으로 귀속되도록
+    // userId를 넘긴다(없으면 관리자 신원으로 폴백).
+    await gitea.deleteFileContent(req.params.projectId, target, filePath, message || `docs: delete ${filePath}`, req.userId);
     await syncSourceFileOnDelete(req.params.projectId, filePath);
     res.json({ ok: true });
   }),
@@ -4484,18 +4482,18 @@ app.post(
   asyncRoute(async (req, res) => {
     const { message } = req.body as { message?: string };
     if (!message) { res.status(400).json({ error: "message가 필요합니다" }); return; }
-    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
-    const result = await gitStaging.commitStaged(req.params.projectId, message, actingToken);
+    const result = await gitStaging.commitStaged(req.params.projectId, message, req.userId);
     if (result.status === "committed" && result.paths.length > 0) {
       // 커밋 반영분의 검색 인덱스도 최신화(put/delete 라우트와 동일한
-      // write-through) - 한 번에 배치 조회, 트리에 없으면(삭제된 경로) 색인도 삭제.
+      // write-through) - 한 번에 배치 조회 + 한 번의 벌크 upsert/delete로
+      // 반영(파일마다 개별 호출하면 Meilisearch 라운드트립이 그만큼
+      // 늘어나 커밋이 느려짐 - 설계자 피드백으로 발견, syncSourceFilesForCommit).
       const target = await requireGiteaWorkingRef(req.params.projectId);
       const contentByPath = await gitea.getFileContentsBatch(req.params.projectId, target, result.paths);
-      for (const path of result.paths) {
-        const file = contentByPath.get(path);
-        if (file) await syncSourceFileOnSave(req.params.projectId, path, file.content);
-        else await syncSourceFileOnDelete(req.params.projectId, path);
-      }
+      await syncSourceFilesForCommit(
+        req.params.projectId,
+        result.paths.map((path) => ({ path, content: contentByPath.get(path)?.content ?? null })),
+      );
     }
     res.json(result);
   }),
@@ -5071,17 +5069,16 @@ app.post(
     const projectId = req.params.projectId;
     const target = await requireGiteaWorkingRef(projectId);
     const deployed: string[] = [];
-    const actingToken = (await getGiteaAccessToken(req.userId!)) ?? undefined;
 
     const claudeMd = await resolveTemplate("CLAUDE.md", projectId);
     if (claudeMd) {
-      await gitea.putFileContent(projectId, target, "CLAUDE.md", claudeMd.content, "docs: deploy CLAUDE.md template", actingToken);
+      await gitea.putFileContent(projectId, target, "CLAUDE.md", claudeMd.content, "docs: deploy CLAUDE.md template", req.userId);
       deployed.push("CLAUDE.md");
     }
     const skillFilename = ".claude/skills/claude-native-workflow/SKILL.md";
     const skillMd = await resolveTemplate(skillFilename, projectId);
     if (skillMd) {
-      await gitea.putFileContent(projectId, target, skillFilename, skillMd.content, "docs: deploy SKILL.md template", actingToken);
+      await gitea.putFileContent(projectId, target, skillFilename, skillMd.content, "docs: deploy SKILL.md template", req.userId);
       deployed.push(skillFilename);
     }
 

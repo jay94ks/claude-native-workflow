@@ -181,7 +181,7 @@ export type CommitStagedResult =
  * 약속을 지키기 위해, "조용한 데이터 누락보다 안전한 실패"라는 이
  * 코드베이스의 원칙과 일치). "삭제 대 수정" 조합은 항상 충돌로
  * 취급한다(실제 git과 동일). */
-export async function commitStaged(projectId: string, message: string, actingToken?: string): Promise<CommitStagedResult> {
+export async function commitStaged(projectId: string, message: string, actingUserId?: string): Promise<CommitStagedResult> {
   const { target, repoKind } = await resolveWorkTarget(projectId);
   const db = getDb();
   const rows = await db.gitStagingChange.findMany({ where: { projectId, repoKind } });
@@ -231,7 +231,7 @@ export async function commitStaged(projectId: string, message: string, actingTok
 
   if (conflicts.length > 0) return { status: "conflict", conflicts };
 
-  const result = await gitea.changeFiles(projectId, target, changes, message, actingToken);
+  const result = await gitea.changeFiles(projectId, target, changes, message, actingUserId);
   await db.gitStagingChange.deleteMany({ where: { id: { in: rows.map((r: { id: string }) => r.id) } } });
   return { status: "committed", commitSha: result.commitSha, paths: changes.map((c) => c.path) };
 }

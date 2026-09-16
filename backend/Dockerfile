@@ -7,7 +7,14 @@
 # Prisma의 쿼리 엔진이 필요로 하는 libssl - node:22-slim엔 기본으로
 # 없어서 "failed to detect the libssl/openssl version" 경고를 내며
 # 추측값으로 대체한다(concept 브랜치에서 이미 겪은 문제).
-FROM node:22-slim
+#
+# node:22-slim(기본은 Debian 12 "bookworm", glibc 2.36)이 아니라
+# trixie 태그를 명시한다 - es-git(#git-direct-exec, napi-rs 네이티브
+# 바이너리)의 linux-x64-gnu 사전 빌드가 glibc 2.38+ 심볼(__isoc23_strtol)
+# 을 요구해 bookworm에서 `ERR_DLOPEN_FAILED: undefined symbol`로 실제
+# 로드 실패를 실측 확인 - Debian 13 "trixie"(glibc 2.41)로 올리면
+# 해결됨(CNW-test에서 네이티브 바이너리 직접 로드 테스트로 확인).
+FROM node:22-trixie-slim
 
 # git은 애플리케이션 런타임엔 필요 없지만(clone/push는 항상 설계자가
 # 직접 함), scripts/migrate-gitea-namespaces.ts의 transfer-API 폴백

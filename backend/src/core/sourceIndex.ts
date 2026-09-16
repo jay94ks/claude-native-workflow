@@ -130,6 +130,39 @@ export async function syncSourceFileOnDelete(projectId: string, path: string): P
   }
 }
 
+/** git 스테이징 커밋처럼 한 번에 여러 파일이 바뀔 때 - syncSourceFileOnSave/
+ * syncSourceFileOnDelete를 파일마다 순서대로 호출하면 Meilisearch
+ * 라운드트립(+waitTask)이 파일 수만큼 그대로 늘어나 커밋이 느려진다
+ * (실측: "커밋이 너무 오래 걸린다"는 설계자 피드백으로 발견) - upsert/
+ * delete를 각각 한 번의 벌크 호출로 묶는다(indexSourceFilesBulkUpsert/
+ * indexSourceFilesBulkDelete는 이미 백필 경로에서 쓰던 것을 재사용).
+ * fail-soft 원칙은 그대로: Meilisearch가 죽어 있어도 이미 끝난 git
+ * 커밋을 실패로 보이게 하지 않고 큐에 남겨 재처리한다. */
+export async function syncSourceFilesForCommit(projectId: string, files: { path: string; content: string | null }[]): Promise<void> {
+  const upserts: SearchableSourceFile[] = [];
+  const deletePaths: string[] = [];
+  const now = Date.now();
+  for (const { path, content } of files) {
+    if (content !== null && isIndexableFile(path, Buffer.byteLength(content, "utf-8"))) {
+      upserts.push({ id: sourceFileId(projectId, path), projectId, path, content, updatedAt: now });
+    } else {
+      // 삭제된 파일이거나(content === null), 화이트리스트 밖으로
+      // 바뀐 파일(예: 내용이 커져서) - 기존 색인이 있었다면 정리한다.
+      deletePaths.push(path);
+    }
+  }
+  try {
+    if (upserts.length > 0) await indexSourceFilesBulkUpsert(upserts);
+    if (deletePaths.length > 0) await indexSourceFilesBulkDelete(projectId, deletePaths);
+  } catch (err) {
+    if (err instanceof MeiliSearchRequestError) {
+      await enqueueSearchSync("resyncProjectSourceFiles", { projectId });
+    } else {
+      throw err;
+    }
+  }
+}
+
 /** push 웹훅으로 들어온 커밋들의 added/modified/removed를 순서대로
  * 접어(같은 경로가 여러 번 나오면 마지막 상태만 적용) 최종 upsert/delete
  * 집합을 구한 뒤 반영한다. 이 시스템에서 브라우징 가능한 git 콘텐츠는

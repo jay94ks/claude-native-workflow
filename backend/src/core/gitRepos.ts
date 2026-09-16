@@ -529,14 +529,17 @@ function diffTrees(mirrorTree: gitea.FullTreeEntry[], workTree: gitea.FullTreeEn
 
 /** pull 미러를 강제로 새로고침하고, 실제로 갱신될 때까지(최대 20초)
  * 기다린다 - sync-status 계산과 publishToExternalRepo의 fast-forward
- * 안전성 확인이 공통으로 쓴다. */
+ * 안전성 확인이 공통으로 쓴다. 짧은 간격(500ms)으로 확인해 완료 감지
+ * 지연을 줄인다(설계자 피드백 - "publish가 너무 오래 걸린다": 실제
+ * 동기화는 보통 몇 초면 끝나는데 예전엔 2초 간격으로만 확인해 그만큼
+ * 헛되이 더 기다리고 있었다) - 총 대기 상한은 그대로 20초. */
 async function refreshMirrorAndWait(mirrorTarget: GiteaRepoRef): Promise<void> {
   const updatedBefore = await gitea.getMirrorUpdatedAt(mirrorTarget);
   await gitea.forceMirrorSync(mirrorTarget);
 
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
-    await sleep(2000);
+    await sleep(500);
     const updatedNow = await gitea.getMirrorUpdatedAt(mirrorTarget);
     if (updatedNow !== updatedBefore) break;
   }
@@ -726,9 +729,14 @@ async function destroyInvalidCredential(gitCredentialId: string, triggeringProje
   });
 }
 
+/** 완료 감지 지연을 줄이려고 짧은 간격(500ms)으로 촘촘히 확인한다
+ * (설계자 피드백 - "publish가 너무 오래 걸린다": 실제 동기화 자체는
+ * 보통 몇 초면 끝나는데 예전엔 1초 간격으로만 확인해 그만큼 헛되이
+ * 더 기다리고 있었다) - 총 대기 상한(20초)은 그대로. */
 async function waitForPushMirrorOutcome(target: GiteaRepoRef, previousUpdate: string | null): Promise<gitea.PushMirrorStatus | null> {
-  for (let i = 0; i < 20; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    await sleep(500);
     const status = await gitea.getPushMirrorStatus(target);
     if (status?.lastError) return status;
     if (status?.lastUpdate && status.lastUpdate !== previousUpdate) return status;

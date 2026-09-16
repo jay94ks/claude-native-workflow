@@ -10050,3 +10050,64 @@ DN-A9E5B1C6)에 호출당 평균 소요 시간을 추가했다.
 **결론**: 명령 빈도/흐름뿐 아니라 각 명령이 실제로 얼마나 오래
 걸리는지까지 같은 대시보드에서 볼 수 있게 됐다 - 느린 라우트를
 찾아 최적화할 지점을 판단하는 데도 쓸 수 있다.
+
+## commit/publish 지연 조사 → 백엔드 직접 git 실행(es-git)으로 전환
+
+방금 추가한 avgMs로 정작 확인해보니 설계자 피드백("publish와 commit이
+너무 오래 걸려")이 사실이었다 - `docs git commit`(및 소스 에디터
+저장/삭제, CLAUDE.md/SKILL.md 템플릿 배포)이 내부적으로 쓰는 Gitea
+REST 배치 API(`POST .../contents`)가 파일 8개짜리 작은 커밋에도
+5.7~6.1초 걸림을 Gitea 자체 로그로 실측 확인(이 앱 코드 로직은 100ms
+미만). 설계자가 제시된 선택지 중 "백엔드에서 각 설계자별로 git 명령을
+직접 실행하는 구조로 가자"를 선택했고, 구현 중 "es-git 노드 모듈을
+검토해서 반영해" 지시로 최초 설계(child_process로 `git` CLI 직접
+실행)를 폐기하고 `es-git`(napi-rs로 git2-rs/libgit2를 감싼 네이티브
+모듈) 기반으로 재설계했다.
+
+**구현**: 새 모듈 `core/gitExec.ts`가 `gitea.ts`의 `changeFiles()`
+(현재 유일한 실제 반영 지점)를 대신한다 - 매 호출마다 로컬 클론을
+새로 만들고(`.cache/git-raw`와 같은 재구성 가능 캐시 취급, 볼륨
+불필요), 파일 write/delete → index 반영 → `writeTree()` → `commit()`
+(그 요청을 보낸 설계자의 이름/이메일로 저작자 귀속) → `push()`(그
+설계자의 Gitea PAT으로 인증). 같은 저장소 동시 요청은 in-process
+직렬화. `actingToken` 파라미터를 `actingUserId`로 바꿔(`changeFiles`/
+`putFileContent`/`deleteFileContent`/`commitStaged`) 저작자 신원
+조회를 `giteaAccounts.ts`의 신규 `resolveGitAuthorIdentity()` 한
+곳에 모았다. 읽기 경로(REST)와 `gitStaging.ts`의 드리프트 감지/3-way
+merge 로직은 전혀 안 바뀜 - 병목이 아니었던 부분과 최종 반영 로직만
+교체. `docs git publish`(push mirror)는 무관한 하위 시스템이라 이
+변경으로 안 빨라짐(이미 별도로 폴링 간격만 단축해둠).
+
+**구현 중 발견·수정한 실측 이슈**:
+- **clone 실패를 "빈 저장소"로 잘못 추측하던 버그** - es-git이 clone
+  중 빈 저장소와 무관한 일시적 에러(`config value
+  'http.followRedirects' was not found`)를 던지는 경우가 있어, 이걸
+  "커밋 0개"로 착각해 부트스트랩 경로로 빠지면 실제로는 히스토리가
+  있는 저장소에 히스토리 없는 새 루트 커밋을 만들어 push가
+  non-fast-forward로 거부되는 사고로 이어짐(CNW-test에서 재현
+  확인). 호출부(`gitea.ts`)가 이미 계산해둔 트리 캐시로 "빈
+  저장소인지"를 명시적으로 알려주는 방식으로 해결(추측 제거).
+- **es-git 0.7.0의 clone 자격증명 문서-실제 불일치** - 문서의
+  `cloneRepository(url, path, {fetch: {credential}})` 예제가 실제로는
+  `remote authentication required but no callback set`로 실패 - URL에
+  `token:<PAT>@host` 임베드 방식으로 교체해 해결(push의 `credential`
+  옵션은 정상 동작해 그대로 둠).
+- **base 이미지 glibc 버전 문제** - `node:22-slim`(Debian 12,
+  glibc 2.36)에서 es-git 네이티브 바이너리가 `undefined symbol:
+  __isoc23_strtol`(glibc 2.38+ 심볼)로 로드 실패 - `node:
+  22-trixie-slim`(Debian 13, glibc 2.41)로 올려 해결.
+
+**검증**: `C:\CNW-test`에서 8개 소파일 커밋 기준 REST ~6초 → 새
+방식 서버 쪼갠 타이밍 clone+push 합산 ~2.7~4.7초(실행마다 변동) -
+개선은 실재하지만 REST의 진짜 병목이 사라진 대신 Gitea의 git
+smart-HTTP 처리 시간 자체가 새 하한선이 돼 극적이지는 않음(있는
+그대로 설계자에게 보고). 빈 저장소 첫 커밋, 서로 다른 계정의 저작자
+귀속(`git log`로 실제 이름/이메일 확인), 소스 에디터 저장/삭제,
+템플릿 배포 회귀 전부 정상 동작 확인.
+
+**결론**: `docs git commit`류의 실제 반영 단계가 Gitea REST API의
+느린 배치 처리를 벗어나 백엔드가 직접 다루는 로컬 git 객체 조작으로
+바뀌었고, 커밋 저작자도 공용 관리자가 아니라 실제로 그 작업을 한
+설계자로 정확히 귀속된다 - 다만 남은 지연(Gitea의 git smart-HTTP
+자체 처리 시간)은 이 변경으로도 완전히 없어지지 않는다는 걸 명확히
+알아두고 써야 한다(PN-39A9C17E 완료 처리).

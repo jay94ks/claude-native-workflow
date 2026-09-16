@@ -9,6 +9,8 @@ import { getOrCreateGiteaSystemWebhookSecret } from "./installConfig.js";
 import { paginateInMemory, type Page } from "./pagination.js";
 import { sliceLines, grepLines, type LinesResult, type GrepMatch, type GrepOptions } from "./textLines.js";
 import * as gitCache from "./gitCache.js";
+import * as gitExec from "./gitExec.js";
+import { resolveGitAuthorIdentity } from "./giteaAccounts.js";
 
 interface GiteaConfig {
   apiUrl: string;
@@ -28,6 +30,20 @@ function config(): GiteaConfig {
 
 export function repoOwner(): string {
   return config().owner;
+}
+
+/** Gitea가 git-over-HTTP도 REST API와 같은 base에서 서빙하므로(clone
+ * URL 조립용) - core/gitExec.ts(#git-direct-exec) 전용. */
+export function apiBaseUrl(): string {
+  return config().apiUrl;
+}
+
+/** git commit 저작자/push 인증을 위한 관리자 신원 - actingUserId가
+ * 없거나(웹훅 등) 그 설계자가 아직 Gitea 토큰이 없는 과도기 상태일 때
+ * 폴백(core/gitExec.ts 전용, #git-direct-exec). */
+function adminGitIdentity(): { name: string; email: string; token: string } {
+  const { owner, token } = config();
+  return { name: owner, email: `${owner}@users.noreply.claude-native-workflow.local`, token };
 }
 
 // 저장소는 관리자 개인 네임스페이스가 아니라 프로젝트마다 별도로 만드는
@@ -820,10 +836,8 @@ export async function changeFiles(
   target: GiteaRepoRef,
   changes: FileChangeOp[],
   message: string,
-  actingToken?: string,
+  actingUserId?: string,
 ): Promise<ChangeFilesResult> {
-  const { apiUrl, token: adminToken } = config();
-  const authToken = actingToken || adminToken;
   const repoKind = repoKindFromRef(target);
 
   let tree = await gitCache.getCachedTree(projectId, repoKind, "HEAD");
@@ -836,59 +850,47 @@ export async function changeFiles(
     }
   }
 
-  const filesPayload = changes.map((c) => {
-    const sha = shaByPath.get(c.path);
-    if (c.changeType === "delete") return { operation: "delete", path: c.path, sha };
-    const contentB64 = Buffer.from(c.content ?? "", "utf-8").toString("base64");
-    return sha
-      ? { operation: "update", path: c.path, content: contentB64, sha }
-      : { operation: "upload", path: c.path, content: contentB64 };
-  });
-
-  const res = await fetch(`${apiUrl}/api/v1/repos/${target.org}/${target.repo}/contents`, {
-    method: "POST",
-    headers: { Authorization: `token ${authToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ message, files: filesPayload }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Gitea API 오류: HTTP ${res.status} ${body}`);
-  }
-  const json = (await res.json()) as { commit: { sha: string }; files: ({ sha: string } | null)[] };
-  const resultFiles = changes.map((c, i) => ({ path: c.path, sha: json.files[i]?.sha ?? null }));
+  const identity = (actingUserId ? await resolveGitAuthorIdentity(actingUserId) : null) ?? adminGitIdentity();
+  // tree.length === 0 → 커밋이 0개인 저장소(또는 전부 삭제된 극히
+  // 드문 케이스) - gitExec가 clone 실패를 놓고 "빈 저장소인가?"를
+  // 추측하지 않도록 이미 계산해둔 트리로 명시적으로 알려준다(실측으로
+  // 발견: clone 단계의 무관한 일시적 에러 - "config value
+  // 'http.followRedirects' was not found" - 를 "빈 저장소"로 잘못
+  // 해석해 실제로는 커밋이 있는 저장소의 히스토리를 끊어버리는 실제
+  // 버그가 있었음, #git-direct-exec).
+  const result = await gitExec.applyChanges(apiBaseUrl(), target, changes, message, identity, tree.length === 0);
 
   const patched = new Map(tree.map((e) => [e.path, e]));
-  for (const rf of resultFiles) {
+  for (const rf of result.files) {
     if (rf.sha) patched.set(rf.path, { path: rf.path, sha: rf.sha, type: "blob" as const });
     else patched.delete(rf.path);
   }
   await gitCache.setCachedTree(projectId, repoKind, "HEAD", [...patched.values()]);
   for (const c of changes) {
     if (c.changeType !== "upsert" || c.content === undefined) continue;
-    const rf = resultFiles.find((r) => r.path === c.path);
+    const rf = result.files.find((r) => r.path === c.path);
     if (rf?.sha) await gitCache.setCachedBlob(projectId, rf.sha, c.content);
   }
 
-  return { commitSha: json.commit.sha, files: resultFiles };
+  return { commitSha: result.commitSha, files: result.files };
 }
 
 /** 파일이 있으면 갱신, 없으면 생성 - 소스 에디터 저장 + CLAUDE.md/
- * SKILL.md 템플릿 배포에서 쓴다. `actingToken`이 있으면 그 값(호출한
- * 설계자 자신의 Gitea PAT - core/giteaAccounts.ts의
- * getGiteaAccessToken())으로 인증해 커밋이 그 설계자 신원으로
- * 귀속되게 한다 - 없으면(그 설계자가 아직 Gitea 토큰이 없는 과도기
- * 상태) 관리자 토큰으로 폴백한다(저장 자체를 막지 않기 위한 방어적
- * 처리 - 호출부가 이 경우 경고를 남긴다). 내부적으로 changeFiles()의
- * 1개 변경 호출로 통합됨(#git-cache-and-staging). */
+ * SKILL.md 템플릿 배포에서 쓴다. `actingUserId`가 있으면 그 설계자의
+ * git 저작자 신원(core/giteaAccounts.ts의 resolveGitAuthorIdentity())
+ * 으로 커밋이 귀속되게 한다 - 없으면(그 설계자가 아직 Gitea 토큰이
+ * 없는 과도기 상태) 관리자 신원으로 폴백한다(저장 자체를 막지 않기
+ * 위한 방어적 처리). 내부적으로 changeFiles()의 1개 변경 호출로
+ * 통합됨(#git-cache-and-staging, #git-direct-exec). */
 export async function putFileContent(
   projectId: string,
   target: GiteaRepoRef,
   filepath: string,
   content: string,
   message: string,
-  actingToken?: string,
+  actingUserId?: string,
 ): Promise<void> {
-  await changeFiles(projectId, target, [{ path: filepath, changeType: "upsert", content }], message, actingToken);
+  await changeFiles(projectId, target, [{ path: filepath, changeType: "upsert", content }], message, actingUserId);
 }
 
 /** 저장소에서 파일을 삭제(커밋으로 기록) - putFileContent의 반대.
@@ -900,9 +902,9 @@ export async function deleteFileContent(
   target: GiteaRepoRef,
   filepath: string,
   message: string,
-  actingToken?: string,
+  actingUserId?: string,
 ): Promise<void> {
-  await changeFiles(projectId, target, [{ path: filepath, changeType: "delete" }], message, actingToken);
+  await changeFiles(projectId, target, [{ path: filepath, changeType: "delete" }], message, actingUserId);
 }
 
 /** Gitea 사용자 계정 존재 여부 - 사용자 계정 마스터링(core/
