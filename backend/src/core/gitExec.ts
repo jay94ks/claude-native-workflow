@@ -510,9 +510,24 @@ function resolveTreeAtRef(repo: Repository, branch: string, ref?: string): Tree 
   return commit ? commit.tree() : null;
 }
 
+/** 트리 항목이 blob(일반 파일)이 아니면 es-git이 `peelToBlob()`에서
+ * 사람이 읽기 힘든 네이티브 libgit2 에러(예: "can not be successfully
+ * peeled into a blob")를 던진다 - 실측으로 발견(디렉터리 경로를 파일
+ * grep/읽기 라우트에 넘긴 경우). REST 시절 `getContentsRaw`가
+ * `Array.isArray(raw)`로 미리 걸러 "파일이 아니라 디렉터리입니다"로
+ * 명확히 실패하던 것과 동등하게, peel을 시도하기 전에 타입을 먼저
+ * 확인해 같은 문구로 실패한다. git submodule(gitlink, type "Commit")
+ * 등 blob도 tree도 아닌 경우는 별도 문구로 구분. */
 function blobAtPath(repo: Repository, tree: Tree, filePath: string): { content: Buffer; sha: string } | null {
   const entry = tree.getPath(filePath);
   if (!entry) return null;
+  const entryType = entry.type();
+  if (entryType === "Tree") {
+    throw new Error(`${filePath}는 파일이 아니라 디렉터리입니다`);
+  }
+  if (entryType !== "Blob") {
+    throw new Error(`${filePath}는 일반 파일이 아닙니다(git submodule 등으로 추정) - 내용을 읽을 수 없습니다`);
+  }
   const blob = entry.toObject(repo).peelToBlob();
   return { content: Buffer.from(blob.content()), sha: entry.id() };
 }
@@ -612,8 +627,16 @@ export async function readFilesBatch(
   const tree = resolveTreeAtRef(entry.repo, entry.branch, ref);
   if (!tree) return result;
   for (const p of paths) {
-    const found = blobAtPath(entry.repo, tree, p);
-    if (found) result.set(p, { path: p, content: found.content.toString("utf-8"), sha: found.sha });
+    // 파일 하나가 실패해도(디렉터리/submodule 경로 등) 나머지는 계속
+    // 반환한다 - REST 시절 getFileContentsBatchRest의 개별 try/catch
+    // 관용과 동일한 원칙(#git-cache-and-staging), 하나의 나쁜 경로가
+    // 배치 전체를 실패시키면 안 됨.
+    try {
+      const found = blobAtPath(entry.repo, tree, p);
+      if (found) result.set(p, { path: p, content: found.content.toString("utf-8"), sha: found.sha });
+    } catch (err) {
+      console.error(`readFilesBatch 개별 파일 조회 실패 - ${p}:`, err);
+    }
   }
   return result;
 }

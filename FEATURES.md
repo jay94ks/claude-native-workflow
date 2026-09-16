@@ -892,7 +892,14 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   설계자의 동시 push로 거부되면 한 번 재시도 후에도 실패하면 강제
   push 없이 명확한 충돌 에러로 끝난다. mirror 저장소(외부 연동
   프로젝트의 읽기 전용 사본, sync-status/제안 비교용)는 대응하는
-  영구 클론이 없어 그대로 Gitea REST를 쓴다.
+  영구 클론이 없어 그대로 Gitea REST를 쓴다. 파일 조회가 가리키는
+  경로가 디렉터리이거나 git submodule(gitlink)이면 명확한 한국어
+  에러로 실패한다("...는 파일이 아니라 디렉터리입니다" 등, REST
+  시절과 동일 문구) - 타입 확인 없이 바로 peel을 시도해 네이티브
+  libgit2 에러로 크래시하던 실측 버그를 수정(DN-6EAB4F38). 여러
+  파일을 한 번에 조회하는 배치 조회도 그중 한 경로가 이렇게 실패해도
+  나머지 정상 경로의 결과는 그대로 반환한다(fail-soft, 한 경로의
+  실패가 배치 전체를 실패시키지 않음).
 - **`docs git publish`(외부 GitHub/GitLab 발행)도 같은 영구 클론에서
   직접 push한다**(#git-publish-direct-push) - Gitea의 "push mirror"
   기능(비동기 트리거+폴링)을 거치지 않고, work 영구 클론의 "origin"

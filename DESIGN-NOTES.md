@@ -10232,3 +10232,46 @@ fast-forward 강제(더 안전, 경쟁 조건 없음)로 보장한다 - 다만 �
 라운드에서 얕은 클론의 push 실패가 "에러 없이 조용히 실패"하는
 형태로 나타난다는 걸 실측으로 처음 확인했다는 점을 향후 이 영구
 클론 인프라를 다른 용도로 확장할 때도 기억해둘 필요가 있다.
+
+## git 읽기 경로 - 디렉터리/submodule 경로 peel 크래시 및 배치 fail-soft 회귀 수정
+
+`#git-persistent-local-clone` 이후 프로덕션에서 실제로 크래시가
+재현됐다 - 설계자가 에러 원문만 전달: `libgit2 error: the git_object
+of id '...' can not be successfully peeled into a blob
+(git_object_t=3).; class=Object (11); code=InvalidSpec (-12)`.
+프로덕션 backend 로그에서 스택트레이스로 확인: `blobAtPath` →
+`readFile` → `getFileContent` → `grepSourceFile` → `GET
+/api/projects/:projectId/git/file/grep` 라우트. 서로 다른 object sha
+2건이 같은 경로로 반복 발생 - 1회성이 아니라 진행 중인 실제 작업에서
+계속 재현되던 살아있는 버그였다.
+
+**원인**: `gitExec.ts`의 `blobAtPath()`가 트리에서 찾은 `TreeEntry`가
+실제로 blob(일반 파일)인지 확인하지 않고 바로 `entry.toObject(repo).
+peelToBlob()`을 호출했다. 경로가 디렉터리(`type() === "Tree"`)나 git
+submodule/gitlink(`type() === "Commit"`)를 가리키면 es-git이 위
+원문 그대로의 네이티브 libgit2 에러를 던진다 - REST 시절
+`getContentsRaw` 기반 함수들이 `Array.isArray(raw)`로 미리 걸러
+"...는 파일이 아니라 디렉터리입니다"로 명확하게 실패하던 동작을 이
+영구 클론 rewrite가 이어받지 못했던 것. 같은 파일의
+`readFilesBatch()`에도 관련 버그가 있었다 - `blobAtPath()` 호출에
+try/catch가 없어, 위 수정으로 깔끔한 `Error`를 던지게 만든 뒤에도
+그 에러가 루프를 그대로 빠져나가 배치 전체가 실패했다 - REST 시절
+`getFileContentsBatchRest`가 `Promise.all(...).catch` per-item으로
+지키던 fail-soft 관용(`#git-cache-and-staging`)이 이번 rewrite에서
+빠졌던 것.
+
+**수정**: `blobAtPath()`는 peel 시도 전에 `entry.type()`을 먼저
+확인해 `"Tree"`면 REST 시절과 동일한 문구로, 그 외 `"Blob"`이 아닌
+타입(submodule 등)이면 별도 문구로 구분해 명확한 에러를 던진다.
+`readFilesBatch()`는 루프 안의 `blobAtPath()` 호출을 개별
+try/catch로 감싸 실패한 경로만 건너뛰고 나머지 정상 경로는 그대로
+반환하도록 복원했다. 단일 파일 조회(`readFile`/`readFileRawBytes`)는
+그대로 뒀다 - 새로 던지는 깔끔한 `Error`가 그대로 전파돼 호출부가
+받는 게 REST 시절 단일 파일 동작과 동등하다.
+
+**검증**: `C:\CNW-test`에서 `npx tsc` 타입 체크 통과 확인 후, 알려진
+디렉터리 경로로 `docs git grep`을 호출해 네이티브 크래시 대신 깔끔한
+"...는 파일이 아니라 디렉터리입니다" 에러로 바뀜을 확인, 배치 조회
+엔드포인트(`paths=디렉터리,정상파일1,정상파일2`)로 디렉터리 경로만
+`null`로 조용히 건너뛰고 나머지 정상 파일들은 전체 내용/sha가 정상
+반환돼 배치가 중단되지 않음을 확인.
