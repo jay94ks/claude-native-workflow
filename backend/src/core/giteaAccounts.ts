@@ -138,17 +138,25 @@ export async function getGiteaAccessToken(userId: string): Promise<string | null
 /** git commit 저작자(name/email) + push 인증(token) - core/gitExec.ts
  * 전용(#git-direct-exec). 토큰이 아직 없으면(과도기 상태) null - 호출부가
  * 관리자 신원으로 폴백한다(기존 putFileContent()의 "actingToken 없으면
- * 관리자 토큰" 폴백과 같은 판단, 여기서는 신원 전체를 폴백). email은
- * ensureGiteaAccountForUser()가 계정 생성 시 쓰는 것과 정확히 같은
- * 폴백 표현식을 재사용 - 실제 이메일이 없으면 DB에 저장되지 않고
- * 그때그때 재계산되므로 여기서도 똑같이 계산해야 한다. */
+ * 관리자 토큰" 폴백과 같은 판단, 여기서는 신원 전체를 폴백).
+ *
+ * email은 **항상** 합성 noreply 주소(`${giteaUsername}@users.noreply.
+ * claude-native-workflow.local`)를 쓴다 - `user.email`(실제 개인
+ * 이메일)을 절대 쓰지 않는다. 실측으로 발견한 실제 사고: 이 값을
+ * `user.email || 합성값`으로 뒀다가, `docs git publish`가 그 커밋을
+ * GitHub로 미러 push할 때 GitHub가 "GH007: Your push would publish a
+ * private email address"로 거부(그 설계자가 GitHub에서 이메일 비공개
+ * 설정을 켜둔 상태라 실제 이메일이 커밋 저작자에 그대로 노출되는 걸
+ * GitHub가 서버 사이드에서 막음) - 자기 계정이 아닌 프로젝트의 외부
+ * 저장소로도 얼마든지 나갈 수 있는 커밋에 실제 개인 이메일을 절대
+ * 심지 않아야 한다(#git-direct-exec, GH007 사고). */
 export async function resolveGitAuthorIdentity(userId: string): Promise<{ name: string; email: string; token: string } | null> {
   const db = getDb();
   const user = await db.user.findUnique({ where: { id: userId } });
   if (!user?.giteaAccessTokenEncrypted || !user.giteaUsername) return null;
   return {
     name: user.nickname || user.username,
-    email: user.email || `${user.giteaUsername}@users.noreply.claude-native-workflow.local`,
+    email: `${user.giteaUsername}@users.noreply.claude-native-workflow.local`,
     token: decryptSecret(user.giteaAccessTokenEncrypted),
   };
 }
