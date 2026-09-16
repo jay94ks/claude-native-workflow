@@ -365,6 +365,7 @@ function asyncRoute(
 // 없으면(webhook, 로그인/가입 등 미인증 요청) 기록하지 않는다** -
 // "AI/설계자가 CNW를 통해 쓰는 요청"이라는 취지에 자연히 맞다.
 app.use((req: AuthedRequest, res: Response, next: NextFunction) => {
+  const startedAt = Date.now(); // 평균 소요 시간 계산용(설계자 요청) - finish 시점에 경과만 계산
   res.on("finish", () => {
     const routePattern = req.route?.path;
     if (typeof routePattern !== "string" || !req.userId) return;
@@ -372,7 +373,7 @@ app.use((req: AuthedRequest, res: Response, next: NextFunction) => {
     const origin = resolveMessageOrigin(req);
     const sessionId = req.headers["x-session-id"];
     const transitionKey = typeof sessionId === "string" && sessionId ? sessionId : req.userId;
-    recordRequest(req.method, routePattern, projectId, origin, transitionKey).catch(() => {});
+    recordRequest(req.method, routePattern, projectId, origin, transitionKey, Date.now() - startedAt).catch(() => {});
   });
   next();
 });

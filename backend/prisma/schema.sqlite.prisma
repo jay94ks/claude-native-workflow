@@ -571,6 +571,7 @@ model RequestStat {
   method       String
   origin       String // "designer" | "ai"
   count        Int      @default(0)
+  totalDurationMs Int   @default(0) // 평균 소요 시간 = totalDurationMs / count(호출부가 매번 계산 - 별도 컬럼 없음)
   lastSeenAt   DateTime @default(now())
 
   @@unique([projectId, routePattern, method, origin])

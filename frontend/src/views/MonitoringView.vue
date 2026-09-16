@@ -17,6 +17,7 @@ interface StatRow {
   mcp: string | null;
   origin: string;
   count: number;
+  avgMs: number;
   lastSeenAt: string;
 }
 interface TransitionRow {
@@ -75,6 +76,7 @@ watch(showInstallWide, load);
               <th>MCP</th>
               <th>출처</th>
               <th>횟수</th>
+              <th>평균 소요 시간</th>
               <th>마지막 호출</th>
             </tr>
           </thead>
@@ -84,6 +86,7 @@ watch(showInstallWide, load);
               <td class="mono muted">{{ s.mcp ?? "-" }}</td>
               <td>{{ originLabel[s.origin] ?? s.origin }}</td>
               <td class="num">{{ s.count }}</td>
+              <td class="num">{{ s.avgMs.toLocaleString() }}ms</td>
               <td class="muted">{{ new Date(s.lastSeenAt).toLocaleString() }}</td>
             </tr>
           </tbody>

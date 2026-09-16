@@ -18,13 +18,16 @@ const lastCallByKey = new Map<string, { pattern: string; at: number }>();
 /** 요청 하나를 기록한다 - 패턴별 누적 카운트(RequestStat) upsert +
  * 직전 호출과 5분 이내면 전이 카운트(RequestTransitionStat)도
  * upsert. 실패해도 응답 자체를 막으면 안 되므로 호출부(미들웨어)가
- * await 후 에러를 삼킨다. */
+ * await 후 에러를 삼킨다. durationMs는 호출부(미들웨어)가 요청 시작~
+ * res.on("finish") 사이를 재서 넘긴다 - 평균은 별도 컬럼 없이
+ * totalDurationMs/count로 매번 계산(설계자 요청, #usage-monitoring). */
 export async function recordRequest(
   method: string,
   routePattern: string,
   projectId: string | null,
   origin: string,
   transitionKey: string,
+  durationMs: number,
 ): Promise<void> {
   const db = getDb();
   // Prisma가 복합 unique where에 null을 못 받는다(실측: "Argument
@@ -34,8 +37,8 @@ export async function recordRequest(
   const storedProjectId = projectId ?? "";
   await db.requestStat.upsert({
     where: { projectId_routePattern_method_origin: { projectId: storedProjectId, routePattern, method, origin } },
-    create: { projectId: storedProjectId, routePattern, method, origin, count: 1 },
-    update: { count: { increment: 1 }, lastSeenAt: new Date() },
+    create: { projectId: storedProjectId, routePattern, method, origin, count: 1, totalDurationMs: durationMs },
+    update: { count: { increment: 1 }, totalDurationMs: { increment: durationMs }, lastSeenAt: new Date() },
   });
 
   const now = Date.now();
@@ -59,6 +62,7 @@ interface RequestStatRow {
   method: string;
   origin: string;
   count: number;
+  totalDurationMs: number;
   lastSeenAt: Date;
 }
 
@@ -76,7 +80,12 @@ export interface LabeledStat {
   mcp: string | null;
   origin: string;
   count: number;
+  avgMs: number; // totalDurationMs / count(반올림) - 호출 하나당 평균 소요 시간
   lastSeenAt: Date;
+}
+
+function avgOf(totalDurationMs: number, count: number): number {
+  return count > 0 ? Math.round(totalDurationMs / count) : 0;
 }
 
 function labelFor(method: string, routePattern: string): { label: string; mcp: string | null } {
@@ -117,27 +126,35 @@ export async function getMonitoringStats(
       take: limit,
     });
     return {
-      stats: rows.map((r: RequestStatRow) => ({ ...labelFor(r.method, r.routePattern), method: r.method, routePattern: r.routePattern, origin: r.origin, count: r.count, lastSeenAt: r.lastSeenAt })),
+      stats: rows.map((r: RequestStatRow) => ({ ...labelFor(r.method, r.routePattern), method: r.method, routePattern: r.routePattern, origin: r.origin, count: r.count, avgMs: avgOf(r.totalDurationMs, r.count), lastSeenAt: r.lastSeenAt })),
       transitions: transitionRows.map((r: RequestTransitionStatRow) => ({ from: labelPattern(r.fromPattern), to: labelPattern(r.toPattern), count: r.count })),
     };
   }
 
   // 설치 전체 - projectId 구분 없이 (method, routePattern, origin)
   // 기준으로 다시 합산한다(같은 패턴이 여러 프로젝트에 걸쳐 따로
-  // 저장돼 있으므로).
+  // 저장돼 있으므로). totalDurationMs도 같이 더해뒀다가 마지막에
+  // avgMs로 환산한다(LabeledStat 자체엔 totalDurationMs를 안 노출).
   const allStats = await db.requestStat.findMany();
-  const statMap = new Map<string, LabeledStat>();
+  const statAccMap = new Map<string, { stat: Omit<LabeledStat, "avgMs">; totalDurationMs: number }>();
   for (const r of allStats) {
     const key = `${r.method} ${r.routePattern} ${r.origin}`;
-    const existing = statMap.get(key);
+    const existing = statAccMap.get(key);
     if (existing) {
-      existing.count += r.count;
-      if (r.lastSeenAt > existing.lastSeenAt) existing.lastSeenAt = r.lastSeenAt;
+      existing.stat.count += r.count;
+      existing.totalDurationMs += r.totalDurationMs;
+      if (r.lastSeenAt > existing.stat.lastSeenAt) existing.stat.lastSeenAt = r.lastSeenAt;
     } else {
-      statMap.set(key, { ...labelFor(r.method, r.routePattern), method: r.method, routePattern: r.routePattern, origin: r.origin, count: r.count, lastSeenAt: r.lastSeenAt });
+      statAccMap.set(key, {
+        stat: { ...labelFor(r.method, r.routePattern), method: r.method, routePattern: r.routePattern, origin: r.origin, count: r.count, lastSeenAt: r.lastSeenAt },
+        totalDurationMs: r.totalDurationMs,
+      });
     }
   }
-  const stats = [...statMap.values()].sort((a, b) => b.count - a.count).slice(0, limit);
+  const stats = [...statAccMap.values()]
+    .map((acc) => ({ ...acc.stat, avgMs: avgOf(acc.totalDurationMs, acc.stat.count) }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
 
   const allTransitions = await db.requestTransitionStat.findMany();
   const transitionMap = new Map<string, LabeledTransition>();

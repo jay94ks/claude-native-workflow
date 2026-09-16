@@ -1568,9 +1568,16 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   [--all]` / `docs monitoring stats-all [--limit <n>] [--all]` ↔ MCP
   `monitoring_stats`/`monitoring_stats_all`.
 - **웹 UI** - 프로젝트 탭 바에 "모니터링" - 명령 사용 빈도 표(명령/
-  MCP/출처/횟수/마지막 호출) + 연이은 패턴 표(이전 명령/다음 명령/
-  횟수), 조회만(편집 없음). superAdmin에게는 "설치 전체(모든 프로젝트
-  합산)" 체크박스가 추가로 보임.
+  MCP/출처/횟수/평균 소요 시간/마지막 호출) + 연이은 패턴 표(이전 명령/
+  다음 명령/횟수), 조회만(편집 없음). superAdmin에게는 "설치 전체(모든
+  프로젝트 합산)" 체크박스가 추가로 보임.
+- **평균 소요 시간(avgMs)** - `RequestStat`에 `totalDurationMs`
+  컬럼을 추가해 매 요청마다 함께 누적하고, 조회 시점에
+  `totalDurationMs / count`(반올림)로 계산해 붙여 나간다 - 별도의
+  이동평균/러닝평균 컬럼 없이 항상 그때그때 계산(설치 전체 합산
+  뷰에서도 프로젝트별 totalDurationMs/count를 먼저 더한 뒤 마지막에
+  한 번만 나눈다). 미들웨어가 요청 시작 시각을 재서
+  `res.on("finish")` 시점까지의 경과를 넘긴다(설계자 요청).
 - **새 명령을 만들 때 `monitoringRegistry.ts`도 같이 갱신** - SKILL.md
   갱신과 같은 라운드에(CLAUDE.md "CLAUDE.md/SKILL.md 동기화" 규칙
   확장) - 안 해도 기능이 죽지는 않지만(raw route로 표시) 대시보드가
