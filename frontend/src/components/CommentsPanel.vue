@@ -5,7 +5,12 @@ import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import UserRef from "./UserRef.vue";
 import TrackingCodeText from "./TrackingCodeText.vue";
 
-const props = defineProps<{ projectId: string; targetType: "document" | "source" | "kanbanCard"; targetKey: string }>();
+// targetType은 QAPanel.vue/TargetPanelDialog.vue의 공유 스토어
+// (targetPanelDialog.ts의 TargetPanelType)와 타입을 맞추기 위해
+// "plan"까지 포함한 전체 합집합을 받는다 - 이 컴포넌트 자신은 코멘트
+// 대상으로 "plan"을 실제로 쓰지 않는다(호출부가 그 값으로 부르지
+// 않음 - 의견/OpinionsPanel.vue만 "plan"을 씀).
+const props = defineProps<{ projectId: string; targetType: "document" | "source" | "kanbanCard" | "plan"; targetKey: string }>();
 
 interface CommentItem {
   id: string;

@@ -671,6 +671,9 @@ UI와 강하게 결합돼 있음) - 그 외 조회/대화/진행 내역/머지·
 | 질의 확인 완료 처리 | `docs question-ack <trackingCode>` | `question_ack` |
 | 질의 일괄 확인 완료 처리 | `docs question-ack-bulk <trackingCode...>` | `question_ack_bulk` |
 | 질의 철회 | `docs question-withdraw <trackingCode>` | `question_withdraw` |
+| 의견(문서/계획에 설계자가 남긴 AI 참고용 - 코멘트와 정반대로 CLI/MCP 조회 가능, 생성은 웹 UI 전용) 대기 목록(open만) | `docs opinion pending <projectId>` | `opinion_pending` |
+| 의견 목록(--target으로 특정 대상만, --status로 상태 제한(기본 open)) | `docs opinion list <projectId> [--target <trackingCode>] [--status open\|resolved\|all]` | `opinion_list` |
+| 의견 확인 완료 표시(되돌리기 없음) | `docs opinion resolve <opinionId>` | `opinion_resolve` |
 | 본인 프로필 조회/whoami | `docs auth whoami` | `auth_whoami` |
 | 본인 프로필 수정 | `docs profile set [옵션...]` | `profile_set` |
 | 타 설계자 프로필 조회 | `docs user get <userId>` | `user_get` |

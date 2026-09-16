@@ -98,6 +98,7 @@ model User {
   questionsAsked    Question[]         @relation("QuestionAskedBy")
   answersGiven      Answer[]           @relation("AnswerAnsweredBy")
   comments          Comment[]          @relation("CommentAuthor")
+  opinions          Opinion[]          @relation("OpinionAuthor")
   messagesSent      Message[]          @relation("MessageAuthor")
   teamAdminships    TeamAdmin[]
   projectGroupAdminships ProjectGroupAdmin[]
@@ -227,6 +228,7 @@ model Project {
   docTypes        DocType[]
   documents       Document[]
   comments        Comment[]
+  opinions        Opinion[]
   questions       Question[]
   pushHookPrompts PushHookPrompt[]
   messages        Message[]
@@ -522,6 +524,31 @@ model Comment {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   author  User    @relation("CommentAuthor", fields: [authorId], references: [id])
+
+  @@index([projectId])
+  @@index([targetType, targetKey])
+}
+
+// 코멘트(Comment)와 반대 방향 채널 - 코멘트는 "설계자들끼리만 공유,
+// AI 참고 지표가 될 수 없다"는 원칙으로 CLI/MCP가 없는데, 의견은
+// 정반대다: 설계자가 웹 UI로만 남기고(생성 도구가 CLI/MCP에 의도적으로
+// 없음), AI가 CLI/MCP로 직접 읽고 확인 완료(resolved)로 표시한다.
+// targetType은 "document" | "plan" 두 가지만(요청 범위 - 소스/칸반은
+// 필요해지면 그대로 확장 가능한 모양).
+model Opinion {
+  id         String    @id @default(cuid())
+  projectId  String
+  targetType String // "document" | "plan"
+  targetKey  String
+  body       String
+  authorId   String
+  status     String    @default("open") // open | resolved(되돌리기 없음 - 필요하면 새 의견으로)
+  resolvedBy String? // CodeReviewFinding.resolvedBy와 같은 이유로 FK 아님(방어적)
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author  User    @relation("OpinionAuthor", fields: [authorId], references: [id])
 
   @@index([projectId])
   @@index([targetType, targetKey])

@@ -4,6 +4,7 @@ import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
 import { nextDialogZIndex } from "../dialogZIndex";
 import QAPanel from "./QAPanel.vue";
 import CommentsPanel from "./CommentsPanel.vue";
+import OpinionsPanel from "./OpinionsPanel.vue";
 
 const dialog = useTargetPanelDialogStore();
 const zIndex = ref(1000);
@@ -28,6 +29,12 @@ watch(
         :in-dialog="true"
       />
       <CommentsPanel
+        v-else-if="dialog.panel === 'comments'"
+        :project-id="dialog.projectId"
+        :target-type="dialog.targetType"
+        :target-key="dialog.targetKey"
+      />
+      <OpinionsPanel
         v-else
         :project-id="dialog.projectId"
         :target-type="dialog.targetType"

@@ -681,6 +681,12 @@ onUnmounted(() => disconnectRealtime?.());
         >
           코멘트
         </button>
+        <button
+          class="secondary"
+          @click="targetPanelDialog.show('opinion', id, 'document', trackingCode)"
+        >
+          의견
+        </button>
       </div>
   
       <template v-if="activeTab === 'view'">

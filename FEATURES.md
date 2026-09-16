@@ -1449,3 +1449,35 @@ DESIGN-NOTES.md에, 검증 절차는 `QA` 문서에 남긴다.
   뜬다. 리뷰 헤더에 리뷰 전체 코멘트 스레드, 각 finding 아래에 그
   finding 전용 코멘트 스레드가 있어(목록 + 작성 폼) 설계자도 웹에서
   직접 코멘트를 남길 수 있다(editor 이상).
+
+## 27. 의견 (AI 참고용)
+
+- **코멘트(Comment)와 정반대 방향 채널** - 코멘트(9. "코멘트(설계자
+  전용 채널)")는 "설계자들끼리만 공유되는 채널이라 AI 참고 지표가 될
+  수 없다"는 원칙으로 CLI/MCP에 없는데, 의견(Opinion)은 AI가 참고해야
+  하는 채널이라 그 반대다: 생성은 웹 UI(설계자)에서만 하고 CLI/MCP에
+  생성 도구가 의도적으로 없지만, 조회와 확인 완료 처리는 CLI/MCP로
+  AI가 직접 한다.
+- **대상은 문서/계획 두 가지** - `targetType`/`targetKey`로 다형화
+  (Question/Comment와 같은 패턴). 문서/계획 편집 화면에 "코멘트"
+  버튼 옆에 "의견" 버튼이 따로 있다(둘 다 같은 다이얼로그 컴포넌트를
+  재사용, 안에 끼워 넣는 패널만 다름).
+- **상태는 open → resolved 둘뿐** - 되돌리기 없음(CodeReviewFinding과
+  같은 이유 - 다시 논의가 필요하면 설계자가 새 의견을 남기는 게
+  자연스럽다). `docs opinion resolve <opinionId>`(또는 웹의 "확인
+  완료로 표시" 버튼)로 전이.
+- **자동 눈에 띔** - `docs get <trackingCode>`(문서)/`docs plan get
+  <trackingCode>`가 그 대상에 미확인(open) 의견이 있으면 응답
+  notices에 안내를 얹는다("이 대상에 AI가 아직 확인하지 않은 의견이
+  N건 있습니다 - ..."로 시작) - 웹 UI도 문서 편집 화면의 기존 notice
+  배너로 같은 문구가 그대로 뜬다(별도 UI 추가 없이 재사용).
+- **CLI/MCP** - `docs opinion pending <projectId>`(open만) /
+  `docs opinion list <projectId> [--target <trackingCode>] [--status
+  open|resolved|all]` / `docs opinion resolve <opinionId>` ↔ MCP
+  `opinion_pending`/`opinion_list`/`opinion_resolve`. 생성 명령은
+  없음(설계자가 웹에서만 남긴다) - 완전성 원칙의 의도적 예외(코멘트와
+  같은 이유, 방향만 반대).
+- **웹 UI** - `OpinionsPanel.vue`(코멘트와 별도 컴포넌트) - 목록(작성자/
+  본문/시각/상태 배지) + 작성 폼 + open 항목마다 "확인 완료로 표시"
+  버튼. 실시간 갱신(다른 세션이 새 의견을 남기거나 확인 완료로
+  표시하면 자동 반영).

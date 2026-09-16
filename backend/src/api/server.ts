@@ -152,6 +152,14 @@ import {
   listRecentComments,
   setCommentStatus,
 } from "../core/comments.js";
+import {
+  addOpinion,
+  listOpinions,
+  resolveOpinion,
+  countOpenOpinionsForTarget,
+  getOpinionProjectId,
+  type OpinionListFilter,
+} from "../core/opinions.js";
 import { resolveTemplate, setTemplateOverride, seedDefaultTemplates, listTemplateRevisions, listTemplateRevisionsPaged } from "../core/templates.js";
 import { MeiliSearchRequestError } from "meilisearch";
 import { ensureSearchIndexes, searchDocumentsWithSnippets, searchSourceFiles } from "../core/search.js";
@@ -1762,6 +1770,14 @@ function withNotices<T extends object>(payload: T, ...noticeSources: (string | s
   return notices.length ? { ...payload, notices } : payload;
 }
 
+// #opinion-target-notice - 문서/계획을 AI가 다시 열 때 미확인 의견을
+// 자동으로 눈에 띄게 하는 알림(설계자 요청). pendingQuestionNotice(뒤쪽,
+// 프로젝트 단위)와 같은 모양이지만 "이 대상 하나"만 본다.
+function openOpinionNotice(openCount: number, trackingCode: string): string | null {
+  if (openCount === 0) return null;
+  return `이 대상에 AI가 아직 확인하지 않은 의견이 ${openCount}건 있습니다 - docs opinion list <projectId> --target ${trackingCode}로 확인하세요`;
+}
+
 /** X-Session-Id 헤더 값(있으면) - 세션 자신의 클레임은 충돌 경고에서
  * 제외할 때 쓴다(#multi-session-workclaim). */
 function resolveSessionId(req: AuthedRequest): string | undefined {
@@ -1782,14 +1798,16 @@ app.get(
     // 보고는 다른 문서를 언급/참조하는지 알 수 없어, CLI/MCP로 문서를
     // 훑는 세션이 매번 doc-graph/links-out/backlinks를 따로 조회하지
     // 않아도 되게 한다.
-    const [linksOut, backlinks] = await Promise.all([
+    const [linksOut, backlinks, openOpinions] = await Promise.all([
       listDocumentLinksOut(req.params.trackingCode),
       listBacklinks(req.params.trackingCode),
+      countOpenOpinionsForTarget("document", req.params.trackingCode),
     ]);
     res.json(
       withNotices(
         { ...doc, linksOut, backlinks, perm: { read: perm.read, write: perm.write, delete: perm.delete } },
         perm.notice,
+        openOpinionNotice(openOpinions, req.params.trackingCode),
       ),
     );
   }),
@@ -3035,7 +3053,8 @@ app.get(
     if (!plan) { res.status(404).json({ error: "not found" }); return; }
     const role = await getMemberRole(plan.projectId, req.userId!);
     if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
-    res.json(plan);
+    const openOpinions = await countOpenOpinionsForTarget("plan", req.params.trackingCode);
+    res.json(withNotices(plan, openOpinionNotice(openOpinions, req.params.trackingCode)));
   }),
 );
 
@@ -3550,6 +3569,56 @@ app.get(
   asyncRoute(async (req, res) => {
     const limit = Number(req.query.limit ?? 5);
     res.json(await listRecentComments(req.params.projectId, limit));
+  }),
+);
+
+// ---------------------------------------------------------------- 의견(Opinion) - 코멘트와 정반대 채널.
+// 코멘트는 "설계자들끼리만 공유, AI 참고 지표가 될 수 없다"는 원칙으로
+// CLI/MCP가 없는데, 의견은 AI가 참고해야 하는 채널이라 그 반대다 -
+// 생성은 여기 웹 전용 라우트로만(설계자가 문서/계획 화면의 "의견"
+// 버튼으로), 조회/확인 완료는 CLI/MCP로도 노출한다(뒤쪽 opinion_*
+// 섹션). targetType은 document/plan만 지원 - resolveTargetByTrackingCode
+// 가 kanbanCard로 판별하면 명확히 거부한다.
+
+app.post(
+  "/api/opinions",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { trackingCode, body } = req.body as { trackingCode?: string; body?: string };
+    if (!trackingCode || !body) { res.status(400).json({ error: "trackingCode/body가 필요합니다" }); return; }
+    const target = await resolveTargetByTrackingCode(trackingCode);
+    if (!target || target.targetType === "kanbanCard") { res.status(404).json({ error: "대상을 찾을 수 없습니다" }); return; }
+    if (!(await requireEditorForTarget(target.projectId, req.userId!))) {
+      res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" });
+      return;
+    }
+    res.json(await addOpinion(target.projectId, target.targetType, trackingCode, body, req.userId!));
+  }),
+);
+
+app.get(
+  "/api/opinions",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const { projectId, targetKey, status } = req.query as { projectId?: string; targetKey?: string; status?: string };
+    if (!projectId) { res.status(400).json({ error: "projectId 쿼리가 필요합니다" }); return; }
+    const role = await getMemberRole(projectId, req.userId!);
+    if (!role) { res.status(403).json({ error: "이 작업은 최소 viewer 권한이 필요합니다" }); return; }
+    res.json(await listOpinions(projectId, { targetKey, status: status as OpinionListFilter["status"] }));
+  }),
+);
+
+app.post(
+  "/api/opinions/:id/resolve",
+  authenticate,
+  asyncRoute(async (req, res) => {
+    const projectId = await getOpinionProjectId(req.params.id);
+    if (!projectId) { res.status(404).json({ error: "의견을 찾을 수 없습니다" }); return; }
+    if (!(await requireEditorForTarget(projectId, req.userId!))) {
+      res.status(403).json({ error: "이 작업은 최소 editor 권한이 필요합니다" });
+      return;
+    }
+    res.json(await resolveOpinion(req.params.id, req.userId!));
   }),
 );
 

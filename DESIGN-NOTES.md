@@ -9792,3 +9792,73 @@ UTF-8이 아닌 인코딩으로 읽어 생긴 순수 확인 절차상의 오탐�
 채널로 완성돼, 트리아지 판단 근거를 남기고(`resolve-finding
 --comment`) 다음 리뷰가 그 근거를 `file-history`로 다시 찾아볼 수
 있게 됐다.
+
+## 문서/계획 의견(Opinion) 기능 추가
+
+**배경**: 설계자가 "문서나 계획에 의견을 남기는 기능"을 요청했다.
+처음엔 기존 코멘트(`Comment` 모델, FT-6FD32AA6)에 "plan"을 대상으로
+추가하는 걸로 이해하고 그 방향으로 설계까지 마쳤으나, 설계자가
+명확히 정정했다: "코멘트에 설계자들간 코멘트인지 아닌지를 내부적으로
+구분하여 설계자들간 코멘트가 아닌것을 활용할 방법을 찾자". 후속
+질문으로 구체화된 요구: (1) "코멘트" 버튼 외에 "의견" 버튼을 따로
+두고, (2) "의견"은 AI가 CLI/MCP로 직접 조회 가능해야 하며, (3) AI가
+그 대상을 다시 열 때 자동으로 눈에 띄어야 하고, (4) 상태 관리(확인
+완료 표시)가 있어야 한다. 기존 코멘트는 "설계자들끼리만 공유, AI
+참고 지표가 될 수 없다"는 원칙으로 CLI/MCP가 없는데(comments.ts:7-10
+주석), 이번 요청은 정확히 그 반대 방향의 채널이다 - 바로 앞 라운드의
+`CodeReviewComment`(코드 리뷰 코멘트, DN-74C83C55)와 같은 설계
+철학을 문서/계획에도 적용하는 것.
+
+**설계 결정**: 기존 `Comment`는 건드리지 않고 완전히 새 엔티티
+`Opinion` 신설 - `targetType`("document" | "plan")/`targetKey`로
+다형화(Question/Comment와 같은 패턴). 작성은 설계자만(웹 UI "의견"
+버튼) - CLI/MCP에 생성 도구는 의도적으로 없음(`CodeReviewComment`와
+반대 방향: 여긴 설계자가 쓰고 AI가 읽는다). 조회/확인 완료는 AI가
+CLI/MCP로 직접. 상태는 open → resolved 둘뿐(`CodeReviewFinding`처럼
+되돌리기 없음). 자동 눈에 띔은 CLI/MCP 직접 조회 + 문서/계획 GET
+응답에 기존 `withNotices()` 헬퍼(server.ts:1760)로 미확인 개수를
+얹는 방식 둘 다 구현 - 웹 UI도 문서 편집 화면의 기존 notice 배너가
+그대로 표시해줘서 별도 UI 추가가 필요 없었다. 웹은 `CommentsPanel.vue`
+를 고치지 않고 `OpinionsPanel.vue`를 새로 만들어(상태 배지 + 확인완료
+버튼이 다름) `useTargetPanelDialogStore`의 `panel`에 `"opinion"`을
+추가해 같은 다이얼로그를 재사용.
+
+**구현**:
+- 스키마 3종에 `Opinion` 모델 신규(targetType/targetKey/body/
+  authorId/status/resolvedBy/resolvedAt) + `Project.opinions`/
+  `User.opinions` 백레퍼런스.
+- `core/opinions.ts`(신규): `addOpinion`/`listOpinions`(기본
+  status:"open")/`resolveOpinion`/`countOpenOpinionsForTarget`/
+  `getOpinionProjectId`/`resolveOpinionTargetLabel`.
+- REST `POST/GET /api/opinions`(트래킹코드 기반, 기존
+  `resolveTargetByTrackingCode` 재사용 - kanbanCard면 거부),
+  `POST /api/opinions/:id/resolve`. 문서/계획 GET 라우트에
+  `openOpinionNotice()` 소스 추가.
+- CLI `opinion pending/list/resolve`(생성 명령 없음), MCP
+  `opinion_pending`/`opinion_list`/`opinion_resolve`(생성 도구 없음).
+- 웹 `OpinionsPanel.vue`(신규), `targetPanelDialog.ts`/
+  `TargetPanelDialog.vue`에 `"opinion"` 분기, `DocumentEditorView.vue`/
+  `PlanEditorView.vue`에 "의견" 버튼 추가(**`PlanEditorView.vue`는
+  기존에 "코멘트" 버튼 자체가 없었다** - Q&A만 있었음 - 그래서
+  "코멘트" 버튼도 이번에 같이 추가해야 "의견" 버튼이 옆에 설 자리가
+  생겼다). `ChangeEvent.entity`에 `"opinion"` 추가(백엔드/프론트
+  두 사본 다).
+
+**검증**: `C:\CNW-test`에서 REST로 문서/계획 각각에 의견을 등록 →
+`docs opinion pending/list`로 조회, `docs get`/`docs plan get`
+notices에 미확인 개수가 뜨는지 확인 → `docs opinion resolve`로
+확인 완료 처리 후 notices가 줄고 `--status all`로는 여전히 보이는지
+확인 → 브라우저로 문서/계획 편집 화면 각각에서 "의견" 버튼 →
+다이얼로그 → 목록/작성/확인완료가 실제로 동작하는지, 문서 편집
+화면의 기존 notice 배너에도 안내가 뜨는지 확인 → 기존 "코멘트" 버튼
+회귀 없음 확인. (검증 중 curl로 REST를 직접 호출할 때 한글을 명령줄
+인자에 그대로 실어 보내 저장 데이터가 실제로 깨지는 걸 발견 - 로컬
+파일에 JSON을 써서 `curl --data-binary @file`로 보내면 깨끗했다.
+CNW 코드 결함이 아니라 이 환경에서 curl로 직접 테스트할 때의
+주의사항.)
+
+**결론**: 문서/계획에 "코멘트"(설계자 전용, CLI/MCP 없음)와 "의견"
+(AI 참고용, CLI/MCP로 직접 조회·확인 완료)이라는 방향이 반대인 두
+채널이 나란히 생겼다 - `CodeReviewComment`까지 포함하면 이 시스템
+전반에 "AI가 참고해야 하는 채널"이라는 한 가지 패턴이 세 곳(코드
+리뷰/문서/계획)에 일관되게 자리잡았다.

@@ -10,6 +10,7 @@ import QAPanel from "../components/QAPanel.vue";
 import StatusBadge from "../components/StatusBadge.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useToastStore } from "../stores/toast";
+import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 
@@ -17,6 +18,7 @@ const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
 const entityPicker = useEntityPickerStore();
 const toast = useToastStore();
+const targetPanelDialog = useTargetPanelDialogStore();
 const activeTab = ref<"view" | "qa" | "qa-history">("view");
 
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
@@ -328,6 +330,9 @@ onUnmounted(() => disconnectRealtime?.());
         <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">보기</button>
         <button :class="{ active: activeTab === 'qa' }" @click="activeTab = 'qa'">질의/답변</button>
         <button :class="{ active: activeTab === 'qa-history' }" @click="activeTab = 'qa-history'">답변 기록</button>
+        <span class="spacer"></span>
+        <button class="secondary" @click="targetPanelDialog.show('comments', id, 'plan', trackingCode)">코멘트</button>
+        <button class="secondary" @click="targetPanelDialog.show('opinion', id, 'plan', trackingCode)">의견</button>
       </div>
 
       <template v-if="activeTab === 'view'">

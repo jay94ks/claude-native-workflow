@@ -31,7 +31,7 @@ export function projectMessagesTopic(projectId: string): string {
 }
 
 export interface ChangeEvent {
-  entity: "document" | "comment" | "question" | "answer" | "project" | "kanbanColumn" | "kanbanCard" | "message" | "plan" | "codeReview";
+  entity: "document" | "comment" | "opinion" | "question" | "answer" | "project" | "kanbanColumn" | "kanbanCard" | "message" | "plan" | "codeReview";
   action: "create" | "update" | "delete";
   id: string;
   trackingCode?: string;
