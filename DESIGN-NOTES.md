@@ -9920,3 +9920,46 @@ CNW 코드 결함이 아니라 이 환경에서 curl로 직접 테스트할 때�
 특히 refs-status는 "문서가 서술하는 상태 vs 실제 상태"의 불일치를
 발견하는 데 걸리는 시간을 코드 하나씩 대조하던 것에서 한 번의 호출로
 줄였다.
+
+## DC 문서 - 의견 추가 시 자동 review 전환 + notice 알림(중복 방지)
+
+**배경**: `DC`(결정 요구사항 및 요청) 문서는 AI가 등록하는 설계
+제안이고, 설계자가 "의견"(Opinion)으로 답변성 반응을 남긴다. 지금까지
+의견을 남겨도 문서 상태/알림에 변화가 없어 AI가 `docs opinion
+pending`을 스스로 주기적으로 확인해야 했다. 설계자 요청: DC 문서에
+새 의견이 달리면 (1) 상태를 `review`로 자동 전환하고 (2) 확인 메시지를
+보낸다 - 같은 문서에 대해 아직 처리 안 된(대기 중) 알림이 이미 있으면
+새로 만들지 않고 이어붙인다(메시지 과다 생성 방지).
+
+**설계 결정**: 전환 조건은 현재 상태가 `review`가 아니면 항상
+`review`로(approved 이후에도 새 의견이 오면 다시 review로 - "새
+의견 = 다시 봐야 함", 설계자 확인). `editMessage()`의 "대기 중
+메시지는 수정 불가"라는 기존 규칙과 충돌하는 지점은 설계자에게
+확인받아 예외를 뒀다 - 사람이 쓰는 일반 `editMessage`는 규칙 그대로,
+이 알림 전용 내부 함수(`sendOrAppendMessage`, REST/CLI/MCP 미노출)
+만 대기 중 메시지에 이어붙일 수 있다. 새 메시지 origin `"notice"`를
+도입해(설계자 확인, 범위 확장) 실제 행위자 없는 순수 시스템 자동
+발신을 구분하고, **행위자가 없는(authorId: null) 기존 자동 발신 세
+곳도 함께 고쳤다** - `core/gitRepos.ts`의 자격증명 무효화/발행
+대기열/발행 실패 알림. 실제 행위자가 있는 PR 머지/거부/닫기/재오픈,
+칸반 카드 알림은 행위자 귀속이 정확해야 의미가 있어 그대로 뒀다.
+
+**구현**: `core/messages.ts`에 `MessageOrigin`의 `"notice"` +
+`sendOrAppendMessage(projectId, matchSubstring, appendBody)`(대기
+중이고 본문에 matchSubstring을 포함하는 가장 최근 메시지를 찾아
+있으면 직접 이어붙이고, 없으면 `authorId:null, origin:"notice"`로
+새로 발송). `core/gitRepos.ts` 세 곳의 origin을 `"designer"`→
+`"notice"`로. `core/opinions.ts`의 `addOpinion()`이 document 대상일
+때 `maybeNotifyDcOpinion()`을 호출해 docType이 `dc`면 상태 전이+
+알림을 처리(그 외 문서/계획은 영향 없음). 웹은 `MessagesView.vue`에
+`origin==="notice"`일 때 "알림" 배지만 추가(별도 필터 탭 없음).
+
+**검증**: `C:\CNW-test`에서 DC 문서에 의견을 연달아 등록해 상태
+전환·메시지 이어붙이기·ack 후 새 메시지 생성·approved에서 되돌아옴을
+전부 확인, DC가 아닌 문서 대상 회귀 없음 확인, 웹 "메시지" 탭에서
+"알림" 배지가 정상 렌더링되고 콘솔 에러 없음 확인.
+
+**결론**: 문서(DC)의 의견 확인 흐름이 AI가 스스로 폴링하지 않아도
+상태 전이+메시지로 자동 안내되게 됐고, 이 과정에서 실제 행위자가
+없는 시스템 자동 알림 전체가 `notice`라는 일관된 표식을 갖게 됐다
+(기존에 부정확하게 "designer"로 붙어 있던 세 곳도 같이 바로잡음).

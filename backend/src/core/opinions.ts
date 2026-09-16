@@ -1,7 +1,9 @@
 import { getDb } from "./db.js";
-import { getDocument } from "./documents.js";
+import { getDocument, transitionDocumentStatus } from "./documents.js";
+import { getDocTypeById } from "./docTypes.js";
 import { getPlanProjectId, getPlanByTrackingCode } from "./plans.js";
 import { realtimePublish, projectChangesTopic, type ChangeEvent } from "./realtime.js";
+import { sendOrAppendMessage } from "./messages.js";
 
 // 코멘트(Comment, core/comments.ts)와 정반대 방향 채널 - 코멘트는
 // "설계자들끼리만 공유되는 채널이라 CLI/MCP에 없다"는 게 원칙인데,
@@ -63,7 +65,40 @@ export async function addOpinion(
     at: new Date().toISOString(),
   } satisfies ChangeEvent);
 
+  if (targetType === "document") {
+    await maybeNotifyDcOpinion(projectId, targetKey, body);
+  }
+
   return row;
+}
+
+/** DC(결정 요구사항 및 요청) 문서에 새 의견이 달리면 (1) 상태를
+ * review로 되돌리고(이미 review면 그대로 - "새 의견 = 다시 봐야
+ * 함", 설계자 확인) (2) 확인 메시지를 보낸다 - 같은 문서를 가리키는
+ * 아직 처리 안 된(대기 중) 알림이 있으면 새로 만들지 않고 이어붙인다
+ * (sendOrAppendMessage, #dc-opinion-notice). DC가 아닌 문서거나
+ * review 전이가 안 되는 상태여도(docType에 review가 없는 등) 의견
+ * 저장 자체는 이미 끝났으니 조용히 넘어간다. */
+async function maybeNotifyDcOpinion(projectId: string, documentTrackingCode: string, opinionBody: string): Promise<void> {
+  const doc = await getDocument(documentTrackingCode);
+  if (!doc) return;
+  const docType = await getDocTypeById(doc.docTypeId);
+  if (docType?.code.toLowerCase() !== "dc") return;
+
+  if (doc.statusCode !== "review") {
+    try {
+      await transitionDocumentStatus(documentTrackingCode, "review");
+    } catch {
+      // docType에 review 상태가 없는 등 - 전이만 조용히 스킵.
+    }
+  }
+
+  const snippet = opinionBody.length > 60 ? `${opinionBody.slice(0, 60)}...` : opinionBody;
+  await sendOrAppendMessage(
+    projectId,
+    documentTrackingCode,
+    `${documentTrackingCode}에 새 의견이 있습니다 - 확인해주세요: "${snippet}"`,
+  );
 }
 
 export interface OpinionListFilter {

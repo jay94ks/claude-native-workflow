@@ -18,7 +18,7 @@ interface MessageItem {
   id: string;
   authorId: string | null;
   body: string;
-  origin: "designer" | "ai";
+  origin: "designer" | "ai" | "notice";
   deliveredAt: string | null;
   ackedAt: string | null;
   completedAt: string | null;
@@ -184,6 +184,7 @@ watch(page, load);
         <UserRef v-if="m.authorId" :user-id="m.authorId" />
         <span v-else class="system">system</span>
         <span v-if="m.origin === 'ai'" class="origin-badge">AI</span>
+        <span v-else-if="m.origin === 'notice'" class="origin-badge notice">알림</span>
         <span class="body"><TrackingCodeText :text="m.body" /></span>
         <span class="at">{{ new Date(m.createdAt).toLocaleString() }}</span>
         <button v-if="tab === 'pending'" class="manage-btn" @click="ack(m)">처리 시작</button>
@@ -266,6 +267,10 @@ h1 {
   padding: 1px 6px;
   border-radius: 4px;
   flex-shrink: 0;
+}
+.origin-badge.notice {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
 }
 .body {
   flex: 1;

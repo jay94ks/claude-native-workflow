@@ -11,7 +11,11 @@ import { getMemberRole } from "./members.js";
 // 새 CLI/MCP 명령을 만들지 않고 기존 message send/message_send 그대로
 // 자동 태깅). 웹 프런트엔드(frontend/src/api/client.ts)는 이 헤더를
 // 붙이는 코드가 없어 자연히 "designer"로 남는다.
-export type MessageOrigin = "designer" | "ai";
+// "notice" - 실제 행위자가 없는 순수 시스템 자동 발신(예: 자격증명
+// 무효화 감지, DC 문서에 새 의견이 달렸을 때의 확인 요청). authorId는
+// 항상 null과 짝을 이룬다 - "누가 보냈나"가 아니라 "시스템이 관찰한
+// 상태 변화"라는 뜻이라 designer/ai 어느 쪽도 아니다.
+export type MessageOrigin = "designer" | "ai" | "notice";
 
 export interface MessageDetail {
   id: string;
@@ -144,6 +148,37 @@ export async function completeMessage(id: string, requesterId: string): Promise<
     action: "update",
     id,
     at: now.toISOString(),
+  } satisfies ChangeEvent);
+  return row;
+}
+
+/** DC 문서에 새 의견이 달렸을 때의 확인 요청처럼, "아직 처리 안 된
+ * 같은 알림이 있으면 새로 만들지 않고 이어붙인다"는 자동 알림 전용
+ * 내부 함수 - REST/CLI/MCP에 노출하지 않는다. editMessage()는
+ * "대기 상태(ackedAt 없음)인 메시지는 수정 불가"가 설계자 지시로
+ * 고정돼 있는데(사람이 대기 중 메시지를 마음대로 고치지 못하게), 이
+ * 함수는 그 가드를 의도적으로 우회한다 - 사람이 편집하는 게 아니라
+ * 시스템이 "같은 알림을 또 쌓지 않는다"는 목적으로만 쓰기 때문
+ * (설계자 확인). matchSubstring은 보통 대상 문서의 트래킹 코드 -
+ * appendBody 자체에 항상 포함돼 있어야 다음 호출이 이 메시지를 다시
+ * 찾을 수 있다. */
+export async function sendOrAppendMessage(projectId: string, matchSubstring: string, appendBody: string): Promise<MessageDetail> {
+  const db = getDb();
+  const existing = await db.message.findFirst({
+    where: { projectId, ackedAt: null, body: { contains: matchSubstring } },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!existing) return sendMessage(projectId, null, appendBody, "notice");
+
+  const row = await db.message.update({ where: { id: existing.id }, data: { body: `${existing.body}\n${appendBody}` } });
+  // editMessage()와 같은 이유로 project/{id}/changes에 발행한다 -
+  // messages 토픽은 waitForMessage()가 "새 메시지 도착"으로 오인하는
+  // 전용 채널이라 여기 올리면 안 된다.
+  await realtimePublish(projectChangesTopic(projectId), {
+    entity: "message",
+    action: "update",
+    id: existing.id,
+    at: new Date().toISOString(),
   } satisfies ChangeEvent);
   return row;
 }
