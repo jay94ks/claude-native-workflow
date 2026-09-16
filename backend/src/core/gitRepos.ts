@@ -9,6 +9,7 @@ import { registerWebhook, detectProvider, validateCredential } from "./externalG
 import { resyncCollaboratorGrantsForProject } from "./members.js";
 import { sendMessage } from "./messages.js";
 import { resolveCredentialTokenById as resolveCredentialToken } from "./gitCredentials.js";
+import { dropPersistentRepo } from "./gitExec.js";
 
 export { GitAuthRequiredError };
 export type { GiteaRepoRef };
@@ -311,6 +312,10 @@ export async function promoteToExternal(
     await gitea.deleteRepo(mirrorTarget).catch(() => {});
     throw err;
   }
+  // #git-persistent-local-clone - self_hosted("repo")로 클론돼 있던
+  // 영구 로컬 클론은 이제 origin이 바뀐(work로 rename) 걸 모르므로
+  // 정리한다 - 다음 접근에서 새 이름으로 다시 클론.
+  dropPersistentRepo(projectId);
 
   const secret = crypto.randomBytes(24).toString("hex");
   const targetUrl = webhookTargetUrl(provider, projectId);
@@ -407,6 +412,10 @@ export async function unlinkExternalRepo(projectId: string): Promise<ProjectGitR
   // 찾아 404가 난다(실측으로 발견) - 실제로 이름을 바꿔야 self_hosted
   // 프로젝트와 완전히 동일하게 동작한다.
   const workRepo = await gitea.renameRepo(workTarget, REPO_SELF_HOSTED);
+  // #git-persistent-local-clone - work로 클론돼 있던 영구 로컬 클론은
+  // 이제 origin이 바뀐(repo로 rename) 걸 모르므로 정리한다 - 다음
+  // 접근에서 새 이름으로 다시 클론.
+  dropPersistentRepo(projectId);
   const db = getDb();
   const row = await db.projectGitRepo.update({
     where: { projectId },
@@ -446,6 +455,9 @@ export async function deleteProjectGitRepo(projectId: string): Promise<void> {
       console.error(`deleteProjectGitRepo(${projectId}) - Gitea 저장소 삭제 실패(${target.org}/${target.repo}):`, err);
     }
   }
+  // #git-persistent-local-clone - 프로젝트 자체가 없어지므로 영구
+  // 로컬 클론도 같이 정리(fail-soft, 위 저장소 삭제와 같은 원칙).
+  dropPersistentRepo(projectId);
   if (targets.length > 0) {
     await gitea.deleteOrg(orgForProject(projectId)).catch((err) => {
       console.error(`deleteProjectGitRepo(${projectId}) - Gitea org 삭제 실패:`, err);

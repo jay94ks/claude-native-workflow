@@ -10111,3 +10111,64 @@ smart-HTTP 처리 시간 자체가 새 하한선이 돼 극적이지는 않음(�
 설계자로 정확히 귀속된다 - 다만 남은 지연(Gitea의 git smart-HTTP
 자체 처리 시간)은 이 변경으로도 완전히 없어지지 않는다는 걸 명확히
 알아두고 써야 한다(PN-39A9C17E 완료 처리).
+
+## git 읽기 경로를 es-git 기반 영구 로컬 클론으로 전환
+
+`GET /api/projects/:projectId/git/tree`가 어디로 접근하는지 추적하다
+확인한 사실 - 소스 브라우저/스테이징이 쓰는 읽기 경로(`gitea.ts`의
+`listTree`/`getFullTree`/`getFileContent`/`getFileContentsBatch`/
+`getFileRaw`)는 여전히 매번 Gitea REST API를 직접 호출했다(일부는
+`gitCache` DB 캐시를 거치지만 `listTree`는 그마저도 없었음). 설계자
+지시("es-git으로 캐시를 만들어놓고 프로젝트 life-time동안 유지,
+다만 gitea가 원본이라는 것만 명심")로 프로젝트당 로컬 클론 하나를
+프로세스가 살아있는 동안 계속 열어두고 읽기/쓰기 모두 그걸 통해
+처리하도록 전환했다.
+
+**구현**: 클론 키는 Gitea 레포 이름이 아니라 projectId(외부 연동
+해제/전환 시 work<->self_hosted rename이 있어 레포 이름 키는
+흔들림). Gitea 시스템 웹훅이 이미 부르던 `gitCache.invalidateTree()`
+옆에 `gitExec.markStale(projectId)`를 얹어 새 무효화 채널 없이
+staleness 신호를 재사용, 실제 갱신(fetch + 로컬 브랜치/워킹
+디렉터리/인덱스를 원격 tip으로 강제 정렬)은 다음 접근 시점에 한 번만.
+읽기(`revparseSingle`→`findCommit`→`commit.tree()`)는 HEAD/워킹
+디렉터리/인덱스를 안 건드리는 순수 조회라 평소엔 락 없이 쓰기와
+동시 진행. `gitea.ts`의 `getFullTree`/`getFileContent`/
+`getFileContentsBatch`/`listTree`/`listTreePaged`/`getFileRaw`를
+mirror는 REST 그대로, work/self_hosted는 영구 클론으로 위임하도록
+재작성. `gitExec.ts`의 쓰기 경로(`applyChanges`)도 매번 재클론하던
+걸 영구 핸들 재사용으로 바꿨다. `gitRepos.ts`의 프로젝트 삭제/외부
+연동 해제·전환 3곳에 영구 클론 정리 훅 추가. 영구 볼륨은 안
+만든다(설계자 확인) - 컨테이너 재시작으로 클론이 날아가도 다음
+요청이 그 자리에서 다시 클론.
+
+**구현 중 발견·수정한 실측 버그**:
+- es-git의 `Iterator` 서브클래스(`TreeIter` 등)가 이 프로젝트
+  tsconfig 설정상 `for...of`를 타입 통과 못해 `next()` 수동 소진
+  헬퍼로 우회.
+- **staleness 갱신이 진행 중인 커밋과 경합하면 로컬 저장소가 깨짐** -
+  처음엔 락 없이 아무 때나 갱신했는데, 실측으로 재현: 저장 직후
+  바로 읽으면 "파일을 찾을 수 없음", 이후 삭제는 계속
+  non-fast-forward로 실패. 원인은 읽기 쪽 staleness 갱신(워킹
+  디렉터리/인덱스/HEAD를 실제로 바꿈)이 쓰기의 커밋 진행과 동시
+  실행되며 서로의 상태를 덮어쓴 것 - staleness 갱신도 쓰기와 같은
+  프로젝트당 락으로 직렬화(읽기는 stale일 때만 그 락을 잠깐 탐)하도록
+  고쳐 해결. 부가로 `resyncToRemote` 자체에도 libgit2 제약("cannot
+  force update branch 'main' as it is the current HEAD")이 있어
+  `setHeadDetached`로 먼저 HEAD를 떼어낸 뒤 브랜치를 옮기는 순서로
+  수정.
+
+**검증**: 소스 브라우저 반복 조회 - 첫 접근(클론)만 Gitea에 흔적,
+이후 반복은 어떤 요청도 안 감을 로그로 확인, avgMs가 3회째부터
+사실상 0에 수렴(~15ms). 외부에서 직접 push(백엔드 안 거침) 후
+webhook으로 staleness가 서고 다음 조회가 정확히 최신을 반영함을
+확인(버그 수정 전/후 재현·재확인). 외부 push 직후 백엔드 커밋이
+히스토리 안 갈라지고 정상 이어짐. 저장→즉시읽기→삭제 5회 연속
+스트레스 테스트 통과(락 버그 수정 후). 컨테이너 재시작 후 자연스러운
+재클론, 프로젝트 삭제 시 클론 디렉터리 실제 정리 확인. git status/
+소스 에디터/템플릿 배포/PR REST 경로 회귀 전부 정상.
+
+**결론**: 소스 브라우저·스테이징이 더 이상 Gitea REST를 매번 왕복
+하지 않고 로컬 git 객체를 직접 읽어 응답한다 - 다만 그 과정에서
+"영구 상태를 읽기와 쓰기가 동시에 건드릴 수 있다"는, 매번 새로
+클론하던 이전 설계에는 없던 새로운 동시성 버그 클래스를 실제로
+겪고 고쳤다는 점이 이번 라운드의 핵심 교훈이다.

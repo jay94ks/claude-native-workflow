@@ -5,6 +5,7 @@ import { syncSourceFilesForPush } from "./sourceIndex.js";
 import { resolveProjectFromOrgAndRepo } from "./gitRepos.js";
 import { deleteRelationsForBranch } from "./codeRelations.js";
 import { invalidateTree } from "./gitCache.js";
+import { markStale } from "./gitExec.js";
 
 // 웹훅 수신 인프라(Phase 2 범위) - PushHookPrompt를 만들고 매칭 규칙을
 // 관리하는 CRUD/CLI는 아직 없다(Phase 3 몫). 지금은 이미 존재하는
@@ -235,6 +236,13 @@ export async function handleGiteaSystemPush(parsed: ParsedPush): Promise<GiteaSy
   // 통과해버린다(실제로 겪어 발견 - #git-cache-and-staging 검증 중
   // "웹훅이 전혀 안 온다"로 오인했던 원인이 사실 이 라인이었음).
   await invalidateTree(resolved.projectId, resolved.kind);
+  // #git-persistent-local-clone - 영구 로컬 클론도 같은 이유로
+  // 무효화(다음 접근 때 fetch로 최신화) - kind 무관 항상, 위
+  // invalidateTree와 같은 원칙(mirror push에도 markStale 자체는
+  // 불필요한 낭비일 뿐 틀린 동작은 아님 - 영구 클론은 projectId당
+  // work/self_hosted 하나뿐이라 mirror 변경과는 무관하지만, 구분하는
+  // 비용보다 그냥 부르는 게 더 단순함).
+  markStale(resolved.projectId);
   if (resolved.kind === "mirror") return { status: "ignored", reason: "미러 저장소 push는 무시함" };
   const queued = await recordPushEvent(resolved.projectId, parsed);
   return { status: "processed", projectId: resolved.projectId, queued };
@@ -255,6 +263,7 @@ export async function handleGiteaSystemDelete(parsed: ParsedDelete): Promise<Git
   const resolved = resolveProjectFromOrgAndRepo(parsed.org, parsed.repoName);
   if (!resolved) return { status: "ignored", reason: "관리 대상 저장소가 아님" };
   await invalidateTree(resolved.projectId, resolved.kind); // ref 생략 이유는 handleGiteaSystemPush 주석 참고, kind 무관은 동일 원칙
+  markStale(resolved.projectId); // #git-persistent-local-clone, 위 handleGiteaSystemPush와 같은 이유
   if (resolved.kind === "mirror") return { status: "ignored", reason: "미러 저장소의 브랜치 삭제는 무시함" };
   const deletedRelations = await deleteRelationsForBranch(resolved.projectId, parsed.branch);
   return { status: "processed", projectId: resolved.projectId, deletedRelations };

@@ -4260,7 +4260,7 @@ app.get(
   asyncRoute(async (req, res) => {
     const target = await requireGiteaWorkingRef(req.params.projectId);
     const dirPath = req.query.path ? normalizeGitPath(req.query.path as string) : "";
-    res.json(await gitea.listTree(target, dirPath, req.query.ref as string | undefined));
+    res.json(await gitea.listTree(req.params.projectId, target, dirPath, req.query.ref as string | undefined));
   }),
 );
 
@@ -4273,6 +4273,7 @@ app.get(
     const dirPath = req.query.path ? normalizeGitPath(req.query.path as string) : "";
     res.json(
       await gitea.listTreePaged(
+        req.params.projectId,
         target,
         dirPath,
         req.query.ref as string | undefined,
@@ -4511,7 +4512,7 @@ app.get(
     const target = await requireGiteaWorkingRef(req.params.projectId);
     const filePath = req.query.path ? normalizeGitPath(req.query.path as string) : undefined;
     if (!filePath) { res.status(400).json({ error: "path 쿼리 파라미터가 필요합니다" }); return; }
-    const raw = await gitea.getFileRaw(target, filePath, req.query.ref as string | undefined);
+    const raw = await gitea.getFileRaw(req.params.projectId, target, filePath, req.query.ref as string | undefined);
     res.type(gitea.mimeTypeForPath(filePath));
     res.sendFile(raw.cachePath);
   }),

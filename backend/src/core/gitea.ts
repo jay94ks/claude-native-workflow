@@ -343,7 +343,14 @@ export function repoKindFromRef(target: GiteaRepoRef): RepoKind {
   return "mirror";
 }
 
-export async function getFullTree(projectId: string, target: GiteaRepoRef, ref = "HEAD"): Promise<FullTreeEntry[]> {
+/** REST 기반 원본 구현 - #git-persistent-local-clone 도입 이후에도
+ * 두 군데는 이걸 직접 써야 한다: (1) mirror 저장소 조회(영구 클론이
+ * 없는 kind - sync-status/proposal이 mirror vs work를 비교하려면
+ * 결국 하나는 REST로 봐야 함), (2) changeFiles()의 "이 저장소가 커밋
+ * 0개인 빈 저장소인가?" 판단(gitExec가 clone 실패를 그걸로 추측하지
+ * 않고 이 함수로 명시적으로 확인 - 아래 getFullTree()의 checkEmpty도
+ * 같은 이유로 이걸 재사용). */
+async function getFullTreeRest(projectId: string, target: GiteaRepoRef, ref = "HEAD"): Promise<FullTreeEntry[]> {
   const cached = await gitCache.getCachedTree(projectId, repoKindFromRef(target), ref);
   if (cached) return cached;
 
@@ -370,6 +377,23 @@ export async function getFullTree(projectId: string, target: GiteaRepoRef, ref =
     .map((e) => ({ path: e.path, sha: e.sha, type: "blob" as const, size: e.size }));
   await gitCache.setCachedTree(projectId, repoKindFromRef(target), ref, tree);
   return tree;
+}
+
+/** mirror가 아니면(work/self_hosted) 영구 로컬 클론(#git-persistent-
+ * local-clone)에서 직접 읽는다 - Gitea REST 왕복이 완전히 없어진다
+ * (staleness 플래그가 안 서 있으면 네트워크 호출 자체가 없음). mirror는
+ * 영구 클론이 없는 kind라(sync-status가 work와 비교하는 읍기 전용
+ * 사본일 뿐) 그대로 REST. 조회는 저작자 귀속이 필요 없으므로 관리자
+ * 신원을 그대로 쓴다. */
+export async function getFullTree(projectId: string, target: GiteaRepoRef, ref = "HEAD"): Promise<FullTreeEntry[]> {
+  if (repoKindFromRef(target) === "mirror") return getFullTreeRest(projectId, target, ref);
+  const entries = await gitExec.readFullTree(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), ref);
+  return entries.map((e) => ({ path: e.path, sha: e.sha, type: e.type }));
+}
+
+async function checkEmptyRepo(projectId: string, target: GiteaRepoRef): Promise<boolean> {
+  const tree = await getFullTreeRest(projectId, target, "HEAD");
+  return tree.length === 0;
 }
 
 export interface SystemWebhook {
@@ -604,10 +628,10 @@ export interface TreeEntry {
   type: "file" | "dir";
 }
 
-/** Gitea Contents API는 디렉터리면 배열, 파일이면 객체 하나를 돌려준다 -
- * 이 함수는 디렉터리 조회 전용(배열이 아니면 명확한 에러). path 빈
- * 문자열이면 루트. */
-export async function listTree(target: GiteaRepoRef, dirPath: string, ref?: string): Promise<TreeEntry[]> {
+/** REST 기반 원본 구현(mirror 전용 폴백) - Gitea Contents API는
+ * 디렉터리면 배열, 파일이면 객체 하나를 돌려준다 - 이 함수는 디렉터리
+ * 조회 전용(배열이 아니면 명확한 에러). path 빈 문자열이면 루트. */
+async function listTreeRest(target: GiteaRepoRef, dirPath: string, ref?: string): Promise<TreeEntry[]> {
   const raw = await getContentsRaw(target, dirPath, ref);
   if (!Array.isArray(raw)) {
     throw new Error(`${dirPath || "/"}는 디렉터리가 아닙니다`);
@@ -619,13 +643,27 @@ export async function listTree(target: GiteaRepoRef, dirPath: string, ref?: stri
   }));
 }
 
+/** mirror가 아니면 영구 로컬 클론에서 직접 목록을 만든다(#git-
+ * persistent-local-clone) - REST 왕복 없음. */
+export async function listTree(projectId: string, target: GiteaRepoRef, dirPath: string, ref?: string): Promise<TreeEntry[]> {
+  if (repoKindFromRef(target) === "mirror") return listTreeRest(target, dirPath, ref);
+  return gitExec.listDir(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), dirPath, ref);
+}
+
 /** Gitea Contents API 자체가 page/limit 파라미터를 안 받는 단발성
  * 엔드포인트라(listCommitsPaged처럼 상류에 페이지를 위임할 수 없음),
  * 전체 목록을 한 번에 받아온 뒤 여기서 잘라 반환한다 - 디렉터리
  * 하나가 실제로 수백~수천 항목까지 가는 경우는 드물어 감내 가능한
  * 비용이라고 판단. */
-export async function listTreePaged(target: GiteaRepoRef, dirPath: string, ref: string | undefined, page: number, pageSize: number): Promise<Page<TreeEntry>> {
-  const all = await listTree(target, dirPath, ref);
+export async function listTreePaged(
+  projectId: string,
+  target: GiteaRepoRef,
+  dirPath: string,
+  ref: string | undefined,
+  page: number,
+  pageSize: number,
+): Promise<Page<TreeEntry>> {
+  const all = await listTree(projectId, target, dirPath, ref);
   return paginateInMemory(all, page, pageSize);
 }
 
@@ -635,7 +673,8 @@ export interface FileContent {
   sha: string;
 }
 
-export async function getFileContent(projectId: string, target: GiteaRepoRef, filePath: string, ref?: string): Promise<FileContent> {
+/** REST 기반 원본 구현(mirror 전용 폴백). */
+async function getFileContentRest(projectId: string, target: GiteaRepoRef, filePath: string, ref?: string): Promise<FileContent> {
   const repoKind = repoKindFromRef(target);
   const cachedSha = await gitCache.lookupShaInCachedTree(projectId, repoKind, filePath, ref ?? "HEAD");
   if (cachedSha) {
@@ -653,11 +692,20 @@ export async function getFileContent(projectId: string, target: GiteaRepoRef, fi
   return { path: file.path, content, sha: file.sha };
 }
 
+/** mirror가 아니면 영구 로컬 클론에서 직접 읽는다(#git-persistent-
+ * local-clone) - REST 왕복 없음. */
+export async function getFileContent(projectId: string, target: GiteaRepoRef, filePath: string, ref?: string): Promise<FileContent> {
+  if (repoKindFromRef(target) === "mirror") return getFileContentRest(projectId, target, filePath, ref);
+  const result = await gitExec.readFile(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), filePath, ref);
+  if (!result) throw new Error(`파일을 찾을 수 없습니다: ${filePath}`);
+  return result;
+}
+
 /** 여러 파일을 한 번에 조회 - #git-cache-and-staging. 트리 캐시(또는
  * fetch)로 path→sha를 전체 해석한 뒤 블롭 캐시를 배치로 조회, 미스만
  * 남겨 병렬로 Gitea에서 받아온다(backfillProjectSourceIndexRaw/
  * syncSourceFilesForPush/getGitSyncProposal의 순차·개별 호출을 대체). */
-export async function getFileContentsBatch(
+async function getFileContentsBatchRest(
   projectId: string,
   target: GiteaRepoRef,
   paths: string[],
@@ -668,7 +716,7 @@ export async function getFileContentsBatch(
   const repoKind = repoKindFromRef(target);
 
   let tree = await gitCache.getCachedTree(projectId, repoKind, ref ?? "HEAD");
-  if (!tree) tree = await getFullTree(projectId, target, ref ?? "HEAD");
+  if (!tree) tree = await getFullTreeRest(projectId, target, ref ?? "HEAD");
   const shaByPath = new Map(tree.map((e) => [e.path, e.sha]));
 
   const wantedShas = paths.map((p) => shaByPath.get(p)).filter((s): s is string => !!s);
@@ -708,6 +756,13 @@ export async function getFileContentsBatch(
   return result;
 }
 
+/** mirror가 아니면 영구 로컬 클론에서 직접 읽는다(#git-persistent-
+ * local-clone) - REST 왕복 없음. */
+export async function getFileContentsBatch(projectId: string, target: GiteaRepoRef, paths: string[], ref?: string): Promise<Map<string, FileContent>> {
+  if (repoKindFromRef(target) === "mirror") return getFileContentsBatchRest(projectId, target, paths, ref);
+  return gitExec.readFilesBatch(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), paths, ref);
+}
+
 /** 문서(#document-partial-read-grep-diff)와 같은 이유로 소스 코드
  * 파일에도 부분 읽기/검색을 둔다 - 큰 파일 전체를 매번 컨텍스트에
  * 올리지 않아도 되게. 파일 내용을 가져오는 방식만 다르고(Gitea REST),
@@ -745,14 +800,7 @@ export interface RawFile {
   size: number;
 }
 
-/** 이미지/영상 미리보기·"원본 다운로드" 전용 - Gitea에서 받은 내용을
- * JSON+base64로 바로 감싸 응답하지 않고, blob sha를 파일명 삼아 로컬
- * 디스크 캐시(backend/.cache/git-raw/<sha>)에 디코드해 저장한 뒤 그
- * 파일 경로를 반환한다(호출부가 res.sendFile()로 서빙 - Content-Type/
- * ETag/Last-Modified/Range를 Express가 전부 알아서 처리). sha가 이미
- * 내용의 고유 식별자라 내용이 바뀌면 sha도 바뀌어 캐시가 자연히
- * 무효화되고, 같은 내용이면 프로젝트가 달라도 캐시가 재사용된다. */
-export async function getFileRaw(target: GiteaRepoRef, filePath: string, ref?: string): Promise<RawFile> {
+async function getFileRawRest(target: GiteaRepoRef, filePath: string, ref?: string): Promise<RawFile> {
   const raw = await getContentsRaw(target, filePath, ref);
   if (Array.isArray(raw)) {
     throw new Error(`${filePath}는 파일이 아니라 디렉터리입니다`);
@@ -764,6 +812,26 @@ export async function getFileRaw(target: GiteaRepoRef, filePath: string, ref?: s
     fs.writeFileSync(cachePath, Buffer.from(file.content, "base64"));
   }
   return { cachePath, sha: file.sha, size: fs.statSync(cachePath).size };
+}
+
+/** 이미지/영상 미리보기·"원본 다운로드" 전용 - blob sha를 파일명
+ * 삼아 로컬 디스크 캐시(backend/.cache/git-raw/<sha>)에 저장한 뒤 그
+ * 파일 경로를 반환한다(호출부가 res.sendFile()로 서빙 - Content-Type/
+ * ETag/Last-Modified/Range를 Express가 전부 알아서 처리). sha가 이미
+ * 내용의 고유 식별자라 내용이 바뀌면 sha도 바뀌어 캐시가 자연히
+ * 무효화되고, 같은 내용이면 프로젝트가 달라도 캐시가 재사용된다.
+ * mirror가 아니면 영구 로컬 클론(#git-persistent-local-clone)에서
+ * 직접 blob을 읽어 이 캐시에 쓴다 - REST 왕복 없음. */
+export async function getFileRaw(projectId: string, target: GiteaRepoRef, filePath: string, ref?: string): Promise<RawFile> {
+  if (repoKindFromRef(target) === "mirror") return getFileRawRest(target, filePath, ref);
+  const found = await gitExec.readFileRawBytes(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), filePath, ref);
+  if (!found) throw new Error(`파일을 찾을 수 없습니다: ${filePath}`);
+  const cachePath = path.join(RAW_CACHE_DIR, found.sha);
+  if (!fs.existsSync(cachePath)) {
+    fs.mkdirSync(RAW_CACHE_DIR, { recursive: true });
+    fs.writeFileSync(cachePath, found.content);
+  }
+  return { cachePath, sha: found.sha, size: fs.statSync(cachePath).size };
 }
 
 const RAW_MIME_TYPES: Record<string, string> = {
@@ -841,7 +909,7 @@ export async function changeFiles(
   const repoKind = repoKindFromRef(target);
 
   let tree = await gitCache.getCachedTree(projectId, repoKind, "HEAD");
-  if (!tree) tree = await getFullTree(projectId, target, "HEAD");
+  if (!tree) tree = await getFullTreeRest(projectId, target, "HEAD");
   const shaByPath = new Map(tree.map((e) => [e.path, e.sha]));
 
   for (const c of changes) {
@@ -853,12 +921,11 @@ export async function changeFiles(
   const identity = (actingUserId ? await resolveGitAuthorIdentity(actingUserId) : null) ?? adminGitIdentity();
   // tree.length === 0 → 커밋이 0개인 저장소(또는 전부 삭제된 극히
   // 드문 케이스) - gitExec가 clone 실패를 놓고 "빈 저장소인가?"를
-  // 추측하지 않도록 이미 계산해둔 트리로 명시적으로 알려준다(실측으로
-  // 발견: clone 단계의 무관한 일시적 에러 - "config value
-  // 'http.followRedirects' was not found" - 를 "빈 저장소"로 잘못
-  // 해석해 실제로는 커밋이 있는 저장소의 히스토리를 끊어버리는 실제
-  // 버그가 있었음, #git-direct-exec).
-  const result = await gitExec.applyChanges(apiBaseUrl(), target, changes, message, identity, tree.length === 0);
+  // 추측하지 않도록 위에서 이미 REST로 구한 트리를 그대로 넘긴다
+  // (실측으로 발견: clone 단계의 무관한 일시적 에러를 "빈 저장소"로
+  // 잘못 해석해 실제로는 커밋이 있는 저장소의 히스토리를 끊어버리는
+  // 실제 버그가 있었음, #git-direct-exec).
+  const result = await gitExec.applyChanges(projectId, apiBaseUrl(), target, changes, message, identity, async () => tree.length === 0);
 
   const patched = new Map(tree.map((e) => [e.path, e]));
   for (const rf of result.files) {
