@@ -3,11 +3,13 @@ import { computed, inject, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { apiCall, ApiError } from "../api/client";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
+import { useConfirmDialogStore } from "../stores/confirmDialog";
 import MarkdownBody from "../components/MarkdownBody.vue";
 import PullRequestTimeline from "../components/PullRequestTimeline.vue";
 import StatusBadge from "../components/StatusBadge.vue";
 
 const router = useRouter();
+const confirmDialog = useConfirmDialogStore();
 
 const props = defineProps<{ id: string; index: string }>();
 
@@ -126,7 +128,7 @@ const actionError = ref("");
 const acting = ref(false);
 
 async function runAction(path: string, confirmMsg?: string) {
-  if (confirmMsg && !window.confirm(confirmMsg)) return;
+  if (confirmMsg && !(await confirmDialog.confirm(confirmMsg))) return;
   acting.value = true;
   actionError.value = "";
   try {

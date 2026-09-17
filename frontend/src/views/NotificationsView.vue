@@ -4,7 +4,8 @@
 // 페이지. 팝업과 같은 API(/auth/me/pending-questions/page)를 페이지
 // 크기만 늘려 재사용.
 import { onMounted, ref } from "vue";
-import { apiCall, ApiError } from "../api/client";
+import { apiCall } from "../api/client";
+import { useAsyncAction } from "../composables/useAsyncAction";
 import QuestionListPanel from "../components/QuestionListPanel.vue";
 
 interface NotificationQuestion {
@@ -26,21 +27,15 @@ interface NotificationPage {
 }
 
 const result = ref<NotificationPage>({ items: [], page: 1, pageSize: 30, total: 0, totalPages: 1 });
-const loading = ref(true);
-const error = ref("");
+const { loading, error, run } = useAsyncAction();
+loading.value = true; // 최초 로드 전(onMounted) 잠깐이라도 "결과 없음"이 보이지 않게
 const pageNum = ref(1);
 
 async function load() {
-  loading.value = true;
-  error.value = "";
-  try {
+  await run(async () => {
     const qs = new URLSearchParams({ page: String(pageNum.value), pageSize: "30" });
     result.value = await apiCall<NotificationPage>(`/auth/me/pending-questions/page?${qs}`);
-  } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "알림을 불러오지 못했습니다";
-  } finally {
-    loading.value = false;
-  }
+  }, "알림을 불러오지 못했습니다");
 }
 function onPageChange(page: number) {
   pageNum.value = page;

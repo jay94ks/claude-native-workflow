@@ -1,70 +1,39 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
 import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
-import { nextDialogZIndex } from "../dialogZIndex";
+import BaseModal from "./BaseModal.vue";
 import QAPanel from "./QAPanel.vue";
 import CommentsPanel from "./CommentsPanel.vue";
 import OpinionsPanel from "./OpinionsPanel.vue";
 
 const dialog = useTargetPanelDialogStore();
-const zIndex = ref(1000);
-
-watch(
-  () => dialog.open,
-  (open) => {
-    if (open) zIndex.value = nextDialogZIndex();
-  },
-);
 </script>
 
 <template>
-  <div v-if="dialog.open && dialog.projectId && dialog.targetKey" class="overlay" :style="{ zIndex }" @click.self="dialog.close()">
-    <div class="dialog">
-      <button class="close-btn" @click="dialog.close()">닫기 ✕</button>
-      <QAPanel
-        v-if="dialog.panel === 'qa'"
-        :project-id="dialog.projectId"
-        :target-type="dialog.targetType"
-        :target-key="dialog.targetKey"
-        :in-dialog="true"
-      />
-      <CommentsPanel
-        v-else-if="dialog.panel === 'comments'"
-        :project-id="dialog.projectId"
-        :target-type="dialog.targetType"
-        :target-key="dialog.targetKey"
-      />
-      <OpinionsPanel
-        v-else
-        :project-id="dialog.projectId"
-        :target-type="dialog.targetType"
-        :target-key="dialog.targetKey"
-      />
-    </div>
-  </div>
+  <BaseModal :open="!!(dialog.open && dialog.projectId && dialog.targetKey)" @close="dialog.close()">
+    <button class="close-btn" @click="dialog.close()">닫기 ✕</button>
+    <QAPanel
+      v-if="dialog.panel === 'qa'"
+      :project-id="dialog.projectId!"
+      :target-type="dialog.targetType"
+      :target-key="dialog.targetKey!"
+      :in-dialog="true"
+    />
+    <CommentsPanel
+      v-else-if="dialog.panel === 'comments'"
+      :project-id="dialog.projectId!"
+      :target-type="dialog.targetType"
+      :target-key="dialog.targetKey!"
+    />
+    <OpinionsPanel
+      v-else
+      :project-id="dialog.projectId!"
+      :target-type="dialog.targetType"
+      :target-key="dialog.targetKey!"
+    />
+  </BaseModal>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-.dialog {
-  background: var(--color-surface);
-  color: var(--color-text);
-  border-radius: 10px;
-  padding: 24px;
-  width: min(640px, 90vw);
-  max-height: 80vh;
-  overflow-y: auto;
-  position: relative;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
-}
 .close-btn {
   position: absolute;
   top: 16px;

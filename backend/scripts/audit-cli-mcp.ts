@@ -1,12 +1,18 @@
 // CLI/MCP 대칭성 자동 감사 - PLANS.md #cli-mcp-audit-script.
 //
-// CLI 쪽은 src/cli/index.ts를 정적으로 파싱해서 구한다 - Commander의
-// `program`이 export되지 않고 파일 맨 아래서 무조건 `program.parse()`가
-// 실행되기 때문에(cli/index.ts 참고), 빌드된 모듈을 import해서
-// `.commands`를 읽는 방법은 못 쓴다. 이 파일의 명령 선언 스타일은 두
-// 가지뿐이라(플랫 최상위 `program.command(...)`, 그룹 `const xCmd =
-// program.command("group")` + `xCmd.command("sub")`) 정적 파싱만으로
-// 충분히 신뢰할 수 있다.
+// CLI 쪽은 src/cli/index.ts + src/cli/commands/*.ts를 정적으로 파싱해서
+// 구한다 - Commander의 `program`이 export되지 않고 파일 맨 아래서
+// 무조건 `program.parse()`가 실행되기 때문에(cli/index.ts 참고), 빌드된
+// 모듈을 import해서 `.commands`를 읽는 방법은 못 쓴다(#cli-mcp-domain-split,
+// BL-57F8DF17 #63 - 모든 명령 등록이 index.ts에서 도메인별 cli/commands/
+// <name>Commands.ts로 옮겨진 뒤로는 index.ts 단독으로는 커맨드가 하나도
+// 안 잡힌다). 이 파일들의 명령 선언 스타일은 두 가지뿐이라(플랫 최상위
+// `program.command(...)`, 그룹 `const xCmd = program.command("group")` +
+// `xCmd.command("sub")` - 그룹 변수가 함수 매개변수로 다른 도메인 파일에
+// 넘어가 거기서 이어 `xCmd.command("sub")`를 부르는 경우도 있음, 예:
+// gitRepoCommands.ts가 만든 gitCmd를 gitFileCommands.ts/
+// gitStagingCommands.ts가 넘겨받음) 모든 관련 파일을 하나로 이어붙여
+// 정적 파싱하면 변수명이 파일 경계를 넘나들어도 충분히 신뢰할 수 있다.
 //
 // MCP 쪽은 반대로 정적 파싱을 안 한다 - 실제로 서버 프로세스를 띄워
 // 표준 `tools/list`를 호출한다. mcp/server.ts의 도구 등록은 완전히
@@ -16,7 +22,7 @@
 // 직접 부르는 예외도 자동으로 잡힌다(정적 파싱이었다면 놓쳤을 것).
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -38,10 +44,18 @@ interface CliExtractResult {
   displayNames: Map<string, string>; // tag -> 원래 표시용 이름("group leaf")
 }
 
-/** src/cli/index.ts를 정적으로 파싱해 실행 가능한 리프 명령 전체를
- * 구한다(그룹 루트 자신은 제외 - 직접 실행할 수 없으므로). */
-function extractCliCommands(): CliExtractResult {
-  const source = fs.readFileSync(path.join(backendRoot, "src/cli/index.ts"), "utf-8");
+/** src/cli/index.ts + src/cli/commands/*.ts를 전부 이어붙여 정적으로
+ * 파싱해 실행 가능한 리프 명령 전체를 구한다(그룹 루트 자신은 제외 -
+ * 직접 실행할 수 없으므로). */
+async function extractCliCommands(): Promise<CliExtractResult> {
+  const commandsDir = path.join(backendRoot, "src/cli/commands");
+  const commandFiles = fs
+    .readdirSync(commandsDir)
+    .filter((f) => f.endsWith(".ts"))
+    .map((f) => path.join(commandsDir, f));
+  const source = [path.join(backendRoot, "src/cli/index.ts"), ...commandFiles]
+    .map((f) => fs.readFileSync(f, "utf-8"))
+    .join("\n");
 
   // 1단계 - 그룹 선언(`const xCmd = program.command("group")`) 수집.
   // 나중에 "program.command(...)" 전체 목록에서 이 위치들은 그룹 루트로
@@ -78,6 +92,31 @@ function extractCliCommands(): CliExtractResult {
     const groupName = groupVarToName.get(varName);
     if (!groupName) continue; // 그룹 변수가 아니면 무관한 .command() 호출
     const fullName = `${groupName} ${firstToken(m[2])}`;
+    const tag = toTag(fullName);
+    tags.add(tag);
+    displayNames.set(tag, fullName);
+  }
+
+  // 4단계 - registerListCommand(parent, spec, ...)로 등록되는 명령
+  // (#cli-mcp-shared-operation-descriptor, BL-57F8DF17 #64) - 이런
+  // 명령은 소스에 literal `.command("...")` 문자열이 없어(팩토리
+  // 안에서 spec.cliName으로 동적으로 만들어짐) 위 1~3단계 정규식이
+  // 못 잡는다. 실제 spec 객체를 이 스크립트가 직접 import해서(정규식
+  // 대신 진짜 값을 읽는 게 훨씬 안전) parent가 "program"(플랫)인지
+  // 알려진 그룹 변수(그룹 리프)인지에 따라 태그를 합성한다.
+  const listSpecs = (await import(pathToFileURL(path.join(backendRoot, "src/shared/listOperation.specs.ts")).href)) as Record<
+    string,
+    { cliName: string }
+  >;
+  const registerListCallRe = /registerListCommand\(\s*(\w+)\s*,\s*(\w+)\s*[,)]/g;
+  for (const m of source.matchAll(registerListCallRe)) {
+    const parentVar = m[1];
+    const specVar = m[2];
+    const spec = listSpecs[specVar];
+    if (!spec) continue; // import한 모듈에 없는 변수면(오타 등) 그냥 건너뜀
+    const groupName = parentVar === "program" ? undefined : groupVarToName.get(parentVar);
+    if (parentVar !== "program" && !groupName) continue; // 알 수 없는 parent
+    const fullName = groupName ? `${groupName} ${spec.cliName}` : spec.cliName;
     const tag = toTag(fullName);
     tags.add(tag);
     displayNames.set(tag, fullName);
@@ -183,6 +222,19 @@ const KNOWN_RENAMES: Record<string, string> = {
   link_branch: "document_link_branch",
   unlink_branch: "document_unlink_branch",
   branch_links: "document_branch_links",
+  patch: "document_patch",
+  patch_batch: "document_patch_batch",
+  links_out: "document_links_out",
+  unlink: "document_unlink",
+  links_reorder: "document_links_reorder",
+  doc_graph: "document_graph",
+  dashboard: "project_dashboard",
+  activity: "project_activity",
+  plan_bulk_export: "plan_export",
+  plan_status_bulk: "plan_bulk_status",
+  plan_link_bulk: "plan_bulk_link",
+  plan_depend_bulk: "plan_bulk_depend",
+  session_project: "project_sessions_list",
   question: "question_add",
   question_source: "question_add_source",
   questions: "question_list",
@@ -193,7 +245,7 @@ const KNOWN_RENAMES: Record<string, string> = {
 };
 
 async function main() {
-  const cli = extractCliCommands();
+  const cli = await extractCliCommands();
   const mcp = await fetchMcpToolTags();
 
   const renamedMcpTags = new Set(Object.values(KNOWN_RENAMES));

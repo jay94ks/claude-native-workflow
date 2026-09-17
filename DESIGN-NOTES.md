@@ -10275,3 +10275,443 @@ try/catch로 감싸 실패한 경로만 건너뛰고 나머지 정상 경로는 
 엔드포인트(`paths=디렉터리,정상파일1,정상파일2`)로 디렉터리 경로만
 `null`로 조용히 건너뛰고 나머지 정상 파일들은 전체 내용/sha가 정상
 반환돼 배치가 중단되지 않음을 확인.
+
+## 코드베이스 전체 재검토 - 백로그 정리 + server.ts 필수 필드 검증 보일러플레이트 축약
+
+설계자 지시로 기능 개선/통합/리팩터링 후보를 찾기 위해 코드베이스
+전체(API 라우트 레이어/코어 서비스/CLI·MCP 레이어/프론트엔드)를
+4개 병렬 조사로 재검토해 14개 후보를 BL-57F8DF17(백로그 색인)
+#58~#71로 등록했다. 이후 설계자 지시("루프 태스크를 등록해서 하나씩
+진행해, 커밋/푸시/배포는 마지막에 내가 하게 남겨놔")로 이 목록을
+자율 루프로 하나씩 처리하기 시작 - 각 항목은 구현+검증+문서화까지
+끝내되 커밋/푸시/배포는 절대 하지 않고 설계자가 마지막에 직접
+하도록 남겨둔다.
+
+**#58(server.ts를 도메인별 라우트 파일로 분리)은 착수 전 조사에서
+당초 예상보다 훨씬 위험도가 높다는 걸 확인해 보류했다** - `asyncRoute`/
+`resolveMessageOrigin`/`withNotices`/`openOpinionNotice`/
+`resolveSessionId`/`parseDocumentSort`/`pendingQuestionNotice`/
+`requireEditorForTarget` 8개 로컬 헬퍼 함수가 37개 도메인 섹션
+경계를 넘나들며 공유되고 있어(예: `withNotices`가 API키/문서/
+보류계획/질의응답 4개 섹션에서 쓰임), 잘못 나누면 백엔드 API 표면
+전체가 깨질 수 있다. 분석 결과(섹션 경계 라인, 공유 vs 섹션-로컬
+헬퍼 분류)는 코드 관계도에 기록해뒀다 - 이 항목은 자율 루프가 아니라
+설계자가 직접 스코프를 정하는 별도 라운드로 진행하는 게 낫다고
+판단.
+
+**#59(필수 필드 검증 보일러플레이트 축약)를 완료했다.** `server.ts`
+전체에 84곳 반복되던 `if (!field) { res.status(400).json({error:
+"..."}); return; }` 형태를 `backend/src/api/httpValidation.ts`의
+assertion function 3개(`assertTruthy`/`assertDefined`/
+`assertNonEmpty`)로 축약. **첫 시도는 단순 boolean 반환 헬퍼였는데
+타입 체크에서 40개 이상의 새 에러가 남**(원래 `if (!field) return`
+가드가 TypeScript 제어 흐름 좁히기 역할도 겸하고 있었는데 함수
+호출로는 그 효과가 없어짐) - assertion function(`asserts value is
+...`)으로 재설계해 해결. `ValidationError`를 던지면 전역 에러
+핸들러가 잡아 원래와 동일한 400+메시지로 응답(로그는 안 남김).
+`C:\CNW-test`에서 세 헬퍼 각각의 실제 HTTP 응답이 원래와 100% 동일함을
+확인(특히 `assertDefined`가 falsy지만 유효한 `hidden: false`를
+거부하지 않는다는 핵심 semantics 보존 확인). API 응답 자체는 전혀
+안 바뀌어 FT 문서는 갱신 대상 없음.
+
+**#61(GiteaRepoRef/GitAuthRequiredError 타입 위치 정리)을 완료했다.**
+`GiteaRepoRef`/`GitAuthRequiredError`가 예전 REST 전용 모듈 gitea.ts에
+정의돼 있었는데, 더 최신/주력 모듈인 gitExec.ts가 타입 하나 때문에
+그 오래된 모듈을 역으로 import하는 의존성 역전이 있었다(`import
+type`이라 런타임 순환 참조는 아님). `backend/src/core/gitTypes.ts`를
+신설해 두 타입을 옮기고, gitea.ts는 하위 호환을 위해 재수출만 하도록
+바꿔 gitExec.ts 외의 다른 소비 파일(gitRepos.ts/gitStaging.ts/
+members.ts/server.ts)은 전혀 안 건드려도 되게 했다. `C:\CNW-test`에서
+git 읽기(gitExec 경로)/REST 경로(gitea 경로)/쓰기 전부 회귀 없음
+확인(DN-6F4D6ABB).
+
+**#60(gitea.ts의 5쌍 REST/로컬클론 디스패치 함수 통합)은 착수해보니
+당초 생각보다 더 미묘해 보류했다** - 5쌍이 겉보기엔 똑같은 "if
+(mirror) return XRest(...); return gitExec.X(...)" 패턴처럼 보이지만
+실제로는 REST 분기 호출 인자(일부는 projectId를 받고 일부는 안 받음)와
+gitExec 분기의 후처리(map 변환/null체크+throw/파일 캐시 쓰기 등)가
+함수마다 달라, 범용 dispatch 헬퍼로 묶기엔 부자연스럽다. 대안(REST
+전용 라이프사이클과 읽기 경로로 gitea.ts 자체를 파일 분리)은 #58과
+비슷한 규모의 블라스트 반경이라 이번 라운드에서는 보류 - 분석 내용은
+코드 관계도에 기록.
+
+**#62(문서간 링크 기능 분리)를 완료했다.** `documents.ts`(943줄)에
+남아있던 문서간 링크(link/backlink/그래프) 기능을
+`documentSourceLinks.ts`/`documentBranchLinks.ts`와 같은 기존 관례를
+따라 `documentLinks.ts`로 분리 - `getDb()`/`paginate()`만 쓰고
+`documents.ts` 내부 다른 함수에는 의존하지 않는 독립 도메인이라
+안전하게 잘라낼 수 있었다. `server.ts`/`report.ts` 두 소비 파일의
+import 출처만 바꿈(하위 호환 재수출은 안 함 - 기존 두 분리 파일도
+`documents.ts`를 안 거치므로). `C:\CNW-test`에서 링크 생성/조회/
+그래프/해제 전체 왕복 확인.
+
+**#63(cli/index.ts·mcp/server.ts 도메인 분리)~#66(apiclient 응답
+검증)은 클러스터로 보류했다** - 구조적 위험은 server.ts보다 낮지만
+(로컬 헬퍼 6개 vs 17개), 이 네 파일이 바로 이 자율 루프 자신이
+나머지 항목을 처리하는 데 쓰는 CLI/MCP 도구라 잘못 고치면 이후
+진행 자체가 막히는 별도 위험이 있어 이번 라운드는 건너뛰고 먼저
+CLI/MCP에 의존하지 않는 프론트엔드 항목을 진행했다.
+
+**#71(다크모드 토큰화 마무리)을 완료했다.** `RelationGraphCanvas.vue`
+의 "sharedTag" 엣지 색(`#9aa1ac`)은 `--color-text-muted` 토큰으로,
+`DocumentEditorView.vue`의 즐겨찾기 별 활성 색(`#e0a82e`)은 처음엔
+`--color-warning-border`로 바꿨다가, 브라우저에서 실제 계산된 색상값
+으로 WCAG 대비율을 직접 계산해보니 라이트 1.69:1/다크 2.31:1로
+기준(3:1) 미달임을 발견해 `--color-warning-text`(5.43:1/9.87:1)로
+재선택했다 - 단순히 "토큰만 쓰면 끝"이 아니라 대비율까지 실측 확인한
+것.
+
+**#67(DocumentEditorView.vue 분리)은 착수 전 조사에서 관심사 간
+교차 참조(예: save 흐름이 여러 관심사의 error ref를 함께 리셋)를
+발견해 #58/#60/#63과 같은 이유로 보류했다** - 분석은 코드 관계도에
+기록.
+
+**#68(공용 async 액션 composable)을 완료했다.**
+`frontend/src/composables/useAsyncAction.ts` 신설 - `loading`/`error`
+ref와 `run(fn, fallbackMessage)`을 제공, "data ref"는 강제하지 않아
+조회/저장·삭제 액션 둘 다 대응. 대표 사례 2건(`NotificationsView.vue`,
+`ProjectActivityView.vue`)에 적용해 패턴을 검증했고, 전체 50여개
+파일 전환은 스코프를 벗어난다고 판단해 후속 계획(PN-F81CD257)으로
+남겼다. `npx vue-tsc -b` 통과 확인 후, Vite가 실제로 서빙하는 컴파일된
+모듈을 브라우저에서 직접 동적 import해 성공/실패 경로를 실측 -
+loading 초기값이 composable 기본값(`false`)과 원래 두 컴포넌트의
+`ref(true)`가 달라 명시적으로 `true`를 다시 세팅해줘야 했던 점을
+발견·수정.
+
+**#69(공용 BaseModal 컴포넌트)를 완료했다.**
+`frontend/src/components/BaseModal.vue` 신설 - 12개 다이얼로그가
+복붙하던 `.overlay`/`.dialog` CSS + `nextDialogZIndex()` watch
+패턴을 `open`/`width` prop + `close` emit으로 대체. 대표 사례 2건
+(`TargetPanelDialog.vue`, `MembershipsDialog.vue`)에 적용 -
+열림 조건이 복합식인 경우 slot 내부의 타입 좁히기가 깨져 `!`
+non-null assertion이 필요했던 점을 발견. 브라우저에서 BaseModal을
+격리된 Vue 앱으로 직접 마운트해 오버레이 렌더링(스크린샷 확인)과
+배경 클릭 시 close emit 동작을 실측. 나머지 10개 파일 전환은
+PN-217E9F83 후속 계획으로 남김.
+
+**#70(파괴적 작업 확인을 공용 ConfirmDialog로 통일)을 완료했다 -
+BL-57F8DF17 항목 14개 전체의 마지막 항목.** 원래 백로그 서술("이미
+있는 QuestionDialog/questionDialog 스토어 패턴으로 통일")은 조사해
+보니 착오였음을 발견 - `questionDialog.ts`는 AI가 설계자에게 묻는
+Q&A 도메인 엔티티용이지 범용 확인 다이얼로그가 아니었고, 이 프로젝트엔
+그런 범용 confirm 패턴 자체가 없었다. `frontend/src/stores/
+confirmDialog.ts`(Promise 기반 `confirm()`)와 `ConfirmDialog.vue`
+(방금 만든 `#69`의 `BaseModal`을 재사용)를 새로 만들어 `AppLayout.vue`
+에 전역 마운트하고, 9개 파일 12곳 전부(`#68`/`#69`와 달리 부분
+적용이 아님 - 개수가 적어 한 번에 처리 가능했고, 확인 방식이
+섞이면 오히려 혼란스러움)를 `window.confirm()`에서
+`await confirmDialog.confirm(msg)`로 변환. 동기(블로킹)에서
+비동기로 바뀌는 만큼 모든 호출부에서 `await` 게이팅이 정확히
+됐는지 확인. `npx vue-tsc -b` 통과, `grep`으로 `window.confirm()`
+호출부 0건 확인, 브라우저에서 스토어 액션(`confirm()`→`resolve()`)
+을 직접 호출해 Promise가 실제로 해결됨을 실측(브라우저 프리뷰가
+비활성 탭일 때 `requestAnimationFrame`/타이머가 멈추는 환경 제약으로
+버튼 클릭 시뮬레이션 자체는 안정적으로 재현 안 됨 - 대신 스토어
+로직을 직접 검증하고, 선언적 클릭 바인딩과 `#69`에서 이미 검증된
+BaseModal 배경클릭 메커니즘으로 나머지를 뒷받침).
+
+---
+
+**BL-57F8DF17 코드베이스 재검토 라운드 마무리.** #58~#71 14개 항목
+중 완료 8건(#59/#61/#62/#68/#69/#70/#71 + 문서화), 조사 후 보류
+6건(#58/#60/#63~66/#67 - 전부 "겉보기보다 위험도가 높다"는 걸 실제
+조사로 확인하고 근거를 코드 관계도/BL 표에 남김). 이 라운드 전체에서
+커밋/푸시/배포는 하지 않았다(설계자 지시) - 모든 변경은 dev repo
+워킹 트리에만 있고, 설계자가 검토 후 직접 커밋/푸시/배포할 차례다.
+
+## 보류 항목 6건에 착수 계획 수립 + #66 착수
+
+설계자 지시("위험한 작업들도 착수 계획을 세워")로 보류된 6개 항목
+(#58/#60/#63/#64/#65/#66/#67 - #63~66은 개별) 전부에 PN 착수 계획을
+작성해 BL-57F8DF17에 연결했다(PN-147594AC/#58, PN-75558F6D/#60,
+PN-284C73F0/#63, PN-01007911/#64 - #63에 의존, PN-12C91128/#65,
+PN-A7B931B5/#66, PN-24284AF8/#67). 각 계획은 그 항목이 왜 위험한지
+(이미 기록된 조사 결과)를 바탕으로 안전하게 착수하는 순서(공유
+헬퍼 먼저 분리 → 배치 단위 이관 → 매번 검증, 또는 CLI/MCP 클러스터는
+별도 브랜치+병행 설치 바이너리 안전장치)를 구체적으로 정한다. #60은
+방향 A(공용 dispatch 헬퍼)/방향 B(파일 분리) 중 설계자 결정이
+필요하다는 점도 계획에 명시.
+
+설계자가 "가장 안전한 것부터 지금 바로 착수"를 선택해 **PN-A7B931B5
+(#66, apiclient.ts 응답 zod 검증)를 바로 진행**했다 - 파일 구조
+이동이 전혀 없는 순수 추가라 가장 안전. `apiCallValidated<T>` 신설
+(기존 `apiCall<T>`는 그대로, 165개 호출부 강제 마이그레이션 없음),
+`docs relation list`에 시범 적용 - `listRelations()`가 page 옵션
+유무에 따라 배열/`Page<T>` 객체 중 하나를 반환하는 유니온 타입이라
+"응답 드리프트에 취약한 대표 사례"로 골랐다. 글로벌 CLI 재빌드 후
+**실제 프로덕션 데이터로 두 응답 형태(빈 배열, 페이지네이션 객체)를
+전부 검증 통과 확인**(읽기 전용이라 프로덕션 직접 호출 - 이 세션
+내내 해온 정상 사용과 동일). PN-A7B931B5는 완료 처리, BL-57F8DF17
+#66도 ✅로 갱신 - 나머지 5개 계획(#58/#60/#63/#64/#65/#67)은
+설계자 요청 시 이어서 진행.
+
+## #58 서버 라우트 도메인 분리 실행 완료(PN-147594AC)
+
+설계자 지시("루프 걸어서 다 구현한 뒤에 검토해보자")로 보류돼
+있던 #58(server.ts를 도메인별 라우트 파일로 분리)을 PN-147594AC
+계획대로 8개 배치로 나눠 자율 루프로 전부 실행했다. `server.ts`
+(5165줄, 311개 라우트가 37개 도메인 절 주석 아래 인라인 등록돼
+있던 상태)를 순수 기계적 추출(행동 변화 없음)로 `api/routes/
+<domain>.ts` 28개 파일로 쪼갰다 - Step 0(8개 공유 헬퍼를
+`shared.ts`로 승격) → 배치 1(인증/자격증명/OAuth/설치설정) →
+배치 2a/2b(사용자·관리자 / 팀·그룹·프로젝트) → 배치 3(API 키) →
+배치 4(문서 타입) → 배치 5(문서, 818줄) → 배치 6(접근권한/폴더/
+코드관계도/칸반/보고서/계획) → 배치 7(질의응답/코멘트/의견/템플릿/
+메시징/세션·EMQX) → 배치 8(git 저장소 전체 도메인 - 연결/이력/
+트리/파일/스테이징/동기화/발행/PR/코드리뷰/웹훅/push훅/템플릿배포,
+가장 큰 최종 배치). 결과: `server.ts`가 2266+줄(작업 도중 마지막
+읽은 시점 기준)→227줄(부트스트랩+`app.use()` 등록+전역 미들웨어+
+에러 핸들러만 남김)로 축소, 라우트 총량은 배치 전후 311개로 동일함을
+매 배치·최종 통합 시 재확인.
+
+두 가지 구조적 패턴을 반복 확인했다: (1) `// ----` 섹션 헤더가
+실제 라우트 경계를 안 지키는 사례가 배치 2b/5에서 발견돼("팀" 헤더
+밑에 프로젝트그룹/프로젝트가 헤더 없이 얹혀있었음, "문서" 헤더 안에
+검색/모니터링/refs-status가 우연히 같이 있었음) 이후 모든 배치에서
+헤더 위치를 믿지 않고 실제 경로 접두사를 먼저 grep으로 확인하는
+절차를 강제했다(배치 6~8의 11개 헤더는 전부 실제 일치 확인). (2)
+배치 1~6이 라우트를 이관하면서 `server.ts` 자신의 최상단 import는
+안 정리하고 넘어가 죽은 import가 누적됐다 - 배치 7에서 처음 발견해
+그때그때 정리, 배치 8이 끝나 `server.ts`에 인라인 라우트가 완전히
+없어진 시점에 전체 import를 스캔해 최종 정리(`core/auth.js` 등
+26개 모듈 import 블록이 이 시점엔 완전히 죽어있었음 - `server.ts`는
+이제 실제 부트스트랩 코드만 남음). 웹훅 라우트의 등록 순서 민감성
+(`/api/webhooks/gitea/system`이 `/api/webhooks/:provider/:projectId`
+보다 먼저 등록돼야 하는, 과거 실제로 재현·수정한 이력이 있는 버그)은
+같은 파일에 원본 순서 그대로 보존해 실측으로 재확인했다.
+
+매 배치 `npx tsc` 무오류 + `C:\CNW-test` 격리 스택에서 그 배치의
+모든 라우트를 curl로 실측 검증(생성/조회/수정/삭제/페이지네이션/
+권한거부까지) 후 `docker compose down` - 배치 8은 특히 git 연결/
+스테이징+커밋(검색 인덱스 동기화 포함)/PR 생성·머지(실제 Gitea
+비즈니스 로직 도달 확인)/코드 리뷰 전체 사이클/시스템 웹훅 등록
+순서/템플릿 배포(실제 CLAUDE.md/SKILL.md 커밋 확인)까지 실측했다.
+전체 배치 완료 후 한 세션에서 배치 1~8 대표 라우트를 순서대로
+호출해 교차 배치 간섭 없음도 재확인(DN-401D93F8). 부수적으로
+배치 8 검증 중 `core/gitea.ts`의 `listBranches()`가 커밋이 하나도
+없는 새 저장소에서 Gitea REST가 `null`을 반환할 때 그대로
+`json.map()`이 터지는 기존 버그(#58과 무관한 별도 이슈)를 발견해
+분리된 세션으로 넘겼다.
+
+PN-147594AC 완료 처리, BL-57F8DF17 #58도 ✅로 갱신 - 커밋/푸시/
+배포는 설계자가 나머지 항목(#60/#63/#64/#65/#67)까지 모두 검토한
+뒤 한 번에 직접 진행하도록 남겨둔다.
+
+## #67 DocumentEditorView.vue composable 분리 완료(PN-24284AF8)
+
+이어서 #67(DocumentEditorView.vue, 1240줄을 composable/자식
+컴포넌트로 분리)을 PN-24284AF8 계획대로 실행했다. 0단계(교차 참조
+전수 조사)를 먼저 마쳤다 - 기존에 알려진 챕터↔본문 교차 참조 외에
+3건을 추가로 발견: (1) 즐겨찾기 토글 실패 시 자기 관심사가 아니라
+로드 관심사의 `error` ref에 직접 씀, (2) save/폴더이동/삭제도
+같은 방식으로 `error`를 공유(의도된 공유 배너라 위반은 아니지만
+분리 시 명시적 계약이 필요), (3) **라우트 재사용 리셋 로직이
+브랜치링크 관심사(branchLinksError/newBranchName)를 리셋 목록에서
+빠뜨린 실질적 버그** - 사이드바에서 다른 문서로 이동해도 이전
+문서의 브랜치 연결 에러 메시지가 잠깐 남아있을 수 있었다.
+
+조사 결과를 바탕으로 7개 composable로 분리했다
+(`frontend/src/composables/useDocumentFavorite.ts`/
+`useDocumentMessaging.ts`/`useDocumentSourceLinks.ts`/
+`useDocumentBranchLinks.ts`/`useDocumentChapters.ts`/
+`useDocumentStatus.ts`/`useDocumentPriority.ts`, 총 543줄) - 완전히
+독립적인 관심사(메시징/소스링크/브랜치링크)는 그대로 뽑고, 교차
+참조가 있던 관심사는 콜백으로 명시적 계약을 만들어 정리했다(즐겨찾기는
+`onError` 콜백, 챕터는 `onBodyChanged` 콜백 - doc/body/mode를 직접
+안 건드림). 상태전이/우선순위는 응답에 `perm`이 없어 `doc` ref를
+그대로 공유받아 병합하는 방식을 유지(Vue composable의 표준 패턴이라
+교차 참조라기보다 명시적 계약). 브랜치링크 분리 과정에서 리셋 누락
+버그도 같이 고쳤다. `DocumentEditorView.vue`는 1240줄→936줄로
+축소됐고 **템플릿은 한 글자도 안 바뀌었다**(모든 ref/함수 이름을
+그대로 유지).
+
+`npx vue-tsc -b` 무오류 확인 후 `C:\CNW-test`에서 실제 브라우저로
+9개 관심사 전부 조작 검증(즐겨찾기 토글/본문 편집+저장/상태
+전이+우선순위 저장/챕터 추가(본문 교차 참조 반영 확인)/소스 파일
+연결(피커 다이얼로그 포함)/브랜치 연결/메시지 작성+전송/문서 두
+개를 오가며 라우트 재사용 리셋이 전부 정상 동작하는지까지). 이
+세션의 이전 라운드(#68 useAsyncAction 롤아웃, 13개 파일 + 신규
+composables/stores/components 4개)가 CNW-test에 한 번도 반영된
+적이 없어 이번에 처음 같이 동기화했다(#67과 무관하지만 프런트엔드
+빌드 자체가 막혀 있었음 - `confirmDialog.ts`/`BaseModal.vue`/
+`ConfirmDialog.vue` 등). PN-24284AF8 완료 처리, BL-57F8DF17 #67도
+✅로 갱신 - GitRepoPanel.vue/DocumentsView.vue/RelationsView.vue는
+계획이 예고한 후속 후보로 남겨둔다(별도 백로그 판단 필요).
+
+## #60 gitea.ts REST/gitExec 디스패치 헬퍼 통합 완료(PN-75558F6D)
+
+#60(gitea.ts의 5쌍 REST/gitExec 디스패치 통합)은 계획(PN-75558F6D)
+자체가 "AI 혼자 못 정하는" 설계 갈림길을 명시하고 있어 진행 전
+설계자에게 직접 확인했다 - 방향 A(공용 dispatch 헬퍼, 작고 안전)와
+방향 B(gitea.ts를 REST 전용/읽기 전용으로 파일 자체 분리, #58급
+블라스트 반경이지만 더 근본적)를 제시했고, 계획 문서 자체가 "5쌍의
+REST 인자/후처리가 전부 달라 방향 A가 억지스러울 수 있다"고 미리
+경고해둔 내용도 그대로 전달했다. **설계자가 그 경고를 인지한 채로
+방향 A를 선택**했다.
+
+`dispatchGitRead<T>(target, restFn, execFn)` 헬퍼 하나를 신설해
+`repoKindFromRef(target) === "mirror"` 분기 판단만 대신하게 했다 -
+계획이 제안한 대로 별도 `postProcess` 파라미터는 안 두고, 5쌍
+(`getFullTree`/`listTree`/`getFileContent`/`getFileContentsBatch`/
+`getFileRaw`) 각각의 서로 다른 후처리(map 변환/null체크+throw/
+`RAW_CACHE_DIR` 파일 캐시 쓰기)를 execFn 클로저 안에 그대로 유지
+했다 - REST 쪽 함수 5개는 전혀 안 건드림(`dispatchGitRead`의 `restFn`
+인자로 그대로 전달만).
+
+`npx tsc` 무오류 확인 후 `C:\CNW-test`에서 self-hosted 저장소(gitExec
+분기)를 대상으로 5개 함수 전부 실측(여러 파일 커밋 후 tree/파일/배치
+조회/raw 파일 서빙, 존재하지 않는 파일의 null체크+throw 후처리까지).
+**mirror 분기(REST 경로)는 외부 GitHub/GitLab 연동 자격증명이 있어야
+격리 환경에서 재현 가능해 이번엔 실측 통합 검증을 못 했다** - REST
+쪽 함수 본문을 전혀 안 건드렸다는 코드 검토로 대체(투명하게 기록).
+PN-75558F6D 완료 처리, BL-57F8DF17 #60도 ✅로 갱신.
+
+## #65 CLI/MCP 내부 작은 공용 헬퍼 추출 완료(PN-12C91128)
+
+#65(`apiclient.ts`의 `apiCall`/`apiCallText` 내부 res.ok 체크+에러
+파싱 중복, `printJson`(cli)/`textResult`(mcp)의 notices 처리 중복)를
+계획대로 처리했다 - `assertOk(res)`(실패 판정+에러 메시지 조립)와
+`formatNotices(value)`(notices 배열→"⚠ " 접두사 문자열 배열, export)
+두 헬퍼를 `apiclient.ts`에 추가하고 양쪽에서 재사용하게 했다("어디에
+어떻게 찍을지"는 CLI/MCP가 여전히 각자 다르게 유지 - console.log
+한 줄씩 vs MCP text content 블록).
+
+**이 항목도 이 세션 자신의 CLI/MCP 도구를 건드리는 것이라 #63/#64와
+같은 안전장치를 적용했다** - 먼저 실측으로 확인한 사실: 전역
+`docs`/`docs-mcp` 명령이 `npm link`로 이 저장소
+(`C:\GitHub\claude-native-workflow\backend`)의 `dist/cli/index.js`를
+그대로 실행하도록 연결돼 있어, **이 자율 루프가 지금 쓰고 있는 도구
+그 자체**라는 것. 그 자리에서 `npm run build`를 돌리면 전역 명령이
+즉시 새 코드로 바뀌어 안전망이 사라지므로, 소스를 스크래치
+디렉터리에 복사(node_modules는 junction으로 연결해 빠르게)한 뒤
+거기서만 `tsc`로 빌드해 병행 설치 바이너리를 만들고 그걸로만
+검증했다 - **전역 `dist/`는 이번 라운드에서도 한 번도 재빌드하지
+않았다**(이 세션 시작 이후 오늘 있었던 #58/#60/#65/#67 소스 변경
+전부 전역 `docs` 명령에는 아직 반영 안 된 상태로 남아있다는 뜻이기도
+하다).
+
+병행 바이너리로 `docs project <id>`/`docs get <잘못된 코드>`(에러
+경로)를 전역 `docs`와 나란히 호출해 출력이 완전히 동일함을 확인
+(`assertOk` 추출이 동작 보존). 프로덕션에 지금 활성 notices가 없어
+실제 API로는 `formatNotices` 경로를 재현 못 해, 병행 바이너리에서
+`formatNotices()`를 직접 호출해 notices 있음/없음/배열 아님 세
+케이스가 원래 인라인 로직과 동일한 출력을 냄을 확인했다. 검증 후
+스크래치 디렉터리 정리, 전역 `docs --version` 재확인. 전역 `docs`/
+`docs-mcp`로의 실제 스위칭(재빌드)은 #63을 마친 뒤 그 계획의 안전
+절차에 따라 한 번에 처리하기로 미뤄둔다. PN-12C91128 완료 처리,
+BL-57F8DF17 #65도 ✅로 갱신.
+
+## #63 CLI/MCP 도구/명령 도메인별 파일 분리 완료(PN-284C73F0)
+
+`cli/index.ts`(2861줄)와 `mcp/server.ts`(2259줄)가 각각 모든 CLI
+명령/MCP 도구를 한 파일에 평평하게 등록하고 있었다 - #58에서 이미
+`api/server.ts`(5165줄)를 28개 라우트 파일로 쪼갠 것과 같은 문제,
+같은 해법. 결과: `cli/index.ts` 55줄, `mcp/server.ts` 89줄로 축소 -
+둘 다 순수 부트스트랩(`Command`/`McpServer` 생성 + `register*(...)`
+호출 나열뿐, 직접 `.command(`/`tool(` 호출 0개)만 남았다. 새 파일:
+`cli/commands/*.ts` 23개, `mcp/tools/*.ts` 23개(도메인 1:1 대응),
+`cli/shared.ts`/`mcp/shared.ts` 신설(공용 헬퍼 - MCP 쪽은 원래
+`main()` 클로저였던 `tool()` 등록기를 `createToolRegistrar(server)`
+팩토리로 승격). 로직은 어디서도 안 바뀌었다.
+
+#58에서 처음 확인된 "`// ----` 섹션 헤더가 실제 명령/도구 경계를
+신뢰성 있게 반영하지 않는다"는 패턴이 이번에도 반복됐다(MCP Opinion
+도구가 코드리뷰 섹션에서 900줄 떨어져 있었던 것, monitoring_stats가
+문서 섹션 한가운데 끼어 있던 것, CLI dashboard/activity가 "질의/
+답변" 헤더 아래 있었던 것 등) - 이후 배치부터는 항상 실제
+`.command(`/`"tool_name"` grep으로 경계를 먼저 확인했다. `git_diff`/
+`git_compare`는 응답이 순수 텍스트(unified diff)라 `tool()` 래퍼를
+안 거치고 `server.registerTool`을 직접 호출하는 유일한 예외로 남아,
+`gitRepoTools.ts`만 `ToolRegistrar` 외에 `server: McpServer`도
+파라미터로 받는다.
+
+**이번에도 스크래치 병렬 빌드**(소스만 복사, `node_modules`는
+PowerShell junction, 별도 디렉터리에서 `tsc` 빌드 후 전역 `docs`와
+diff/JSON-RPC로 검증)로 매 배치를 검증했다 - MCP 도구 개수(207개)가
+전 배치에 걸쳐 불변임을 반복 확인.
+
+**작업 중 안전 사고**: `backend/tsconfig.json`에 `outDir`는 있지만
+`noEmit`이 없어, 실저장소 디렉터리에서 "타입체크만" 하려고 반복
+실행한 `npx tsc -p tsconfig.json`이 매번 실제 `backend/dist/`(전역
+`docs`/`docs-mcp`가 그대로 참조하는 디렉터리)에도 컴파일 결과를
+덮어쓰고 있었다 - "스크래치로만 검증, 마지막에 딱 한 번만 의도적
+스왑"이라는 계획이 여러 배치에 걸쳐 의도치 않게 조금씩 깨지고 있었던
+것. 발견 즉시 멈추고 설계자에게 직접 보고했고, 설계자는 "백업에서
+복원 후 스왑을 다시 의도적으로 하자"를 선택했다. 초기 백업
+(`dist.orig`, #63 착수 전 상태)으로 `backend/dist/`를 복원해 전역
+`docs`가 구코드로 정상 동작함을 확인 → 이후 타입체크는 전부 `--noEmit`
+으로 전환 → 스크래치 빌드와 (구코드로 복원된) 전역 `docs` 사이에
+`--help` 전체(최상위 + 하위 명령 그룹 103개 전부)를 전수 diff, 유일한
+차이(`git my-token`의 `git --help` 목록 내 등장 위치 - 세 파일로
+쪼개며 등록 순서가 미묘하게 바뀐 것)를 수정 후 재검증 → 그 뒤에야
+딱 한 번, 의도적으로 실저장소에서 `tsc`(`--noEmit` 없이) 실행 →
+직후 전역 `docs`뿐 아니라 **전역 `docs-mcp` 바이너리 자체**에 JSON-RPC
+를 직접 파이프해 `tools/list` 207개 + 실제 `tools/call` 성공까지
+확인. 앞으로 이 저장소의 `backend/`에서 순수 타입체크가 목적이면
+항상 `--noEmit`을 붙이기로 했다.
+
+`backend/scripts/audit-cli-mcp.ts`(CLI/MCP 대칭성 정적 감사 스크립트)
+도 이번 분리로 `src/cli/index.ts` 하나만 파싱하던 기존 방식이 깨져
+"CLI 리프 명령: 0개"를 내게 됐다 - `index.ts` + `cli/commands/*.ts`
+전부를 이어붙여 파싱하도록 수정. 고친 김에 재실행해 드러난 13개
+불일치는 전부 이번 라운드와 무관하게 원래 `KNOWN_RENAMES`에 빠져
+있던 기존 이름 매핑(`patch`→`document_patch` 등 15건)이라 같이
+보완했다. 최종: `CLI 리프 명령: 219개, MCP 도구: 207개, 허용된
+의도적 예외(CLI 전용): 12개, ✅ CLI/MCP 대칭성 이상 없음`.
+PN-284C73F0 완료 처리, BL-57F8DF17 #63도 ✅로 갱신.
+
+## #64 CLI/MCP 공용 연산 서술자 도입 완료(PN-01007911)
+
+목록/필터 계열 명령이 `cli/commands/*.ts`/`mcp/tools/*.ts` 양쪽에
+거의 동일한 URLSearchParams 빌딩 로직을 복붙하던 것(예: `relation
+list`) - `audit:cli-mcp`가 사후에 잡아주던 대칭성을 애초에 구조적으로
+보장하는 "연산 서술자" 패턴을 도입했다. `shared/listOperation.ts`
+(런타임 무관한 순수 타입 + `buildListUrl()`)와
+`shared/listOperation.specs.ts`(실제 서술자 정의, CLI/MCP 양쪽이
+같은 객체를 import)로 나누고, `cli/shared.ts`의 `registerListCommand`
+/`mcp/shared.ts`의 `registerListTool`이 각자의 런타임(Commander/zod)
+접착을 맡는다.
+
+설계 중 이 API의 페이지네이션 관례가 실제로 두 가지임을 발견했다
+(`doctypes`처럼 "/page" URL 접미사를 쓰는 방식과 `relation list`처럼
+URL은 그대로 두고 쿼리스트링 유무로만 서버가 배열/Page 응답을 가르는
+방식) - `paginated: "suffix"|"inline"|false`로 구분해 감당한다. REST
+쿼리스트링 키가 정본(MCP) 키와 다를 때를 위한 `qsKey` 오버라이드
+(`rootOnly`→`hasNoParent`), 브랜치 자동 감지처럼 서로 배타적인 필터
+쌍을 위한 `extraQs` 탈출구도 뒀다.
+
+계획 1단계("가장 단순한 목록 명령 1~2개로 시범 적용")대로 난이도의
+양 끝을 검증하기 위해 두 개를 골랐다 - `doctypes`/`doctype_list`
+(필터 없이 페이지네이션만)와 `relation list`/`relation_list`(필터
+7개 + 브랜치 자동 감지 co-dependent 쌍 + 다른 페이지네이션 관례,
+계획이 예로 든 바로 그 명령이자 가장 복잡한 축).
+
+이번엔 로직이 실제로 바뀌는 변경이라(#63의 순수 파일 이동과 다름)
+더 두꺼운 검증을 했다 - 스크래치 병행 빌드로 `--help` diff(유일한
+차이는 `relation list`의 `--page`/`--count`가 이제 다른 모든
+페이지네이션 명령과 같은 설명 문구를 얻은 것 - 원래 그 문구가 없던
+게 이 저장소 관례의 예외였을 뿐이라 의도적 정리로 남김, 회귀 아님),
+CLI 옵션 조합 8가지 실제 호출 결과(`--file`/`--ref`의 opts 키
+리매핑, `--root-only`의 `hasNoParent` qsKey 리매핑, 브랜치 자동 감지
+포함) 전부 전역 `docs`와 바이트 동일, MCP `tools/list`(207개 불변)+
+스키마 키 일치+실제 `tools/call` 3가지 조합의 응답 본문까지 전역
+`docs-mcp`와 바이트 동일 확인. #63의 사고 교훈대로 실저장소
+`backend/`에서 타입체크는 전부 `--noEmit`, 전 과정 통과 후에만 딱
+한 번 의도적으로 실저장소 `dist/`를 재빌드하고 전역 `docs`/`docs-mcp`
+바이너리 자체로 스왑 직후 재확인했다.
+
+`audit-cli-mcp.ts`를 이 라운드에서 두 번째로 고쳤다(#63 때와는 다른
+원인의 같은 증상) - 서술자로 등록되는 명령은 소스에 `.command("...")`
+리터럴 문자열이 없어(`registerListCommand` 안에서 `spec.cliName`으로
+동적 생성) 정적 정규식 파서가 못 찾는다. 정규식으로 더 억지로
+우회하는 대신 감사 스크립트 자신이 실제 `listOperation.specs.ts`
+모듈을 동적 `import()`(Windows 경로라 `pathToFileURL` 필요)해
+`spec.cliName`을 진짜 값으로 읽어오도록 고쳤다. 재실행 결과 `CLI
+리프 명령: 219개, MCP 도구: 207개, ✅ CLI/MCP 대칭성 이상 없음`으로
+복구.
+
+계획 2단계("패턴이 검증되면 나머지 목록/필터 계열 명령에 순차 적용")
+는 이번 라운드에 다 하지 않고 후속 계획 PN-DED84912로 분리해뒀다
+(대상 후보 목록 포함). 3단계(git 계열처럼 복잡한 옵션 조합은 서술자로
+안 묶는다)는 이번 라운드부터 이미 지키고 있다. PN-01007911 완료
+처리, BL-57F8DF17 #64도 ✅로 갱신.

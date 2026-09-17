@@ -2,7 +2,10 @@
 import { computed, inject, onMounted, onUnmounted, ref } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { PROJECT_MY_ROLE_KEY } from "../utils/projectContext";
+import { useConfirmDialogStore } from "../stores/confirmDialog";
 import GithubRepoPickerDialog from "./GithubRepoPickerDialog.vue";
+
+const confirmDialog = useConfirmDialogStore();
 
 interface GithubRepoSummary {
   fullName: string;
@@ -139,11 +142,10 @@ const unlinking = ref(false);
 const unlinkError = ref("");
 
 async function unlinkExternal() {
-  if (
-    !window.confirm(
-      "외부 저장소와의 연동을 해제합니다. 미러 저장소는 삭제되고, 지금까지 작업해온 Gitea 저장소는 그대로 이 프로젝트의 자체 호스팅 저장소가 됩니다. 계속할까요?",
-    )
-  ) {
+  const confirmed = await confirmDialog.confirm(
+    "외부 저장소와의 연동을 해제합니다. 미러 저장소는 삭제되고, 지금까지 작업해온 Gitea 저장소는 그대로 이 프로젝트의 자체 호스팅 저장소가 됩니다. 계속할까요?",
+  );
+  if (!confirmed) {
     return;
   }
   unlinking.value = true;

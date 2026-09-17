@@ -10,6 +10,7 @@ import QAPanel from "../components/QAPanel.vue";
 import StatusBadge from "../components/StatusBadge.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useToastStore } from "../stores/toast";
+import { useConfirmDialogStore } from "../stores/confirmDialog";
 import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
@@ -18,6 +19,7 @@ const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
 const entityPicker = useEntityPickerStore();
 const toast = useToastStore();
+const confirmDialog = useConfirmDialogStore();
 const targetPanelDialog = useTargetPanelDialogStore();
 const activeTab = ref<"view" | "qa" | "qa-history">("view");
 
@@ -246,7 +248,7 @@ async function removeDependency(code: string) {
 
 async function remove() {
   if (!plan.value) return;
-  const confirmed = window.confirm(`"${plan.value.title}"(${props.trackingCode}) 계획을 삭제하시겠습니까?`);
+  const confirmed = await confirmDialog.confirm(`"${plan.value.title}"(${props.trackingCode}) 계획을 삭제하시겠습니까?`);
   if (!confirmed) return;
   deleting.value = true;
   deleteError.value = "";

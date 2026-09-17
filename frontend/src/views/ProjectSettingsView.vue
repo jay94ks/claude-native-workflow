@@ -9,10 +9,12 @@ import TemplateSettingsPanel from "../components/TemplateSettingsPanel.vue";
 import UserRef from "../components/UserRef.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
 import { useAuthStore } from "../stores/auth";
+import { useConfirmDialogStore } from "../stores/confirmDialog";
 import { PROJECT_MY_ROLE_KEY } from "../utils/projectContext";
 
 const entityPicker = useEntityPickerStore();
 const auth = useAuthStore();
+const confirmDialog = useConfirmDialogStore();
 const router = useRouter();
 
 const props = defineProps<{ id: string }>();
@@ -24,7 +26,7 @@ const deleting = ref(false);
 const deleteProjectError = ref("");
 
 async function deleteProject() {
-  const confirmed = window.confirm(
+  const confirmed = await confirmDialog.confirm(
     "이 프로젝트를 완전히 삭제하시겠습니까?\n문서/코멘트/칸반 보드/질의응답 등 이 프로젝트의 모든 데이터가 함께 삭제되고, 연결된 Gitea 저장소도 함께 삭제됩니다.\n되돌릴 수 없습니다.",
   );
   if (!confirmed) return;

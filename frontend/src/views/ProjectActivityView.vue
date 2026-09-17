@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { apiCall, ApiError } from "../api/client";
+import { apiCall } from "../api/client";
+import { useAsyncAction } from "../composables/useAsyncAction";
 import TrackingCodeText from "../components/TrackingCodeText.vue";
 
 const props = defineProps<{ id: string }>();
@@ -13,23 +14,17 @@ interface ActivityItem {
 }
 
 const activity = ref<ActivityItem[]>([]);
-const loading = ref(true);
-const error = ref("");
+const { loading, error, run } = useAsyncAction();
+loading.value = true; // 최초 로드 전(onMounted) 잠깐이라도 "결과 없음"이 보이지 않게
 
 // RecentCommentsView.vue의 "최근 코멘트" 더보기와 같은 관례 - 실제
 // 페이지네이션 없이 더 큰 limit 하나로 "더 보여준다"(여러 엔티티
 // 타입을 매번 병합정렬하는 활동 피드는 커서 기반 페이지네이션을
 // 붙이기엔 비용 대비 이득이 적다고 판단, #project-dashboard 후속).
 async function load() {
-  loading.value = true;
-  error.value = "";
-  try {
+  await run(async () => {
     activity.value = await apiCall<ActivityItem[]>(`/projects/${props.id}/activity?limit=100`);
-  } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "최근 활동을 불러오지 못했습니다";
-  } finally {
-    loading.value = false;
-  }
+  }, "최근 활동을 불러오지 못했습니다");
 }
 
 onMounted(load);

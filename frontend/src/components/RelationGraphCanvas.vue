@@ -111,7 +111,7 @@ function styleForMode(mode: RelationViewMode): StylesheetJsonBlock[] {
         "curve-style": isNetwork ? "bezier" : "taxi",
         "line-style": "dashed",
         width: isNetwork ? 1 : 1.5,
-        "line-color": "#9aa1ac",
+        "line-color": readColor("--color-text-muted", "#9aa1ac"),
         "target-arrow-shape": "none",
         opacity: 0.55,
       },

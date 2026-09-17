@@ -5,12 +5,14 @@ import { apiCall, ApiError } from "../api/client";
 import RelationGraphCanvas from "../components/RelationGraphCanvas.vue";
 import RelationDetailPanel from "../components/RelationDetailPanel.vue";
 import { useEntityPickerStore } from "../stores/entityPicker";
+import { useConfirmDialogStore } from "../stores/confirmDialog";
 import type { RelationGraphEdge, RelationGraphNode } from "../utils/relationGraph";
 import { RELATION_VIEW_MODES, DEFAULT_VIEW_MODE_ID } from "../utils/relationViewModes";
 
 const props = defineProps<{ id: string }>();
 const route = useRoute();
 const entityPicker = useEntityPickerStore();
+const confirmDialog = useConfirmDialogStore();
 
 interface CodeRelationDetail {
   id: string;
@@ -319,7 +321,7 @@ async function submitForm() {
 
 async function removeSelected() {
   if (!selectedId.value) return;
-  if (!window.confirm("이 관계를 삭제할까요? 연결된 상위/하위 링크만 함께 정리되고 나머지 그래프는 그대로 남습니다.")) return;
+  if (!(await confirmDialog.confirm("이 관계를 삭제할까요? 연결된 상위/하위 링크만 함께 정리되고 나머지 그래프는 그대로 남습니다."))) return;
   try {
     await apiCall(`/projects/${props.id}/relations/${selectedId.value}`, { method: "DELETE" });
     delete relationCache[selectedId.value];

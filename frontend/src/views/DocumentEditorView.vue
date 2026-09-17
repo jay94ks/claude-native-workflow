@@ -11,8 +11,16 @@ import { useEntityPickerStore } from "../stores/entityPicker";
 import { useTargetPanelDialogStore } from "../stores/targetPanelDialog";
 import { useFolderPickerStore } from "../stores/folderPicker";
 import { useToastStore } from "../stores/toast";
+import { useConfirmDialogStore } from "../stores/confirmDialog";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
+import { useDocumentFavorite } from "../composables/useDocumentFavorite";
+import { useDocumentMessaging } from "../composables/useDocumentMessaging";
+import { useDocumentSourceLinks } from "../composables/useDocumentSourceLinks";
+import { useDocumentBranchLinks } from "../composables/useDocumentBranchLinks";
+import { useDocumentChapters } from "../composables/useDocumentChapters";
+import { useDocumentStatus } from "../composables/useDocumentStatus";
+import { useDocumentPriority } from "../composables/useDocumentPriority";
 
 const props = defineProps<{ id: string; trackingCode: string }>();
 const router = useRouter();
@@ -20,6 +28,7 @@ const entityPicker = useEntityPickerStore();
 const targetPanelDialog = useTargetPanelDialogStore();
 const folderPicker = useFolderPickerStore();
 const toast = useToastStore();
+const confirmDialog = useConfirmDialogStore();
 const activeTab = ref<"view" | "chapters" | "qa" | "qa-history">("view");
 
 // 메시지로 지시는 문서 자체 권한이 아니라 프로젝트 editor 이상(백엔드
@@ -55,29 +64,6 @@ interface DocumentDetail {
 // review/pending은 문서 상태(statusCode)의 표준 코드 - Q&A의 별개
 // "pending"(질문 상태)과는 무관.
 const PRIORITY_EDITABLE_STATUSES = new Set(["review", "pending"]);
-interface NextStatus {
-  code: string;
-  label: string;
-  guideline: string | null;
-}
-interface SourceLink {
-  id: string;
-  filePath: string;
-}
-interface BranchLink {
-  id: string;
-  branchName: string;
-}
-interface ChapterInfo {
-  ordinal: number;
-  level: number;
-  heading: string;
-  lineStart: number;
-  lineEnd: number;
-}
-interface ChapterMutationResult {
-  chapters: ChapterInfo[];
-}
 
 const doc = ref<DocumentDetail | null>(null);
 const body = ref("");
@@ -87,30 +73,84 @@ const saving = ref(false);
 const saveMessage = ref("");
 const mode = ref<"read" | "edit">("read");
 
-const nextStatuses = ref<NextStatus[]>([]);
-const toStatusCode = ref("");
-const transitionError = ref("");
-
-const priorityInput = ref<string | number>("");
-const priorityError = ref("");
-const savingPriority = ref(false);
-
-const sourceLinks = ref<SourceLink[]>([]);
-const sourceLinksError = ref("");
-const newSourcePath = ref("");
-
-const branchLinks = ref<BranchLink[]>([]);
-const branchLinksError = ref("");
-const newBranchName = ref("");
-
 const deleting = ref(false);
 const deleteError = ref("");
 
-const messageDraft = ref("");
-const messageOpen = ref(false);
-const messageSending = ref(false);
-const messageError = ref("");
-const messageSent = ref(false);
+const trackingCodeGetter = () => props.trackingCode;
+const projectIdGetter = () => props.id;
+
+const { nextStatuses, toStatusCode, transitionError, loadNextStatuses, transition, refreshStatus, reset: resetStatus } =
+  useDocumentStatus<DocumentDetail>(trackingCodeGetter, doc);
+
+const { priorityInput, priorityError, savingPriority, savePriority, reset: resetPriority } = useDocumentPriority<DocumentDetail>(
+  trackingCodeGetter,
+  doc,
+);
+
+const {
+  sourceLinks,
+  sourceLinksError,
+  newSourcePath,
+  loadSourceLinks,
+  addSourceLink,
+  pickSourceLink,
+  removeSourceLink,
+  openSourceFile,
+  reset: resetSourceLinks,
+} = useDocumentSourceLinks(projectIdGetter, trackingCodeGetter, router, entityPicker);
+
+const {
+  branchLinks,
+  branchLinksError,
+  newBranchName,
+  loadBranchLinks,
+  addBranchLink,
+  removeBranchLink,
+  reset: resetBranchLinks,
+} = useDocumentBranchLinks(trackingCodeGetter);
+
+const { favorited, favoriteToggling, loadFavorite, toggleFavorite } = useDocumentFavorite(
+  trackingCodeGetter,
+  (message) => (error.value = message),
+);
+
+const {
+  messageDraft,
+  messageOpen,
+  messageSending,
+  messageError,
+  messageSent,
+  sendInstructionMessage,
+  reset: resetMessaging,
+} = useDocumentMessaging(projectIdGetter, trackingCodeGetter);
+
+const {
+  chapters,
+  chaptersLoading,
+  chaptersError,
+  chaptersLoaded,
+  editingChapterOrdinal,
+  editingChapterContent,
+  editingChapterLoading,
+  editingChapterSaving,
+  editingChapterError,
+  addingChapter,
+  addChapterContent,
+  addChapterPosition,
+  addChapterRelativeOrdinal,
+  addChapterSaving,
+  addChapterError,
+  chapterLabel,
+  ensureChaptersLoaded,
+  startEditChapter,
+  cancelEditChapter,
+  saveEditChapter,
+  deleteChapter,
+  startAddChapter,
+  cancelAddChapter,
+  saveAddChapter,
+  reset: resetChapters,
+} = useDocumentChapters(trackingCodeGetter, confirmDialog, refreshDocumentBody);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -132,101 +172,8 @@ async function fetchDocument(retryOn404: boolean): Promise<DocumentDetail> {
   }
 }
 
-async function loadNextStatuses() {
-  try {
-    nextStatuses.value = await apiCall<NextStatus[]>(`/documents/${props.trackingCode}/next-statuses`);
-  } catch {
-    nextStatuses.value = [];
-  }
-}
-
-async function loadSourceLinks() {
-  try {
-    sourceLinks.value = await apiCall<SourceLink[]>(`/documents/${props.trackingCode}/source-links`);
-  } catch {
-    sourceLinks.value = [];
-  }
-}
-
-async function addSourceLink() {
-  const filePath = newSourcePath.value.trim();
-  if (!filePath) return;
-  sourceLinksError.value = "";
-  try {
-    await apiCall(`/documents/${props.trackingCode}/source-links`, {
-      method: "POST",
-      body: JSON.stringify({ filePath }),
-    });
-    newSourcePath.value = "";
-    await loadSourceLinks();
-  } catch (err) {
-    sourceLinksError.value = err instanceof ApiError ? err.message : "연결에 실패했습니다";
-  }
-}
-
-async function pickSourceLink() {
-  const result = await entityPicker.pick({
-    kind: "sourceFile",
-    projectId: props.id,
-    multi: false,
-    allowManualEntry: true,
-  });
-  if (result && result[0]) {
-    newSourcePath.value = result[0];
-    await addSourceLink();
-  }
-}
-
-async function removeSourceLink(id: string) {
-  sourceLinksError.value = "";
-  try {
-    await apiCall(`/document-source-links/${id}?trackingCode=${encodeURIComponent(props.trackingCode)}`, { method: "DELETE" });
-    await loadSourceLinks();
-  } catch (err) {
-    sourceLinksError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
-  }
-}
-
-function openSourceFile(filePath: string) {
-  router.push(`/projects/${props.id}/source?path=${encodeURIComponent(filePath)}`);
-}
-
 function openRelatedDocument(trackingCode: string) {
   router.push(`/projects/${props.id}/documents/${trackingCode}`);
-}
-
-async function loadBranchLinks() {
-  try {
-    branchLinks.value = await apiCall<BranchLink[]>(`/documents/${props.trackingCode}/branch-links`);
-  } catch {
-    branchLinks.value = [];
-  }
-}
-
-async function addBranchLink() {
-  const branchName = newBranchName.value.trim();
-  if (!branchName) return;
-  branchLinksError.value = "";
-  try {
-    await apiCall(`/documents/${props.trackingCode}/branch-links`, {
-      method: "POST",
-      body: JSON.stringify({ branchName }),
-    });
-    newBranchName.value = "";
-    await loadBranchLinks();
-  } catch (err) {
-    branchLinksError.value = err instanceof ApiError ? err.message : "연결에 실패했습니다";
-  }
-}
-
-async function removeBranchLink(id: string) {
-  branchLinksError.value = "";
-  try {
-    await apiCall(`/document-branch-links/${id}?trackingCode=${encodeURIComponent(props.trackingCode)}`, { method: "DELETE" });
-    await loadBranchLinks();
-  } catch (err) {
-    branchLinksError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
-  }
 }
 
 async function load() {
@@ -245,83 +192,12 @@ async function load() {
   }
 }
 
-// ---------------------------------------------------------------- 즐겨찾기(#document-favorites)
-
-const favorited = ref(false);
-const favoriteToggling = ref(false);
-
-async function loadFavorite() {
-  try {
-    const result = await apiCall<{ favorited: boolean }>(`/documents/${props.trackingCode}/favorite`);
-    favorited.value = result.favorited;
-  } catch {
-    favorited.value = false;
-  }
-}
-
-async function toggleFavorite() {
-  if (favoriteToggling.value) return;
-  const next = !favorited.value;
-  favoriteToggling.value = true;
-  try {
-    await apiCall(`/documents/${props.trackingCode}/favorite`, {
-      method: "PUT",
-      body: JSON.stringify({ favorited: next }),
-    });
-    favorited.value = next;
-  } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "즐겨찾기 변경에 실패했습니다";
-  } finally {
-    favoriteToggling.value = false;
-  }
-}
-
-// ---------------------------------------------------------------- 챕터(헤딩 섹션) CRUD(#document-chapters)
-// 백엔드는 CLI/MCP 전용으로 먼저 나왔고(설계자 지시 "클로드가 호출"),
-// 이번에 웹 에디터에도 붙인다. 한 번에 챕터 하나만 편집/추가 폼을
-// 열 수 있게 한다(아코디언 - 여러 개를 동시에 열면 어느 걸 저장했을
-// 때 다른 편집 중인 내용의 lineStart/lineEnd가 밀려 꼬일 수 있어서).
-// 챕터를 쓰면(교체/삽입/삭제) 그 자리에서 받은 최신 chapters 배열로
-// 목록만 갱신하고, "보기"/"편집" 탭이 보는 doc.body/body도 같이
-// 새로고침해 두 탭이 항상 같은 내용을 보게 한다.
-
-const chapters = ref<ChapterInfo[]>([]);
-const chaptersLoading = ref(false);
-const chaptersError = ref("");
-const chaptersLoaded = ref(false);
-
-const editingChapterOrdinal = ref<number | null>(null);
-const editingChapterContent = ref("");
-const editingChapterLoading = ref(false);
-const editingChapterSaving = ref(false);
-const editingChapterError = ref("");
-
-const addingChapter = ref(false);
-const addChapterContent = ref("");
-const addChapterPosition = ref<"atStart" | "atEnd" | "after" | "before">("atEnd");
-const addChapterRelativeOrdinal = ref<number | "">("");
-const addChapterSaving = ref(false);
-const addChapterError = ref("");
-
-function chapterLabel(c: ChapterInfo): string {
-  return c.heading || (c.level === 0 ? "(제목 없음)" : `(제목 없는 ${"#".repeat(c.level)} 헤딩)`);
-}
-
-async function loadChapters() {
-  chaptersLoading.value = true;
-  chaptersError.value = "";
-  try {
-    chapters.value = await apiCall<ChapterInfo[]>(`/documents/${props.trackingCode}/chapters`);
-    chaptersLoaded.value = true;
-  } catch (err) {
-    chaptersError.value = err instanceof ApiError ? err.message : "챕터 목록을 불러오지 못했습니다";
-  } finally {
-    chaptersLoading.value = false;
-  }
-}
-
 // 챕터를 쓴 뒤 doc.body/body(보기·편집 탭용)도 최신화 - 재조회는
 // fetchDocument()의 404 재시도 없이 바로(이미 존재이 확인된 문서라).
+// useDocumentChapters composable이 챕터를 쓸 때마다 이 콜백을 호출한다
+// (챕터/로드 두 관심사의 유일한 교차 참조 - 전수 조사로 이미 알려진
+// 지점, composable에는 콜백으로만 노출해 doc/body/mode를 직접 안
+// 건드리게 함).
 async function refreshDocumentBody() {
   try {
     const updated = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}`);
@@ -335,115 +211,7 @@ async function refreshDocumentBody() {
 
 function openChapterTab() {
   activeTab.value = "chapters";
-  if (!chaptersLoaded.value) loadChapters();
-}
-
-async function startEditChapter(ordinal: number) {
-  addingChapter.value = false;
-  editingChapterOrdinal.value = ordinal;
-  editingChapterContent.value = "";
-  editingChapterError.value = "";
-  editingChapterLoading.value = true;
-  try {
-    const result = await apiCall<{ chapter: ChapterInfo; content: string }>(`/documents/${props.trackingCode}/chapters/${ordinal}`);
-    editingChapterContent.value = result.content;
-  } catch (err) {
-    editingChapterError.value = err instanceof ApiError ? err.message : "챕터 내용을 불러오지 못했습니다";
-  } finally {
-    editingChapterLoading.value = false;
-  }
-}
-
-function cancelEditChapter() {
-  editingChapterOrdinal.value = null;
-  editingChapterContent.value = "";
-  editingChapterError.value = "";
-}
-
-async function saveEditChapter() {
-  if (editingChapterOrdinal.value === null) return;
-  editingChapterSaving.value = true;
-  editingChapterError.value = "";
-  try {
-    const result = await apiCall<ChapterMutationResult>(`/documents/${props.trackingCode}/chapters/${editingChapterOrdinal.value}`, {
-      method: "PUT",
-      body: JSON.stringify({ content: editingChapterContent.value }),
-    });
-    chapters.value = result.chapters;
-    cancelEditChapter();
-    await refreshDocumentBody();
-  } catch (err) {
-    editingChapterError.value = err instanceof ApiError ? err.message : "저장에 실패했습니다";
-  } finally {
-    editingChapterSaving.value = false;
-  }
-}
-
-async function deleteChapter(ordinal: number) {
-  const chapter = chapters.value.find((c) => c.ordinal === ordinal);
-  const confirmed = window.confirm(`"${chapter ? chapterLabel(chapter) : ordinal}" 챕터를 삭제하시겠습니까?`);
-  if (!confirmed) return;
-  chaptersError.value = "";
-  try {
-    const result = await apiCall<ChapterMutationResult>(`/documents/${props.trackingCode}/chapters/${ordinal}`, { method: "DELETE" });
-    chapters.value = result.chapters;
-    if (editingChapterOrdinal.value === ordinal) cancelEditChapter();
-    await refreshDocumentBody();
-  } catch (err) {
-    chaptersError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
-  }
-}
-
-function startAddChapter() {
-  cancelEditChapter();
-  addingChapter.value = true;
-  addChapterContent.value = "";
-  addChapterPosition.value = "atEnd";
-  addChapterRelativeOrdinal.value = "";
-  addChapterError.value = "";
-}
-
-function cancelAddChapter() {
-  addingChapter.value = false;
-}
-
-async function saveAddChapter() {
-  if (!addChapterContent.value.trim()) return;
-  if ((addChapterPosition.value === "after" || addChapterPosition.value === "before") && addChapterRelativeOrdinal.value === "") {
-    addChapterError.value = "기준 챕터 번호를 입력하세요";
-    return;
-  }
-  addChapterSaving.value = true;
-  addChapterError.value = "";
-  try {
-    const payload: Record<string, unknown> = { content: addChapterContent.value };
-    if (addChapterPosition.value === "atStart") payload.atStart = true;
-    else if (addChapterPosition.value === "atEnd") payload.atEnd = true;
-    else if (addChapterPosition.value === "after") payload.after = Number(addChapterRelativeOrdinal.value);
-    else if (addChapterPosition.value === "before") payload.before = Number(addChapterRelativeOrdinal.value);
-    const result = await apiCall<ChapterMutationResult>(`/documents/${props.trackingCode}/chapters`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    chapters.value = result.chapters;
-    addingChapter.value = false;
-    await refreshDocumentBody();
-  } catch (err) {
-    addChapterError.value = err instanceof ApiError ? err.message : "추가에 실패했습니다";
-  } finally {
-    addChapterSaving.value = false;
-  }
-}
-
-// QAPanel에서 답변으로 인한 자동 상태 전이가 일어났을 때만 씀 - 전체
-// load()는 loading 플래그를 다시 세워 화면을 통째로 숨기고 편집 중인
-// body도 서버 값으로 덮어써버리므로, 상단 상태 배지만 조용히 갱신한다.
-// QAPanel의 답변 API 응답에 이미 새 상태 코드가 있으니 재조회하지 않고
-// 그대로 받아쓴다(재조회하면 Meilisearch 색인 반영 지연으로 옛 상태가
-// 잠깐 다시 보일 수 있음 - fetchDocument의 재시도 패턴과 같은 원인).
-function refreshStatus(statusCode: string) {
-  if (doc.value) doc.value.statusCode = statusCode;
-  loadNextStatuses();
+  ensureChaptersLoaded();
 }
 
 function startEdit() {
@@ -493,55 +261,9 @@ async function onPickFolder() {
   }
 }
 
-async function transition() {
-  if (!toStatusCode.value) return;
-  transitionError.value = "";
-  try {
-    // 전이 응답엔 perm이 없다(GET 단건 조회만 얹어줌) - 통째로
-    // 바꿔치면 doc.perm이 undefined가 돼 툴바의 v-if="doc.perm.write"
-    // 가 깨진다(실측 중 발견). 기존 doc 위에 병합해 perm을 보존한다.
-    const updated = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}/transition`, {
-      method: "POST",
-      body: JSON.stringify({ toStatusCode: toStatusCode.value }),
-    });
-    doc.value = doc.value ? { ...doc.value, ...updated } : updated;
-    toStatusCode.value = "";
-    await loadNextStatuses();
-  } catch (err) {
-    transitionError.value = err instanceof ApiError ? err.message : "상태 전이에 실패했습니다";
-  }
-}
-
-async function savePriority() {
-  // v-model이 type="number" 입력에는 값을 문자열이 아니라 숫자로
-  // 자동 캐스팅한다(Vue 3 - .number 수식어 없이도) - 그래서 빈 값이면
-  // ""(문자열)로 남고, 뭔가 입력되면 숫자로 바뀐다. 둘 다 안전하게
-  // 처리한다.
-  const raw = priorityInput.value;
-  const priority = Number(raw);
-  if (raw === "" || !Number.isInteger(priority)) {
-    priorityError.value = "정수를 입력하세요";
-    return;
-  }
-  savingPriority.value = true;
-  priorityError.value = "";
-  try {
-    // transition()과 같은 이유로 병합(priority 응답에도 perm이 없음).
-    const updated = await apiCall<DocumentDetail>(`/documents/${props.trackingCode}/priority`, {
-      method: "PUT",
-      body: JSON.stringify({ priority }),
-    });
-    doc.value = doc.value ? { ...doc.value, ...updated } : updated;
-  } catch (err) {
-    priorityError.value = err instanceof ApiError ? err.message : "우선순위 저장에 실패했습니다";
-  } finally {
-    savingPriority.value = false;
-  }
-}
-
 async function remove() {
   if (!doc.value) return;
-  const confirmed = window.confirm(
+  const confirmed = await confirmDialog.confirm(
     `"${doc.value.title}"(${props.trackingCode}) 문서를 삭제하시겠습니까?\n리비전 이력, 링크, 코멘트, 질의/답변이 모두 함께 삭제되며 되돌릴 수 없습니다.`,
   );
   if (!confirmed) return;
@@ -553,26 +275,6 @@ async function remove() {
   } catch (err) {
     deleteError.value = err instanceof ApiError ? err.message : "삭제에 실패했습니다";
     deleting.value = false;
-  }
-}
-
-async function sendInstructionMessage() {
-  if (!messageDraft.value.trim()) return;
-  messageSending.value = true;
-  messageError.value = "";
-  try {
-    await apiCall(`/projects/${props.id}/messages`, {
-      method: "POST",
-      body: JSON.stringify({ body: `[${props.trackingCode}] ${messageDraft.value.trim()}` }),
-    });
-    messageDraft.value = "";
-    messageOpen.value = false;
-    messageSent.value = true;
-    setTimeout(() => (messageSent.value = false), 3000);
-  } catch (err) {
-    messageError.value = err instanceof ApiError ? err.message : "전송에 실패했습니다";
-  } finally {
-    messageSending.value = false;
   }
 }
 
@@ -589,22 +291,18 @@ watch(
   () => props.trackingCode,
   () => {
     activeTab.value = "view";
-    toStatusCode.value = "";
-    transitionError.value = "";
-    priorityError.value = "";
-    sourceLinksError.value = "";
-    newSourcePath.value = "";
     deleteError.value = "";
     saveMessage.value = "";
-    messageDraft.value = "";
-    messageOpen.value = false;
-    messageError.value = "";
-    messageSent.value = false;
-    chapters.value = [];
-    chaptersLoaded.value = false;
-    chaptersError.value = "";
-    cancelEditChapter();
-    cancelAddChapter();
+    resetStatus();
+    resetPriority();
+    resetSourceLinks();
+    // 브랜치링크 관심사도 여기서 리셋한다 - 원래 코드는 이 관심사의
+    // 임시 상태(branchLinksError/newBranchName)를 빠뜨려서 다른 문서로
+    // 이동해도 이전 문서의 에러 메시지가 잠깐 남아있을 수 있었다(교차
+    // 참조 전수 조사로 발견한 버그, #67 분리하며 같이 고침).
+    resetBranchLinks();
+    resetMessaging();
+    resetChapters();
     load();
   },
 );
@@ -970,8 +668,8 @@ h1 {
   color: var(--color-text-muted);
 }
 .star-btn.active {
-  color: #e0a82e;
-  border-color: #e0a82e !important;
+  color: var(--color-warning-text);
+  border-color: var(--color-warning-text) !important;
   background: var(--color-warning-bg) !important;
 }
 .star-btn:disabled {

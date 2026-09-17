@@ -2,7 +2,8 @@
 import { ref, watch } from "vue";
 import { apiCall, ApiError } from "../api/client";
 import { useMembershipsDialogStore } from "../stores/membershipsDialog";
-import { nextDialogZIndex } from "../dialogZIndex";
+import { useConfirmDialogStore } from "../stores/confirmDialog";
+import BaseModal from "./BaseModal.vue";
 
 interface UserProjectMembership {
   projectId: string;
@@ -31,18 +32,11 @@ interface UserMemberships {
 const ROLE_LABEL: Record<string, string> = { owner: "owner", editor: "editor", viewer: "viewer" };
 
 const dialog = useMembershipsDialogStore();
+const confirmDialog = useConfirmDialogStore();
 const memberships = ref<UserMemberships | null>(null);
 const loading = ref(false);
 const error = ref("");
 const removingKey = ref("");
-const zIndex = ref(1000);
-
-watch(
-  () => dialog.open,
-  (open) => {
-    if (open) zIndex.value = nextDialogZIndex();
-  },
-);
 
 watch(
   () => [dialog.open, dialog.userId],
@@ -73,7 +67,7 @@ function groupDisableReason(m: UserProjectGroupMembership): string {
 
 async function removeProject(m: UserProjectMembership) {
   if (!dialog.userId || !memberships.value) return;
-  if (!window.confirm(`"${m.projectName}" 프로젝트에서 ${dialog.username}을(를) 방출할까요?`)) return;
+  if (!(await confirmDialog.confirm(`"${m.projectName}" 프로젝트에서 ${dialog.username}을(를) 방출할까요?`))) return;
   const key = `project:${m.projectId}`;
   removingKey.value = key;
   error.value = "";
@@ -89,7 +83,7 @@ async function removeProject(m: UserProjectMembership) {
 
 async function removeTeam(m: UserTeamMembership) {
   if (!dialog.userId || !memberships.value) return;
-  if (!window.confirm(`"${m.teamName}" 팀에서 ${dialog.username}을(를) 방출할까요?`)) return;
+  if (!(await confirmDialog.confirm(`"${m.teamName}" 팀에서 ${dialog.username}을(를) 방출할까요?`))) return;
   const key = `team:${m.teamId}`;
   removingKey.value = key;
   error.value = "";
@@ -105,7 +99,7 @@ async function removeTeam(m: UserTeamMembership) {
 
 async function removeGroup(m: UserProjectGroupMembership) {
   if (!dialog.userId || !memberships.value) return;
-  if (!window.confirm(`"${m.groupName}" 그룹에서 ${dialog.username}을(를) 방출할까요?`)) return;
+  if (!(await confirmDialog.confirm(`"${m.groupName}" 그룹에서 ${dialog.username}을(를) 방출할까요?`))) return;
   const key = `group:${m.groupId}`;
   removingKey.value = key;
   error.value = "";
@@ -121,10 +115,9 @@ async function removeGroup(m: UserProjectGroupMembership) {
 </script>
 
 <template>
-  <div v-if="dialog.open" class="overlay" :style="{ zIndex }" @click.self="dialog.close()">
-    <div class="dialog">
-      <button class="close-btn" @click="dialog.close()">닫기 ✕</button>
-      <h2>{{ dialog.username }}의 소속</h2>
+  <BaseModal :open="dialog.open" :width="560" @close="dialog.close()">
+    <button class="close-btn" @click="dialog.close()">닫기 ✕</button>
+    <h2>{{ dialog.username }}의 소속</h2>
       <p v-if="loading" class="muted">불러오는 중...</p>
       <p v-else-if="error" class="error">{{ error }}</p>
       <template v-else-if="memberships">
@@ -185,31 +178,10 @@ async function removeGroup(m: UserProjectGroupMembership) {
           <p v-else class="muted">없음</p>
         </section>
       </template>
-    </div>
-  </div>
+  </BaseModal>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-.dialog {
-  background: var(--color-surface);
-  color: var(--color-text);
-  border-radius: 10px;
-  padding: 24px;
-  width: min(560px, 90vw);
-  max-height: 80vh;
-  overflow-y: auto;
-  position: relative;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
-}
 .close-btn {
   position: absolute;
   top: 16px;

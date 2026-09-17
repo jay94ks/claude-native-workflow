@@ -1,4 +1,5 @@
-import { createDocument, addDocumentLink, type DocumentMutationSummary } from "./documents.js";
+import { createDocument, type DocumentMutationSummary } from "./documents.js";
+import { addDocumentLink } from "./documentLinks.js";
 
 const REPORT_TYPE_CODE = "DN";
 

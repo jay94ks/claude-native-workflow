@@ -11,6 +11,7 @@ import { sliceLines, grepLines, type LinesResult, type GrepMatch, type GrepOptio
 import * as gitCache from "./gitCache.js";
 import * as gitExec from "./gitExec.js";
 import { resolveGitAuthorIdentity } from "./giteaAccounts.js";
+import { type GiteaRepoRef, GitAuthRequiredError } from "./gitTypes.js";
 
 interface GiteaConfig {
   apiUrl: string;
@@ -59,10 +60,11 @@ export function adminGitIdentity(): { name: string; email: string; token: string
 // 하나로 개편했다 - org 이름 자체(`core/gitRepos.ts`의 orgForProject())는
 // projectId의 순수 함수라 별도 DB 컬럼이 필요 없다. 이 파일은 org
 // 이름이 아니라 항상 호출부가 이미 계산해 넘긴 GiteaRepoRef만 다룬다.
-export interface GiteaRepoRef {
-  org: string;
-  repo: string;
-}
+// GiteaRepoRef 자체는 gitTypes.ts에 정의돼 있다(gitExec.ts와 공유하는
+// 타입이라 이 파일에 정의하면 gitExec.ts가 이 파일을 역으로 import해야
+// 했다 - #gitea-gitexec-read-consolidation, BL-57F8DF17 #61) - 여기서는
+// 하위 호환을 위해 재수출만 한다.
+export type { GiteaRepoRef } from "./gitTypes.js";
 
 /** 프로젝트 하나의 org를 멱등하게 보장한다(GET으로 먼저 확인, 404면
  * 생성) - 예전 ensureGiteaOrgConfigured()는 서버 기동 시 전역 org 1개를
@@ -175,15 +177,9 @@ export async function deleteRepo(target: GiteaRepoRef): Promise<void> {
   await giteaFetch(`/api/v1/repos/${target.org}/${target.repo}`, { method: "DELETE" });
 }
 
-/** migrateRepo()가 "인증이 필요해서 실패"를 다른 실패와 구분해 던질 때
- * 쓴다 - 호출부(gitRepos.ts)가 이 타입만 잡아서 "자격증명 입력 후
- * 재시도" 흐름으로 안내할 수 있게. */
-export class GitAuthRequiredError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "GitAuthRequiredError";
-  }
-}
+// GitAuthRequiredError도 gitTypes.ts로 옮기고 여기서는 재수출만 한다
+// (위 GiteaRepoRef와 같은 이유).
+export { GitAuthRequiredError } from "./gitTypes.js";
 
 export interface MigrateOptions {
   mirror: boolean;
@@ -272,6 +268,20 @@ export function repoKindFromRef(target: GiteaRepoRef): RepoKind {
   return "mirror";
 }
 
+/** REST-vs-로컬클론 분기 하나만 대신하는 공용 헬퍼(#60,
+ * BL-57F8DF17 - PN-75558F6D 방향 A). 5쌍(getFullTree/listTree/
+ * getFileContent/getFileContentsBatch/getFileRaw)이 겉보기엔 같은
+ * "if (mirror) REST else gitExec" 패턴이지만 REST 쪽 인자(일부만
+ * projectId를 받음)와 gitExec 쪽 후처리(map 변환/null체크+throw/
+ * 파일 캐시 쓰기)가 전부 달라 범용 dispatch 헬퍼로 그 차이까지
+ * 흡수하려 하지 않는다 - 각 호출부가 자기 REST/gitExec 호출과
+ * 후처리를 그대로 클로저로 넘기고, 이 헬퍼는 정말로 mirror 분기
+ * 판단만 대신한다. */
+async function dispatchGitRead<T>(target: GiteaRepoRef, restFn: () => Promise<T>, execFn: () => Promise<T>): Promise<T> {
+  if (repoKindFromRef(target) === "mirror") return restFn();
+  return execFn();
+}
+
 /** REST 기반 원본 구현 - #git-persistent-local-clone 도입 이후에도
  * 두 군데는 이걸 직접 써야 한다: (1) mirror 저장소 조회(영구 클론이
  * 없는 kind - sync-status/proposal이 mirror vs work를 비교하려면
@@ -315,9 +325,14 @@ async function getFullTreeRest(projectId: string, target: GiteaRepoRef, ref = "H
  * 사본일 뿐) 그대로 REST. 조회는 저작자 귀속이 필요 없으므로 관리자
  * 신원을 그대로 쓴다. */
 export async function getFullTree(projectId: string, target: GiteaRepoRef, ref = "HEAD"): Promise<FullTreeEntry[]> {
-  if (repoKindFromRef(target) === "mirror") return getFullTreeRest(projectId, target, ref);
-  const entries = await gitExec.readFullTree(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), ref);
-  return entries.map((e) => ({ path: e.path, sha: e.sha, type: e.type }));
+  return dispatchGitRead(
+    target,
+    () => getFullTreeRest(projectId, target, ref),
+    async () => {
+      const entries = await gitExec.readFullTree(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), ref);
+      return entries.map((e) => ({ path: e.path, sha: e.sha, type: e.type }));
+    },
+  );
 }
 
 async function checkEmptyRepo(projectId: string, target: GiteaRepoRef): Promise<boolean> {
@@ -575,8 +590,11 @@ async function listTreeRest(target: GiteaRepoRef, dirPath: string, ref?: string)
 /** mirror가 아니면 영구 로컬 클론에서 직접 목록을 만든다(#git-
  * persistent-local-clone) - REST 왕복 없음. */
 export async function listTree(projectId: string, target: GiteaRepoRef, dirPath: string, ref?: string): Promise<TreeEntry[]> {
-  if (repoKindFromRef(target) === "mirror") return listTreeRest(target, dirPath, ref);
-  return gitExec.listDir(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), dirPath, ref);
+  return dispatchGitRead(
+    target,
+    () => listTreeRest(target, dirPath, ref),
+    () => gitExec.listDir(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), dirPath, ref),
+  );
 }
 
 /** Gitea Contents API 자체가 page/limit 파라미터를 안 받는 단발성
@@ -624,10 +642,15 @@ async function getFileContentRest(projectId: string, target: GiteaRepoRef, fileP
 /** mirror가 아니면 영구 로컬 클론에서 직접 읽는다(#git-persistent-
  * local-clone) - REST 왕복 없음. */
 export async function getFileContent(projectId: string, target: GiteaRepoRef, filePath: string, ref?: string): Promise<FileContent> {
-  if (repoKindFromRef(target) === "mirror") return getFileContentRest(projectId, target, filePath, ref);
-  const result = await gitExec.readFile(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), filePath, ref);
-  if (!result) throw new Error(`파일을 찾을 수 없습니다: ${filePath}`);
-  return result;
+  return dispatchGitRead(
+    target,
+    () => getFileContentRest(projectId, target, filePath, ref),
+    async () => {
+      const result = await gitExec.readFile(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), filePath, ref);
+      if (!result) throw new Error(`파일을 찾을 수 없습니다: ${filePath}`);
+      return result;
+    },
+  );
 }
 
 /** 여러 파일을 한 번에 조회 - #git-cache-and-staging. 트리 캐시(또는
@@ -688,8 +711,11 @@ async function getFileContentsBatchRest(
 /** mirror가 아니면 영구 로컬 클론에서 직접 읽는다(#git-persistent-
  * local-clone) - REST 왕복 없음. */
 export async function getFileContentsBatch(projectId: string, target: GiteaRepoRef, paths: string[], ref?: string): Promise<Map<string, FileContent>> {
-  if (repoKindFromRef(target) === "mirror") return getFileContentsBatchRest(projectId, target, paths, ref);
-  return gitExec.readFilesBatch(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), paths, ref);
+  return dispatchGitRead(
+    target,
+    () => getFileContentsBatchRest(projectId, target, paths, ref),
+    () => gitExec.readFilesBatch(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), paths, ref),
+  );
 }
 
 /** 문서(#document-partial-read-grep-diff)와 같은 이유로 소스 코드
@@ -752,15 +778,20 @@ async function getFileRawRest(target: GiteaRepoRef, filePath: string, ref?: stri
  * mirror가 아니면 영구 로컬 클론(#git-persistent-local-clone)에서
  * 직접 blob을 읽어 이 캐시에 쓴다 - REST 왕복 없음. */
 export async function getFileRaw(projectId: string, target: GiteaRepoRef, filePath: string, ref?: string): Promise<RawFile> {
-  if (repoKindFromRef(target) === "mirror") return getFileRawRest(target, filePath, ref);
-  const found = await gitExec.readFileRawBytes(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), filePath, ref);
-  if (!found) throw new Error(`파일을 찾을 수 없습니다: ${filePath}`);
-  const cachePath = path.join(RAW_CACHE_DIR, found.sha);
-  if (!fs.existsSync(cachePath)) {
-    fs.mkdirSync(RAW_CACHE_DIR, { recursive: true });
-    fs.writeFileSync(cachePath, found.content);
-  }
-  return { cachePath, sha: found.sha, size: fs.statSync(cachePath).size };
+  return dispatchGitRead(
+    target,
+    () => getFileRawRest(target, filePath, ref),
+    async () => {
+      const found = await gitExec.readFileRawBytes(projectId, apiBaseUrl(), target, adminGitIdentity(), () => checkEmptyRepo(projectId, target), filePath, ref);
+      if (!found) throw new Error(`파일을 찾을 수 없습니다: ${filePath}`);
+      const cachePath = path.join(RAW_CACHE_DIR, found.sha);
+      if (!fs.existsSync(cachePath)) {
+        fs.mkdirSync(RAW_CACHE_DIR, { recursive: true });
+        fs.writeFileSync(cachePath, found.content);
+      }
+      return { cachePath, sha: found.sha, size: fs.statSync(cachePath).size };
+    },
+  );
 }
 
 const RAW_MIME_TYPES: Record<string, string> = {

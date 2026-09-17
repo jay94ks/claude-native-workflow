@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import mqtt from "mqtt";
+import type { ZodType } from "zod";
 
 // concept 브랜치 tier3의 docs3 CLI와 같은 패턴 - CLI는 순수 REST
 // 클라이언트다(로컬 DB/파일 직접 접근 없음, "CLI/MCP 명령어 완전성"
@@ -142,22 +143,52 @@ async function apiFetch(pathSuffix: string, init?: RequestInit): Promise<Respons
   return res;
 }
 
+// apiCall/apiCallText 둘 다 여기서 실패를 던진다 - 응답 파싱 방식만
+// 다를 뿐 실패 판정/에러 메시지 조립 로직은 완전히 같아서 추출했다
+// (#65, BL-57F8DF17).
+async function assertOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  const body = await res.json().catch(() => ({ error: res.statusText }));
+  throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+}
+
+/** 응답 객체에 `notices: string[]`가 있으면 "⚠ " 접두사를 붙인 줄
+ * 배열로 돌려준다(없으면 빈 배열) - CLI(`printJson`, console.log로
+ * 한 줄씩)와 MCP(`textResult`, 별도 text content 블록으로) 양쪽이
+ * 이 배열을 만드는 로직만 중복하고 있었다(#65, BL-57F8DF17) - 그
+ * 뒤 "어디에 어떻게 찍을지"는 여전히 각자 다르므로 여기서는 안 건드림. */
+export function formatNotices(value: unknown): string[] {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { notices?: unknown }).notices)) return [];
+  return (value as { notices: string[] }).notices.map((notice) => `⚠ ${notice}`);
+}
+
 export async function apiCall<T>(pathSuffix: string, init?: RequestInit): Promise<T> {
   const res = await apiFetch(pathSuffix, init);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
+  await assertOk(res);
   return res.json() as Promise<T>;
+}
+
+/** `apiCall<T>`와 동일하지만 응답 본문을 zod 스키마로 런타임 검증한다
+ * (#apiclient-response-validation, BL-57F8DF17 #66) - MCP 입력
+ * 스키마 205개에 이미 쓰이는 zod를 응답 파싱에도 재사용. 기존
+ * `apiCall<T>`는 그대로 두고(하위 호환, 165개 호출부를 강제
+ * 마이그레이션하지 않음) 응답 형태 드리프트가 실제로 문제됐던
+ * 호출부만 선택적으로 이걸 쓴다. 검증 실패 시 어떤 필드가 기대와
+ * 다른지 zod의 메시지를 그대로 포함해 던진다 - 서버 응답이 조용히
+ * 깨지는 대신 명확한 에러로 즉시 드러나게. */
+export async function apiCallValidated<T>(pathSuffix: string, schema: ZodType<T>, init?: RequestInit): Promise<T> {
+  const raw = await apiCall<unknown>(pathSuffix, init);
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(`${pathSuffix} 응답이 예상한 형태와 다릅니다: ${parsed.error.message}`);
+  }
+  return parsed.data;
 }
 
 // git diff처럼 응답이 JSON이 아니라 순수 텍스트(unified diff)인 엔드포인트용.
 export async function apiCallText(pathSuffix: string, init?: RequestInit): Promise<string> {
   const res = await apiFetch(pathSuffix, init);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
+  await assertOk(res);
   return res.text();
 }
 

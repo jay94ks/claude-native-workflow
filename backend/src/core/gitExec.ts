@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cloneRepository, initRepository, type Repository, type Tree } from "es-git";
-import type { GiteaRepoRef } from "./gitea.js";
+import type { GiteaRepoRef } from "./gitTypes.js";
 
 // #git-direct-exec - Gitea REST의 파일 배치 커밋 API(`POST .../contents`)
 // 자체가 실측으로 5~6초씩 걸리는 게 확인돼(설계자 피드백 "commit이

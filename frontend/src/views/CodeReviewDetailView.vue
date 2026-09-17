@@ -5,6 +5,7 @@ import { apiCall, apiCallText, ApiError } from "../api/client";
 import { PROJECT_MY_ROLE_KEY, roleSatisfies } from "../utils/projectContext";
 import { connectProjectRealtime, type ChangeEvent } from "../realtime";
 import { useToastStore } from "../stores/toast";
+import { useConfirmDialogStore } from "../stores/confirmDialog";
 import { parseUnifiedDiff, type FileDiff } from "../utils/diffParse";
 import DiffFileList from "../components/DiffFileList.vue";
 import StatusBadge from "../components/StatusBadge.vue";
@@ -13,6 +14,7 @@ import TrackingCodeText from "../components/TrackingCodeText.vue";
 const props = defineProps<{ id: string; reviewId: string }>();
 const router = useRouter();
 const toast = useToastStore();
+const confirmDialog = useConfirmDialogStore();
 
 const myRole = inject(PROJECT_MY_ROLE_KEY, ref(null));
 const canAct = computed(() => roleSatisfies(myRole.value, "editor"));
@@ -191,7 +193,7 @@ async function postComment(findingId: string | null) {
 const deleting = ref(false);
 const deleteError = ref("");
 async function deleteReview() {
-  if (!window.confirm("이 리뷰를 삭제할까요?")) return;
+  if (!(await confirmDialog.confirm("이 리뷰를 삭제할까요?"))) return;
   deleting.value = true;
   deleteError.value = "";
   try {

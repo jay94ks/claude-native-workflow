@@ -7,7 +7,10 @@
 import { ref } from "vue";
 import draggable from "vuedraggable";
 import { apiCall, ApiError } from "../api/client";
+import { useConfirmDialogStore } from "../stores/confirmDialog";
 import type { SelectableFolderNode } from "../utils/folderTree";
+
+const confirmDialog = useConfirmDialogStore();
 
 defineOptions({ name: "FolderSelectNode" });
 const props = defineProps<{ node: SelectableFolderNode; projectId: string; selectedFolderId: string | null }>();
@@ -83,8 +86,8 @@ async function removeWithMode(mode: "recursive" | "promote") {
     emit("changed", err instanceof ApiError ? err.message : "삭제에 실패했습니다");
   }
 }
-function confirmRecursiveDelete() {
-  const confirmed = window.confirm(
+async function confirmRecursiveDelete() {
+  const confirmed = await confirmDialog.confirm(
     "이 폴더와 모든 하위 폴더, 그 안의 문서 배치가 함께 사라집니다.\n문서 자체는 삭제되지 않습니다(이 폴더에 있다는 정리 정보만 사라짐).\n되돌릴 수 없습니다.",
   );
   if (!confirmed) return;
