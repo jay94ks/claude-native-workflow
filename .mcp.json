@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cnw": {
+      "command": "npm",
+      "args": ["run", "--silent", "dev"],
+      "cwd": "mcp"
+    }
+  }
+}

@@ -1,0 +1,62 @@
+// GitHub 저장소 페이지의 "UI 모양"만 참고한 전역 톤/컬러 토큰 - 기능을
+// 그대로 옮기는 게 아니라 우리 앱(프로젝트/문서 워크플로우)에 맞는
+// 화면 구조 위에 색/여백/보더 스타일만 입힌다.
+:root {
+  --gh-header-bg: #24292f;
+  --gh-canvas: #ffffff;
+  --gh-canvas-subtle: #f6f8fa;
+  --gh-border: #d0d7de;
+  --gh-fg: #1f2328;
+  --gh-fg-muted: #656d76;
+  --gh-accent: #0969da;
+  --gh-success: #1a7f37;
+}
+
+body {
+  background: var(--gh-canvas-subtle);
+  color: var(--gh-fg);
+}
+
+.gh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--gh-border);
+  border-radius: 2em;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gh-fg-muted);
+  background: var(--gh-canvas);
+}
+
+.gh-btn {
+  border: 1px solid var(--gh-border);
+  border-radius: 6px;
+  background: var(--gh-canvas-subtle);
+}
+
+.gh-card {
+  border: 1px solid var(--gh-border);
+  border-radius: 6px;
+  background: var(--gh-canvas);
+}
+
+.gh-link {
+  color: var(--gh-accent);
+  text-decoration: none;
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.gh-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--gh-accent);
+  color: white;
+  font-weight: 600;
+  flex-shrink: 0;
+}

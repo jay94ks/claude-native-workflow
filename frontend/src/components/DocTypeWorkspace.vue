@@ -1,0 +1,298 @@
+<template>
+  <div class="row no-wrap" style="height: calc(100vh - 160px)">
+    <div class="col-5 q-pa-sm" style="overflow-y: auto">
+      <div class="row items-center justify-between q-mb-sm">
+        <div class="text-subtitle1">{{ title }} ({{ items.length }})</div>
+        <q-btn v-if="!readOnly" size="sm" color="primary" icon="add" :label="createLabel" :to="createRoute" />
+      </div>
+      <!-- design-notes.md "문서 의존성" - dependsOn readiness(아직 해소되지
+           않은 의존 개수) 오름차순 정렬을 docs.list의 sort 옵션으로 노출. -->
+      <q-toggle v-model="sortByDependency" label="의존성 순 정렬" dense size="sm" class="q-mb-sm" @update:model-value="load" />
+      <q-list bordered separator>
+        <q-item
+          v-for="doc in items"
+          :key="doc.code"
+          clickable
+          :active="selected?.code === doc.code"
+          active-class="bg-blue-1"
+          @click="select(doc.code)"
+        >
+          <q-item-section>
+            <q-item-label>{{ doc.title }}</q-item-label>
+            <q-item-label caption>{{ doc.code }} · {{ doc.kind }} · {{ doc.chapter ?? "-" }}</q-item-label>
+          </q-item-section>
+          <q-item-section side>
+            <q-badge :color="stateColor(doc.state)">{{ doc.state }}</q-badge>
+          </q-item-section>
+        </q-item>
+        <q-item v-if="items.length === 0">
+          <q-item-section class="text-caption">문서가 없습니다.</q-item-section>
+        </q-item>
+      </q-list>
+    </div>
+
+    <q-separator vertical />
+
+    <div class="col-7 q-pa-md" style="overflow-y: auto">
+      <template v-if="selected">
+        <div class="row items-center justify-between">
+          <div class="text-h6">{{ selected.title }}</div>
+          <q-badge :color="stateColor(selected.state)">{{ selected.state }}</q-badge>
+        </div>
+        <div class="text-caption q-mb-sm">
+          {{ selected.code }} · author: {{ selected.author }} · etag: {{ selected.etag }}
+          <span v-if="selected.chapter"> · chapter: {{ selected.chapter }}</span>
+        </div>
+
+        <!-- design-notes.md "문서간 참조"/"의존성" - related/dependsOn을 태그
+             배지로 보여주고, 클릭하면(다른 type이어도) 그 문서로 바로 이동한다. -->
+        <div class="q-gutter-xs q-mb-sm">
+          <q-badge
+            v-for="ref in selected.related"
+            :key="'related-' + ref.code"
+            outline
+            color="primary"
+            class="cursor-pointer"
+            @click="select(ref.code)"
+          >
+            related: {{ ref.code }}
+          </q-badge>
+          <q-badge
+            v-for="ref in selected.dependsOn"
+            :key="'dependsOn-' + ref.code"
+            outline
+            color="deep-orange"
+            class="cursor-pointer"
+            @click="select(ref.code)"
+          >
+            dependsOn: {{ ref.code }}
+          </q-badge>
+          <q-btn v-if="!readOnly" size="sm" dense flat icon="add_link" label="태그 추가" @click="openTagDialog" />
+        </div>
+
+        <div v-if="!readOnly" class="q-gutter-sm q-mb-md">
+          <q-btn
+            v-for="t in availableTransitions"
+            :key="t.to"
+            size="sm"
+            :color="t.color ?? 'primary'"
+            :label="t.label"
+            :loading="transitioning === t.to"
+            @click="transition(t.to)"
+          />
+        </div>
+        <div v-if="actionError" class="text-negative text-caption q-mb-sm">{{ actionError }}</div>
+
+        <div class="text-caption text-grey-8 q-mb-xs">Source View</div>
+        <MarkdownSourceView :key="selected.code" :content="selected.content" :read-only="readOnly" @save="saveContent" />
+
+        <q-separator class="q-my-md" />
+        <!-- design-notes.md "UI 설계" - question/answer/opinion은 별도 Q&A 탭이
+             아니라 PR 리뷰 코멘트처럼 그 문서를 보는 화면 안에 통합된다. -->
+        <DocumentDiscussion :project-id="projectId" :parent-code="selected.code" />
+      </template>
+      <div v-else class="text-caption">왼쪽에서 문서를 선택하세요.</div>
+    </div>
+
+    <q-dialog v-model="showTagDialog">
+      <q-card style="width: 420px">
+        <q-card-section class="text-h6">태그 추가</q-card-section>
+        <q-card-section class="q-gutter-md">
+          <q-select v-model="tagKind" :options="['related', 'dependsOn']" label="종류" />
+          <q-input v-model="tagCode" label="대상 추적 코드 (예: SP-XXXXXXXX)" />
+          <div v-if="tagError" class="text-negative text-caption">{{ tagError }}</div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="취소" v-close-popup />
+          <q-btn color="primary" label="추가" :loading="tagging" @click="addTag" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, watch } from "vue";
+import { useAuthStore } from "stores/auth";
+import DocumentDiscussion from "components/DocumentDiscussion.vue";
+import MarkdownSourceView from "components/MarkdownSourceView.vue";
+
+interface TaggedRef {
+  code: string;
+  etag: string;
+}
+interface DocSummary {
+  code: string;
+  parent_id: string | null;
+  etag: string;
+  type: string;
+  kind: string;
+  state: string;
+  chapter: string | null;
+  title: string;
+  author: string;
+  related: TaggedRef[];
+  dependsOn: TaggedRef[];
+}
+interface DocFull extends DocSummary {
+  content: string;
+}
+interface TransitionOption {
+  to: string;
+  label: string;
+  color?: string;
+}
+
+const props = withDefaults(
+  defineProps<{
+    projectId: string;
+    type: string;
+    kinds: string[];
+    title: string;
+    createLabel?: string;
+    createRoute?: string;
+    readOnly?: boolean;
+    transitionsByState?: Record<string, TransitionOption[]>;
+  }>(),
+  { readOnly: false, createLabel: "새로 만들기", createRoute: "", transitionsByState: () => ({}) }
+);
+
+const auth = useAuthStore();
+const items = ref<DocSummary[]>([]);
+const selected = ref<DocFull | null>(null);
+const transitioning = ref<string | null>(null);
+const actionError = ref("");
+
+function stateColor(state: string): string {
+  if (state === "done" || state === "ended") return "positive";
+  if (state === "discard" || state === "canceled") return "grey-6";
+  if (state === "active" || state === "resumed") return "orange";
+  return "primary";
+}
+
+const sortByDependency = ref(false);
+
+async function load() {
+  const result = await auth.run({
+    action: "docs.list",
+    projectId: props.projectId,
+    type: props.type,
+    sort: sortByDependency.value ? "dependency" : undefined,
+  });
+  if (result.ok) items.value = (result.data as { items: DocSummary[] }).items;
+}
+
+async function select(code: string) {
+  actionError.value = "";
+  const result = await auth.run({ action: "docs.get", projectId: props.projectId, code });
+  if (result.ok) selected.value = result.data as DocFull;
+}
+
+const availableTransitions = ref<TransitionOption[]>([]);
+watch(selected, (doc) => {
+  availableTransitions.value = doc ? props.transitionsByState[doc.state] ?? [] : [];
+});
+
+async function transition(to: string) {
+  if (!selected.value) return;
+  transitioning.value = to;
+  actionError.value = "";
+  // docs.transition의 실제 계약: { projectId, state: { code: [nextState, expectedCurrentState] } }
+  // (etag가 아니라 "지금 이 상태일 거라 예상한다"는 현재 상태 문자열로 낙관적 동시성을 건다).
+  const result = await auth.run({
+    action: "docs.transition",
+    projectId: props.projectId,
+    state: { [selected.value.code]: [to, selected.value.state] },
+  });
+  transitioning.value = null;
+  if (!result.ok) {
+    actionError.value = result.reason?.join(", ") ?? "전이에 실패했습니다.";
+    return;
+  }
+  await load();
+  await select(selected.value.code);
+}
+
+// design-notes.md 후속 판단(설계자 요청) - "Source View"는 view/edit 두
+// 모드를 가진 것으로 정의됐다(MarkdownSourceView) - 기존 문서의 본문도
+// 여기서 바로 편집해 docs.update로 저장할 수 있다.
+async function saveContent(markdown: string) {
+  if (!selected.value) return;
+  actionError.value = "";
+  const result = await auth.run({
+    action: "docs.update",
+    projectId: props.projectId,
+    code: selected.value.code,
+    etag: selected.value.etag,
+    content: markdown,
+  });
+  if (!result.ok) {
+    actionError.value = result.reason?.join(", ") ?? "저장에 실패했습니다.";
+    return;
+  }
+  await load();
+  await select(selected.value.code);
+}
+
+const showTagDialog = ref(false);
+const tagKind = ref<"related" | "dependsOn">("related");
+const tagCode = ref("");
+const tagging = ref(false);
+const tagError = ref("");
+
+function openTagDialog() {
+  tagCode.value = "";
+  tagError.value = "";
+  showTagDialog.value = true;
+}
+
+// docs.tag는 related/dependsOn을 "전체 교체"로 받으므로(design-notes.md
+// "문서간 참조" - 항목 하나만 추가/제거하는 액션이 아니다), 대상의 최신
+// etag를 docs.get으로 확인한 뒤 지금 배열에 이어붙여서 다시 통째로 보낸다.
+async function addTag() {
+  if (!selected.value) return;
+  tagging.value = true;
+  tagError.value = "";
+
+  const targetResult = await auth.run({ action: "docs.get", projectId: props.projectId, code: tagCode.value });
+  if (!targetResult.ok) {
+    tagging.value = false;
+    tagError.value = targetResult.reason?.join(", ") ?? "대상 문서를 찾을 수 없습니다.";
+    return;
+  }
+  const target = targetResult.data as { code: string; etag: string };
+
+  const nextRelated = tagKind.value === "related" ? [...selected.value.related, { code: target.code, etag: target.etag }] : undefined;
+  const nextDependsOn = tagKind.value === "dependsOn" ? [...selected.value.dependsOn, { code: target.code, etag: target.etag }] : undefined;
+
+  const result = await auth.run({
+    action: "docs.tag",
+    projectId: props.projectId,
+    code: selected.value.code,
+    etag: selected.value.etag,
+    related: nextRelated,
+    dependsOn: nextDependsOn,
+  });
+  tagging.value = false;
+  if (!result.ok) {
+    tagError.value = result.reason?.join(", ") ?? "태그 추가에 실패했습니다.";
+    return;
+  }
+  showTagDialog.value = false;
+  await select(selected.value.code);
+}
+
+onMounted(load);
+watch(() => props.projectId, load);
+</script>
+
+<style scoped>
+.doc-source {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 12px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+</style>

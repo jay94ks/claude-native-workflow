@@ -1,0 +1,16 @@
+node_modules/
+dist/
+generated/
+data/
+.quasar/
+.env
+*.log
+.DS_Store
+
+# .cnw/config.json is project config, safe to commit - these are not.
+# **/ prefix is required - a project's .cnw/ can be nested anywhere
+# (e.g. mcp/.cnw/ for this repo's own dogfooding link), and a bare
+# "dir/file" pattern is anchored to the repo root, not recursive.
+**/.cnw/session.json
+**/.cnw/staging.json
+**/.cnw/cache.json

@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cnw
+      POSTGRES_USER: cnw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY}
+    volumes:
+      - ./data/meilisearch:/meili_data
+
+  emqx:
+    image: emqx/emqx:5.8
+    environment:
+      EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_SERVICE_USERNAME}
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_SERVICE_PASSWORD}
+    ports:
+      - "1883:1883"
+      - "8083:8083"
+    volumes:
+      - ./data/emqx:/opt/emqx/data
+
+  gitea:
+    image: gitea/gitea:latest
+    environment:
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: postgres:5432
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: cnw
+      GITEA__database__PASSWD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./data/gitea:/data
+    depends_on:
+      - postgres
+
+  backend:
+    build: ./backend
+    environment:
+      PORT: 8388
+      DATABASE_URL: postgresql://cnw:${POSTGRES_PASSWORD}@postgres:5432/cnw
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY}
+      EMQX_MQTT_URL: mqtt://emqx:1883
+      GITEA_URL: http://gitea:3000
+      GITEA_API_TOKEN: ${GITEA_API_TOKEN}
+    depends_on:
+      - postgres
+      - meilisearch
+      - emqx
+      - gitea
+
+  frontend:
+    build: ./frontend
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+      - gitea

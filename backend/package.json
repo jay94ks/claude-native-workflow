@@ -1,0 +1,29 @@
+{
+  "name": "@cnw/backend",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "dev": "tsx src/api/server.ts",
+    "start": "node dist/api/server.js",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "argon2": "^0.41.0",
+    "es-git": "^0.7.0",
+    "express": "^4.21.0",
+    "meilisearch": "^0.45.0",
+    "mqtt": "^5.10.0",
+    "prisma": "^6.19.0",
+    "tsx": "^4.19.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.0",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.0"
+  }
+}

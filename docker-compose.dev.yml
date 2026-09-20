@@ -1,0 +1,44 @@
+# 로컬 개발용 인프라 전용 compose - postgres/meilisearch/emqx만 컨테이너로
+# 띄우고, backend(tsx)/frontend(quasar dev)/cli는 호스트에서 직접 실행한다.
+# docker-compose.yml(전체 컨테이너 빌드 - backend/frontend Dockerfile,
+# gitea, nginx 리버스 프록시)은 아직 실기동 검증된 적이 없어서 별도로
+# 둔다 - 이 파일은 오직 "지금 바로 로컬에서 써보기" 용도.
+#
+# 호스트 포트는 이 머신의 다른 claude-native-workflow 설치(운영 중인
+# 별도 인스턴스)와 절대 겹치지 않도록 전부 비표준 포트로 고정했다
+# (특히 EMQX 1883/8083은 그 설치가 이미 쓰고 있어 반드시 피해야 함).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cnw-v3-dev-postgres
+    environment:
+      POSTGRES_DB: cnw
+      POSTGRES_USER: cnw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "15432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    container_name: cnw-v3-dev-meilisearch
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY}
+    ports:
+      - "17700:7700"
+    volumes:
+      - ./data/meilisearch:/meili_data
+
+  emqx:
+    image: emqx/emqx:5.8
+    container_name: cnw-v3-dev-emqx
+    environment:
+      EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_SERVICE_USERNAME}
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_SERVICE_PASSWORD}
+    ports:
+      - "11883:1883"
+      - "18084:18083"
+    volumes:
+      - ./data/emqx:/opt/emqx/data

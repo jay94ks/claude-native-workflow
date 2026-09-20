@@ -1,0 +1,11 @@
+{
+  "name": "claude-native-workflow-v3",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "backend",
+    "cli",
+    "mcp",
+    "frontend"
+  ]
+}
