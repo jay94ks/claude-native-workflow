@@ -32,6 +32,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
+import * as api from "src/api/client";
 
 const props = defineProps<{ projectId: string }>();
 const auth = useAuthStore();
@@ -54,7 +55,7 @@ const createError = ref("");
 const canCreate = computed(() => title.value.trim().length > 0 && !!source.value && !!target.value && source.value !== target.value);
 
 async function loadBranches() {
-  const result = await auth.run({ action: "repo.branches", projectId: props.projectId });
+  const result = await api.listBranches(auth.apiKey!, props.projectId);
   if (result.ok) branchNames.value = (result.data as { items: { name: string }[] }).items.map((b) => b.name);
 }
 
@@ -62,13 +63,11 @@ async function create() {
   creating.value = true;
   createError.value = "";
   const description = descriptionEditorRef.value?.getMarkdown() ?? "";
-  const result = await auth.run({
-    action: "pr.create",
-    projectId: props.projectId,
+  const result = await api.createPullRequest(auth.apiKey!, props.projectId, {
     title: title.value,
     description: description || undefined,
-    sourceBranch: source.value,
-    targetBranch: target.value,
+    sourceBranch: source.value!,
+    targetBranch: target.value!,
   });
   creating.value = false;
   if (!result.ok) {

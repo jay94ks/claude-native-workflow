@@ -1,11 +1,13 @@
 <template>
-  <div class="row no-wrap" style="height: calc(100vh - 160px)">
-    <div class="col-5 q-pa-sm" style="overflow-y: auto">
+  <div class="row no-wrap" style="min-height: calc(100vh - 160px)">
+    <ProjectSidebar>
       <div class="row items-center justify-between q-mb-sm">
         <div class="text-subtitle1">Pull requests ({{ items.length }})</div>
         <q-btn size="sm" color="primary" icon="add" label="새 PR" :to="`/projects/${projectId}/pull-requests/new`" />
       </div>
-      <q-list bordered separator>
+      <!-- 설계자 요청(2026-09-21) - PR이 선택되면 목록은 500px로 고정(스크롤
+           가능)하고 그 밑에 바뀐 파일을 트리로 보여준다. -->
+      <q-list bordered separator :style="selected ? 'max-height: 500px; overflow-y: auto' : ''">
         <q-item
           v-for="pr in items"
           :key="pr.id"
@@ -24,18 +26,40 @@
         </q-item>
         <q-item v-if="items.length === 0"><q-item-section class="text-caption">Pull request가 없습니다.</q-item-section></q-item>
       </q-list>
-    </div>
+
+      <template v-if="selected">
+        <div class="text-subtitle2 q-mt-md q-mb-sm">변경된 파일 ({{ selected.diff.files.length }})</div>
+        <q-tree
+          :nodes="fileTree"
+          node-key="nodeKey"
+          :selected="selectedPath"
+          @update:selected="onTreeSelect"
+          default-expand-all
+        >
+          <template #default-header="scope">
+            <div class="row items-center" style="gap: 4px">
+              <q-icon :name="scope.node.isFile ? 'description' : 'folder'" :color="scope.node.isFile ? 'grey-7' : 'amber-8'" size="16px" />
+              <span>{{ scope.node.label }}</span>
+              <q-badge v-if="scope.node.status" outline dense>{{ scope.node.status }}</q-badge>
+            </div>
+          </template>
+        </q-tree>
+        <div v-if="selected.diff.files.length === 0" class="text-caption" style="color: var(--gh-fg-muted)">변경된 파일이 없습니다.</div>
+      </template>
+    </ProjectSidebar>
 
     <q-separator vertical />
 
-    <div class="col-7 q-pa-md" style="overflow-y: auto">
+    <div class="col q-pa-md" style="overflow-y: auto">
       <template v-if="selected">
         <div class="row items-center justify-between">
           <div class="text-h6">{{ selected.title }}</div>
           <q-badge :color="stateColor(selected.state)">{{ selected.state }}</q-badge>
         </div>
         <div class="text-caption q-mb-sm">{{ selected.sourceBranch }} → {{ selected.targetBranch }} · author: {{ selected.author }}</div>
-        <div v-if="selected.description" class="text-body2 q-mb-md">{{ selected.description }}</div>
+        <div v-if="selected.description" class="q-mb-md">
+          <MarkdownSourceView :key="selected.id" :content="selected.description" read-only />
+        </div>
 
         <div v-if="selected.state === 'open'" class="q-gutter-sm q-mb-md">
           <q-btn size="sm" color="positive" label="Merge" :loading="merging" @click="merge" />
@@ -44,17 +68,11 @@
         <div v-if="actionError" class="text-negative text-caption q-mb-sm">{{ actionError }}</div>
         <div v-if="selected.mergeCommitId" class="text-caption q-mb-sm">merge commit: {{ selected.mergeCommitId }}</div>
 
-        <div class="text-subtitle2 q-mb-xs">변경된 파일 ({{ selected.diff.files.length }})</div>
-        <q-list bordered separator dense class="q-mb-md">
-          <q-item v-for="f in selected.diff.files" :key="f.path">
-            <q-item-section>{{ f.path }}</q-item-section>
-            <q-item-section side><q-badge outline>{{ f.status }}</q-badge></q-item-section>
-          </q-item>
-          <q-item v-if="selected.diff.files.length === 0"><q-item-section class="text-caption">변경된 파일이 없습니다.</q-item-section></q-item>
-        </q-list>
-
+        <!-- 설계자 요청(2026-09-21) - 파일을 하나 고르면 여기(예전에 Diff 패치
+             텍스트가 있던 자리)에 좌/우 분할 diff 뷰어를 보여준다. -->
         <div class="text-subtitle2 q-mb-xs">Diff</div>
-        <pre class="doc-source">{{ selected.diff.patch || "(빈 diff)" }}</pre>
+        <DiffViewer v-if="selectedPath" :project-id="projectId" :base="selected.targetBranch" :head="selected.sourceBranch" :path="selectedPath" />
+        <div v-else class="text-caption" style="color: var(--gh-fg-muted)">왼쪽 파일 트리에서 파일을 선택하세요.</div>
       </template>
       <div v-else class="text-caption">왼쪽에서 PR을 선택하세요.</div>
     </div>
@@ -62,8 +80,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useAuthStore } from "stores/auth";
+import ProjectSidebar from "components/ProjectSidebar.vue";
+import MarkdownSourceView from "components/MarkdownSourceView.vue";
+import DiffViewer from "components/DiffViewer.vue";
+import * as api from "src/api/client";
 
 interface PrSummary {
   id: string;
@@ -88,6 +110,7 @@ const auth = useAuthStore();
 
 const items = ref<PrSummary[]>([]);
 const selected = ref<PrFull | null>(null);
+const selectedPath = ref<string | null>(null);
 const actionError = ref("");
 const merging = ref(false);
 const closing = ref(false);
@@ -98,14 +121,65 @@ function stateColor(state: string): string {
   return "primary";
 }
 
+interface TreeNode {
+  label: string;
+  nodeKey: string;
+  isFile: boolean;
+  status?: string;
+  children?: TreeNode[];
+}
+
+// 설계자 요청(2026-09-21) - 변경된 파일 목록을 평평한 경로 배열이 아니라
+// 디렉터리 구조를 살린 트리(q-tree)로 보여준다.
+function buildFileTree(files: DiffFile[]): TreeNode[] {
+  interface Draft {
+    label: string;
+    nodeKey: string;
+    isFile: boolean;
+    status?: string;
+    children: Map<string, Draft>;
+  }
+  const root: Draft = { label: "", nodeKey: "", isFile: false, children: new Map() };
+  for (const f of files) {
+    const parts = f.path.split("/");
+    let cur = root;
+    let acc = "";
+    parts.forEach((part, idx) => {
+      acc = acc ? `${acc}/${part}` : part;
+      const isFile = idx === parts.length - 1;
+      if (!cur.children.has(part)) {
+        cur.children.set(part, { label: part, nodeKey: acc, isFile, status: isFile ? f.status : undefined, children: new Map() });
+      }
+      cur = cur.children.get(part)!;
+    });
+  }
+  function toArray(draft: Draft): TreeNode[] {
+    return [...draft.children.values()]
+      .sort((a, b) => Number(a.isFile) - Number(b.isFile) || a.label.localeCompare(b.label))
+      .map((d) => ({ label: d.label, nodeKey: d.nodeKey, isFile: d.isFile, status: d.status, children: d.isFile ? undefined : toArray(d) }));
+  }
+  return toArray(root);
+}
+
+const fileTree = computed(() => (selected.value ? buildFileTree(selected.value.diff.files) : []));
+
+function onTreeSelect(key: string | number | null) {
+  if (typeof key !== "string") return;
+  // 폴더 노드는 파일이 아니므로 무시 - selected.diff.files에 그 경로가
+  // 실제로 있는 것만(=파일) diff 뷰어 대상으로 받아들인다.
+  const isFile = selected.value?.diff.files.some((f) => f.path === key);
+  if (isFile) selectedPath.value = key;
+}
+
 async function load() {
-  const result = await auth.run({ action: "pr.list", projectId: props.projectId });
+  const result = await api.listPullRequests(auth.apiKey!, props.projectId);
   if (result.ok) items.value = (result.data as { items: PrSummary[] }).items;
 }
 
 async function select(id: string) {
   actionError.value = "";
-  const result = await auth.run({ action: "pr.get", projectId: props.projectId, id });
+  selectedPath.value = null;
+  const result = await api.getPullRequest(auth.apiKey!, props.projectId, id);
   if (result.ok) selected.value = result.data as PrFull;
 }
 
@@ -113,7 +187,7 @@ async function merge() {
   if (!selected.value) return;
   merging.value = true;
   actionError.value = "";
-  const result = await auth.run({ action: "pr.merge", projectId: props.projectId, id: selected.value.id });
+  const result = await api.mergePullRequest(auth.apiKey!, props.projectId, selected.value.id);
   merging.value = false;
   if (!result.ok) {
     actionError.value = result.reason?.join(", ") ?? "머지에 실패했습니다.";
@@ -127,7 +201,7 @@ async function close() {
   if (!selected.value) return;
   closing.value = true;
   actionError.value = "";
-  const result = await auth.run({ action: "pr.close", projectId: props.projectId, id: selected.value.id });
+  const result = await api.closePullRequest(auth.apiKey!, props.projectId, selected.value.id);
   closing.value = false;
   if (!result.ok) {
     actionError.value = result.reason?.join(", ") ?? "닫기에 실패했습니다.";
@@ -140,17 +214,3 @@ async function close() {
 onMounted(load);
 watch(() => props.projectId, load);
 </script>
-
-<style scoped>
-.doc-source {
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: rgba(0, 0, 0, 0.04);
-  padding: 12px;
-  border-radius: 4px;
-  font-family: monospace;
-  font-size: 12px;
-  max-height: 400px;
-  overflow-y: auto;
-}
-</style>

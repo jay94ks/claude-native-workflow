@@ -64,6 +64,7 @@
 import { ref, onMounted } from "vue";
 import ProjectCard from "components/ProjectCard.vue";
 import { useAuthStore } from "stores/auth";
+import * as api from "src/api/client";
 
 interface ProjectSummary {
   id: string;
@@ -86,7 +87,7 @@ const createError = ref("");
 
 async function load() {
   loading.value = true;
-  const result = await auth.run({ action: "project.list" });
+  const result = await api.listProjects(auth.apiKey!);
   if (result.ok) {
     projects.value = (result.data as { items: ProjectSummary[] }).items;
   }
@@ -96,8 +97,7 @@ async function load() {
 async function create() {
   creating.value = true;
   createError.value = "";
-  const result = await auth.run({
-    action: "project.create",
+  const result = await api.createProject(auth.apiKey!, {
     name: newName.value,
     description: newDescription.value || undefined,
     visibility: newIsPublic.value ? "PUBLIC" : "PRIVATE",
@@ -126,7 +126,7 @@ const accepting = ref<string | null>(null);
 const acceptError = ref("");
 
 async function loadMyInvites() {
-  const result = await auth.run({ action: "project.invitesForMe" });
+  const result = await api.listMyInvites(auth.apiKey!);
   if (result.ok) myInvites.value = (result.data as { items: MyInvite[] }).items;
 }
 
@@ -138,7 +138,7 @@ function openAcceptDialog() {
 async function acceptInvite(projectId: string) {
   accepting.value = projectId;
   acceptError.value = "";
-  const result = await auth.run({ action: "project.acceptInvite", projectId });
+  const result = await api.acceptInvite(auth.apiKey!, projectId);
   accepting.value = null;
   if (!result.ok) {
     acceptError.value = result.reason?.join(", ") ?? "수락에 실패했습니다.";

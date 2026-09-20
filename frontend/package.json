@@ -11,6 +11,7 @@
     "@quasar/extras": "^1.16.0",
     "@yiitap/vue": "^0.19.2",
     "@yiitap/vue-preset": "^0.19.2",
+    "diff": "^5.2.2",
     "marked": "^18.0.13",
     "pinia": "^2.2.0",
     "quasar": "^2.17.0",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@quasar/app-vite": "^2.1.0",
+    "@types/diff": "^7.0.2",
     "@types/turndown": "^5.0.6",
     "@vue/tsconfig": "^0.5.1",
     "typescript": "^5.6.0",

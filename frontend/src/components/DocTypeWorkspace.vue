@@ -1,6 +1,6 @@
 <template>
-  <div class="row no-wrap" style="height: calc(100vh - 160px)">
-    <div class="col-5 q-pa-sm" style="overflow-y: auto">
+  <div class="row no-wrap" style="min-height: calc(100vh - 160px)">
+    <ProjectSidebar>
       <div class="row items-center justify-between q-mb-sm">
         <div class="text-subtitle1">{{ title }} ({{ items.length }})</div>
         <q-btn v-if="!readOnly" size="sm" color="primary" icon="add" :label="createLabel" :to="createRoute" />
@@ -29,11 +29,11 @@
           <q-item-section class="text-caption">문서가 없습니다.</q-item-section>
         </q-item>
       </q-list>
-    </div>
+    </ProjectSidebar>
 
     <q-separator vertical />
 
-    <div class="col-7 q-pa-md" style="overflow-y: auto">
+    <div class="col q-pa-md" style="overflow-y: auto">
       <template v-if="selected">
         <div class="row items-center justify-between">
           <div class="text-h6">{{ selected.title }}</div>
@@ -89,7 +89,7 @@
         <q-separator class="q-my-md" />
         <!-- design-notes.md "UI 설계" - question/answer/opinion은 별도 Q&A 탭이
              아니라 PR 리뷰 코멘트처럼 그 문서를 보는 화면 안에 통합된다. -->
-        <DocumentDiscussion :project-id="projectId" :parent-code="selected.code" />
+        <DocumentDiscussion ref="discussionRef" :project-id="projectId" :parent-code="selected.code" :highlight-code="highlightCode" />
       </template>
       <div v-else class="text-caption">왼쪽에서 문서를 선택하세요.</div>
     </div>
@@ -116,6 +116,8 @@ import { ref, onMounted, watch } from "vue";
 import { useAuthStore } from "stores/auth";
 import DocumentDiscussion from "components/DocumentDiscussion.vue";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
+import ProjectSidebar from "components/ProjectSidebar.vue";
+import * as api from "src/api/client";
 
 interface TaggedRef {
   code: string;
@@ -153,6 +155,11 @@ const props = withDefaults(
     createRoute?: string;
     readOnly?: boolean;
     transitionsByState?: Record<string, TransitionOption[]>;
+    // 설계자 요청(2026-09-21) - RecentQaFeed에서 Q&A 항목을 누르면 그게
+    // 달린 문서를 자동 선택(openCode)하고 그 Q&A 카드까지 스크롤한다
+    // (highlightCode, DocumentDiscussion에 그대로 전달).
+    openCode?: string;
+    highlightCode?: string;
   }>(),
   { readOnly: false, createLabel: "새로 만들기", createRoute: "", transitionsByState: () => ({}) }
 );
@@ -173,9 +180,7 @@ function stateColor(state: string): string {
 const sortByDependency = ref(false);
 
 async function load() {
-  const result = await auth.run({
-    action: "docs.list",
-    projectId: props.projectId,
+  const result = await api.listDocuments(auth.apiKey!, props.projectId, {
     type: props.type,
     sort: sortByDependency.value ? "dependency" : undefined,
   });
@@ -184,7 +189,7 @@ async function load() {
 
 async function select(code: string) {
   actionError.value = "";
-  const result = await auth.run({ action: "docs.get", projectId: props.projectId, code });
+  const result = await api.getDocument(auth.apiKey!, props.projectId, code);
   if (result.ok) selected.value = result.data as DocFull;
 }
 
@@ -197,13 +202,9 @@ async function transition(to: string) {
   if (!selected.value) return;
   transitioning.value = to;
   actionError.value = "";
-  // docs.transition의 실제 계약: { projectId, state: { code: [nextState, expectedCurrentState] } }
-  // (etag가 아니라 "지금 이 상태일 거라 예상한다"는 현재 상태 문자열로 낙관적 동시성을 건다).
-  const result = await auth.run({
-    action: "docs.transition",
-    projectId: props.projectId,
-    state: { [selected.value.code]: [to, selected.value.state] },
-  });
+  // docs.transition의 실제 계약: etag가 아니라 "지금 이 상태일 거라
+  // 예상한다"는 현재 상태 문자열로 낙관적 동시성을 건다.
+  const result = await api.transitionDocument(auth.apiKey!, props.projectId, selected.value.code, to, selected.value.state);
   transitioning.value = null;
   if (!result.ok) {
     actionError.value = result.reason?.join(", ") ?? "전이에 실패했습니다.";
@@ -219,13 +220,7 @@ async function transition(to: string) {
 async function saveContent(markdown: string) {
   if (!selected.value) return;
   actionError.value = "";
-  const result = await auth.run({
-    action: "docs.update",
-    projectId: props.projectId,
-    code: selected.value.code,
-    etag: selected.value.etag,
-    content: markdown,
-  });
+  const result = await api.updateDocument(auth.apiKey!, props.projectId, selected.value.code, { etag: selected.value.etag, content: markdown });
   if (!result.ok) {
     actionError.value = result.reason?.join(", ") ?? "저장에 실패했습니다.";
     return;
@@ -254,7 +249,7 @@ async function addTag() {
   tagging.value = true;
   tagError.value = "";
 
-  const targetResult = await auth.run({ action: "docs.get", projectId: props.projectId, code: tagCode.value });
+  const targetResult = await api.getDocument(auth.apiKey!, props.projectId, tagCode.value);
   if (!targetResult.ok) {
     tagging.value = false;
     tagError.value = targetResult.reason?.join(", ") ?? "대상 문서를 찾을 수 없습니다.";
@@ -265,10 +260,7 @@ async function addTag() {
   const nextRelated = tagKind.value === "related" ? [...selected.value.related, { code: target.code, etag: target.etag }] : undefined;
   const nextDependsOn = tagKind.value === "dependsOn" ? [...selected.value.dependsOn, { code: target.code, etag: target.etag }] : undefined;
 
-  const result = await auth.run({
-    action: "docs.tag",
-    projectId: props.projectId,
-    code: selected.value.code,
+  const result = await api.tagDocument(auth.apiKey!, props.projectId, selected.value.code, {
     etag: selected.value.etag,
     related: nextRelated,
     dependsOn: nextDependsOn,
@@ -282,7 +274,10 @@ async function addTag() {
   await select(selected.value.code);
 }
 
-onMounted(load);
+onMounted(async () => {
+  await load();
+  if (props.openCode) await select(props.openCode);
+});
 watch(() => props.projectId, load);
 </script>
 

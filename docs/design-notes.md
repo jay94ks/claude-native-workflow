@@ -2234,3 +2234,511 @@ source·target 브랜치/설명(yiitap)을 채워 생성 → 목록에 반영 �
   않아도 프로세스가 죽지는 않는다** - 다만 각 핸들러가 의미 있는
   에러 메시지를 반환하는 것 자체는 여전히 핸들러 책임.
 
+### 좌측 패널 고정폭 + Settings 통합 + yiitap 실기능 라운드 (2026-09-21)
+
+설계자가 프론트엔드 레이아웃/에디터에 대해 8가지를 한 번에 요청했다:
+(1) Code/PR/Issues/Documents/Trackers 좌측 패널을 270px 고정폭으로
+통일 + 좁은 화면에서 로고 좌측 햄버거로 토글, (2) 탑바의 "Settings"
+버튼 제거(탭은 유지), (3)(4) Collaborators/Template을 독립 탭에서
+Settings 탭 안 좌측 메뉴("기본 설정"/"Collaborators"/"Template")로
+통합, (5)(6) 모든 에디터가 yiitap을 쓰고 툴바는 항상 보이되 보기
+모드에선 비활성・편집 모드에선 활성(마크다운과 안 맞는 기능은 제외
+가능), (7) 프로젝트 진입 시 Code 탭이 기본(이미 만족돼 있었음),
+(8) Documents에 있던 About 카드를 Code 탭 좌측 패널 맨 위로 이동.
+
+**좌측 패널 공용화**: `stores/ui.ts`(신규, `sidebarOpen` 전역 상태)
++ `components/ProjectSidebar.vue`(신규) - 270px 고정폭 래퍼를 만들어
+`CodeTab.vue`/`PullRequestsTab.vue`/`DocTypeWorkspace.vue`(Documents/
+Plans/Issues/Trackers·Tests가 전부 공유)/`layouts/SettingsShell.vue`
+가 전부 이걸 쓴다. 1024px 미만에서는 `position: fixed`
+오프캔버스(왼쪽에서 슬라이드 인) + 반투명 백드롭으로 바뀌고,
+`MainLayout.vue`의 로고 좌측에 햄버거(같은 브레이크포인트에서만
+보임, `currentProject`가 있을 때만 렌더)로 `ui.toggleSidebar()`를
+호출한다. 라우트가 바뀌면(사이드바 안의 링크를 눌러 이동했을 때 등)
+`ProjectSidebar.vue` 자체가 `route.fullPath`를 지켜보다 자동으로
+닫아준다(모바일에서 메뉴 클릭 후 패널이 계속 덮고 있는 것 방지).
+데스크톱(1024px 이상)에서는 `position: static`이라 토글 개념
+자체가 없다(햄버거도 안 보임).
+
+**Settings 통합**: `layouts/SettingsShell.vue`(신규) - `ProjectShell.
+vue`의 GitHub 탭바 밑에 또 하나의 270px `ProjectSidebar`(기본 설정/
+Collaborators/Template 3개 메뉴) + `router-view`를 갖는 중첩
+레이아웃. `routes.ts`의 `settings` 라우트가 `collaborators`/
+`template`/`settings`(SettingsTab.vue) 세 개의 독립 라우트 대신
+`SettingsShell.vue` 아래 `general`/`collaborators`/`template` 세
+자식 라우트(빈 경로는 `general`로 리다이렉트)가 됐다. 기존
+`SettingsTab.vue`/`CollaboratorsTab.vue`/`TemplateTab.vue`는 삭제
+하고 내용을 `pages/project/settings/{General,Collaborators,
+Template}Page.vue`로 그대로(Template만 아래 설명대로 에디터 교체)
+옮겼다. `ProjectShell.vue` 탭 목록과 `ProjectAboutSidebar.vue`의
+바로가기 링크(`/collaborators`, `/template` → `/settings/
+collaborators`, `/settings/template`)도 갱신했다. `MainLayout.vue`
+탑바의 "Settings" 버튼(탭과 별개로 탑바에도 따로 있던 것)은 삭제
+- Settings **탭**은 그대로 유지된다(설계자가 지운 건 탑바 버튼).
+
+**Code 탭에 About 이동**: `DocumentsTab.vue`의 우측 `ProjectAboutSidebar`
+카드를 제거하고, `CodeTab.vue`의 `ProjectSidebar` 맨 위(브랜치
+선택기보다 위)로 옮겼다 - 프로젝트 진입 시 첫 화면이 Code라 About이
+가장 먼저 보여야 한다는 판단.
+
+**yiitap 실제 기능 결함 발견 및 수정 (이번 라운드의 핵심)**:
+Code 탭의 파일 뷰어/에디터도 yiitap 기반으로 바꾸면서(비-markdown
+파일은 마크다운 펜스 코드 블록 ` ```lang ... ``` `으로 감싸 넣고
+저장 시 다시 벗기는 방식 - `frontend/src/pages/project/CodeTab.vue`
+의 `wrapAsCodeFence`/`unwrapCodeFence`) 실기동 검증을 하다가,
+**`MarkdownSourceView.vue`가 지금까지 `YiiEditor`의 `extensions`
+prop을 한 번도 넘긴 적이 없었다는 게 실제 버그로 드러났다**:
+- `YiiEditor`의 `extensions` prop 문서 주석은 "기본으로 BuiltinExtensions
+  를 켠다"고 돼 있지만, `node_modules/@yiitap/vue/dist/index.mjs`를
+  직접 뜯어보면 그 prop의 **실제 기본값은 빈 배열**이고, 내부
+  베이스 에디터(Tiptap StarterKit 격)도 `codeBlock: false,
+  document: false, horizontalRule: false, link: false, blockquote:
+  false`로 명시적으로 꺼둔 채 만들어진다 - 즉 `extensions` prop을
+  안 넘기면 문서 주석과 달리 codeBlock/blockquote/horizontalRule/
+  link 툴바 버튼이 **눌러도 아무 일도 안 일어난다**(버튼은 렌더링
+  되지만 그 노드/마크 자체가 에디터 스키마에 없음 - 예를 들어 코드
+  블록 버튼을 눌러도 그냥 일반 문단이 되고, 여러 줄 텍스트를
+  붙여넣으면 `<p><code>줄1<br>줄2<br>...</code></p>`처럼 인라인
+  code+수동 줄바꿈으로 뭉개진다).
+  - **발견 경위**: 코드 탭에서 펜스 코드 블록으로 감싼 TypeScript
+    파일을 열어보니 들여쓰기가 안 보존되는 이상한 렌더링이 나왔고,
+    DOM을 직접 까보니 실제 `<pre><code>` 노드가 아니라 `<p><code>`
+    (인라인 code 마크 + `<br>`)였다 - 이걸 보고서야 `codeBlock`
+    자체가 스키마에 없다는 걸 알았다.
+  - **수정**: `@yiitap/vue`가 공개 export하는 `OStarterKit`
+    (`OStarterKit.configure(options)` - `node_modules/@yiitap/vue/
+    dist/index.mjs`의 `export` 목록에서 직접 확인, `@yiitap/
+    vue-preset`은 이름과 달리 실제로는 `export default {}`뿐인
+    빈 메타 패키지라 쓸모없었음)을 `MarkdownSourceView.vue`에서
+    호출해 `extensions` prop으로 넘긴다. 동시에 이 `configure()`
+    옵션으로 마크다운과 안 맞는 기능(BackgroundColor/Color/
+    FontFamily/Highlight/TextAlign/TextStyle/Typography/OCallout/
+    OTable/Subscript/Superscript/Focus)은 **확장 자체를 꺼서
+    제외**한다(설계자 요청 "마크다운과 호환되지 않는 기능은 제외해도
+    돼"를 main-menu에서 버튼만 숨기는 것보다 확실하게 만족 - 슬래시
+    커맨드 등 다른 경로로도 그 기능이 못 들어오게 됨). 나머지
+    (OBlockquote/OCodeBlock/OHorizontalRule/OLink/TaskItem/TaskList/
+    OSlash/OSlashZh/OSelectionDecoration/UniqueID)는 yiitap의
+    `DefaultExtensionNames` 그대로 유지.
+  - 수정 후 코드 탭에서 실제 `.ts` 스크래치 파일을 열어 문법
+    하이라이팅이 되는 진짜 코드 블록(언어 셀렉터+다운로드+복사
+    버튼까지 딸린)으로 렌더되는 것, 편집 후 저장한 내용이 펜스
+    마커 없이 원문 그대로 커밋되는 것(`repo.file`로 재조회해 확인)
+    까지 검증했다. 이 버그는 `MarkdownSourceView.vue` 하나를
+    고치는 것으로 이 컴포넌트를 쓰는 모든 곳(Documents/Plans/
+    Issues/Trackers Source View, PR 설명, Template, Discussion
+    작성창)에 동시에 적용된다.
+  - **알아둘 잔여 한계**: marked→turndown 코드 블록 왕복에서 파일
+    끝 줄바꿈이 하나 없어지는 경우가 있어(별도로 Node 스크립트로
+    직접 재현/확인) `CodeTab.vue`의 `saveSelectedFile()`에서 원본이
+    `\n`으로 끝났으면 저장 직전에 되돌려준다 - 안 그러면 저장할
+    때마다 "파일 끝에 줄바꿈 없음" diff가 매번 튄다.
+
+**툴바 항상 표시 + 보기 모드 비활성화**: `MarkdownSourceView.vue`의
+두 `YiiEditor` 인스턴스(편집/보기) 모두 `show-main-menu`를 켜고,
+보기 모드일 때만 `.source-view-toolbar-disabled` 클래스를 씌워
+`:deep(.o-main-menu) { pointer-events: none; opacity: 0.45; }`로
+시각적 비활성화 + 실제 클릭 차단을 동시에 한다 - `editable: false`
+여도 yiitap 커맨드는 프로그래매틱으로는 실행되므로 CSS로 완전히
+막아야 보기 모드에서 눌러서 내용이 바뀌는 사고를 막을 수 있다.
+main-menu 항목 목록도 `MARKDOWN_MAIN_MENU`(bold/italic/text-format-
+dropdown/heading/clearFormat/horizontalRule/blockquote/list-dropdown/
+codeBlock/link/emoji)로 커스터마이징했다 - 위 extensions 커스터마이징
+과 짝을 맞춘 것(버튼 목록과 실제 켜진 기능이 서로 어긋나지 않게).
+
+**PR 설명도 Source View로**: `PullRequestsTab.vue`의 PR 설명 표시가
+평문 `<div>`에서 `<MarkdownSourceView read-only>`로 바뀌었다 - PR
+설명을 만든 뒤 다시 편집하는 액션은 아직 없어서(`pr.update` 미구현)
+읽기 전용으로만 붙였다.
+
+**실제로 검증한 시나리오**: 데스크톱(1280px)에서 Code/PR/Issues/
+Documents/Trackers/Settings 좌측 패널이 전부 정확히 270px(개발자
+도구로 `getComputedStyle` 직접 확인)인 것 → 모바일 뷰포트(375px)로
+전환해 햄버거가 나타나고 클릭 시 패널이 오프캔버스로 슬라이드
+인하는 것, 백드롭 클릭 시 닫히는 것 확인 → Settings 탭 진입 시
+`/settings/general`로 리다이렉트되고 좌측 메뉴 3개(기본 설정/
+Collaborators/Template)가 각자의 화면으로 정확히 전환되는 것 확인
+→ Template 페이지에서 CLAUDE.md/SKILL.md 두 Source View가 독립
+적으로 view/edit 토글되는 것 확인 → Code 탭 진입 시 About 카드가
+좌측 패널 맨 위에, Documents 탭에는 더 이상 없는 것 확인 → 코드
+탭에서 스크래치 `.ts` 파일을 실제로 열어 진짜 코드 블록으로
+렌더되는 것, 편집 후 저장한 내용을 `repo.file`로 재조회해 펜스
+마커 없이 정확히 반영된 것 확인(검증에 쓴 스크래치 파일은 커밋
+삭제 액션이 없어 "clean up test artifact" 관례대로 최소 placeholder
+로 덮어썼다). PR 설명이 Source View(보기 전용, 비활성 툴바)로
+정확히 렌더되는 것도 확인.
+
+**이번 라운드에서 판단해 기록해두는 것** (설계에 없던 지점):
+- **좌측 패널 반응형 브레이크포인트는 1024px로 임의 설정**했다 -
+  설계 노트에 구체적 픽셀값 지시가 없어 GitHub 자체가 사이드바를
+  접는 폭과 비슷한 값으로 판단.
+- **Code 탭의 비-markdown 파일 편집은 마크다운 펜스 코드 블록으로
+  감싸는 방식**을 택했다 - yiitap이 근본적으로 마크다운/리치텍스트
+  에디터라 원문을 그대로 넣으면 공백/들여쓰기가 문단으로 뭉개지는데,
+  펜스 코드 블록(`<pre><code>`)은 공백을 보존하는 유일한 마크다운
+  구조라 이걸 썼다. 코드 블록 안에 원본이 우연히 트리플 백틱을
+  담고 있으면 벗기기 정규식이 깨질 수 있다는 한계가 있지만, 흔한
+  경우는 아니라 이번 라운드 스코프에서는 받아들이기로 했다.
+  줄바꿈 하나를 빼면 완전한 왕복(원본=편집 후 저장본)이 되는 것을
+  Node 스크립트로 직접 검증했다.
+- **`OStarterKit` 발견은 순전히 컴파일된 번들을 직접 읽어서** 한
+  것이다 - `@yiitap/vue`의 공개 타입 선언(`.d.ts`)과 README성
+  문서 주석은 "extensions 기본값이 BuiltinExtensions"라고 하지만
+  실제 코드와 다르므로, **이 패키지의 동작을 확인할 땐 타입
+  선언이나 문서 주석을 곧이곧대로 믿지 말고 `node_modules/@yiitap/
+  vue/dist/index.mjs`를 직접 grep해서 확인해야 한다**(이번에
+  `showMainMenu`/`showBubbleMenu` 등 다른 prop들의 실제 기본값도
+  전부 이 방식으로 재확인했음) - 다음에 이 라이브러리를 또 건드릴
+  일이 있으면 이 방법부터 쓴다.
+- **PR 설명 편집(수정) 기능은 아직 없다** - `pr.update` 액션이
+  없어서 생성 시점에만 입력 가능하고 이후엔 읽기 전용이다. 필요해
+  지면 다음 라운드 후보.
+
+### WEB REST API 전환 + PR/커밋 diff 뷰어 + Q&A 계층/에디터 정비 라운드 (2026-09-21)
+
+설계자가 이번엔 12가지를 한 번에 요청했다: (1) WEB UI를 `/api/actions`
+단일 엔드포인트에서 액션별 REST 엔드포인트로 전환, (2) RECENT Q&A
+탭 이름 변경 + 클릭 시 그 문서로 이동・스크롤, (3) Q&A 계층 구조를
+"more" 아이콘 + 별도 페이지로 드러내기, (4) 질문하기 등을 다이얼로그
+대신 인라인 확장 에디터로, (5) yiitap 좌측 사이드 메뉴/여백/최소
+높이/배경, (6) PR diff 뷰어 전면 개편(파일 트리+분할 diff+컨텍스트
+접기+이미지/바이너리 처리+툴바), (7) Contributors를 팝업으로, (8)
+코드 탭 우측 뷰어 탭 분리, (9) 좌측 "최근 커밋" 제거+눈알 아이콘,
+(10) 커밋 diff 페이지, (11) README 없음 안내 중앙 정렬, (12) 툴바 밑
+내용이 옆으로 새는 버그.
+
+**(1) REST API 전환 - 가장 큰 구조 변경**: "/api/actions 단일
+엔드포인트 + command 패턴"은 애초에 CLI/MCP(`shared/apiclient.ts`,
+항상 `X-Cnw-Channel: agent`)를 위한 설계였지 WEB UI까지 그리로
+몰아넣으라는 뜻이 아니었다는 설계자 지적 - `backend/src/api/rest.ts`
+(신규)에 프로젝트/문서/repo/PR/메시지/웹훅/템플릿/remember 전
+영역에 걸쳐 REST 라우트(GET/POST/PATCH/PUT/DELETE, 자원 기반 경로)
+를 만들었다. **core/*.ts의 액션 핸들러(`(payload, ctx) => ActionResult`
+모양)는 전혀 안 건드리고 그대로 재사용**했다 - `rest.ts`의 `web()`
+헬퍼가 `req.params`/`req.query`/`req.body`를 그 핸들러가 기대하는
+payload 모양으로 조립해서 그대로 호출하고, 결과를 REST 응답(성공은
+`data`를 그대로 200/201, 실패는 `{error: reason[]}`을 422)으로
+매핑한다 - **비즈니스 로직/검증/권한 로직이 완전히 하나(같은 함수)
+라 CLI/MCP와 WEB UI가 서로 다른 규칙을 갖게 될 위험이 없다**.
+notices piggyback도 그대로 유지하되(REST 자원 응답 모양을 안
+어지럽히려고) `X-Cnw-Signature`처럼 `X-Cnw-Notices`(JSON을 base64로
+인코딩한) 응답 헤더로 옮겼다 - `frontend/src/api/client.ts`가 그
+헤더를 읽어 Quasar `Notify` 토스트로 띄운다(기존과 동일한 사용자
+경험, 표준 응답 모양만 REST에 맞게 바뀜). `/api/actions`는
+`server.ts`에 **그대로 남아있고** CLI/MCP는 전혀 안 건드렸다 - 실제로
+`X-Cnw-Channel: agent` 헤더로 그 엔드포인트를 다시 호출해 여전히
+정상 동작하는 것까지 확인했다.
+- `frontend/src/api/client.ts`를 완전히 새로 썼다 - `runActions`/
+  `runAction`을 없애고 자원별 함수(`listDocuments`/`createDocument`/
+  `getFileDiff`/`mergePullRequest` 등 40여 개)로 대체했다. 각 함수는
+  기존 `ActionResult`(`{ok, data}`/`{ok:false, reason}`)와 똑같은
+  모양을 돌려주도록 만들어서, 컴포넌트 쪽의 `if (!result.ok) { ...
+  result.reason ... }` 코드는 호출부 하나만 바꾸면 되게 했다 -
+  덕분에 `stores/auth.ts`의 `run`/`runBulk`를 지우고 14개 파일,
+  53곳의 호출부를 전부 옮겼는데도 각 컴포넌트의 나머지 로직은
+  거의 그대로였다.
+- **문서 전이(`docs.transition`)처럼 원래 여러 문서를 한 번에
+  받는 벌크 액션은 REST에서 "그 문서 하나"짜리 엔드포인트
+  (`POST .../documents/:code/transition`)로 단순화**했다 - 웹 UI는
+  실제로 한 번에 하나씩만 전이시키므로 벌크 계약을 그대로 노출할
+  필요가 없었다(내부적으로는 여전히 `{state: {[code]: [to, from]}}`
+  모양으로 조립해서 같은 핸들러를 호출한다).
+
+**(6)(10) PR/커밋 diff 뷰어 전면 개편**: 기존엔 PR 상세에 통짜
+patch 텍스트(`git diff` 원문)만 `<pre>`로 보여줬는데, 이번에
+`components/DiffViewer.vue`(신규, PR/커밋 diff 페이지가 공유)로
+바꿨다:
+- 백엔드에 `backend/src/core/gitRepo.ts`의 `readFileAtRef`/
+  `readBlobRawAtRef`(이미지 미리보기용 base64 data URL)/`diffCommit`
+  (커밋 하나 대 그 부모)/`getApproxParentCommitId`(es-git `Commit`에
+  parent 접근자가 없어 Revwalk로 그 커밋 다음 것을 부모로 근사 -
+  머지 커밋처럼 부모가 여럿이면 "정확히 첫 부모"가 아닐 수 있다는
+  한계를 알고 감수)/`listCommitsForPath`(특정 경로를 실제로 건드린
+  커밋만, 브랜치 히스토리를 훑으며 커밋마다 그 부모와의 diff에 그
+  경로가 있는지 직접 확인 - es-git에 그런 필터가 없어서)/
+  `getCommitInfo`를 추가하고, `repoBrowse.ts`에 `repo.diffFile`/
+  `repo.commitDiff`/`repo.commitInfo`/`repo.fileCommits` 액션으로
+  노출했다(CLI/MCP `/api/actions`와 REST 둘 다).
+- 파일 하나의 diff 계산(라인 단위, ±6줄 컨텍스트, 그 사이는 접어서
+  "변경되지 않은 코드 보기" 버튼으로 펼치기)은 **백엔드가 아니라
+  프론트엔드에서** 한다 - `frontend/src/utils/lineDiff.ts`(신규,
+  `diff` npm 패키지의 `diffLines`로 라인 단위 diff를 낸 뒤, 좌우
+  정렬된 행으로 조립하고 컨텍스트 밖 구간을 접는 순수 함수).
+  백엔드는 그 파일의 두 시점(브랜치든 커밋이든 `ref` 하나로 통일-
+  `resolveTreeForRef`) 전체 내용만 주고, "얼마나 접을지/펼칠지"는
+  브라우저가 전체 내용을 이미 갖고 있으니 그 자리에서 계산하는 게
+  더 유연하다는 판단(왕복 없이 즉시 펼쳐짐).
+  - **버그(실기동 중 발견) 1**: 파일 끝/시작 구간의 컨텍스트 임계값을
+    중간 구간과 똑같이 `context*2`로 판단해서, 파일 끝에서 4~6줄
+    남은 경우를 안 접어야 하는데(그쪽엔 컨텍스트가 한쪽만 필요)
+    접어야 할 걸 안 접는 버그가 있었다 - Node 스크립트로 직접
+    합성 diff를 넣어보고서야 발견, 파일 시작/끝은 `context` 하나만
+    기준으로 판단하도록 분리해 고쳤다.
+  - 이미지 파일(`isImagePath` - 확장자 기반)은 diff 대신 변경 전/후
+    이미지를 나란히, 그 외 바이너리는 "Raw Contents라서 미리 볼 수
+    없습니다"만 표시한다. 툴바 우측엔 "코드 트리에서 보기"(Code
+    탭으로 이동해 그 브랜치/커밋 기준 파일을 곧장 열어줌 - 아래
+    참고)와 "Raw Content 다운로드"(Blob+임시 `<a download>`로
+    브라우저 자체 다운로드, 클로드 아티팩트 뷰어의 다운로드 제한과는
+    무관한 이 앱 자체 기능) 버튼.
+  - **버그(실기동 중 발견) 2**: 최초 커밋(부모가 없음)의 diff에서
+    `base`를 빈 문자열로 보냈는데, REST 클라이언트의 쿼리스트링
+    빌더가 빈 문자열 파라미터를 아예 생략하는 설계(의도된 동작 -
+    불필요한 쿼리 파라미터를 안 보내려고)라 서버가 "base가
+    필요합니다"로 거부(422)했다 - `repoDiffFile`이 `base`를 필수가
+    아니라 선택으로 바꾸고, 없으면 "그 시점 파일이 없었다"로
+    자연스럽게 처리(전부 추가된 것으로 보임)하도록 고쳤다.
+- `PullRequestsTab.vue`: PR 선택 시 좌측 PR 목록은 500px로 고정
+  (스크롤 가능)하고 그 밑에 변경된 파일을 `q-tree`(디렉터리 구조
+  살림)로, 파일 클릭 시 우측 하단(예전 patch 텍스트 자리)에
+  `DiffViewer`.
+- `pages/project/CommitDiffPage.vue`(신규, `/projects/:id/commit/:commitId`)
+  - PR diff 페이지와 완전히 같은 구성(파일 트리+DiffViewer)을 커밋
+    하나에 대해 보여준다. `pages/project/BranchCommitsPage.vue`
+    (신규, `/projects/:id/commits?branch=`)에서 커밋을 누르면
+    여기로 온다.
+
+**(8)(9) 코드 탭 우측 뷰어 개편**: 파일을 하나 보고 있으면(README
+자동 표시든 트리에서 직접 클릭이든 - 이번에 이 둘을 `currentPath`/
+`currentFile`이라는 하나의 개념으로 통합) 우측을 `q-tabs`로 나눴다 -
+첫 탭 이름은 그 파일명만(경로 제외), 둘째 탭 "Recent Commits"는
+`repo.fileCommits`로 그 파일을 실제로 건드린 커밋만(브랜치 전체
+히스토리가 아니라) 보여주고 클릭하면 CommitDiffPage로. 좌측 패널의
+"최근 커밋" 목록은 없앴고, 브랜치 선택기 옆에 눈알 아이콘을 둬서
+누르면 `BranchCommitsPage`로 이동한다.
+- **버그(실기동 중 발견, 중요)**: DiffViewer의 "코드 트리에서
+  보기" 링크는 `/code?branch=&path=`처럼 같은 라우트를 query만
+  바꿔 가리키는데, Vue Router는 이런 경우 컴포넌트를 다시 마운트
+  하지 않고 `route.query`만 갱신한다 - `onMounted` 안에서만 그
+  query를 처리했더니 **처음 한 번은 되고 그다음부터는 아무 반응이
+  없는** 버그가 있었다(직접 URL을 새로고침하면 되는데 앱 안에서
+  링크를 눌러 이동하면 안 됨 - 이 차이 때문에 처음엔 재현이
+  안 돼서 헷갈렸다). `route.query.branch`/`path`를 `watch`로 따로
+  지켜보다 바뀔 때마다 다시 열어주도록 고쳤다.
+
+**(2)(3) Q&A 계층/RECENT Q&A**: `TrackersTestsTab.vue`의 "최근 Q&A
+모아보기" 탭을 "RECENT Q&A"로 이름만 바꿨다. `RecentQaFeed.vue`
+항목을 누르면 그 Q&A가 실제로 달린 "진짜 문서"(doc/plan/issue/
+tracker/test)로 이동해 자동 선택 + 그 Q&A 카드까지 스크롤+잠깐
+강조된다 - question/answer/opinion은 서로에게 중첩될 수 있어서
+(design-notes.md "답변에 재질의를 등록하는 흐름" - 답변에 또 질문을
+달 수 있다) parent_id를 계속 타고 올라가야 하는데, **추적 코드
+파서(`parseTrackingCode`)가 kind 접두사 두세 글자의 형식만 검사할
+뿐 그 문서의 실제 kind와 일치하는지는 안 따진다는 점**(id로만
+조회)을 이용해 자리 표시 kind(`XX-<rawId>`)로 `docs.get`을 불러
+raw id만으로 그 문서(진짜 kind 포함)를 되찾는 트릭을 썼다. 문서
+타입 → 탭 경로 매핑(doc→documents, plan→plans, issue→issues,
+tracker/test→trackers-tests?inner=)으로 라우팅한다.
+- **버그(실기동 중 발견)**: 스크롤/강조 대상 판정에
+  `item.answer?.code === highlightCode`를 썼는데, `highlightCode`가
+  없을 때(일반적인 진입, RecentQaFeed를 거치지 않은 경우)
+  `item.answer`가 `null`인 항목은 `undefined === undefined`가 참이
+  돼서 **모든 무응답 항목이 잘못 강조 표시되는 버그**가 있었다 -
+  `!!highlightCode &&` 가드를 앞에 추가해 고쳤다.
+- Q&A가 실제로는 계층 구조(질문→답변→그 답변에 대한 재질의→...)
+  인데 `DocumentDiscussion.vue`는 딱 한 단계(질문+그 직접 답변)만
+  보여주는 문제를, 각 카드(질문/답변 각각)에 "그 이상의 자식이
+  있는지"를 세어뒀다가(이미 보여준 직접 답변 자신은 자식 수에서
+  제외) 있으면 우측 상단에 `more_horiz` 아이콘을 붙이는 것으로
+  풀었다 - 누르면 `pages/project/DocumentThreadPage.vue`(신규,
+  `/projects/:id/thread/:code`)로 이동해서, 그 문서 자신 + 직접
+  자식 목록을 보여주고 각 자식도 또 자식이 있으면 같은 방식으로
+  더 아래로 내려갈 수 있다(재귀적으로 같은 페이지 컴포넌트를
+  :code만 바꿔 다시 여는 구조라 별도 트리 렌더링 로직 없이 자연히
+  임의 깊이를 지원).
+
+**(4) 질문하기 등 다이얼로그 → 인라인 확장 에디터**:
+`DocumentDiscussion.vue`의 질문하기/답변 작성/의견 남기기 세
+다이얼로그(`q-dialog`)를 없애고, 버튼을 누르면 `q-slide-transition`
+으로 그 자리가 그대로 늘어나며 `MarkdownSourceView`(hideToolbar)가
+나타나고 하단 우측에 "취소하기"/"등록하기" 버튼을 두는 것으로
+바꿨다 - 다이얼로그가 화면을 가리지 않고 문서 스크롤 흐름 안에서
+자연스럽게 이어진다.
+
+**(5)(12) yiitap 사이드 메뉴/여백/최소 높이/배경**: 실기동 중 에디터
+내용이 툴바 밑이 아니라 툴바 오른쪽으로 밀려 보이는 문제를
+조사하다가, **yiitap의 `.ProseMirror`가 `padding-inline: 54px`를
+무조건(보기/편집 모드 무관, 사이드 메뉴가 실제로 뜨는지와도 무관)
+예약해둔다는 걸 발견**했다(`node_modules/@yiitap/vue/dist/vue.css`
+직접 grep) - 사이드 메뉴(드래그 핸들) 자체는 `editable && sideMenu.
+show`일 때만 렌더링되므로(보기 모드에선 이미 자동으로 안 뜬다,
+`editable=false`라서) 이 padding만 문제였다. `MarkdownSourceView.
+vue`에 `sv-view`/`sv-edit` 클래스를 추가해:
+- 보기 모드(`sv-view`)에선 `padding-inline: 0`으로 되돌려 내용이
+  왼쪽부터 시작하게 했다(항목 5-1, 12).
+- 편집 모드(`sv-edit`)에선 원래 padding(사이드 메뉴가 실제로 뜨니
+  자리가 있어야 함, 항목 5-2)은 그대로 두고, 추가로 `min-height`
+  (CSS 변수 `--sv-edit-min-height`, 새 `editMinHeight` prop 기본값
+  300)와 흰 배경(`background: #fff`)을 줬다(항목 5-3/5-4) -
+  일반 Source View는 300px, `DocumentDiscussion.vue`의 질문하기/
+  답변 작성/의견 남기기 세 컴포저는 `:edit-min-height="200"`으로
+  더 작게(짧은 댓글 성격이라).
+
+**(7) Contributors 팝업**: `ProjectAboutSidebar.vue`의 기여자
+아바타 나열을 없애고, "Contributors N" 라벨에 `q-menu`를 달아
+누르면 팝업으로 목록(아바타+아이디)을 보여준다.
+
+**(11) README 없음 안내 중앙 정렬**: `CodeTab.vue`에서 README가
+없을 때 안내 문구+"README.md 작성하기" 버튼을 `column items-center`
++ `padding-top: 200px`로 우측 영역 중앙 정렬했다(편집 모드로
+전환된 뒤엔 전체 너비 에디터가 필요하니 중앙 정렬을 풀고 일반
+레이아웃으로).
+
+**실제로 검증한 시나리오**: REST 전환 - `curl`로 `/api/projects`,
+`/api/projects/:id/documents`, `/api/projects/:id/repo/*` 등 주요
+엔드포인트 성공/실패(401 무인증, 422 검증 실패) 응답 직접 확인,
+`/api/actions`에 `X-Cnw-Channel: agent`로 CLI/MCP 경로가 여전히
+정상 동작하는 것 확인. PR/커밋 diff - PR 상세에서 500px 스크롤+
+파일 트리+분할 diff+"코드 트리에서 보기"(SPA 네비게이션까지) 확인,
+커밋 목록→커밋 diff 페이지 확인, README.md 파일별 Recent Commits가
+정말 그 파일을 건드린 커밋만 필터링하는 것 확인. Q&A - RECENT Q&A
+탭에서 항목 클릭 시 실제로 그 문서로 이동해 정확한 카드까지
+스크롤+강조되는 것 확인, 답변에 재질의를 실제로 하나 만들어(curl)
+more 아이콘이 뜨고 눌렀을 때 스레드 페이지에서 재귀적으로
+내려가지는 것까지 확인(검증에 쓴 재질의는 discard 처리로 정리).
+에디터 - 보기/편집 모드 전환 시 `getComputedStyle`로 padding-inline/
+min-height/background가 정확히 바뀌는 것 직접 확인. Contributors
+팝업 확인.
+
+**이번 라운드에서 판단해 기록해두는 것** (설계에 없던 지점):
+- **REST 엔드포인트의 성공 응답은 `{ok:true, data}`로 다시 감싸지
+  않고 `data`를 그대로 최상위에 둔다**(RESTful 관례) - 대신 실패는
+  `{error: string[]}` + 422(검증 실패)/401(미인증)/500(예상 못한
+  예외)로 상태 코드를 의미 있게 나눴다. `frontend/src/api/client.ts`
+  의 `request()`가 이걸 다시 기존 `{ok, data}`/`{ok:false, reason}`
+  모양으로 맞춰주므로 컴포넌트 코드 입장에선 이 차이가 안 보인다.
+- **notices는 응답 바디가 아니라 `X-Cnw-Notices` 헤더로 옮겼다** -
+  REST 자원 응답의 모양(그 자원 자체)을 notices라는 부가 정보로
+  어지럽히고 싶지 않았다.
+- **문서 하나짜리 REST 엔드포인트(transition/tag)는 내부적으로
+  여전히 벌크 payload 모양(`{state: {code: [to,from]}}`)으로
+  변환해서 같은 핸들러를 부른다** - 핸들러 자체의 벌크 계약을
+  없애는 건 CLI/MCP 쪽에서 여전히 벌크로 쓸 수 있어야 하니(현재는
+  안 쓰지만) 손대지 않았다.
+- **라인 단위 diff 계산은 서버가 아니라 클라이언트에서** 한다 -
+  "컨텍스트 몇 줄 보여줄지"가 사용자 상호작용(접기/펼치기)에 달려
+  있어서, 서버가 고정 윈도우만 잘라주는 것보다 클라이언트가 전체
+  내용을 갖고 그때그때 계산하는 게 왕복 없이 즉시 반응한다는 판단.
+  파일이 아주 크면(수만 줄) 클라이언트 diff 계산 비용이 걸릴 수
+  있다는 걸 인지하고 있으나, 이 앱의 저장소 규모 전제상 지금은
+  받아들일 만하다고 판단 - 필요해지면 다음 라운드에서 청크
+  단위 diff API를 고려.
+- **`listCommitsForPath`/`diffCommit`의 "부모 커밋 근사"는 머지
+  커밋에서 정확히 "첫 부모"가 아닐 수 있다** - es-git에 직접적인
+  parent 접근자가 없어 Revwalk 시간순 다음 커밋으로 근사했다.
+  이 앱이 만드는 히스토리는 대부분 선형이라 실용적으로는 거의
+  항상 맞지만, 복잡한 머지 그래프에서는 어긋날 수 있다는 한계를
+  남겨둔다.
+
+### yiitap 툴바/내용 세로 배치 버그 - 직전 라운드의 fix가 실은 불완전했음 (2026-09-21, 같은 날 후속)
+
+직전 라운드에서 "항목 12(툴바 밑에 내용이 아니라 옆에 보이는 문제)"를
+`.ProseMirror`의 `padding-inline:54px` 제거로 고쳤다고 기록했는데,
+설계자가 재확인해보니 **여전히 재현됐다** - 실제로는 다른 원인이
+하나 더 있었다: yiitap 자체 CSS(`node_modules/@yiitap/vue/dist/
+vue.css`)의 `.yiitap{display:flex; justify-content:center}` 규칙이
+`flex-direction`을 안 정해줘서 기본값 `row`가 적용되고, 그 바로 아래
+직속 자식이 툴바(`<section class="o-main-menu">`)와 실제 내용
+(`<div class="editor-content">`) 딱 둘뿐이라 이 둘이 세로로 쌓이지
+않고 가로로 나란히 배치되고 있었다(브라우저에서 `getBoundingClientRect`
+로 두 엘리먼트가 정확히 나란히 있는 것까지 직접 확인) - yiitap 쪽이
+이 조합을 column으로 고쳐줄 CSS를 빠뜨린 것으로 보이는 라이브러리
+공백이다. `MarkdownSourceView.vue`의 `.yiitap-source-view` 래퍼에
+`:deep(main.yiitap) { flex-direction: column; }`을 추가해 고쳤다.
+
+**그런데 이 수정 자체도 처음엔 전혀 적용되지 않는 2차 버그가 있었다**:
+그 CSS 규칙 바로 위에 있던 설명 주석을 `/* ... */`(CSS 주석)로
+시작해놓고 **닫을 때 실수로 HTML 주석 닫기 문법인 `-->`를 썼다**
+(다른 곳에서 Vue 템플릿 HTML 주석을 많이 쓰다 보니 습관적으로
+잘못 씀) - CSS는 `-->`를 주석 종료로 인식하지 않으므로 그 주석이
+안 닫힌 채로 남아 있었다. 신기하게도 Vue의 scoped-CSS 컴파일러가
+이 상태에서 `:deep()`를 실제 셀렉터로 전혀 변환하지 않고
+(`.yiitap-source-view[data-v-hash] main.yiitap`가 아니라 `:deep(...)`
+문자열이 그대로) 최종 CSS에 그대로 흘려보냈고, 그 결과물은 브라우저가
+파싱 불가능한 문법이라 `document.styleSheets`에서 그 규칙 자체가
+통째로 사라져 있었다(다른 정상 규칙들은 그대로 있었음) - `curl`로
+Vite dev 서버가 실제로 내려주는 컴파일된 스타일 모듈
+(`?vue&type=style&index=0&scoped=...&lang.css`)을 직접 읽어보고서야
+`-->`가 그대로 남아있는 걸 발견했다. `*/`로 고치자 곧바로
+`.yiitap-source-view[data-v-4cfd93c2] main.yiitap { flex-direction:
+column; }`로 정상 컴파일됐고, 실기동에서 View/Edit 두 모드 전부(코드
+탭 README, Documents Source View, Discussion "질문하기" 컴포저)
+내용이 툴바 아래로 정확히 쌓이는 것을 확인했다.
+
+**이번에 판단해 기록해두는 것**: 프론트엔드 CSS 버그를 "고쳤다"고
+보고하기 전에 **`getComputedStyle`로 그 속성값 자체(여기선
+`flexDirection`)를 직접 찍어 확인하는 것만으로는 부족하다** - 지난
+라운드에도 관련 속성(`padding-inline`)은 실제로 검증했지만 진짜
+원인(`flex-direction`)은 놓쳤다. `document.styleSheets`를 뒤져 내가
+작성한 셀렉터가 **실제로 스타일시트에 규칙으로 존재하는지**까지
+확인하는 습관이 이런 종류의(특히 `:deep()`처럼 컴파일 과정을 거치는)
+버그를 훨씬 빨리 잡아준다.
+
+### Q&A 계층 구조 - RecentQaFeed.vue에서 실제로는 회귀돼 있었다 (2026-09-21, 같은 날 후속)
+
+설계자가 "Q&A 계층 구조가 빠져있다"고 다시 지적했다 - `DocumentDiscussion.
+vue`(문서 화면에 끼워진 Discussion 패널)엔 이미 지난 라운드에 more
+아이콘 + `DocumentThreadPage.vue`를 구현해뒀던 터라 처음엔 "이미 했는데"
+싶었지만, 실제로 확인해보니 **`RecentQaFeed.vue`(Trackers 탭의
+"RECENT Q&A")는 완전히 평평한 목록으로 남아 있었다** - 그리고 지난
+라운드에 이 컴포넌트를 REST 전환하며 다시 쓰는 과정에서, **원래
+있던 `parent_id` 표시(`· parent: {{ item.parent_id }}`)까지 실수로
+빼먹고 안 옮겼다는 걸 발견**했다 - 계층 관계를 보여주던 유일한
+단서를 오히려 후퇴시킨 것. 설계자가 실제로 매번 보는 화면(RECENT
+Q&A 목록)에는 계층 구조가 전혀 안 보였으니 "빠져있다"는 지적이
+정확했다 - 다른 화면(개별 문서의 Discussion)에 구현해뒀다는 사실이
+변명이 되지 않는다는 걸 확인한 라운드.
+
+`RecentQaFeed.vue`를 다시 고쳤다:
+- 각 항목에 **부모 관계를 배지로 복원**했다 - 단순히 raw parent_id를
+  보여주던 예전 방식 대신, `resolveByRawId`(자리 표시 kind 트릭)로
+  부모의 실제 제목/타입까지 resolve해서 "↳ 질문: ..."/"↳ 답변: ..."/
+  "↳ doc: ..." 처럼 사람이 읽을 수 있는 배지로 보여주고, 클릭하면
+  그 부모의 스레드 페이지로 이동한다.
+- `DocumentDiscussion.vue`와 동일하게 **자식이 있으면 more 아이콘**
+  (`childCounts` - `docs.list({parentId})`로 배치 계산)을 side
+  섹션에 붙였다 - 눌러도 `DocumentThreadPage.vue`로 바로 간다(항목
+  자체를 누르면 여전히 "그 문서로 이동+스크롤", 아이콘을 누르면
+  "이 항목의 자식들을 보여주는 스레드 페이지로 이동"으로 두 동작이
+  분리된다, `@click.stop`으로 구분).
+
+**이번에 판단해 기록해두는 것**: 같은 기능(Q&A 계층 표시)이 **여러
+화면에 나뉘어 구현될 수 있는 경우, 하나에만 구현하고 "이미 했다"고
+여기면 안 된다** - 설계자가 실제로 보고 있는 그 화면 기준으로
+검증해야 한다. 또한 컴포넌트를 다른 이유(이번엔 REST 전환)로
+다시 쓸 때는 **그 컴포넌트가 이미 갖고 있던 정보 표시(이번엔
+parent_id 캡션)를 빠짐없이 옮겼는지 diff 수준으로 대조**해야
+한다 - 새 요구사항을 구현하는 데 집중하다 기존 기능을 조용히
+후퇴시키는 게 이번이 처음이 아니다(design-notes.md의 다른 "회귀"
+기록들과 같은 패턴) - 기존 파일을 통째로 다시 쓸 때는 "무엇을
+빼는지"를 의식적으로 점검하는 습관이 필요하다.
+
+### RecentQaFeed.vue 회귀 이후 - 통째로 다시 쓴 나머지 파일 전수 감사 (2026-09-21, 같은 날 후속)
+
+위 회귀가 실제로 벌어졌던 걸 계기로, 이번 12항목 라운드에서 통째로
+다시 쓴 나머지 파일들도 `git diff 3fe0f79 -- <file>`로 직전 커밋
+대비 **삭제된 줄만** 걸러서 하나씩 대조했다(같은 방식이 RecentQaFeed.
+vue 회귀를 실제로 잡아냈으므로) - 대상은 `PullRequestsTab.vue`,
+`CodeTab.vue`, `DocumentDiscussion.vue`, `TrackersTestsTab.vue`.
+
+결과: **넷 다 깨끗했다** - 지워진 줄은 전부 (a) 다른 화면으로
+의도적으로 옮긴 것(`CodeTab.vue`의 "최근 커밋" 목록 → 눈알 아이콘+
+`BranchCommitsPage.vue`, 항목 9), (b) 다이얼로그 → 인라인 컴포저
+전환 과정에서 자연히 사라지는 다이얼로그 마크업(`DocumentDiscussion.
+vue`), (c) 그 마크업만 쓰던 이제는 죽은 CSS 클래스(`PullRequestsTab.
+vue`의 `.doc-source`) 중 하나였다 - 실제로 표시되던 정보나 동작이
+조용히 빠진 경우는 없었다.
+
+**검증**: `backend`/`frontend` 양쪽 `tsc --noEmit` 클린,
+`grep auth\.run\(` 전체 프론트엔드에서 0건(REST 전환이 실제로
+빠짐없이 끝났다는 뜻), 브라우저로 RECENT Q&A 탭을 직접 열어
+부모 배지("↳ doc: ...", "↳ 답변: ...")와 `more_horiz` 아이콘이
+실제 데이터로 렌더링되는 것 확인.
+
+**이번에 판단해 기록해두는 것**: 파일 하나를 통째로 다시 쓴 직후엔
+"삭제된 줄만" 걸러 보는 `git diff <직전 커밋> -- <file> | grep '^-'`
+습관을 **그 라운드 안에서 바로** 적용하는 게 회귀를 잡는 가장 싼
+방법이다 - 나중에 설계자가 지적한 뒤에야(이번처럼) 하는 것보다
+비용이 훨씬 적게 든다. 다음에 파일을 통째로 다시 쓰는 라운드에서는
+이 대조를 구현 직후 검증 단계에 기본으로 포함시킨다.
+

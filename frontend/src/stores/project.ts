@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { useAuthStore } from "./auth";
+import * as api from "../api/client";
 
 export interface CurrentProject {
   id: string;
@@ -26,7 +27,7 @@ export const useProjectStore = defineStore("project", {
     async load(projectId: string) {
       this.loading = true;
       const auth = useAuthStore();
-      const result = await auth.run({ action: "project.get", projectId });
+      const result = await api.getProject(auth.apiKey!, projectId);
       this.loading = false;
       if (result.ok) {
         this.current = result.data as CurrentProject;

@@ -2,6 +2,7 @@ import express from "express";
 import { authRouter } from "./auth";
 import { requireApiKey } from "./authMiddleware";
 import { dispatch, type ActionRequest } from "./actions";
+import { restRouter } from "./rest";
 import { resolveChannel } from "../core/channel";
 import { collectAndDeliver } from "../core/messages";
 import { startBroadcastSubscriber } from "../core/broadcastSubscriber";
@@ -38,6 +39,11 @@ app.post("/api/actions", requireApiKey, async (req, res) => {
     result,
   });
 });
+
+// 설계자 지시(2026-09-21): 위 /api/actions는 CLI/MCP(shared/apiclient.ts,
+// 항상 X-Cnw-Channel: agent를 싣는다) 전용으로 남기고, WEB UI는 액션별로
+// 쪼갠 REST 엔드포인트를 쓴다 - backend/src/api/rest.ts.
+app.use("/api", restRouter);
 
 const port = Number(process.env.PORT ?? 8388);
 app.listen(port, () => {

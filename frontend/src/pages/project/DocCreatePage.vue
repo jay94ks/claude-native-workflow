@@ -30,6 +30,7 @@ import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
+import * as api from "src/api/client";
 
 // design-notes.md 후속 판단(설계자 요청, 2026-09-21) - "새 문서/새 계획 등
 // 다이얼로그로는 기능이 부족하고 불편하다" - 본문이 한 줄짜리인 경우가
@@ -65,9 +66,7 @@ const hasContent = computed(() => title.value.trim().length > 0);
 async function create() {
   creating.value = true;
   createError.value = "";
-  const result = await auth.run({
-    action: "docs.add",
-    projectId: props.projectId,
+  const result = await api.createDocument(auth.apiKey!, props.projectId, {
     type: props.type,
     kind: kind.value,
     title: title.value,

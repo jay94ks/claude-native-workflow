@@ -41,6 +41,9 @@ const loadError = ref("");
 // 두지 않는다(각 문서 화면에 DocumentDiscussion으로 통합) - 그래서
 // 여기 탭 목록에 Q&A가 없다.
 // 설계자 요청(2026-09-20) - Code/Pull requests/Issues는 Documents 앞에 둔다.
+// 설계자 요청(2026-09-21) - Collaborators/Template은 독립 탭이 아니라
+// Settings 탭 안 좌측 메뉴(기본 설정/Collaborators/Template)로 통합됐다
+// - layouts/SettingsShell.vue 참고.
 const tabs = [
   { to: "code", icon: "code", label: "Code" },
   { to: "pull-requests", icon: "call_merge", label: "Pull requests" },
@@ -48,8 +51,6 @@ const tabs = [
   { to: "documents", icon: "description", label: "Documents" },
   { to: "plans", icon: "checklist", label: "Plans" },
   { to: "trackers-tests", icon: "science", label: "Trackers" },
-  { to: "collaborators", icon: "group", label: "Collaborators" },
-  { to: "template", icon: "integration_instructions", label: "Template" },
   { to: "settings", icon: "settings", label: "Settings" },
 ];
 

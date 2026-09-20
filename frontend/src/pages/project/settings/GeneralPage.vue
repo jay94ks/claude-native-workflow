@@ -1,5 +1,5 @@
 <template>
-  <div class="q-pa-md" style="max-width: 640px">
+  <div style="max-width: 640px">
     <div class="text-subtitle1 q-mb-sm">프로젝트 설정</div>
     <q-form class="q-gutter-md" @submit.prevent="save">
       <q-input v-model="name" label="이름" :readonly="!project.isAdmin" />
@@ -87,6 +87,7 @@ import { ref, watch, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
+import * as api from "src/api/client";
 
 const props = defineProps<{ projectId: string }>();
 const auth = useAuthStore();
@@ -121,9 +122,7 @@ async function save() {
   saving.value = true;
   message.value = "";
   error.value = "";
-  const result = await auth.run({
-    action: "project.update",
-    projectId: props.projectId,
+  const result = await api.updateProject(auth.apiKey!, props.projectId, {
     name: name.value,
     description: description.value,
     defaultBranch: defaultBranch.value,
@@ -147,7 +146,7 @@ const transferError = ref("");
 async function transfer() {
   transferring.value = true;
   transferError.value = "";
-  const result = await auth.run({ action: "project.transfer", projectId: props.projectId, toUsername: transferTo.value });
+  const result = await api.transferProject(auth.apiKey!, props.projectId, { toUsername: transferTo.value });
   transferring.value = false;
   if (!result.ok) {
     transferError.value = result.reason?.join(", ") ?? "양도에 실패했습니다.";
@@ -167,7 +166,7 @@ const webhookError = ref("");
 const newWebhookSecret = ref("");
 
 async function loadWebhooks() {
-  const result = await auth.run({ action: "webhook.list", projectId: props.projectId });
+  const result = await api.listWebhooks(auth.apiKey!, props.projectId);
   if (result.ok) webhookList.value = (result.data as { items: WebhookSummary[] }).items;
 }
 
@@ -175,7 +174,7 @@ async function addWebhook() {
   addingWebhook.value = true;
   webhookError.value = "";
   newWebhookSecret.value = "";
-  const result = await auth.run({ action: "webhook.add", projectId: props.projectId, url: newWebhookUrl.value });
+  const result = await api.addWebhook(auth.apiKey!, props.projectId, newWebhookUrl.value);
   addingWebhook.value = false;
   if (!result.ok) {
     webhookError.value = result.reason?.join(", ") ?? "추가에 실패했습니다.";
@@ -188,7 +187,7 @@ async function addWebhook() {
 }
 
 async function deleteWebhook(id: string) {
-  const result = await auth.run({ action: "webhook.delete", projectId: props.projectId, id });
+  const result = await api.deleteWebhook(auth.apiKey!, props.projectId, id);
   if (result.ok) await loadWebhooks();
 }
 
@@ -204,7 +203,7 @@ const destroyError = ref("");
 async function destroy() {
   destroying.value = true;
   destroyError.value = "";
-  const result = await auth.run({ action: "project.destroy", projectId: props.projectId });
+  const result = await api.destroyProject(auth.apiKey!, props.projectId);
   destroying.value = false;
   if (!result.ok) {
     destroyError.value = result.reason?.join(", ") ?? "파기에 실패했습니다.";

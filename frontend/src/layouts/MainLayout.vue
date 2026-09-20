@@ -2,6 +2,10 @@
   <q-layout view="lHh Lpr lFf">
     <q-header style="background: var(--gh-header-bg)">
       <q-toolbar style="height: 62px" class="q-gutter-x-md">
+        <!-- 반응형 시나리오(설계자 요청) - 좁은 화면에서 270px 좌측 패널이
+             오프캔버스로 숨는데, 이걸 다시 꺼내는 햄버거를 로고 좌측에 둔다.
+             프로젝트 화면(좌측 패널이 존재하는 화면)에서만 의미가 있다. -->
+        <q-btn v-if="currentProject" flat dense round icon="menu" color="white" class="hamburger-btn" @click="ui.toggleSidebar()" />
         <router-link to="/projects" class="row items-center no-wrap" style="text-decoration: none; gap: 8px">
           <q-icon name="hub" color="white" size="28px" />
           <span v-if="!currentProject" class="text-white text-weight-bold" style="font-size: 18px">claude-native-workflow</span>
@@ -28,15 +32,6 @@
             </span>
           </div>
           <q-btn flat dense round icon="mail" color="white" @click="showMessages = true" />
-          <q-btn
-            flat
-            dense
-            no-caps
-            icon="settings"
-            label="Settings"
-            color="white"
-            :to="`/projects/${currentProject.id}/settings`"
-          />
         </template>
 
         <q-space />
@@ -62,10 +57,12 @@ import { ref, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
+import { useUiStore } from "stores/ui";
 import MessagesDialog from "components/MessagesDialog.vue";
 
 const auth = useAuthStore();
 const project = useProjectStore();
+const ui = useUiStore();
 const router = useRouter();
 const route = useRoute();
 const showMessages = ref(false);
@@ -83,3 +80,17 @@ function logout() {
   router.push("/login");
 }
 </script>
+
+<style scoped>
+/* 좌측 패널이 오프캔버스로 바뀌는 폭(components/ProjectSidebar.vue와
+   동일한 1024px 기준)에서만 햄버거를 보여준다 - 넓은 화면에선 패널이
+   항상 보이니 토글할 게 없다. */
+.hamburger-btn {
+  display: none;
+}
+@media (max-width: 1023px) {
+  .hamburger-btn {
+    display: inline-flex;
+  }
+}
+</style>

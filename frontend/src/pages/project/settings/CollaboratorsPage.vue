@@ -1,5 +1,5 @@
 <template>
-  <div class="q-pa-md">
+  <div>
     <div class="text-subtitle1 q-mb-sm">Collaborators</div>
     <q-list bordered separator class="q-mb-lg">
       <q-item v-for="m in members">
@@ -36,6 +36,7 @@
 import { ref, onMounted } from "vue";
 import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
+import * as api from "src/api/client";
 
 const props = defineProps<{ projectId: string }>();
 const auth = useAuthStore();
@@ -55,7 +56,7 @@ const inviteError = ref("");
 const inviteMessage = ref("");
 
 async function load() {
-  const result = await auth.run({ action: "project.members", projectId: props.projectId });
+  const result = await api.getProjectMembers(auth.apiKey!, props.projectId);
   if (result.ok) {
     const data = result.data as { members: Member[]; pendingInvites: Member[] };
     members.value = data.members;
@@ -67,12 +68,7 @@ async function invite() {
   inviting.value = true;
   inviteError.value = "";
   inviteMessage.value = "";
-  const result = await auth.run({
-    action: "project.invite",
-    projectId: props.projectId,
-    username: inviteUsername.value,
-    role: inviteRole.value,
-  });
+  const result = await api.inviteToProject(auth.apiKey!, props.projectId, { username: inviteUsername.value, role: inviteRole.value });
   inviting.value = false;
   if (!result.ok) {
     inviteError.value = result.reason?.join(", ") ?? "초대에 실패했습니다.";

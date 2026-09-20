@@ -22,11 +22,11 @@
       <q-separator class="q-my-sm" />
 
       <div class="q-gutter-xs">
-        <router-link :to="`/projects/${projectId}/collaborators`" class="row items-center gh-link" style="gap: 6px">
+        <router-link :to="`/projects/${projectId}/settings/collaborators`" class="row items-center gh-link" style="gap: 6px">
           <q-icon name="group" size="16px" />
           <span>{{ members.length }} collaborators</span>
         </router-link>
-        <router-link :to="`/projects/${projectId}/template`" class="row items-center gh-link" style="gap: 6px">
+        <router-link :to="`/projects/${projectId}/settings/template`" class="row items-center gh-link" style="gap: 6px">
           <q-icon name="integration_instructions" size="16px" />
           <span>Template</span>
         </router-link>
@@ -35,15 +35,22 @@
 
     <q-separator />
 
-    <!-- Contributors -->
+    <!-- Contributors - 설계자 요청(2026-09-21): 기여자 아이콘을 늘어놓지 말고,
+         라벨을 누르면 팝업(q-menu)으로 목록만 보여준다. -->
     <div>
-      <div class="text-subtitle2 q-mb-sm">Contributors <span style="color: var(--gh-fg-muted)">{{ members.length }}</span></div>
-      <div class="row" style="gap: 8px">
-        <div v-for="m in members" :key="m.username" class="column items-center" style="width: 44px">
-          <div class="gh-avatar" style="width: 32px; height: 32px; font-size: 14px">{{ m.username.charAt(0).toUpperCase() }}</div>
-          <div class="text-caption text-center" style="line-height: 1.1; word-break: break-all">{{ m.username }}</div>
-        </div>
-        <div v-if="members.length === 0" class="text-caption" style="color: var(--gh-fg-muted)">아직 없음</div>
+      <div class="text-subtitle2 cursor-pointer gh-link" style="width: fit-content">
+        Contributors <span style="color: var(--gh-fg-muted)">{{ members.length }}</span>
+        <q-menu anchor="bottom left" self="top left">
+          <q-list style="min-width: 180px">
+            <q-item v-for="m in members" :key="m.username">
+              <q-item-section avatar>
+                <div class="gh-avatar" style="width: 24px; height: 24px; font-size: 11px">{{ m.username.charAt(0).toUpperCase() }}</div>
+              </q-item-section>
+              <q-item-section>{{ m.username }}</q-item-section>
+            </q-item>
+            <q-item v-if="members.length === 0"><q-item-section class="text-caption">아직 없음</q-item-section></q-item>
+          </q-list>
+        </q-menu>
       </div>
     </div>
 
@@ -76,6 +83,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
+import * as api from "src/api/client";
 
 const props = defineProps<{ projectId: string }>();
 const auth = useAuthStore();
@@ -137,8 +145,8 @@ const typeBreakdown = computed(() => {
 
 async function load() {
   const [membersResult, statusResult] = await Promise.all([
-    auth.run({ action: "project.members", projectId: props.projectId }),
-    auth.run({ action: "docs.status", projectId: props.projectId }),
+    api.getProjectMembers(auth.apiKey!, props.projectId),
+    api.getDocsStatus(auth.apiKey!, props.projectId),
   ]);
   if (membersResult.ok) members.value = (membersResult.data as { members: Member[] }).members;
   if (statusResult.ok) statusByKind.value = (statusResult.data as { byKind: Record<string, KindStatus> }).byKind;

@@ -241,6 +241,18 @@ export interface CommitInfo {
   time: string;
 }
 
+/** 커밋 하나의 메타데이터만 - CommitDiffPage(설계자 요청, 2026-09-21)가 제목 표시용으로. */
+export async function getCommitInfo(projectId: string, commitId: string): Promise<CommitInfo | null> {
+  const repo = await openRepoIfExists(projectId);
+  if (!repo) return null;
+  try {
+    const commit = repo.getCommit(commitId);
+    return { id: commitId, message: commit.summary() ?? commit.message(), author: commit.author().name, time: commit.time().toISOString() };
+  } catch {
+    return null;
+  }
+}
+
 export async function listCommits(projectId: string, branch: string, limit: number): Promise<CommitInfo[]> {
   const repo = await openRepoIfExists(projectId);
   if (!repo) return [];
@@ -257,6 +269,51 @@ export async function listCommits(projectId: string, branch: string, limit: numb
   while (commits.length < limit && (oid = revwalk.next()) !== null) {
     const commit = repo.getCommit(oid);
     commits.push({ id: oid, message: commit.summary() ?? commit.message(), author: commit.author().name, time: commit.time().toISOString() });
+  }
+  return commits;
+}
+
+/**
+ * 특정 파일 경로를 실제로 건드린 커밋만 - Code 탭 파일 뷰어의 "Recent
+ * Commits" 탭(설계자 요청, 2026-09-21)에서 쓴다. es-git엔 "이 경로를
+ * 건드린 커밋만" 직접 걸러주는 API가 없어서, 브랜치 히스토리를 훑으며
+ * 커밋마다 그 부모와의 diff에 이 경로가 있는지 직접 확인한다 - 이
+ * 저장소 규모(개인/소규모 프로젝트 내부 저장소) 전제라 실용적인
+ * 비용이다. maxScan은 실제로 살펴볼 커밋 수 상한(= limit개를 다
+ * 못 채워도 무한정 과거로 가지 않도록).
+ */
+export async function listCommitsForPath(projectId: string, branch: string, filePath: string, limit: number): Promise<CommitInfo[]> {
+  const repo = await openRepoIfExists(projectId);
+  if (!repo) return [];
+  const ref = repo.findBranch(branch, "Local");
+  const tipOid = ref?.referenceTarget();
+  if (!tipOid) return [];
+
+  const revwalk = repo.revwalk();
+  revwalk.push(tipOid);
+  revwalk.setSorting(RevwalkSort.Time);
+
+  const commits: CommitInfo[] = [];
+  const maxScan = Math.max(limit * 20, 200);
+  let scanned = 0;
+  let oid: string | null;
+  while (commits.length < limit && scanned < maxScan && (oid = revwalk.next()) !== null) {
+    scanned++;
+    const commit = repo.getCommit(oid);
+    const headTree = commit.tree();
+    const parentId = getApproxParentCommitId(repo, oid);
+    const baseTree = parentId ? resolveTreeForRef(repo, parentId) : null;
+    const diff = repo.diffTreeToTree(baseTree ?? undefined, headTree);
+    let touched = false;
+    for (const delta of drain<DiffDelta>(diff.deltas())) {
+      if (delta.newFile().path() === filePath || delta.oldFile().path() === filePath) {
+        touched = true;
+        break;
+      }
+    }
+    if (touched) {
+      commits.push({ id: oid, message: commit.summary() ?? commit.message(), author: commit.author().name, time: commit.time().toISOString() });
+    }
   }
   return commits;
 }
@@ -287,6 +344,119 @@ export async function diffBranches(projectId: string, base: string, head: string
   }
   const patch = diff.print({ format: "Patch" });
   return { files, patch };
+}
+
+/** 브랜치 이름이면 그 tip 트리, 아니면(커밋 id로 간주) 그 커밋의 트리 - diffCommit이 커밋 id를 직접 받을 때 재사용. */
+function resolveTreeForRef(repo: Repository, ref: string): Tree | null {
+  const branchTree = resolveTreeForBranch(repo, ref);
+  if (branchTree) return branchTree;
+  try {
+    return repo.getCommit(ref).tree();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 커밋 하나의 직접 부모 id - es-git의 `Commit`엔 parent 접근자가 없어서
+ * (design-notes.md "es-git 이터레이터" 기록과 같은 종류의 API 공백)
+ * Revwalk로 그 커밋부터 시간순으로 훑어 바로 다음 것을 부모로 간주한다.
+ * 머지 커밋(부모가 여럿)의 경우 "정확히 첫 부모"가 아니라 "시간순으로
+ * 다음"이 될 수 있다는 근사임을 인지하고 있다 - 이 앱에서 만드는 머지
+ * 커밋은 대부분 선형 히스토리라 실용적으로는 거의 항상 맞는다.
+ */
+function getApproxParentCommitId(repo: Repository, commitId: string): string | null {
+  const revwalk = repo.revwalk();
+  revwalk.push(commitId);
+  revwalk.setSorting(RevwalkSort.Time);
+  const first = revwalk.next();
+  if (first === null) return null;
+  return revwalk.next();
+}
+
+/** 커밋 하나가 그 부모 대비 뭘 바꿨는지 - 커밋 목록 화면에서 항목 클릭 시 쓴다(design-notes.md "커밋 diff"). */
+export interface CommitDiffResult extends BranchDiff {
+  // 부모가 없으면(=최초 커밋) null - 이땐 diff 뷰어가 "base"로 쓸 게
+  // 없다는 뜻(전부 추가된 것으로 취급).
+  baseCommitId: string | null;
+}
+
+export async function diffCommit(projectId: string, commitId: string): Promise<CommitDiffResult | null> {
+  const repo = await openRepoIfExists(projectId);
+  if (!repo) return null;
+  let headTree: Tree;
+  try {
+    headTree = repo.getCommit(commitId).tree();
+  } catch {
+    return null;
+  }
+  const parentId = getApproxParentCommitId(repo, commitId);
+  const baseTree = parentId ? resolveTreeForRef(repo, parentId) : null; // 부모가 없으면(최초 커밋) 빈 트리 대비 diff.
+
+  const diff = repo.diffTreeToTree(baseTree ?? undefined, headTree);
+  const files: DiffFileInfo[] = [];
+  for (const delta of drain<DiffDelta>(diff.deltas())) {
+    files.push({ path: delta.newFile().path() ?? "", oldPath: delta.oldFile().path(), status: delta.status() });
+  }
+  const patch = diff.print({ format: "Patch" });
+  return { files, patch, baseCommitId: parentId };
+}
+
+/** branch/커밋 id 어느 쪽이든(ref) 그 시점의 파일 내용 - diff 뷰어가 앞/뒤 내용을 각각 읽을 때 재사용. */
+export async function readFileAtRef(projectId: string, ref: string, filePath: string): Promise<BlobContent | null> {
+  const repo = await openRepoIfExists(projectId);
+  if (!repo) return null;
+  const tree = resolveTreeForRef(repo, ref);
+  if (!tree) return null;
+
+  const entry = tree.getPath(filePath);
+  if (!entry || entry.type() !== "Blob") return null;
+  const blob = repo.getObject(entry.id()).peelToBlob();
+  const size = Number(blob.size());
+  if (blob.isBinary() || size > BLOB_SIZE_LIMIT) {
+    return { content: "", isBinary: blob.isBinary(), size };
+  }
+  return { content: Buffer.from(blob.content()).toString("utf-8"), isBinary: false, size };
+}
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+  webp: "image/webp",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+};
+
+export interface BlobRaw {
+  dataUrl: string;
+  size: number;
+}
+
+/** 이미지 미리보기 전용 - 원본 바이트를 base64 data URL로 돌려준다(diff 뷰어의 이미지 미리보기, 8MB 상한). */
+export async function readBlobRawAtRef(projectId: string, ref: string, filePath: string): Promise<BlobRaw | null> {
+  const repo = await openRepoIfExists(projectId);
+  if (!repo) return null;
+  const tree = resolveTreeForRef(repo, ref);
+  if (!tree) return null;
+
+  const entry = tree.getPath(filePath);
+  if (!entry || entry.type() !== "Blob") return null;
+  const blob = repo.getObject(entry.id()).peelToBlob();
+  const size = Number(blob.size());
+  if (size > BLOB_SIZE_LIMIT * 16) return null;
+
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const mimeType = IMAGE_MIME_BY_EXT[ext] ?? "application/octet-stream";
+  const base64 = Buffer.from(blob.content()).toString("base64");
+  return { dataUrl: `data:${mimeType};base64,${base64}`, size };
+}
+
+export function isImagePath(filePath: string): boolean {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  return ext in IMAGE_MIME_BY_EXT;
 }
 
 /**

@@ -1,5 +1,4 @@
 import { defineStore } from "pinia";
-import { Notify } from "quasar";
 import * as api from "../api/client";
 
 const STORAGE_KEY = "cnw.auth";
@@ -19,16 +18,12 @@ function loadStored(): StoredAuth | null {
   }
 }
 
-// design-notes.md "메시지 시스템": notices는 예외 없이 모든 액션 응답에
-// 피기백되어 온다 - CLI/MCP는 이미 이걸 항상 출력하는데(Phase 4에서
-// "notices를 버리고 있던" 버그를 고친 이력이 있다), WEB UI도 그냥
-// 버리지 않고 토스트로 띄워서 architect가 실제로 보게 한다.
-function surfaceNotices(notices: unknown[]): void {
-  for (const notice of notices) {
-    Notify.create({ type: "info", message: String(notice), position: "top-right", timeout: 6000 });
-  }
-}
-
+// 설계자 지시(2026-09-21) - WEB UI는 더 이상 단일 /api/actions로 액션을
+// 몰아넣지 않고 액션별 REST 엔드포인트를 직접 호출한다(api/client.ts).
+// 이 스토어는 로그인 상태(apiKey)만 들고 있고, 각 화면 컴포넌트가
+// `import * as api from "src/api/client"`로 그 apiKey를 넘겨 직접
+// 호출한다 - notices 토스트는 api/client.ts의 request() 공용 지점에서
+// 처리하므로 여기서 따로 감쌀 필요가 없다.
 export const useAuthStore = defineStore("auth", {
   state: () => ({
     architectId: null as string | null,
@@ -63,19 +58,6 @@ export const useAuthStore = defineStore("auth", {
       this.apiKey = null;
       this.username = null;
       localStorage.removeItem(STORAGE_KEY);
-    },
-    /** 로그인된 apiKey로 액션 하나를 보낸다 - 컴포넌트들이 매번 apiKey를 꺼내지 않아도 되게. */
-    async run(action: api.Action): Promise<api.ActionResult> {
-      if (!this.apiKey) throw new Error("로그인이 필요합니다.");
-      const envelope = await api.runActions(this.apiKey, [action]);
-      surfaceNotices(envelope.notices);
-      return envelope.result[0];
-    },
-    async runBulk(actions: api.Action[]): Promise<api.Envelope> {
-      if (!this.apiKey) throw new Error("로그인이 필요합니다.");
-      const envelope = await api.runActions(this.apiKey, actions);
-      surfaceNotices(envelope.notices);
-      return envelope;
     },
   },
 });
