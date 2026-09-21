@@ -6,6 +6,7 @@ import { prisma } from "./prisma";
 import { requireMembership, MembershipError } from "./membership";
 import { isSuperAdmin } from "./auth";
 import { getActiveKeyScope } from "./requestScope";
+import { deleteOrgIfExists, orgForProject } from "./gitea";
 import type { ActionResult } from "./types";
 import type { ActionContext } from "./documents";
 
@@ -17,17 +18,29 @@ function fail(reason: string | string[]): ActionResult {
 // 형태라 모든 응답에 ownerUsername(=creator.username)이 실려야 프론트가 그
 // 링크를 만들 수 있다 - 아래 모든 조회 쿼리가 `creator: { select: { username: true } }`를
 // include해서 이 함수에 넘긴다.
-function toProjectResponse(p: {
-  slug: string;
-  name: string;
-  description: string | null;
-  visibility: string;
-  defaultBranch: string;
-  messageTtlDefault: number;
-  pushMirrorUrl: string | null;
-  createdAt: Date;
-  creator: { username: string };
-}) {
+/**
+ * docs/plan-gitea-provisioning.md 판단해두는 것(후속 처리) -
+ * `pushMirrorUrl`은 이제 `repo.connectGitea`가 자동으로 채울 수도
+ * 있는데(자격증명은 안 심지만, 그래도 "이 프로젝트가 어떤 외부 서버에
+ * 미러링되는지" 자체는 민감 정보로 취급할 만하다는 판단), 지금까지는
+ * READ 권한만 있으면(공개 프로젝트는 비멤버까지) 그대로 노출됐다 -
+ * Admin일 때만 이 필드를 실어준다(호출부가 이미 계산해둔 역할을
+ * 넘긴다 - null/READ/WRITE면 아예 필드 자체를 안 준다).
+ */
+function toProjectResponse(
+  p: {
+    slug: string;
+    name: string;
+    description: string | null;
+    visibility: string;
+    defaultBranch: string;
+    messageTtlDefault: number;
+    pushMirrorUrl: string | null;
+    createdAt: Date;
+    creator: { username: string };
+  },
+  viewerRole: string | null
+) {
   return {
     id: p.slug,
     name: p.name,
@@ -35,7 +48,7 @@ function toProjectResponse(p: {
     visibility: p.visibility,
     defaultBranch: p.defaultBranch,
     messageTtlDefault: p.messageTtlDefault,
-    pushMirrorUrl: p.pushMirrorUrl,
+    pushMirrorUrl: viewerRole === "ADMIN" ? p.pushMirrorUrl : undefined,
     createdAt: p.createdAt,
     ownerUsername: p.creator.username,
   };
@@ -89,7 +102,7 @@ export async function projectCreate(payload: any, ctx: ActionContext): Promise<A
   });
   await prisma.projectMembership.create({ data: { projectId: project.id, accountId: ctx.architectId, role: "ADMIN" } });
 
-  return { ok: true, data: toProjectResponse(project) };
+  return { ok: true, data: toProjectResponse(project, "ADMIN") };
 }
 
 export async function projectGet(payload: any, ctx: ActionContext): Promise<ActionResult> {
@@ -114,8 +127,9 @@ export async function projectGet(payload: any, ctx: ActionContext): Promise<Acti
   const membership = await prisma.projectMembership.findUnique({
     where: { projectId_accountId: { projectId, accountId: ctx.architectId } },
   });
+  const myRole = membership?.role ?? null;
 
-  return { ok: true, data: { ...toProjectResponse(project), myRole: membership?.role ?? null } };
+  return { ok: true, data: { ...toProjectResponse(project, myRole), myRole } };
 }
 
 /**
@@ -178,7 +192,14 @@ export async function projectList(payload: any, ctx: ActionContext): Promise<Act
 
   return {
     ok: true,
-    data: { page: pageNumber, total, items: items.map((p) => ({ ...toProjectResponse(p), myRole: roleByProjectId.get(p.id) ?? null })) },
+    data: {
+      page: pageNumber,
+      total,
+      items: items.map((p) => {
+        const myRole = roleByProjectId.get(p.id) ?? null;
+        return { ...toProjectResponse(p, myRole), myRole };
+      }),
+    },
   };
 }
 
@@ -219,7 +240,7 @@ export async function projectUpdate(payload: any, ctx: ActionContext): Promise<A
     include: { creator: { select: { username: true } } },
   });
 
-  return { ok: true, data: toProjectResponse(updated) };
+  return { ok: true, data: toProjectResponse(updated, "ADMIN") };
 }
 
 /** 초대 - Admin만, Read/Write만 부여 가능(Admin은 project.transfer로만 넘어간다). */
@@ -383,5 +404,10 @@ export async function projectDestroy(payload: any, ctx: ActionContext): Promise<
   if (adminFailure) return adminFailure;
 
   await prisma.project.delete({ where: { id: projectId } });
+  // docs/plan-gitea-provisioning.md 판단해두는 것(후속 처리) - DB 삭제가
+  // 이미 끝난 뒤 마지막 정리 단계로 그 프로젝트의 Gitea org도 지운다
+  // (fail-soft - deleteOrgIfExists 자체가 절대 throw 안 함, 연결한 적
+  // 없는 프로젝트면 조용히 넘어감).
+  await deleteOrgIfExists(orgForProject(projectId));
   return { ok: true };
 }

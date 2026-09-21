@@ -598,6 +598,18 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   재연결(멱등)도 재확인. 프론트엔드는 `settings/GeneralPage.vue`에
   "Gitea에 자동 연결" 버튼 추가(Admin 전용, 성공 시 push-mirror
   URL 입력창이 즉시 채워짐).
+- **후속 처리 두 가지**(설계자 지시, 2026-09-21 같은 날 후속, `docs/
+  plan-gitea-provisioning.md`에 기록) - (1) `project.destroy`가
+  DB 삭제 직후 그 프로젝트의 Gitea org도 정리한다(`gitea.ts`의
+  `deleteOrgIfExists()`, fail-soft - org 안 저장소를 전부 먼저
+  지운 뒤 org를 지운다, Gitea가 저장소 남은 org의 삭제는 거부하는
+  걸 실기동으로 확인해서 그 순서로 구현). (2) `project.get`/`list`
+  가 `pushMirrorUrl`을 READ 권한만 있으면(공개 프로젝트면 비멤버
+  에게도) 그대로 노출하던 것을 Admin에게만 보이도록 좁혔다
+  (`toProjectResponse()`가 `viewerRole`을 받아 `"ADMIN"`이 아니면
+  그 필드 자체를 응답에서 뺀다) - 실기동으로 Admin/WRITE 멤버/
+  완전 비멤버(public 프로젝트) 세 시점에서 WRITE·비멤버 둘 다
+  그 필드가 응답에 아예 안 실리는 것까지 확인했다.
 
 ## 프론트엔드 컴포넌트 관례
 

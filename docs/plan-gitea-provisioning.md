@@ -169,16 +169,21 @@ related:
 - v2의 "설계자별 그림자 Gitea 계정" 기능은 명시적으로 이식하지
   않는다 - v3엔 그 기능이 풀려는 문제(누구 이름으로 Gitea에 직접
   커밋할지) 자체가 없다(위 조사 결과).
-- 프로젝트 파기(`project.destroy`) 시 그 프로젝트의 Gitea org를
-  같이 정리하는 건 이번 범위에 넣지 않았다 - 실기동 중 Gitea가
-  "저장소가 남아있는 org는 삭제 거부"한다는 것도 확인했으니, 필요해
-  지면 다음 라운드에서 (v2의 `deleteOrg()`처럼) fail-soft 정리
-  단계로 추가할 수 있다.
-- `project.get`이 `pushMirrorUrl`을 READ 권한만 있으면(공개
-  프로젝트면 비멤버에게도) 그대로 노출하는 건 **이번에 새로 만든
-  문제가 아니라 기존부터 있던 동작**이다(설계자가 직접 외부 URL에
-  자기 자격증명을 심어 입력하는 기존 흐름 자체가 이미 그랬음) - 이번
-  라운드는 그 노출 범위를 "시스템 전체 공유 Gitea 토큰"으로 넓히지
-  않도록(자동 생성 URL엔 자격증명 자체를 안 심는 설계) 막는 데까지만
-  다뤘고, "pushMirrorUrl을 Admin에게만 보이게 하자"는 더 넓은 개선은
-  별도 판단이 필요한 사항으로 남긴다.
+- **후속 처리(2026-09-21, 같은 날 후속) - 둘 다 완료**:
+  1. **프로젝트 파기 시 Gitea org 정리** - `deleteOrgIfExists()`
+     (`gitea.ts` 신규, fail-soft) 추가, `projectDestroy`가 DB 삭제
+     직후 호출한다. Gitea가 "저장소가 남아있는 org는 삭제 거부"하는
+     걸 실기동으로 재확인해서, org 안 저장소를 전부 먼저 지운 뒤
+     org를 지우도록 구현. 실기동으로 프로젝트 생성→`connectGitea`→
+     Gitea에 org 존재 확인→파기→org가 실제로 없어진 것(404)까지
+     확인했다.
+  2. **`pushMirrorUrl`을 Admin에게만 노출** - `toProjectResponse()`
+     가 `viewerRole` 인자를 받아 `"ADMIN"`이 아니면 그 필드 자체를
+     응답에서 뺀다(`undefined`라 JSON에서 키째 사라짐, `null`과
+     구분). `projectGet`/`projectList`는 이미 계산해둔 그 문서의
+     `myRole`을 그대로 넘기고, `projectCreate`/`projectUpdate`는
+     호출자가 이미 Admin임이 검증된 경로라 `"ADMIN"`을 고정으로
+     넘긴다. 실기동으로 Admin 계정/WRITE 멤버/완전 비멤버(public
+     프로젝트) 세 시점 모두 확인 - WRITE 멤버와 비멤버 둘 다 응답에
+     그 필드 자체가 안 실리는 것까지 확인했다(기존엔 셋 다 값을
+     그대로 봤었음).

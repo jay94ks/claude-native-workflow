@@ -103,6 +103,37 @@ export async function ensureRepoConfigured(org: string, repo: string): Promise<C
   return { cloneUrl: json.clone_url };
 }
 
+/**
+ * docs/plan-gitea-provisioning.md 판단해두는 것(후속 처리) - 프로젝트
+ * 파기(`project.destroy`) 시 그 프로젝트의 Gitea org도 같이 정리한다
+ * (v2의 `deleteOrg()`와 동일하게 fail-soft - 이미 프로젝트/문서 삭제가
+ * 끝난 뒤 마지막 정리 단계라 이 호출 하나가 실패해도 파기 자체를
+ * 막으면 안 된다). Gitea는 저장소가 남아있는 org의 삭제 자체를 거부
+ * 하므로(실기동으로 확인함 - "user still has ownership of repositories")
+ * org 안의 저장소를 전부 먼저 지운 뒤 org를 지운다. Gitea 미설정이거나
+ * 애초에 그 org가 없었으면(연결한 적 없는 프로젝트) 조용히 넘어간다.
+ */
+export async function deleteOrgIfExists(org: string): Promise<void> {
+  const cfg = config();
+  if (!cfg) return;
+
+  try {
+    const getRes = await fetch(`${cfg.apiUrl}/api/v1/orgs/${encodeURIComponent(org)}`, {
+      headers: { Authorization: `token ${cfg.token}` },
+    });
+    if (!getRes.ok) return; // 없거나(404) 조회 자체가 실패 - 어느 쪽이든 정리할 게 없다고 보고 넘어간다
+
+    const reposRes = await giteaFetch(`/api/v1/orgs/${encodeURIComponent(org)}/repos`);
+    const repos = (await reposRes.json()) as { name: string }[];
+    for (const repo of repos) {
+      await giteaFetch(`/api/v1/repos/${encodeURIComponent(org)}/${encodeURIComponent(repo.name)}`, { method: "DELETE" });
+    }
+    await giteaFetch(`/api/v1/orgs/${encodeURIComponent(org)}`, { method: "DELETE" });
+  } catch (err) {
+    console.warn(`[gitea] org "${org}" 정리 실패(무시하고 계속 진행):`, (err as Error).message);
+  }
+}
+
 // Gitea org 사용자명 규칙(영문/숫자/-/_만, 특정 예약어 제외)에 맞춰 정리한다 -
 // 프로젝트 내부 id(cuid)를 그대로 써서 DB 컬럼 없이도 항상 같은 org
 // 이름을 재계산할 수 있게 한다(v2의 "org 이름은 projectId의 순수 함수" 계승).
