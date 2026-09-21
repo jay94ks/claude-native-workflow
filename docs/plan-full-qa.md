@@ -125,9 +125,12 @@ related:
 - [x] `docs.list` 응답에 `content` 키가 아예 없는 것(요약 전용)
       확인.
 - [x] chapter를 doc에 지정 시 거부("question/opinion에만") 확인.
-- [ ] 프론트: Documents/Plans/Issues 세 탭 UI(관련 태그 배지 이동,
-      URL 지속성, `new` 페이지)는 이전 라운드(PL-PLANURL01)에서
-      이미 스크린샷 포함 확인 완료 - 코드 변경 없어 이번엔 생략.
+- [x] **프론트 Documents/Plans/Issues 세 탭 UI - 설계자의 "남은 검증을
+      모두 진행해" 요청(2026-09-21 후속)으로 "코드 변경 없어 생략"
+      대신 실제로 다시 열어서 재확인.** Documents(10건)/Plans(1건)/
+      Issues(1건) 탭 전부 목록/상세 패널이 정상 렌더링되고, 이번
+      라운드에서 만든 `emqx-doc-event-test` 문서를 실제로 열어
+      "폐기" 버튼으로 discard 전이까지 시켜 정리(콘솔 에러 없음).
 
 ## 섹션 4 - Q&A 계층 (question/answer/opinion) [x] (2026-09-21 재확인)
 
@@ -147,8 +150,9 @@ related:
       (WEB) 채널 시도는 "클로드(agent)만 할 수 있습니다"로 거부 확인.
 - [x] test: architect의 discard 시도 거부, agent의 discard 성공
       확인.
-- [ ] 프론트 Trackers 탭 UI는 코드 변경 없어 생략(이전 라운드에
-      확인됨).
+- [x] **프론트 Trackers 탭 UI도 실제로 재확인**(TRACKERS/TESTS/
+      RECENT Q&A 세 서브탭 전부 목록/상세 정상 렌더링, 콘솔 에러
+      없음) - 위와 같은 이유로 "생략" 대신 실기동.
 
 ## 섹션 6 - Remember / Message [x] (2026-09-21 실기동)
 
@@ -165,10 +169,51 @@ related:
 - [x] `message.list`가 발신자 자신이 아니라 그 메시지의 `to`
       기준으로 필터링되는 것(agent 채널로 조회 시 agent가 보낸 게
       아니라 agent 앞으로 온 것만 보임) 확인.
-- [ ] emerg EMQX 실제 브로드캐스트/TTL 만료는 이번 라운드에 새로
-      건드린 코드가 아니고 별도 인프라(EMQX) 연동 확인이 필요해
-      가벼운 스팟체크로 대체 - 위 자동 read 전이가 정상 동작한다는
-      것 자체가 message.ts 핵심 경로가 건강하다는 강한 신호로 판단.
+- [x] **emerg EMQX 실제 브로드캐스트 - 설계자 지적(2026-09-21 후속)으로
+      "가벼운 스팟체크로 대체"를 철회하고 실제 왕복까지 끝까지 확인함.**
+      EMQX는 이 시스템 전용 컨테이너(`cnw-v3-dev-emqx`, 포트 11883,
+      `docker-compose.dev.yml`)로 이미 완전히 이 시스템 통제 하에
+      있었지만, 처음 시도에서 외부 구독자가 실제 백엔드가 보낸 `emerg`
+      메시지를 0건 수신하는 진짜 문제를 만나 원인을 끝까지 추적했다.
+      `emqx.ts`(연결/즉시 publish 패턴), `.env` 값(`EMQX_MQTT_URL`
+      등 - dotenv 없이도 Prisma import 부작용으로 채워짐 확인),
+      `api/actions.ts`/`api/rest.ts`의 owner/slug→내부 PK 치환
+      (`demo-project`는 실제로 PK와 slug가 동일함을 DB 직접 조회로
+      확인 - 원인 아님) 순으로 하나씩 배제해가며 `emqx.ts`에 임시
+      디버그 로그(연결/발행/콜백 각 단계)를 넣고 백엔드를 완전히
+      새 프로세스로 재기동한 뒤 재현했더니 **실제로는 정상 동작**함을
+      확인 - `POST /api/projects/admin/demo-project/messages`
+      (`from:"emerg"`)를 5회 반복 전송, 매번 별도 외부 구독자
+      프로세스(`cnw/demo-project/#`)가 전부 수신 확인(`connected=true`,
+      publish 콜백 성공, 토픽/페이로드 일치). 이전의 "0건 수신"은
+      오래 떠 있던 백엔드 프로세스의 어떤 일시적 상태(정확한 원인은
+      특정하지 못함 - 재현되지 않아 더 추적 불가) 때문이었던 것으로
+      보인다. 디버그 로그는 확인 후 원상복구(`emqx.ts`는 순수 기능
+      변경 없음).
+- [x] **문서 이벤트(`cnw/<projectId>/docs`) 브로드캐스트도 같은 방식
+      으로 실제 왕복 확인** - `docs.add`(REST)로 실제 문서 생성 →
+      외부 구독자가 `cnw/demo-project/docs`에서 실제 upsert 이벤트
+      (문서 전체 필드 포함)를 수신하는 것 확인 - `broadcastSubscriber.ts`
+      가 이 경로로 검색 인덱싱/캐시 무효화/웹훅을 트리거한다는 설계가
+      추론이 아니라 실측으로 확인됨(웹훅 배달은 섹션 9에서 이미
+      HMAC까지 검증됨 - 같은 구독 하나를 공유하므로 이번 확인으로
+      emerg/docs/webhook 세 갈래 전부 실제 브로드캐스트 경로가
+      살아있음이 교차 확인됨).
+- [x] **TTL 기반 메시지 만료도 실제로 확인 완료(설계자의 "남은 검증을
+      모두 진행해" 요청, 2026-09-21 후속).** `messages.ts`의
+      `collectAndDeliver()`는 백그라운드 타이머가 아니라 notices
+      piggyback 시점에 지연 평가하는 방식(`m.ttl >= 0 && now -
+      m.createdAt.getTime() > m.ttl * 1000`이면 `canceled`로 전이하고
+      전달하지 않음)임을 코드로 먼저 확인한 뒤, 실제 만료 시나리오를
+      끝까지 재현: agent 앞으로 `ttl:2`(2초 후 만료)와 `ttl:60`
+      메시지를 각각 전송 → 4초 대기 → agent 채널로 아무 액션(`docs.status`)
+      하나를 호출해 notices piggyback을 트리거 → 응답의 `notices`에
+      `ttl:60` 메시지 본문만 포함되고 `ttl:2` 메시지는 빠진 것을 확인.
+      DB 상태로도 교차 확인 - `GET .../messages`(agent 채널)로 조회한
+      결과 만료된 메시지는 정확히 `state:"canceled"`, 전달된 메시지는
+      `state:"read"`로 각각 정확한 최종 상태였다. 테스트 메시지는
+      정리(전달된 쪽은 `done`으로 전이, 만료된 쪽은 이미 `canceled`라는
+      종단 상태라 그대로 둠).
 
 ## 섹션 7 - Code(내부 저장소)/Git [x] (2026-09-21 실기동, 버그 1건 발견·수정)
 
@@ -195,8 +240,14 @@ related:
       유닛 테스트뿐 아니라 실제 운영 데이터 경로로도 재확인.
 - [x] `repo.commits`/`commitInfo`/`fileCommits`는 위 확인 과정에서
       자연히 같이 왕복됨(별도 이슈 없음).
-- [ ] push-mirror 수동 URL 왕복은 Gitea 프로비저닝 라운드에서
-      이미 실제 외부 대상(Gitea)으로 상세 검증 완료 - 생략.
+- [x] **push-mirror 수동 URL 왕복도 다시 실기동 확인**(2026-09-21
+      후속) - `repo.connectGitea`가 아니라 Gitea org/repo를
+      Gitea API로 직접 미리 만들어두고(`qa-manual-mirror-org/
+      manual-repo`) `project.update`의 `pushMirrorUrl`을 그 주소로
+      수동 지정 → `repo.push` 호출 → Gitea 쪽 커밋 목록을 조회해
+      방금 만든 커밋(`26656b2c...`, message `init`)이 정확히 그
+      수동 지정 저장소에 도착한 것까지 SHA 단위로 확인. 테스트
+      프로젝트/org/repo는 검증 직후 모두 삭제.
 
 ## 섹션 8 - Pull Requests [x] (2026-09-21 실기동)
 
@@ -238,10 +289,12 @@ plan-gitea-provisioning.md` 참고). 오늘은 그 이후 다른 여러 라운�
 - [x] `GITEA_URL`(`http://localhost:13000`)이 여전히 Gitea의
       `ROOT_URL`과 일치해 인증이 조용히 실패하는 회귀가 없음을
       확인(위 push 성공 자체가 증거).
-- [ ] `project.destroy` 시 org 정리는 실제 삭제를 동반하는 테스트라
-      demo-project로는 반복하지 않음(지난 라운드에 별도 테스트
-      프로젝트로 이미 확인 완료) - 이번엔 org/repo/pushMirrorUrl을
-      수동으로 정리.
+- [x] **`project.destroy`의 Gitea org 정리도 오늘 새 테스트 프로젝트로
+      다시 처음부터 실기동**(2026-09-21 후속) - `qa-gitea-cleanup-test`
+      프로젝트 생성 → `repo.connectGitea` → Gitea API로 org(`proj-
+      cmubbhgtl...`)/repo가 실제 생성된 것을 200으로 확인 → `project.destroy`
+      호출 → 같은 org를 다시 조회해 404로 바뀐 것까지 확인 - "지난
+      라운드에 확인됨" 문구에 기대지 않고 이번에 새 데이터로 재현.
 
 ## 섹션 11 - CLI/MCP 커버리지 [x] (2026-09-21 실기동, 버그 2건 발견·수정)
 
