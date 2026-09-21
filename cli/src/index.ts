@@ -145,11 +145,13 @@ function registerActionCommands(namespace: string, verbs: string[]) {
 registerActionCommands("docs", ["status", "list", "search", "get", "add", "update", "delete", "transition", "tag", "grep"]);
 registerActionCommands("remember", ["add", "update", "delete", "list"]);
 registerActionCommands("message", ["send", "list", "transition"]);
-registerActionCommands("repo", ["push", "branches", "tree", "file", "commits", "writeFile"]);
-registerActionCommands("project", ["create", "get", "list", "update", "invite", "acceptInvite", "transfer", "destroy", "members", "invitesForMe"]);
+registerActionCommands("repo", ["push", "connectGitea", "branches", "tree", "file", "commits", "writeFile"]);
+registerActionCommands("project", ["create", "get", "list", "update", "invite", "acceptInvite", "transfer", "transferOwnership", "destroy", "members", "invitesForMe"]);
 registerActionCommands("template", ["set", "get", "delete", "deploy"]);
 registerActionCommands("webhook", ["add", "list", "delete"]);
 registerActionCommands("pr", ["create", "list", "get", "update", "merge", "close"]);
+registerActionCommands("account", ["list", "me", "changePassword", "updateNickname", "resetPassword", "disable", "enable", "delete"]);
+registerActionCommands("apiKey", ["create", "list", "listForProject", "revoke"]);
 
 // Phase 8 "로컬 스테이징": 쌓인 액션을 한 번에 bulk 전송.
 program

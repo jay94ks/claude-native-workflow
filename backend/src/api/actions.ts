@@ -1,4 +1,6 @@
 import * as documents from "../core/documents";
+import * as accounts from "../core/accounts";
+import * as apiKeys from "../core/apiKeys";
 import * as remember from "../core/remember";
 import * as messages from "../core/messages";
 import * as repo from "../core/repo";
@@ -34,6 +36,7 @@ const registry: Record<string, Handler> = {
   "message.list": messages.messageList,
   "message.transition": messages.messageTransition,
   "repo.push": repo.repoPush,
+  "repo.connectGitea": repo.repoConnectGitea,
   "project.create": projects.projectCreate,
   "project.get": projects.projectGet,
   "project.list": projects.projectList,
@@ -43,6 +46,7 @@ const registry: Record<string, Handler> = {
   "project.invite": projects.projectInvite,
   "project.acceptInvite": projects.projectAcceptInvite,
   "project.transfer": projects.projectTransfer,
+  "project.transferOwnership": projects.projectTransferOwnership,
   "project.destroy": projects.projectDestroy,
   "template.set": templates.templateSet,
   "template.get": templates.templateGet,
@@ -66,6 +70,18 @@ const registry: Record<string, Handler> = {
   "pr.update": pullRequests.prUpdate,
   "pr.merge": pullRequests.prMerge,
   "pr.close": pullRequests.prClose,
+  "account.list": accounts.accountList,
+  "account.me": accounts.accountMe,
+  "account.changePassword": accounts.accountChangePassword,
+  "account.updateNickname": accounts.accountUpdateNickname,
+  "account.resetPassword": accounts.accountResetPassword,
+  "account.disable": accounts.accountDisable,
+  "account.enable": accounts.accountEnable,
+  "account.delete": accounts.accountDelete,
+  "apiKey.create": apiKeys.apiKeyCreate,
+  "apiKey.list": apiKeys.apiKeyList,
+  "apiKey.listForProject": apiKeys.apiKeyListForProject,
+  "apiKey.revoke": apiKeys.apiKeyRevoke,
 };
 
 export interface ActionRequest {

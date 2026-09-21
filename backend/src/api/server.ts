@@ -6,6 +6,7 @@ import { restRouter } from "./rest";
 import { resolveChannel } from "../core/channel";
 import { collectAndDeliver } from "../core/messages";
 import { startBroadcastSubscriber } from "../core/broadcastSubscriber";
+import { runWithKeyScope } from "../core/requestScope";
 
 startBroadcastSubscriber();
 
@@ -25,7 +26,7 @@ app.post("/api/actions", requireApiKey, async (req, res) => {
   }
 
   const ctx = { architectId: req.architectId!, channel: resolveChannel(req.header("x-cnw-channel")) };
-  const result = await Promise.all((actions as ActionRequest[]).map((action) => dispatch(action, ctx)));
+  const result = await runWithKeyScope(req.keyScope!, () => Promise.all((actions as ActionRequest[]).map((action) => dispatch(action, ctx))));
 
   // design-notes.md "메시지 시스템": 예외 없이 모든 응답에 통합되어 함께
   // 발신되는 구조 - 이 요청이 건드린 프로젝트들에 대해 미전달 메시지를 모은다.

@@ -11,6 +11,18 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: "", redirect: "/projects" },
       { path: "projects", component: () => import("pages/ProjectListPage.vue") },
+      // docs/plan-account-management.md - 시스템 전체 스코프(프로젝트와 무관)라
+      // `:owner/:projectId` 동적 라우트보다 먼저 오는 정적 형제 경로로 둔다
+      // ("projects"와 동일한 관례 - vue-router가 정적 경로를 항상 먼저 매치).
+      { path: "accounts", component: () => import("pages/AccountsPage.vue") },
+      // docs/plan-nickname-apikey-policy.md - 마찬가지로 시스템/계정
+      // 스코프(내 키만) - 프로젝트 하나에 종속되지 않는다. **주의**: 경로를
+      // "api-keys"로 뒀다가 실기동 검증 중 발견 - Vite dev 서버의 프록시
+      // 설정(quasar.config의 `"/api": {...}`)이 문자열 접두사로만 매치해서
+      // "/api-keys"도 "/api"로 시작한다는 이유로 백엔드로 그대로 넘어가
+      // 버렸다("Cannot GET /api-keys" - Express의 기본 404, 프론트 라우트가
+      // 전혀 안 뜸). "/api"로 시작하지 않는 이름으로 바꿔서 피한다.
+      { path: "keys", component: () => import("pages/ApiKeysPage.vue") },
       // 설계자 요청(2026-09-21 후속) - 프로젝트별 웹 접속 path를
       // /{생성자 login명}/{project id} 형태로 바꿨다(GitHub의 /{owner}/{repo}
       // 스타일 참고) - `owner`는 URL 표시용일 뿐 실제 조회는 항상

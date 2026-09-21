@@ -25,8 +25,24 @@ export async function login(username: string, password: string): Promise<{ archi
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
-  if (!res.ok) throw new ApiError(await res.text(), res.status);
+  if (!res.ok) throw new ApiError(await extractErrorMessage(res), res.status);
   return res.json();
+}
+
+// docs/plan-account-management.md 작업 중 발견 - /api/auth/*는 항상
+// `{error: "..."}` JSON을 응답하는데(auth.ts), login()이 지금까지
+// res.text()로 그 원문(raw JSON 문자열)을 그대로 에러 메시지로 써서
+// LoginPage.vue 화면에 `{"error":"..."}`가 그대로 노출되고 있었다 -
+// disabledAt 도입으로 새로 생긴 "this account has been disabled" 메시지가
+// 실제로 읽을 수 있게 보이려면 이 파싱을 고쳐야 했다.
+async function extractErrorMessage(res: Response): Promise<string> {
+  try {
+    const body = await res.json();
+    if (typeof body?.error === "string") return body.error;
+  } catch {
+    // JSON이 아니면 아래 기본 메시지로 폴백.
+  }
+  return `요청이 실패했습니다 (${res.status})`;
 }
 
 export async function signup(username: string, password: string): Promise<{ architectId: string }> {
@@ -35,7 +51,7 @@ export async function signup(username: string, password: string): Promise<{ arch
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
-  if (!res.ok) throw new ApiError(await res.text(), res.status);
+  if (!res.ok) throw new ApiError(await extractErrorMessage(res), res.status);
   return res.json();
 }
 
@@ -122,6 +138,8 @@ export const inviteToProject = (apiKey: string, owner: string, projectId: string
 export const acceptInvite = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/accept-invite`, { method: "POST" });
 export const transferProject = (apiKey: string, owner: string, projectId: string, body: { toUsername: string }) =>
   request(apiKey, `/projects/${owner}/${projectId}/transfer`, { method: "POST", body });
+export const transferProjectOwnership = (apiKey: string, owner: string, projectId: string, body: { toUsername: string }) =>
+  request(apiKey, `/projects/${owner}/${projectId}/transfer-ownership`, { method: "POST", body });
 
 // ---- Documents ----
 export const listDocuments = (
@@ -176,6 +194,8 @@ export const getFileDiff = (apiKey: string, owner: string, projectId: string, ba
   request(apiKey, `/projects/${owner}/${projectId}/repo/diff`, { query: { base, head, path } });
 export const pushRepo = (apiKey: string, owner: string, projectId: string, body?: Record<string, unknown>) =>
   request(apiKey, `/projects/${owner}/${projectId}/repo/push`, { method: "POST", body: body ?? {} });
+export const connectGitea = (apiKey: string, owner: string, projectId: string) =>
+  request<{ pushMirrorUrl: string }>(apiKey, `/projects/${owner}/${projectId}/repo/connect-gitea`, { method: "POST" });
 
 // ---- Pull requests ----
 export const listPullRequests = (apiKey: string, owner: string, projectId: string, state?: string) =>
@@ -213,6 +233,26 @@ export const deleteWebhook = (apiKey: string, owner: string, projectId: string, 
 export const getTemplate = (apiKey: string) => request(apiKey, "/template");
 export const setTemplate = (apiKey: string, body: { claudeMd: string; skillMd: string }) => request(apiKey, "/template", { method: "PUT", body });
 export const deployTemplate = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/template/deploy`, { method: "POST" });
+
+// ---- Account 관리(docs/plan-account-management.md - 시스템 전체 스코프) ----
+export const listAccounts = (apiKey: string) => request(apiKey, "/accounts");
+export const changeOwnPassword = (apiKey: string, body: { currentPassword: string; newPassword: string }) =>
+  request(apiKey, "/account/password", { method: "PUT", body });
+export const resetAccountPassword = (apiKey: string, accountId: string) =>
+  request<{ username: string; temporaryPassword: string }>(apiKey, `/accounts/${accountId}/reset-password`, { method: "POST" });
+export const disableAccount = (apiKey: string, accountId: string) => request(apiKey, `/accounts/${accountId}/disable`, { method: "POST" });
+export const enableAccount = (apiKey: string, accountId: string) => request(apiKey, `/accounts/${accountId}/enable`, { method: "POST" });
+export const deleteAccount = (apiKey: string, accountId: string) => request(apiKey, `/accounts/${accountId}`, { method: "DELETE" });
+export const getMe = (apiKey: string) => request(apiKey, "/account/me");
+export const updateNickname = (apiKey: string, body: { nickname: string | null }) => request(apiKey, "/account/nickname", { method: "PUT", body });
+
+// ---- API 키(docs/plan-nickname-apikey-policy.md) ----
+export const listMyApiKeys = (apiKey: string) => request(apiKey, "/api-keys");
+export const createApiKey = (apiKey: string, body: { scope: "personal" | "project"; owner?: string; projectId?: string; label?: string }) =>
+  request<{ key: Record<string, unknown>; secret: string }>(apiKey, "/api-keys", { method: "POST", body });
+export const revokeApiKey = (apiKey: string, keyId: string) => request(apiKey, `/api-keys/${keyId}`, { method: "DELETE" });
+export const listProjectApiKeys = (apiKey: string, owner: string, projectId: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/api-keys`);
 
 // ---- Remember ----
 export const listRemember = (apiKey: string, owner: string, projectId: string, params?: { category?: string; page?: number }) =>

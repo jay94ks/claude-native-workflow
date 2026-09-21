@@ -20,6 +20,7 @@ import {
   type TreeEntry,
   type DiffDelta,
 } from "es-git";
+import { config as giteaConfig } from "./gitea";
 
 const REPOS_ROOT = process.env.CNW_REPOS_ROOT ?? path.join(process.cwd(), "data", "repos");
 
@@ -116,18 +117,67 @@ export async function getHead(projectId: string): Promise<CommitResult | null> {
 }
 
 /**
+ * docs/plan-gitea-provisioning.md - es-git에 remote URL을 바꾸거나
+ * remote를 지우는 API가 아예 없어서(index.d.ts 확인 - `createRemote`/
+ * `findRemote`뿐), 기존 "mirror" remote의 URL이 바뀌어야 하면 `.git/config`
+ * 파일의 그 섹션만 직접 편집한다 - 다른 remote/설정은 절대 안 건드리고
+ * `[remote "mirror"]` 섹션의 `url =` 줄만 정규식으로 치환한다. 이 저장소가
+ * child_process로 git CLI를 셸아웃하는 선례가 전혀 없어서(es-git 바인딩만
+ * 씀) 그 관례를 깨지 않는 선에서 고른 방법이다.
+ */
+function upsertMirrorRemoteUrl(repoDir: string, url: string): void {
+  const configPath = path.join(repoDir, ".git", "config");
+  const content = fs.readFileSync(configPath, "utf-8");
+  const sectionRe = /(\[remote "mirror"\][^[]*?url\s*=\s*)[^\r\n]*/;
+  if (!sectionRe.test(content)) return; // 방어적 - 호출부가 이미 존재를 확인하고 부름
+  fs.writeFileSync(configPath, content.replace(sectionRe, `$1${url}`));
+}
+
+/**
+ * docs/plan-gitea-provisioning.md - `repo.connectGitea`로 자동 생성한
+ * Gitea 저장소의 `pushMirrorUrl`엔 자격증명을 절대 심지 않는다(DB의
+ * 그 필드가 `project.get` 응답에 그대로 노출되므로, 공유 admin 토큰을
+ * URL에 심으면 그 프로젝트를 읽을 수 있는 아무나 - public 프로젝트면
+ * 비멤버까지도 - 시스템 전체 Gitea 토큰을 그대로 가져갈 수 있다).
+ * 대신 push 시점에만, 그 URL이 실제로 설정된 GITEA_URL 소속일 때만
+ * es-git의 `PushOptions.credential`(`{type:'Plain', username, password}`)
+ * 로 얹어 쓰고 어디에도 저장하지 않는다 - URL 자체에 `user:pass@host`를
+ * 심는 방식은 libgit2(es-git)의 HTTP 트랜스포트에서 401로 실패하는 걸
+ * 실기동으로 확인해서 이 방식으로 바꿨다(순수 git CLI는 그 방식도
+ * 되지만 libgit2는 명시적 credential 콜백/옵션을 요구하는 것으로 보임).
+ * 사용자가 직접 입력한 다른 외부 URL은 그대로 두고 credential도 안 준다
+ * (이미 자기 자격증명을 스스로 URL에 심어뒀다고 가정 - 기존 동작 유지).
+ */
+function pushCredentialFor(mirrorUrl: string): { type: "Plain"; username: string; password: string } | undefined {
+  const cfg = giteaConfig();
+  if (!cfg) return undefined;
+  try {
+    const target = new URL(mirrorUrl);
+    const giteaOrigin = new URL(cfg.apiUrl);
+    if (target.origin !== giteaOrigin.origin) return undefined;
+    return { type: "Plain", username: cfg.token, password: "" };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * repo.push - 내부 저장소를 옵션 push-mirror 대상으로 동기화한다.
- * (알려진 제약: es-git에 remote URL을 바꾸는 API가 없어서, 이미
- * "mirror"라는 이름의 remote가 있으면 URL이 바뀌었어도 기존 걸 그대로
- * 쓴다 - 프로젝트 설정에서 push-mirror 대상을 바꾸는 시나리오는 다음
- * 라운드에서 remote 재생성 방법을 찾아 보강한다.)
  */
 export async function pushToMirror(projectId: string, mirrorUrl: string): Promise<void> {
   const repo = await ensureRepo(projectId);
-  const remote = repo.findRemote("mirror") ?? repo.createRemote("mirror", mirrorUrl);
+
+  const existing = repo.findRemote("mirror");
+  if (!existing) {
+    repo.createRemote("mirror", mirrorUrl);
+  } else if (existing.url() !== mirrorUrl) {
+    upsertMirrorRemoteUrl(repoPath(projectId), mirrorUrl);
+  }
+  const remote = repo.findRemote("mirror")!;
 
   const branch = repo.head().name().replace(/^refs\/heads\//, "");
-  await remote.push([`refs/heads/${branch}:refs/heads/${branch}`]);
+  const credential = pushCredentialFor(mirrorUrl);
+  await remote.push([`refs/heads/${branch}:refs/heads/${branch}`], credential ? { credential } : undefined);
 }
 
 // ---------------------------------------------------------------------------

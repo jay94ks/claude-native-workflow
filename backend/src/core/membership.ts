@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { getActiveKeyScope } from "./requestScope";
 
 const ROLE_RANK: Record<string, number> = { READ: 0, WRITE: 1, ADMIN: 2 };
 
@@ -24,6 +25,16 @@ export async function requireMembership(
   architectId: string,
   minRole: "READ" | "WRITE" | "ADMIN"
 ): Promise<void> {
+  // docs/plan-nickname-apikey-policy.md (v2 계승) - 이 요청이 "프로젝트
+  // 단위" API 키로 인증됐다면, 실제 멤버십 role과 무관하게 그 키가 발급된
+  // 프로젝트가 아닌 다른 프로젝트는 아예 접근 자체를 거부한다 - 개인 키가
+  // 유출돼도 그 프로젝트 밖으로는 새어나가지 않게 하는 게 이 스코프의
+  // 존재 이유라, 멤버십 조회보다 먼저 확인한다.
+  const scope = getActiveKeyScope();
+  if (scope.type === "project" && scope.projectId !== projectId) {
+    throw new MembershipError("이 API 키는 다른 프로젝트에 대한 접근 권한이 없습니다.");
+  }
+
   const membership = await prisma.projectMembership.findUnique({
     where: { projectId_accountId: { projectId, accountId: architectId } },
   });

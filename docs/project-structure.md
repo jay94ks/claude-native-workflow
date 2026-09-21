@@ -480,6 +480,124 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   버튼으로 만든 실제 강조 마크나 CLI로 등록한 원문 마크다운에서만
   기대대로 동작하며, 이는 이번 라운드의 회귀가 아니라
   `MarkdownSourceView` 전체의 기존 동작이다).
+- **계정 관리**(설계자 지시, 2026-09-21, `docs/plan-account-management.md`
+  완료) - `v2` 브랜치 조사 결과 "시스템 전체 Admin(superAdmin)은
+  별도 role 없이 부트스트랩 계정(username `"admin"`)을 그대로
+  최고 관리자로 취급"하는 패턴과 "admin 대행 임시 비밀번호 재설정
+  (강제 변경 없음)" 정책을 그대로 계승했고(`backend/src/core/auth.ts`의
+  `isSuperAdmin()`), 계정 비활성화/삭제는 v2에도 선례가 없어 순수
+  신규 설계(설계자 확인: 강제 변경 없음 + 삭제 시 콘텐츠 보존)로
+  진행했다. `Account.disabledAt`(로그인 거부 사유) 추가,
+  `backend/src/core/accounts.ts`(신규)의 `account.list`/
+  `changePassword`/`resetPassword`/`disable`/`enable`/`delete` -
+  `disable`은 `disabledAt` 설정과 동시에 기존 `ApiKey`를 전부
+  삭제해 즉시 로그아웃시킨다. `ProjectMembership`/`ProjectInvite`/
+  `ApiKey`/`RememberItem`/`Template`은 그 계정 자신의 소유물이라
+  `onDelete: Cascade`로 계정과 함께 사라지고, `Project.creator`는
+  일부러 그대로 둬(기본 Restrict) 계정 삭제가 그 사람이 만든
+  프로젝트 콘텐츠까지 통째로 지우지 못하게 막는다. **실기동 검증
+  중 발견한 버그**: 이 "콘텐츠 보존" 정책을 지키려면 프로젝트
+  생성자를 다른 계정으로 넘기는 방법이 있어야 하는데, 기존
+  `project.transfer`는 Admin **역할**만 옮길 뿐 `creatorAccountId`
+  (URL `/{생성자}/{project id}`의 그 필드)는 절대 안 바꾼다는 걸
+  재확인해서 - `project.transferOwnership`(신규 액션)을 추가해
+  실제로 소유권(및 URL)을 옮기게 했다. **2차로 발견한 버그**:
+  소유권만 옮기고 `ProjectMembership`의 ADMIN 역할은 그대로 두면
+  그 계정을 지우는 순간 그 멤버십 행이 cascade로 같이 사라져
+  그 프로젝트에 Admin이 한 명도 안 남는 사고가 실제로 재현됐다 -
+  `account.delete`가 "생성한 프로젝트"뿐 아니라 "ADMIN으로 남아있는
+  프로젝트"도 검사해서 둘 다 해소해야만 삭제를 허용한다. 프론트엔드는
+  `MainLayout.vue` 상단바 아바타 메뉴(비밀번호 변경/계정 관리),
+  `components/ChangePasswordDialog.vue`(셀프 비밀번호 변경),
+  `pages/AccountsPage.vue`(`/accounts`, superAdmin 전용 계정
+  목록+재설정/비활성화/활성화/삭제), `settings/GeneralPage.vue`
+  Danger Zone에 "소유자(생성자) 변경" 카드 추가. 실기동으로 계정
+  생성→재설정→로그인→비활성화→로그인 거부+apiKey 무효화→활성화→
+  로그인 복구→(소유권/Admin 역할 이전 후)삭제까지 전 구간과
+  superAdmin 자기 자신에 대한 disable/delete 거부를 CLI/REST/웹
+  UI 모두에서 확인했다.
+- **닉네임 정책 + API 키 세분화**(설계자 지시, 2026-09-21, `docs/
+  plan-nickname-apikey-policy.md` 완료) - Phase 0 스캐폴딩부터
+  TODO로 남아있던 v2 정책 계승 항목. `v2` 조사로 둘 다 충분히
+  구체적인 기존 정책을 확인해 그대로 이식했다: **닉네임**은
+  `Account.nickname`(중복 허용)+`nicknameNumber`(같은 문자열, 또는
+  미설정 시 공통 풀 "설계자" 안에서의 순번 - 그 라벨로 바뀌는
+  시점에만 `nextNicknameNumber()`로 재계산해 확정 저장, 매 조회마다
+  다시 세지 않음)+`nicknameChangedAt`(7일 쿨다운, 같은 값 재제출은
+  안 먹음)로 표시 라벨("Jay #1" 등)을 구성한다. **API 키**는
+  `scope: "personal"`(로그인과 동등, 무제한)/`"project"`(그 프로젝트
+  안에서만)로 나뉘고(v2의 "팀 키"는 v3에 팀이 없어 제외), 로그인이
+  발급하는 키는 항상 personal이다. **스코프 강제는 v2의
+  `requestScope.ts`(`AsyncLocalStorage`) 패턴을 그대로 계승** -
+  `authMiddleware.ts`가 요청마다 키의 스코프를 판별해 `req.keyScope`
+  에 싣고, `api/server.ts`(`/api/actions`)와 `api/rest.ts`(`web()`)
+  둘 다 핸들러 실행 전체를 `runWithKeyScope()`로 감싸며,
+  `membership.ts`의 `requireMembership()` 최상단에서 "이 요청이
+  project 스코프 키로 인증됐는데 그 키가 발급된 프로젝트가 아니면"
+  실제 멤버십 존재 여부와 무관하게 즉시 거부한다 - 액션 핸들러
+  수십 개 전체(문서/PR/repo/webhook/template/remember 등)에 개별
+  체크 없이 자동 적용되는 단일 choke point. `account.*`(계정 관리)
+  와 `project.create`는 애초에 "특정 프로젝트로 좁힐 수 없는 시스템
+  전체 동작"이라 restricted 스코프 키 자체를 별도로 거부한다. API
+  키는 하드 삭제 대신 `revokedAt` soft-revoke(감사 기록 보존, v2
+  판단 계승)이고, project 키는 그 프로젝트 Admin이 남의 것도 배제할
+  수 있다. **실기동 검증**(curl+CLI+웹 UI) - project 키가 실제로
+  다른 프로젝트에는(그 계정이 그 프로젝트의 진짜 멤버여도) 거부되는
+  것, `account.list`/`project.create`가 project 키로는 아예 거부
+  되는 것, Admin이 배제한 남의 project 키가 즉시 401로 막히는 것,
+  닉네임 풀 번호가 실제로 순차 증가하고 7일 쿨다운이 걸리는 것까지
+  전 구간 확인. **실기동 중 발견한 버그**: `pages/ApiKeysPage.vue`를
+  처음 `/api-keys`에 연결했더니 Vite dev 프록시(`quasar.config`의
+  `"/api": {...}`, 문자열 접두사 매치)가 "/api-keys"도 "/api"로
+  시작한다며 백엔드로 그대로 포워딩해버려 화면 자체가 안 떴다
+  ("Cannot GET /api-keys") - 프론트 라우트를 `/keys`로 바꿔 피했다.
+  프론트엔드는 `MainLayout.vue` 상단바에 표시 라벨 노출 + 아바타
+  메뉴에 "닉네임 변경"/"API 키 관리" 추가, `components/
+  NicknameDialog.vue`(신규), `pages/ApiKeysPage.vue`(신규, `/keys`),
+  `settings/GeneralPage.vue`에 그 프로젝트로 발급된 API 키 목록
+  (Admin 전용) 카드 추가.
+- **Gitea 실제 프로비저닝**(설계자 지시, 2026-09-21, `docs/
+  plan-gitea-provisioning.md` 완료) - Phase 5/6 완료 기록에서
+  "다음 라운드 과제"로 명시적으로 남겨뒀던 항목. `v2` 조사 결과
+  v2는 Gitea 자체가 주 저장소라 설계자별 그림자 Gitea 계정까지
+  필요했지만, v3는 이미 로컬 es-git 저장소가 주 저장소고 Gitea는
+  옵션 push-mirror 대상일 뿐이라 그 부분은 대상이 아니었다 - "프로젝트
+  당 org 하나"(`orgForProject(projectId)`, DB 컬럼 없는 순수 함수)와
+  "`project.create`가 아니라 명시적 연결 시점에 생성"이라는 v2 정책
+  두 가지만 계승했다. `backend/src/core/gitea.ts`(신규, org/저장소
+  멱등 생성 - `auto_init:false` 필수, 아니면 Gitea가 미리 커밋해둔
+  기본 브랜치와 로컬 첫 push가 갈라짐)와 `repo.connectGitea`(신규
+  액션, `core/repo.ts`, Admin 전용) - 호출 시 그 프로젝트의 org+저장소
+  를 만들고 `Project.pushMirrorUrl`을 **자격증명을 절대 심지 않은
+  채로** 채운다(공유 Gitea 토큰을 URL에 심으면 `project.get` 응답이
+  그 URL을 그대로 노출해 READ 권한자 - public 프로젝트면 비멤버까지
+  - 누구나 시스템 전체 토큰을 가져갈 수 있게 된다는 걸 인지하고 막은
+  설계). 대신 `gitRepo.ts`의 `pushToMirror`가 push 시점에만 그 URL이
+  설정된 `GITEA_URL` 소속일 때 es-git `PushOptions.credential`
+  (`{type:'Plain', username:token, password:''}`)로 메모리 상에서만
+  자격증명을 얹는다. **실기동 중 발견한 버그 두 개**: (1) es-git
+  (libgit2)은 `http://token@host/...`처럼 URL에 심은 자격증명으로
+  인증하지 못한다(순수 git CLI는 되는데 es-git은 401 - `credential`
+  옵션을 명시적으로 줘야 함, 오히려 이 발견 덕에 "토큰을 URL에 안
+  심는다"는 보안 설계와 자연히 맞아떨어졌다), (2) `GITEA_URL`이
+  그 Gitea의 실제 `ROOT_URL`과 문자열까지 정확히(`localhost`
+  vs `127.0.0.1`도 다르게 취급됨) 일치해야 한다 - 안 그러면 토큰
+  주입 조건(origin 비교)이 조용히 안 맞아서 401만 나고 원인을 알기
+  어렵다. es-git엔 remote 삭제/URL 변경 API 자체가 없어서(`index.d.ts`
+  확인) push-mirror 대상이 바뀌는 시나리오는 `.git/config`의
+  `[remote "mirror"]` 섹션 `url=` 줄만 직접 치환(`upsertMirrorRemoteUrl`)
+  하는 방식으로 해결했다(이 저장소가 child_process로 git CLI를
+  셸아웃하는 선례가 없어 그 관례를 깨지 않는 선택). 실기동 검증은
+  이 저장소 전용의 새 Gitea 컨테이너(`docker-compose.dev.yml`에
+  `cnw-v3-dev-gitea`, 이미지 `gitea/gitea:1.22`, sqlite3, 호스트
+  포트 13000 - `docker ps`에 있던 `cnw-gitea-1`은 이 저장소와 무관한
+  `C:\CNW`의 별도 운영 설치 컨테이너임을 확인하고 절대 안 건드림)
+  를 새로 띄워서 했다 - `repo.connectGitea` 호출 → 실제 org/저장소
+  생성 확인 → `repo.push` → 실제 커밋이 그 저장소에 반영된 것까지
+  Gitea REST API로 직접 확인, push-mirror 대상 변경 시나리오와
+  재연결(멱등)도 재확인. 프론트엔드는 `settings/GeneralPage.vue`에
+  "Gitea에 자동 연결" 버튼 추가(Admin 전용, 성공 시 push-mirror
+  URL 입력창이 즉시 채워짐).
 
 ## 프론트엔드 컴포넌트 관례
 

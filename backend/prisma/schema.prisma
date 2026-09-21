@@ -29,10 +29,24 @@ enum InviteState {
 
 // account = a login-capable identity. "architectId" in docs/design-notes.md == Account.id.
 model Account {
-  id           String   @id @default(cuid())
-  username     String   @unique
+  id           String    @id @default(cuid())
+  username     String    @unique
   passwordHash String
-  createdAt    DateTime @default(now())
+  createdAt    DateTime  @default(now())
+  // 계정 관리(docs/plan-account-management.md) - null이면 정상, 값이
+  // 있으면 로그인이 거부된다(superAdmin만 disable/enable 가능). v2에
+  // 없던 신규 기능 - 삭제와 달리 되돌릴 수 있는 "잠금"이라 별도 필드로 둔다.
+  disabledAt   DateTime?
+
+  // docs/plan-nickname-apikey-policy.md - v2 정책 그대로 계승: nickname은
+  // null 허용에 중복도 허용(표시 라벨은 항상 "{nickname ?? '설계자'} #{번호}").
+  // 그 라벨 풀(같은 nickname 문자열, 또는 미설정이면 공통 풀 "설계자") 안에서
+  // 몇 번째로 그 라벨을 쓰게 됐는지를 nicknameNumber에 "그 라벨로 바뀌는
+  // 시점에만" 확정 저장한다(매 조회마다 다시 세지 않음 - v2 core/auth.ts의
+  // nextNicknameNumber() 계승). nicknameChangedAt은 7일 변경 쿨다운 기준.
+  nickname          String?
+  nicknameNumber    Int       @default(1)
+  nicknameChangedAt DateTime?
 
   memberships     ProjectMembership[]
   invites         ProjectInvite[]
@@ -57,7 +71,13 @@ model Project {
   // 생성자가 아닐 수 있음) 별도로 "생성자"를 영구 기록해야 한다 - transfer가 일어나도
   // 이 필드는 안 바뀐다(URL도 그대로 유지).
   creatorAccountId String
-  creator          Account @relation("ProjectCreator", fields: [creatorAccountId], references: [id])
+  // 계정 관리(docs/plan-account-management.md, "콘텐츠 보존" 결정) - 일부러
+  // Cascade를 걸지 않는다: 계정을 지운다고 그 사람이 만든 프로젝트 전체
+  // (그 안의 Document/PR 등 모든 콘텐츠)가 통째로 사라지면 안 된다는
+  // 판단 - accounts.ts의 accountDelete()가 "생성한 프로젝트가 남아있으면
+  // project.transfer로 먼저 넘기라"고 앞단에서 막고, 이 Restrict는 그
+  // 검증을 우회해도 DB가 막아주는 마지막 방어선이다.
+  creator Account @relation("ProjectCreator", fields: [creatorAccountId], references: [id], onDelete: Restrict)
 
   // 설계자 요청(2026-09-21 추가 후속) - "프로젝트 id는 설계자별로 관리되어야
   // 한다"(서로 다른 두 설계자가 똑같은 id로 각자 프로젝트를 가질 수 있어야
@@ -80,6 +100,7 @@ model Project {
   messages     Message[]
   webhooks     Webhook[]
   pullRequests PullRequest[]
+  apiKeys      ApiKey[]
 
   @@unique([creatorAccountId, slug])
 }
@@ -92,7 +113,10 @@ model ProjectMembership {
   createdAt DateTime       @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  account Account @relation(fields: [accountId], references: [id])
+  // 계정 삭제(docs/plan-account-management.md) - 멤버십은 "그 계정이 가진
+  // 접근 권한"일 뿐 다른 사람의 콘텐츠가 아니므로 계정과 함께 사라져도
+  // 된다(그 프로젝트 자체나 문서는 전혀 안 건드림).
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, accountId])
 }
@@ -106,21 +130,42 @@ model ProjectInvite {
   createdAt DateTime       @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  account Account @relation(fields: [accountId], references: [id])
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, accountId])
 }
 
-// 스캐폴딩 단계에서는 계정 단위 키만 둔다 - v2의 "개인 키/프로젝트 키"
-// 구분(닉네임 정책과 함께 v2에서 계승하기로 한 정책)은 실제 기능
-//구현 라운드에서 다시 다룬다 (TODO).
+// docs/plan-nickname-apikey-policy.md - v2의 "개인 키/프로젝트 키"
+// 구분을 계승한다(v2의 "팀 키"는 v3에 팀 개념 자체가 없어 대상 아님).
+// `scope: "personal"`(projectId null, 로그인과 동등하게 무제한)과
+// `scope: "project"`(그 프로젝트 안에서만 유효 - `core/requestScope.ts`
+// +`core/membership.ts`의 `requireMembership`이 매 액션마다 강제)로
+// 나뉜다. 로그인이 만드는 키는 항상 personal(v2도 로그인=JWT는
+// unrestricted와 동급으로 취급했다). "삭제"가 아니라 `revokedAt`
+// soft-revoke로 남긴다(v2 판단 계승 - "누가 언제 어떤 범위의 신원을
+// 위임받았었는가"라는 이력 자체가 감사 가치가 있다).
 model ApiKey {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   accountId String
-  keyHash   String   @unique
-  createdAt DateTime @default(now())
+  keyHash   String    @unique
+  // 목록 화면에서 원문 노출 없이 구분하는 용도(v2의 keyPrefix 계승) -
+  // "cnwk_" + 앞 6자 정도.
+  keyPrefix String    @default("")
+  scope     String    @default("personal") // "personal" | "project"
+  projectId String? // scope === "project"일 때만
+  label     String?
+  createdAt DateTime  @default(now())
+  lastUsedAt DateTime?
+  expiresAt DateTime?
+  revokedAt DateTime?
 
-  account Account @relation(fields: [accountId], references: [id])
+  // 계정 삭제/비활성화 시 그 계정의 키도 같이 무효화된다 - 자격증명은
+  // "콘텐츠"가 아니라 그 계정 자신의 것이라 보존 대상이 아니다.
+  account Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([projectId])
 }
 
 // type/kind/state are validated at the application layer (docs/design-notes.md
@@ -212,7 +257,9 @@ model RememberItem {
   updatedAt     DateTime @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  owner   Account @relation(fields: [ownerAccountId], references: [id])
+  // 계정 삭제 시 같이 사라진다 - 이 개인화 메모리는 그 architect
+  // 자신만을 위한 것이라 다른 사람이 참조하는 "콘텐츠"가 아니다.
+  owner   Account @relation(fields: [ownerAccountId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, ownerAccountId, id])
 }
@@ -239,7 +286,9 @@ model Template {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  owner Account @relation(fields: [ownerAccountId], references: [id])
+  // 계정 삭제 시 같이 사라진다 - 계정 하나에 묶인 개인 템플릿이라
+  // 그 계정이 없으면 어차피 배포(template.deploy)할 주체도 없다.
+  owner Account @relation(fields: [ownerAccountId], references: [id], onDelete: Cascade)
 
   @@unique([ownerAccountId])
 }

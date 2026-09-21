@@ -13,6 +13,8 @@ import * as messages from "../core/messages";
 import * as repo from "../core/repo";
 import * as projects from "../core/projects";
 import * as templates from "../core/templates";
+import * as accounts from "../core/accounts";
+import * as apiKeys from "../core/apiKeys";
 import * as webhooks from "../core/webhooks";
 import * as repoBrowse from "../core/repoBrowse";
 import * as pullRequests from "../core/pullRequests";
@@ -20,6 +22,7 @@ import { collectAndDeliver } from "../core/messages";
 import { requireApiKey } from "./authMiddleware";
 import { resolveChannel } from "../core/channel";
 import { resolveProjectId } from "../core/projectResolve";
+import { runWithKeyScope } from "../core/requestScope";
 import type { ActionResult } from "../core/types";
 import type { ActionContext } from "../core/documents";
 
@@ -56,7 +59,7 @@ function web(fn: CoreFn, buildPayload: (req: Request) => Record<string, unknown>
 
     let result: ActionResult;
     try {
-      result = await fn(payload, ctx);
+      result = await runWithKeyScope(req.keyScope!, () => fn(payload, ctx));
     } catch (err) {
       console.error(`[rest] ${req.method} ${req.originalUrl} threw an uncaught error:`, err);
       return res.status(500).json({ error: [`처리 중 예상치 못한 오류가 발생했습니다: ${(err as Error).message}`] });
@@ -94,6 +97,7 @@ restRouter.get("/projects/:owner/:projectId/members", web(projects.projectMember
 restRouter.post("/projects/:owner/:projectId/invite", web(projects.projectInvite, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body })));
 restRouter.post("/projects/:owner/:projectId/accept-invite", web(projects.projectAcceptInvite, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
 restRouter.post("/projects/:owner/:projectId/transfer", web(projects.projectTransfer, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body })));
+restRouter.post("/projects/:owner/:projectId/transfer-ownership", web(projects.projectTransferOwnership, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body })));
 
 // ---- Documents ----
 restRouter.get(
@@ -191,6 +195,7 @@ restRouter.get(
   web(repoBrowse.repoDiffFile, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, base: req.query.base, head: req.query.head, path: req.query.path }))
 );
 restRouter.post("/projects/:owner/:projectId/repo/push", web(repo.repoPush, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body })));
+restRouter.post("/projects/:owner/:projectId/repo/connect-gitea", web(repo.repoConnectGitea, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
 
 // ---- Pull requests ----
 restRouter.get(
@@ -248,6 +253,22 @@ restRouter.get("/template", web(templates.templateGet, () => ({})));
 restRouter.put("/template", web(templates.templateSet, (req) => req.body));
 restRouter.delete("/template", web(templates.templateDelete, () => ({})));
 restRouter.post("/projects/:owner/:projectId/template/deploy", web(templates.templateDeploy, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
+
+// ---- Account 관리(docs/plan-account-management.md - 프로젝트와 무관, 시스템 전체 스코프) ----
+restRouter.get("/accounts", web(accounts.accountList, () => ({})));
+restRouter.get("/account/me", web(accounts.accountMe, () => ({})));
+restRouter.put("/account/password", web(accounts.accountChangePassword, (req) => req.body));
+restRouter.put("/account/nickname", web(accounts.accountUpdateNickname, (req) => req.body));
+restRouter.post("/accounts/:accountId/reset-password", web(accounts.accountResetPassword, (req) => ({ accountId: req.params.accountId })));
+restRouter.post("/accounts/:accountId/disable", web(accounts.accountDisable, (req) => ({ accountId: req.params.accountId })));
+restRouter.post("/accounts/:accountId/enable", web(accounts.accountEnable, (req) => ({ accountId: req.params.accountId })));
+restRouter.delete("/accounts/:accountId", web(accounts.accountDelete, (req) => ({ accountId: req.params.accountId })));
+
+// ---- API 키(docs/plan-nickname-apikey-policy.md - 계정 스코프, personal 키는 프로젝트와 무관/project 키는 그 프로젝트) ----
+restRouter.get("/api-keys", web(apiKeys.apiKeyList, () => ({})));
+restRouter.post("/api-keys", web(apiKeys.apiKeyCreate, (req) => req.body, 201));
+restRouter.delete("/api-keys/:keyId", web(apiKeys.apiKeyRevoke, (req) => ({ keyId: req.params.keyId })));
+restRouter.get("/projects/:owner/:projectId/api-keys", web(apiKeys.apiKeyListForProject, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
 
 // ---- Remember ----
 restRouter.get(

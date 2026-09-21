@@ -15,3 +15,6 @@ frontmatter(`id`/`parent_id`/`type`/`kind`/`state`/`branch`/
 | SP-PSTRUCT01 | [project-structure.md](project-structure.md) | 지금 시점의 프로젝트 구조/구현 현황 요약 (CLAUDE.md에서 이관) |
 | PL-PLANURL01 | [plan-pr-code-url-scheme.md](plan-pr-code-url-scheme.md) | 완료: PR/Code URL 체계 개편 |
 | PL-PLANQA001 | [plan-qa-card-redesign.md](plan-qa-card-redesign.md) | 완료: Q&A/opinion 카드 UI 재설계 |
+| PL-PLANACCT1 | [plan-account-management.md](plan-account-management.md) | 완료: 계정 관리(임시 비밀번호 재설정, 비활성화/삭제) |
+| PL-PLANNICKN | [plan-nickname-apikey-policy.md](plan-nickname-apikey-policy.md) | 완료: 닉네임 정책 + 개인/프로젝트별 API 키 세분화 |
+| PL-PLANGITEA | [plan-gitea-provisioning.md](plan-gitea-provisioning.md) | 완료: Gitea 서버 실제 프로비저닝 |

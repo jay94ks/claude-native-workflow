@@ -4,6 +4,8 @@
 
 import { prisma } from "./prisma";
 import { requireMembership, MembershipError } from "./membership";
+import { isSuperAdmin } from "./auth";
+import { getActiveKeyScope } from "./requestScope";
 import type { ActionResult } from "./types";
 import type { ActionContext } from "./documents";
 
@@ -53,6 +55,12 @@ const SLUG_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
  * id를 쓰고 있어도 문제없다.
  */
 export async function projectCreate(payload: any, ctx: ActionContext): Promise<ActionResult> {
+  // docs/plan-nickname-apikey-policy.md - 새 프로젝트를 만드는 건 그
+  // 정의상 "아직 없는" 프로젝트를 대상으로 하므로 특정 프로젝트로 좁힌
+  // 키로는 애초에 의미가 없다(스코프 밖 행위) - personal 키로만 허용.
+  if (getActiveKeyScope().type !== "unrestricted") {
+    return fail("새 프로젝트 생성은 프로젝트로 범위가 제한된 API 키로는 할 수 없습니다.");
+  }
   const { name, description, visibility, defaultBranch, id } = payload;
   if (typeof name !== "string" || !name) return fail("name이 필요합니다.");
   if (typeof id !== "string" || !id) return fail("id가 필요합니다.");
@@ -319,6 +327,52 @@ export async function projectTransfer(payload: any, ctx: ActionContext): Promise
   ]);
 
   return { ok: true };
+}
+
+/**
+ * docs/plan-account-management.md - `project.transfer`는 그 프로젝트
+ * 안에서 Admin **역할**만 옮길 뿐, `Project.creatorAccountId`(웹 URL
+ * `/{생성자}/{project id}`의 그 부분, `project.transfer`가 일부러
+ * 안 건드리는 영구 필드)는 그대로 남는다는 걸 계정 삭제 기능을
+ * 만들다가 재확인했다 - 즉 생성자 계정을 지우려면 이 필드 자체를
+ * 다른 계정으로 옮기는 별도 경로가 있어야 한다(없으면 "content
+ * preservation" 정책이 실행 불가능한 약속이 된다). 그 프로젝트의
+ * Admin이거나 시스템 superAdmin이면 호출 가능(단일-Admin 프로젝트의
+ * 그 Admin 계정 자체를 지우려는 상황엔 대상 계정이 이미 로그인을
+ * 못 할 수도 있어 superAdmin 경로가 필요) - 대상은 이미 그 프로젝트의
+ * collaborator여야 하고(project.transfer와 동일 전제), 대상 계정
+ * 소유 범위에 같은 slug가 이미 있으면(`@@unique([creatorAccountId,
+ * slug])`) 거부한다. URL이 실제로 바뀌므로 신중하게 다뤄야 하는
+ * 작업이다고 판단 - 이 함수 자체는 Admin 역할은 건드리지 않는다
+ * (필요하면 projectTransfer와 함께 쓴다).
+ */
+export async function projectTransferOwnership(payload: any, ctx: ActionContext): Promise<ActionResult> {
+  const { projectId, toUsername } = payload;
+  if (typeof projectId !== "string" || !projectId) return fail("projectId가 필요합니다.");
+
+  const adminFailure = await requireAdmin(projectId, ctx.architectId);
+  if (adminFailure && !(await isSuperAdmin(ctx.architectId))) return adminFailure;
+
+  if (typeof toUsername !== "string" || !toUsername) return fail("toUsername이 필요합니다.");
+  const targetAccount = await prisma.account.findUnique({ where: { username: toUsername } });
+  if (!targetAccount) return fail(`계정 "${toUsername}"을 찾을 수 없습니다.`);
+
+  const targetMembership = await prisma.projectMembership.findUnique({
+    where: { projectId_accountId: { projectId, accountId: targetAccount.id } },
+  });
+  if (!targetMembership) return fail(`${toUsername}은 아직 이 프로젝트의 collaborator가 아닙니다 - 먼저 초대하세요.`);
+
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) return fail("프로젝트를 찾을 수 없습니다.");
+  if (project.creatorAccountId === targetAccount.id) return fail("이미 이 계정이 생성자입니다.");
+
+  const collision = await prisma.project.findUnique({
+    where: { creatorAccountId_slug: { creatorAccountId: targetAccount.id, slug: project.slug } },
+  });
+  if (collision) return fail(`${toUsername}은 이미 같은 id("${project.slug}")의 다른 프로젝트를 갖고 있습니다.`);
+
+  await prisma.project.update({ where: { id: projectId }, data: { creatorAccountId: targetAccount.id } });
+  return { ok: true, data: { newOwnerUsername: toUsername } };
 }
 
 /** 파기("제한구역") - Admin만, 프로젝트와 그 아래 전부(문서/멤버십/초대/메시지/remember)를 영구 삭제한다. */

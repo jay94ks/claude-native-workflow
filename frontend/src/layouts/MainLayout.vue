@@ -36,9 +36,27 @@
 
         <q-space />
 
-        <div class="row items-center no-wrap" style="gap: 10px">
-          <span class="text-white text-caption">{{ auth.username }}</span>
+        <div class="row items-center no-wrap" style="gap: 10px; cursor: pointer">
+          <span class="text-white text-caption">{{ displayLabel || auth.username }}</span>
           <div class="gh-avatar" style="width: 28px; height: 28px; font-size: 13px">{{ initial }}</div>
+          <q-menu>
+            <q-list style="min-width: 160px">
+              <q-item clickable v-close-popup @click="showNickname = true">
+                <q-item-section>닉네임 변경</q-item-section>
+              </q-item>
+              <q-item clickable v-close-popup @click="showChangePassword = true">
+                <q-item-section>비밀번호 변경</q-item-section>
+              </q-item>
+              <q-item clickable v-close-popup :to="'/keys'">
+                <q-item-section>API 키 관리</q-item-section>
+              </q-item>
+              <!-- docs/plan-account-management.md - superAdmin(부트스트랩 admin
+                   계정) 힌트일 뿐, 실제 접근 제어는 AccountsPage/서버가 한다. -->
+              <q-item v-if="auth.username === 'admin'" clickable v-close-popup :to="'/accounts'">
+                <q-item-section>계정 관리</q-item-section>
+              </q-item>
+            </q-list>
+          </q-menu>
           <q-btn flat dense round icon="logout" color="white" @click="logout" />
         </div>
       </q-toolbar>
@@ -49,16 +67,21 @@
     </q-page-container>
 
     <MessagesDialog v-if="currentProject" v-model="showMessages" :owner="currentProject.ownerUsername" :project-id="currentProject.id" />
+    <ChangePasswordDialog v-model="showChangePassword" />
+    <NicknameDialog v-model="showNickname" @updated="loadDisplayLabel" />
   </q-layout>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
 import { useUiStore } from "stores/ui";
+import * as api from "src/api/client";
 import MessagesDialog from "components/MessagesDialog.vue";
+import ChangePasswordDialog from "components/ChangePasswordDialog.vue";
+import NicknameDialog from "components/NicknameDialog.vue";
 
 const auth = useAuthStore();
 const project = useProjectStore();
@@ -66,8 +89,22 @@ const ui = useUiStore();
 const router = useRouter();
 const route = useRoute();
 const showMessages = ref(false);
+const showChangePassword = ref(false);
+const showNickname = ref(false);
+const displayLabel = ref("");
 
 const initial = computed(() => (auth.username ?? "?").charAt(0).toUpperCase());
+
+// docs/plan-nickname-apikey-policy.md - 탑바에 username 대신 표시 라벨
+// ("닉네임 #번호", 미설정이면 "설계자 #번호")을 보여준다. 로그인 응답엔
+// 없는 정보라 account.me로 한 번 더 조회한다.
+async function loadDisplayLabel() {
+  if (!auth.isLoggedIn) return;
+  const result = await api.getMe(auth.apiKey!);
+  if (result.ok) displayLabel.value = (result.data as { displayLabel: string }).displayLabel;
+}
+onMounted(loadDisplayLabel);
+watch(() => auth.apiKey, loadDisplayLabel);
 
 // project.current는 마지막으로 연 프로젝트가 남아있을 수 있으므로, 지금
 // 라우트의 owner+projectId와 실제로 일치할 때만 "프로젝트 화면"으로

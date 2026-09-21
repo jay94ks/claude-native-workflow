@@ -42,6 +42,10 @@ const queryActions = [
   "repo.commits",
   "pr.list",
   "pr.get",
+  "account.list",
+  "account.me",
+  "apiKey.list",
+  "apiKey.listForProject",
 ];
 const mutationActions = [
   "docs.add",
@@ -55,11 +59,13 @@ const mutationActions = [
   "message.send",
   "message.transition",
   "repo.push",
+  "repo.connectGitea",
   "project.create",
   "project.update",
   "project.invite",
   "project.acceptInvite",
   "project.transfer",
+  "project.transferOwnership",
   "project.destroy",
   "template.set",
   "template.delete",
@@ -71,6 +77,14 @@ const mutationActions = [
   "pr.merge",
   "pr.close",
   "repo.writeFile",
+  "account.changePassword",
+  "account.updateNickname",
+  "account.resetPassword",
+  "account.disable",
+  "account.enable",
+  "account.delete",
+  "apiKey.create",
+  "apiKey.revoke",
 ];
 
 async function runAction(action: string, payload: Record<string, unknown> | undefined) {
