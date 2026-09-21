@@ -38,7 +38,7 @@ import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
 import * as api from "src/api/client";
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();
 const project = useProjectStore();
 
@@ -56,7 +56,7 @@ const inviteError = ref("");
 const inviteMessage = ref("");
 
 async function load() {
-  const result = await api.getProjectMembers(auth.apiKey!, props.projectId);
+  const result = await api.getProjectMembers(auth.apiKey!, props.owner, props.projectId);
   if (result.ok) {
     const data = result.data as { members: Member[]; pendingInvites: Member[] };
     members.value = data.members;
@@ -68,7 +68,7 @@ async function invite() {
   inviting.value = true;
   inviteError.value = "";
   inviteMessage.value = "";
-  const result = await api.inviteToProject(auth.apiKey!, props.projectId, { username: inviteUsername.value, role: inviteRole.value });
+  const result = await api.inviteToProject(auth.apiKey!, props.owner, props.projectId, { username: inviteUsername.value, role: inviteRole.value });
   inviting.value = false;
   if (!result.ok) {
     inviteError.value = result.reason?.join(", ") ?? "초대에 실패했습니다.";

@@ -69,7 +69,7 @@ interface ResolvedDoc {
   parent_id: string | null;
 }
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();
 const router = useRouter();
 const feed = ref<DocSummary[]>([]);
@@ -97,7 +97,7 @@ function kindLabel(type: string): string {
 // 아무 자리 표시 kind("XX")를 붙여 docs.get을 부르면 실제 문서(진짜
 // kind 포함)를 그대로 돌려받을 수 있다.
 async function resolveByRawId(rawId: string): Promise<ResolvedDoc | null> {
-  const result = await api.getDocument(auth.apiKey!, props.projectId, `XX-${rawId}`);
+  const result = await api.getDocument(auth.apiKey!, props.owner, props.projectId, `XX-${rawId}`);
   if (!result.ok) return null;
   return result.data as ResolvedDoc;
 }
@@ -108,9 +108,9 @@ function parseIdFromCode(code: string): string {
 async function load() {
   loading.value = true;
   const [q, a, o] = await Promise.all([
-    api.listDocuments(auth.apiKey!, props.projectId, { type: "question" }),
-    api.listDocuments(auth.apiKey!, props.projectId, { type: "answer" }),
-    api.listDocuments(auth.apiKey!, props.projectId, { type: "opinion" }),
+    api.listDocuments(auth.apiKey!, props.owner, props.projectId, { type: "question" }),
+    api.listDocuments(auth.apiKey!, props.owner, props.projectId, { type: "answer" }),
+    api.listDocuments(auth.apiKey!, props.owner, props.projectId, { type: "opinion" }),
   ]);
   const items: DocSummary[] = [];
   for (const r of [q, a, o]) {
@@ -138,7 +138,7 @@ async function loadChildCounts() {
   await Promise.all(
     feed.value.map(async (item) => {
       const rawId = parseIdFromCode(item.code);
-      const result = await api.listDocuments(auth.apiKey!, props.projectId, { parentId: rawId });
+      const result = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { parentId: rawId });
       if (result.ok) childCounts[item.code] = (result.data as { items: unknown[] }).items.length;
     })
   );
@@ -187,14 +187,14 @@ async function openItem(item: DocSummary) {
 
   const query: Record<string, string> = { open: current.code, highlight: item.code };
   if (current.type === "tracker" || current.type === "test") query.inner = current.type;
-  router.push({ path: `/projects/${props.projectId}/${tabPath}`, query });
+  router.push({ path: `/${props.owner}/${props.projectId}/${tabPath}`, query });
 }
 
 function goToThread(code: string) {
-  router.push(`/projects/${props.projectId}/thread/${code}`);
+  router.push(`/${props.owner}/${props.projectId}/thread/${code}`);
 }
 function goToCode(code: string) {
-  router.push(`/projects/${props.projectId}/thread/${code}`);
+  router.push(`/${props.owner}/${props.projectId}/thread/${code}`);
 }
 
 onMounted(load);

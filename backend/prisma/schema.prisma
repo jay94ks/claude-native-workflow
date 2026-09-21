@@ -34,11 +34,12 @@ model Account {
   passwordHash String
   createdAt    DateTime @default(now())
 
-  memberships ProjectMembership[]
-  invites     ProjectInvite[]
-  apiKeys     ApiKey[]
-  remembers   RememberItem[]
-  templates   Template[]
+  memberships     ProjectMembership[]
+  invites         ProjectInvite[]
+  apiKeys         ApiKey[]
+  remembers       RememberItem[]
+  templates       Template[]
+  createdProjects Project[]           @relation("ProjectCreator")
 }
 
 model Project {
@@ -51,6 +52,27 @@ model Project {
   pushMirrorUrl     String? // 옵션 push-mirror 대상 (design-notes.md "저장소(git) 관리" - 외부로의 동기화는 옵션)
   createdAt         DateTime   @default(now())
 
+  // 설계자 요청(2026-09-21 후속) - 웹 접속 path를 /{생성자 login명}/{project id}로
+  // 바꾸면서 필요해졌다. Admin은 project.transfer로 넘어갈 수 있어(현재 Admin ==
+  // 생성자가 아닐 수 있음) 별도로 "생성자"를 영구 기록해야 한다 - transfer가 일어나도
+  // 이 필드는 안 바뀐다(URL도 그대로 유지).
+  creatorAccountId String
+  creator          Account @relation("ProjectCreator", fields: [creatorAccountId], references: [id])
+
+  // 설계자 요청(2026-09-21 추가 후속) - "프로젝트 id는 설계자별로 관리되어야
+  // 한다"(서로 다른 두 설계자가 똑같은 id로 각자 프로젝트를 가질 수 있어야
+  // 함) - 그래서 이 값(설계자가 만들 때 직접 고르는 문자열, 웹 URL/CLI/API가
+  // "projectId"라고 부르는 바로 그 값)은 전역 유일이 아니라 `creatorAccountId`
+  // 범위에서만 유일하다(`@@unique([creatorAccountId, slug])`). 위의 `id`
+  // (cuid)는 여전히 전역 유일한 내부 PK로 남아 Document/PullRequest 등
+  // 모든 관계가 그대로 이 필드를 참조한다 - 이 프로젝트 자체는 스키마
+  // 변경이 전혀 없다. `owner`(생성자 username)+`slug` 쌍을 실제 내부 PK로
+  // 바꾸는 변환은 API 진입점 한 곳(`core/projectResolve.ts` +
+  // `api/actions.ts`의 dispatch(), `api/rest.ts`의 web())에만 있다 -
+  // 그 아래 모든 액션 핸들러는 지금까지처럼 `payload.projectId`를 "이미
+  // 유일하게 식별된 내부 PK"로 그대로 취급한다.
+  slug String
+
   memberships  ProjectMembership[]
   invites      ProjectInvite[]
   documents    Document[]
@@ -58,10 +80,10 @@ model Project {
   messages     Message[]
   webhooks     Webhook[]
   pullRequests PullRequest[]
+
+  @@unique([creatorAccountId, slug])
 }
 
-// "Admin"이 프로젝트당 1명이어야 한다는 제약은 DB에서 표현하지 않고
-// 애플리케이션 레이어에서 검증한다 (TODO: 가능하면 partial unique index로 보강).
 model ProjectMembership {
   id        String         @id @default(cuid())
   projectId String

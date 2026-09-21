@@ -38,7 +38,7 @@
               round
               size="sm"
               icon="more_horiz"
-              :to="`/projects/${projectId}/thread/${child.code}`"
+              :to="`/${owner}/${projectId}/thread/${child.code}`"
             >
               <q-tooltip>자식 항목 {{ childCounts[child.code] }}개 보기</q-tooltip>
             </q-btn>
@@ -66,7 +66,7 @@ interface DocFull {
   author: string;
 }
 
-const props = defineProps<{ projectId: string; code: string }>();
+const props = defineProps<{ owner: string; projectId: string; code: string }>();
 const auth = useAuthStore();
 const router = useRouter();
 
@@ -102,7 +102,7 @@ function goBack() {
 
 async function load() {
   loading.value = true;
-  const result = await api.getDocument(auth.apiKey!, props.projectId, props.code);
+  const result = await api.getDocument(auth.apiKey!, props.owner, props.projectId, props.code);
   if (!result.ok) {
     item.value = null;
     loading.value = false;
@@ -111,11 +111,11 @@ async function load() {
   item.value = result.data as DocFull;
 
   const rawId = parseIdFromCode(props.code);
-  const listResult = await api.listDocuments(auth.apiKey!, props.projectId, { parentId: rawId });
+  const listResult = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { parentId: rawId });
   const summaries = listResult.ok ? (listResult.data as { items: { code: string }[] }).items : [];
   const fulls = await Promise.all(
     summaries.map(async (s) => {
-      const r = await api.getDocument(auth.apiKey!, props.projectId, s.code);
+      const r = await api.getDocument(auth.apiKey!, props.owner, props.projectId, s.code);
       return r.ok ? (r.data as DocFull) : null;
     })
   );
@@ -126,12 +126,12 @@ async function load() {
   await Promise.all(
     children.value.map(async (child) => {
       const childRawId = parseIdFromCode(child.code);
-      const r = await api.listDocuments(auth.apiKey!, props.projectId, { parentId: childRawId });
+      const r = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { parentId: childRawId });
       if (r.ok) childCounts.value[child.code] = (r.data as { items: unknown[] }).items.length;
     })
   );
 }
 
 onMounted(load);
-watch(() => props.code, load);
+watch(() => [props.owner, props.projectId, props.code], load);
 </script>

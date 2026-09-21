@@ -1,11 +1,12 @@
 <template>
   <DocTypeWorkspace
+    :owner="owner"
     :project-id="projectId"
     type="plan"
     :kinds="['PL']"
     title="Plans"
     create-label="새 계획"
-    :create-route="`/projects/${projectId}/plans/new`"
+    :create-route="`/${owner}/${projectId}/plans/new`"
     :transitions-by-state="transitions"
     :open-code="openCode"
     :highlight-code="highlightCode"
@@ -17,7 +18,7 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 import DocTypeWorkspace from "components/DocTypeWorkspace.vue";
 
-defineProps<{ projectId: string }>();
+defineProps<{ owner: string; projectId: string }>();
 
 const route = useRoute();
 const openCode = computed(() => (typeof route.query.open === "string" ? route.query.open : undefined));

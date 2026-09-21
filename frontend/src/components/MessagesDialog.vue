@@ -51,7 +51,7 @@ interface Message {
   createdAt: string;
 }
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const model = defineModel<boolean>({ default: false });
 
 const auth = useAuthStore();
@@ -64,20 +64,20 @@ const sendError = ref("");
 
 async function load() {
   loading.value = true;
-  const result = await api.listMessages(auth.apiKey!, props.projectId);
+  const result = await api.listMessages(auth.apiKey!, props.owner, props.projectId);
   if (result.ok) messages.value = (result.data as { items: Message[] }).items;
   loading.value = false;
 }
 
 async function markDone(m: Message) {
-  const result = await api.transitionMessage(auth.apiKey!, props.projectId, m.id, "done");
+  const result = await api.transitionMessage(auth.apiKey!, props.owner, props.projectId, m.id, "done");
   if (result.ok) await load();
 }
 
 async function send() {
   sending.value = true;
   sendError.value = "";
-  const result = await api.sendMessage(auth.apiKey!, props.projectId, {
+  const result = await api.sendMessage(auth.apiKey!, props.owner, props.projectId, {
     from: urgent.value ? "emerg" : "from-web",
     to: "agent",
     body: body.value,

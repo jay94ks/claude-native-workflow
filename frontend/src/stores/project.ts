@@ -4,6 +4,7 @@ import * as api from "../api/client";
 
 export interface CurrentProject {
   id: string;
+  ownerUsername: string;
   name: string;
   description: string | null;
   visibility: "PUBLIC" | "PRIVATE";
@@ -24,10 +25,10 @@ export const useProjectStore = defineStore("project", {
     canWrite: (state) => state.current?.myRole === "ADMIN" || state.current?.myRole === "WRITE",
   },
   actions: {
-    async load(projectId: string) {
+    async load(owner: string, projectId: string) {
       this.loading = true;
       const auth = useAuthStore();
-      const result = await api.getProject(auth.apiKey!, projectId);
+      const result = await api.getProject(auth.apiKey!, owner, projectId);
       this.loading = false;
       if (result.ok) {
         this.current = result.data as CurrentProject;

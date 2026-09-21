@@ -22,11 +22,11 @@
       <q-separator class="q-my-sm" />
 
       <div class="q-gutter-xs">
-        <router-link :to="`/projects/${projectId}/settings/collaborators`" class="row items-center gh-link" style="gap: 6px">
+        <router-link :to="`/${owner}/${projectId}/settings/collaborators`" class="row items-center gh-link" style="gap: 6px">
           <q-icon name="group" size="16px" />
           <span>{{ members.length }} collaborators</span>
         </router-link>
-        <router-link :to="`/projects/${projectId}/settings/template`" class="row items-center gh-link" style="gap: 6px">
+        <router-link :to="`/${owner}/${projectId}/settings/template`" class="row items-center gh-link" style="gap: 6px">
           <q-icon name="integration_instructions" size="16px" />
           <span>Template</span>
         </router-link>
@@ -85,7 +85,7 @@ import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
 import * as api from "src/api/client";
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();
 const project = useProjectStore();
 
@@ -145,8 +145,8 @@ const typeBreakdown = computed(() => {
 
 async function load() {
   const [membersResult, statusResult] = await Promise.all([
-    api.getProjectMembers(auth.apiKey!, props.projectId),
-    api.getDocsStatus(auth.apiKey!, props.projectId),
+    api.getProjectMembers(auth.apiKey!, props.owner, props.projectId),
+    api.getDocsStatus(auth.apiKey!, props.owner, props.projectId),
   ]);
   if (membersResult.ok) members.value = (membersResult.data as { members: Member[] }).members;
   if (statusResult.ok) statusByKind.value = (statusResult.data as { byKind: Record<string, KindStatus> }).byKind;

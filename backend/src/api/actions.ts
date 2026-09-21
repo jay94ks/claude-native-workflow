@@ -7,6 +7,7 @@ import * as templates from "../core/templates";
 import * as webhooks from "../core/webhooks";
 import * as repoBrowse from "../core/repoBrowse";
 import * as pullRequests from "../core/pullRequests";
+import { resolveProjectId } from "../core/projectResolve";
 import type { ActionResult } from "../core/types";
 import type { ActionContext } from "../core/documents";
 
@@ -62,6 +63,7 @@ const registry: Record<string, Handler> = {
   "pr.create": pullRequests.prCreate,
   "pr.list": pullRequests.prList,
   "pr.get": pullRequests.prGet,
+  "pr.update": pullRequests.prUpdate,
   "pr.merge": pullRequests.prMerge,
   "pr.close": pullRequests.prClose,
 };
@@ -88,8 +90,24 @@ export async function dispatch(request: ActionRequest, ctx: ActionContext): Prom
   if (!handler) {
     return { ok: false, reason: [`unknown action "${request.action}"`] };
   }
+
+  // 설계자 요청(2026-09-21 후속) - project id는 이제 생성자(owner)별로만
+  // 유일하다. `owner`(생성자 username) + `projectId`(그 owner 범위의 slug)가
+  // 함께 왔으면 이 시점에 실제 내부 PK로 미리 바꿔치기한다 - 아래 모든
+  // 핸들러는 지금까지처럼 payload.projectId를 이미 유일하게 식별된 값으로
+  // 취급해도 안전하다(owner 개념 자체를 몰라도 됨). owner 없이 projectId만
+  // 온 요청(예: 이 필드가 필요 없는 project.create/list 등)은 그대로 통과.
+  let payload: ActionRequest = request;
+  if (typeof request.owner === "string" && typeof request.projectId === "string") {
+    const resolved = await resolveProjectId(request.owner, request.projectId);
+    if (!resolved) {
+      return { ok: false, reason: [`"${request.owner}/${request.projectId}" 프로젝트를 찾을 수 없습니다.`] };
+    }
+    payload = { ...request, projectId: resolved };
+  }
+
   try {
-    return await handler(request, ctx);
+    return await handler(payload, ctx);
   } catch (err) {
     console.error(`[actions] "${request.action}" threw an uncaught error:`, err);
     return { ok: false, reason: [`"${request.action}" 처리 중 예상치 못한 오류가 발생했습니다: ${(err as Error).message}`] };

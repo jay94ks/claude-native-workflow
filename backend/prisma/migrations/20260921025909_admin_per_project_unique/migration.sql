@@ -1,0 +1,14 @@
+-- 설계자 요청(2026-09-21 후속) - "Admin은 프로젝트당 1명"은 지금까지
+-- 애플리케이션 레이어(project.create가 생성자에게만 ADMIN을 부여,
+-- project.invite가 ADMIN 부여를 거부, project.transfer가 한 트랜잭션
+-- 안에서 기존 Admin을 WRITE로 내리고 새 Admin을 동시에 올림)에서만
+-- 지켜지고 있었다 - 세 경로 모두 실제로 이 불변식을 깨지 않는 걸
+-- 확인했지만(design-notes.md 기록), DB 제약으로도 이중 방어해두면
+-- 나중에 새 코드 경로가 실수로 이 불변식을 깨는 걸 애플리케이션
+-- 버그가 아니라 DB 에러로 즉시 잡아낼 수 있다.
+--
+-- Prisma 스키마 DSL은 부분 unique 인덱스(WHERE 절)를 표현할 수 없어서
+-- 이 마이그레이션에 직접 SQL로 추가한다 - role='ADMIN'인 행에 대해서만
+-- projectId가 유일하도록 강제(READ/WRITE는 그대로 프로젝트당 여러 명
+-- 가능, projectId+accountId 조합의 기존 @@unique는 그대로 유지된다).
+CREATE UNIQUE INDEX "ProjectMembership_admin_per_project" ON "ProjectMembership" ("projectId") WHERE ("role" = 'ADMIN');

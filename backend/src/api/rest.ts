@@ -19,6 +19,7 @@ import * as pullRequests from "../core/pullRequests";
 import { collectAndDeliver } from "../core/messages";
 import { requireApiKey } from "./authMiddleware";
 import { resolveChannel } from "../core/channel";
+import { resolveProjectId } from "../core/projectResolve";
 import type { ActionResult } from "../core/types";
 import type { ActionContext } from "../core/documents";
 
@@ -39,7 +40,19 @@ function numOr(v: unknown): number | undefined {
 function web(fn: CoreFn, buildPayload: (req: Request) => Record<string, unknown>, successStatus = 200) {
   return async (req: Request, res: Response) => {
     const ctx: ActionContext = { architectId: req.architectId!, channel: resolveChannel(req.header("x-cnw-channel")) };
-    const payload = buildPayload(req);
+    let payload = buildPayload(req);
+
+    // 설계자 요청(2026-09-21 후속) - project id는 이제 생성자(owner)별로만
+    // 유일하다 - `:owner/:projectId` 경로 파라미터를 실제 내부 PK로
+    // 여기 한 곳에서만 바꿔치기하면 core/*.ts의 기존 핸들러는 전혀 안
+    // 건드려도 된다(actions.ts의 dispatch()와 동치인 REST 쪽 진입점).
+    if (typeof payload.owner === "string" && typeof payload.projectId === "string") {
+      const resolved = await resolveProjectId(payload.owner, payload.projectId);
+      if (!resolved) {
+        return res.status(404).json({ error: [`"${payload.owner}/${payload.projectId}" 프로젝트를 찾을 수 없습니다.`] });
+      }
+      payload = { ...payload, projectId: resolved };
+    }
 
     let result: ActionResult;
     try {
@@ -74,85 +87,87 @@ restRouter.use(requireApiKey);
 restRouter.get("/projects", web(projects.projectList, (req) => ({ page: numOr(req.query.page) })));
 restRouter.post("/projects", web(projects.projectCreate, (req) => req.body, 201));
 restRouter.get("/projects/invites-for-me", web(projects.projectInvitesForMe, () => ({})));
-restRouter.get("/projects/:projectId", web(projects.projectGet, (req) => ({ projectId: req.params.projectId })));
-restRouter.patch("/projects/:projectId", web(projects.projectUpdate, (req) => ({ projectId: req.params.projectId, ...req.body })));
-restRouter.delete("/projects/:projectId", web(projects.projectDestroy, (req) => ({ projectId: req.params.projectId })));
-restRouter.get("/projects/:projectId/members", web(projects.projectMembers, (req) => ({ projectId: req.params.projectId })));
-restRouter.post("/projects/:projectId/invite", web(projects.projectInvite, (req) => ({ projectId: req.params.projectId, ...req.body })));
-restRouter.post("/projects/:projectId/accept-invite", web(projects.projectAcceptInvite, (req) => ({ projectId: req.params.projectId })));
-restRouter.post("/projects/:projectId/transfer", web(projects.projectTransfer, (req) => ({ projectId: req.params.projectId, ...req.body })));
+restRouter.get("/projects/:owner/:projectId", web(projects.projectGet, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
+restRouter.patch("/projects/:owner/:projectId", web(projects.projectUpdate, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body })));
+restRouter.delete("/projects/:owner/:projectId", web(projects.projectDestroy, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
+restRouter.get("/projects/:owner/:projectId/members", web(projects.projectMembers, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
+restRouter.post("/projects/:owner/:projectId/invite", web(projects.projectInvite, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body })));
+restRouter.post("/projects/:owner/:projectId/accept-invite", web(projects.projectAcceptInvite, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
+restRouter.post("/projects/:owner/:projectId/transfer", web(projects.projectTransfer, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body })));
 
 // ---- Documents ----
 restRouter.get(
-  "/projects/:projectId/documents",
-  web(documents.docsList, (req) => ({ projectId: req.params.projectId, ...req.query, page: numOr(req.query.page) }))
+  "/projects/:owner/:projectId/documents",
+  web(documents.docsList, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.query, page: numOr(req.query.page) }))
 );
 restRouter.post(
-  "/projects/:projectId/documents",
-  web(documents.docsAdd, (req) => ({ projectId: req.params.projectId, ...req.body }), 201)
+  "/projects/:owner/:projectId/documents",
+  web(documents.docsAdd, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body }), 201)
 );
 restRouter.get(
-  "/projects/:projectId/documents/search",
-  web(documents.docsSearch, (req) => ({ projectId: req.params.projectId, ...req.query, page: numOr(req.query.page) }))
+  "/projects/:owner/:projectId/documents/search",
+  web(documents.docsSearch, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.query, page: numOr(req.query.page) }))
 );
-restRouter.get("/projects/:projectId/documents/status", web(documents.docsStatus, (req) => ({ projectId: req.params.projectId })));
+restRouter.get("/projects/:owner/:projectId/documents/status", web(documents.docsStatus, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
 restRouter.get(
-  "/projects/:projectId/documents/grep",
-  web(documents.docsGrep, (req) => ({ projectId: req.params.projectId, code: req.query.code, pattern: req.query.pattern }))
+  "/projects/:owner/:projectId/documents/grep",
+  web(documents.docsGrep, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, code: req.query.code, pattern: req.query.pattern }))
 );
 restRouter.get(
-  "/projects/:projectId/documents/:code",
-  web(documents.docsGet, (req) => ({ projectId: req.params.projectId, code: req.params.code }))
+  "/projects/:owner/:projectId/documents/:code",
+  web(documents.docsGet, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, code: req.params.code }))
 );
 restRouter.patch(
-  "/projects/:projectId/documents/:code",
-  web(documents.docsUpdate, (req) => ({ projectId: req.params.projectId, code: req.params.code, ...req.body }))
+  "/projects/:owner/:projectId/documents/:code",
+  web(documents.docsUpdate, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, code: req.params.code, ...req.body }))
 );
 restRouter.delete(
-  "/projects/:projectId/documents/:code",
-  web(documents.docsDelete, (req) => ({ projectId: req.params.projectId, code: req.params.code, ...req.body }))
+  "/projects/:owner/:projectId/documents/:code",
+  web(documents.docsDelete, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, code: req.params.code, ...req.body }))
 );
 restRouter.post(
-  "/projects/:projectId/documents/:code/transition",
+  "/projects/:owner/:projectId/documents/:code/transition",
   web(documents.docsTransition, (req) => ({
+    owner: req.params.owner,
     projectId: req.params.projectId,
     state: { [req.params.code]: [req.body.to, req.body.from] },
   }))
 );
 restRouter.post(
-  "/projects/:projectId/documents/:code/tag",
-  web(documents.docsTag, (req) => ({ projectId: req.params.projectId, code: req.params.code, ...req.body }))
+  "/projects/:owner/:projectId/documents/:code/tag",
+  web(documents.docsTag, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, code: req.params.code, ...req.body }))
 );
 
 // ---- Repo (Code 탭) ----
-restRouter.get("/projects/:projectId/repo/branches", web(repoBrowse.repoBranches, (req) => ({ projectId: req.params.projectId })));
+restRouter.get("/projects/:owner/:projectId/repo/branches", web(repoBrowse.repoBranches, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
 restRouter.get(
-  "/projects/:projectId/repo/tree",
-  web(repoBrowse.repoTree, (req) => ({ projectId: req.params.projectId, branch: req.query.branch, path: req.query.path ?? "" }))
+  "/projects/:owner/:projectId/repo/tree",
+  web(repoBrowse.repoTree, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, branch: req.query.branch, path: req.query.path ?? "" }))
 );
 restRouter.get(
-  "/projects/:projectId/repo/file",
-  web(repoBrowse.repoFile, (req) => ({ projectId: req.params.projectId, branch: req.query.branch, path: req.query.path }))
+  "/projects/:owner/:projectId/repo/file",
+  web(repoBrowse.repoFile, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, branch: req.query.branch, path: req.query.path }))
 );
 restRouter.put(
-  "/projects/:projectId/repo/file",
-  web(repoBrowse.repoWriteFile, (req) => ({ projectId: req.params.projectId, ...req.body }))
+  "/projects/:owner/:projectId/repo/file",
+  web(repoBrowse.repoWriteFile, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body }))
 );
 restRouter.get(
-  "/projects/:projectId/repo/commits",
-  web(repoBrowse.repoCommits, (req) => ({ projectId: req.params.projectId, branch: req.query.branch, limit: numOr(req.query.limit) }))
+  "/projects/:owner/:projectId/repo/commits",
+  web(repoBrowse.repoCommits, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, branch: req.query.branch, limit: numOr(req.query.limit) }))
 );
 restRouter.get(
-  "/projects/:projectId/repo/commit-info",
-  web(repoBrowse.repoCommitInfo, (req) => ({ projectId: req.params.projectId, commitId: req.query.commitId }))
+  "/projects/:owner/:projectId/repo/commit-info",
+  web(repoBrowse.repoCommitInfo, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, commitId: req.query.commitId }))
 );
 restRouter.get(
-  "/projects/:projectId/repo/commit-diff",
-  web(repoBrowse.repoCommitDiff, (req) => ({ projectId: req.params.projectId, commitId: req.query.commitId }))
+  "/projects/:owner/:projectId/repo/commit-diff",
+  web(repoBrowse.repoCommitDiff, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, commitId: req.query.commitId }))
 );
 restRouter.get(
-  "/projects/:projectId/repo/file-commits",
+  "/projects/:owner/:projectId/repo/file-commits",
   web(repoBrowse.repoFileCommits, (req) => ({
+    owner: req.params.owner,
     projectId: req.params.projectId,
     branch: req.query.branch,
     path: req.query.path,
@@ -160,78 +175,82 @@ restRouter.get(
   }))
 );
 restRouter.get(
-  "/projects/:projectId/repo/diff",
-  web(repoBrowse.repoDiffFile, (req) => ({ projectId: req.params.projectId, base: req.query.base, head: req.query.head, path: req.query.path }))
+  "/projects/:owner/:projectId/repo/diff",
+  web(repoBrowse.repoDiffFile, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, base: req.query.base, head: req.query.head, path: req.query.path }))
 );
-restRouter.post("/projects/:projectId/repo/push", web(repo.repoPush, (req) => ({ projectId: req.params.projectId, ...req.body })));
+restRouter.post("/projects/:owner/:projectId/repo/push", web(repo.repoPush, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body })));
 
 // ---- Pull requests ----
 restRouter.get(
-  "/projects/:projectId/pull-requests",
-  web(pullRequests.prList, (req) => ({ projectId: req.params.projectId, state: req.query.state }))
+  "/projects/:owner/:projectId/pull-requests",
+  web(pullRequests.prList, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, state: req.query.state }))
 );
 restRouter.post(
-  "/projects/:projectId/pull-requests",
-  web(pullRequests.prCreate, (req) => ({ projectId: req.params.projectId, ...req.body }), 201)
+  "/projects/:owner/:projectId/pull-requests",
+  web(pullRequests.prCreate, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body }), 201)
 );
 restRouter.get(
-  "/projects/:projectId/pull-requests/:id",
-  web(pullRequests.prGet, (req) => ({ projectId: req.params.projectId, id: req.params.id }))
+  "/projects/:owner/:projectId/pull-requests/:id",
+  web(pullRequests.prGet, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, id: req.params.id }))
+);
+restRouter.patch(
+  "/projects/:owner/:projectId/pull-requests/:id",
+  web(pullRequests.prUpdate, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, id: req.params.id, ...req.body }))
 );
 restRouter.post(
-  "/projects/:projectId/pull-requests/:id/merge",
-  web(pullRequests.prMerge, (req) => ({ projectId: req.params.projectId, id: req.params.id }))
+  "/projects/:owner/:projectId/pull-requests/:id/merge",
+  web(pullRequests.prMerge, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, id: req.params.id }))
 );
 restRouter.post(
-  "/projects/:projectId/pull-requests/:id/close",
-  web(pullRequests.prClose, (req) => ({ projectId: req.params.projectId, id: req.params.id }))
+  "/projects/:owner/:projectId/pull-requests/:id/close",
+  web(pullRequests.prClose, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, id: req.params.id }))
 );
 
 // ---- Messages ----
 restRouter.get(
-  "/projects/:projectId/messages",
-  web(messages.messageList, (req) => ({ projectId: req.params.projectId, state: req.query.state, page: numOr(req.query.page) }))
+  "/projects/:owner/:projectId/messages",
+  web(messages.messageList, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, state: req.query.state, page: numOr(req.query.page) }))
 );
 restRouter.post(
-  "/projects/:projectId/messages",
-  web(messages.messageSend, (req) => ({ projectId: req.params.projectId, ...req.body }), 201)
+  "/projects/:owner/:projectId/messages",
+  web(messages.messageSend, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body }), 201)
 );
 restRouter.post(
-  "/projects/:projectId/messages/:id/transition",
-  web(messages.messageTransition, (req) => ({ projectId: req.params.projectId, id: req.params.id, state: req.body.state }))
+  "/projects/:owner/:projectId/messages/:id/transition",
+  web(messages.messageTransition, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, id: req.params.id, state: req.body.state }))
 );
 
 // ---- Webhooks ----
-restRouter.get("/projects/:projectId/webhooks", web(webhooks.webhookList, (req) => ({ projectId: req.params.projectId })));
+restRouter.get("/projects/:owner/:projectId/webhooks", web(webhooks.webhookList, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
 restRouter.post(
-  "/projects/:projectId/webhooks",
-  web(webhooks.webhookAdd, (req) => ({ projectId: req.params.projectId, ...req.body }), 201)
+  "/projects/:owner/:projectId/webhooks",
+  web(webhooks.webhookAdd, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body }), 201)
 );
 restRouter.delete(
-  "/projects/:projectId/webhooks/:id",
-  web(webhooks.webhookDelete, (req) => ({ projectId: req.params.projectId, id: req.params.id }))
+  "/projects/:owner/:projectId/webhooks/:id",
+  web(webhooks.webhookDelete, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, id: req.params.id }))
 );
 
 // ---- Template (architect 계정 스코프 - 프로젝트와 무관) ----
 restRouter.get("/template", web(templates.templateGet, () => ({})));
 restRouter.put("/template", web(templates.templateSet, (req) => req.body));
 restRouter.delete("/template", web(templates.templateDelete, () => ({})));
-restRouter.post("/projects/:projectId/template/deploy", web(templates.templateDeploy, (req) => ({ projectId: req.params.projectId })));
+restRouter.post("/projects/:owner/:projectId/template/deploy", web(templates.templateDeploy, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
 
 // ---- Remember ----
 restRouter.get(
-  "/projects/:projectId/remember",
-  web(remember.rememberList, (req) => ({ projectId: req.params.projectId, category: req.query.category, page: numOr(req.query.page) }))
+  "/projects/:owner/:projectId/remember",
+  web(remember.rememberList, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, category: req.query.category, page: numOr(req.query.page) }))
 );
 restRouter.post(
-  "/projects/:projectId/remember",
-  web(remember.rememberAdd, (req) => ({ projectId: req.params.projectId, ...req.body }), 201)
+  "/projects/:owner/:projectId/remember",
+  web(remember.rememberAdd, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body }), 201)
 );
 restRouter.patch(
-  "/projects/:projectId/remember/:id",
-  web(remember.rememberUpdate, (req) => ({ projectId: req.params.projectId, id: req.params.id, ...req.body }))
+  "/projects/:owner/:projectId/remember/:id",
+  web(remember.rememberUpdate, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, id: req.params.id, ...req.body }))
 );
 restRouter.delete(
-  "/projects/:projectId/remember/:id",
-  web(remember.rememberDelete, (req) => ({ projectId: req.params.projectId, id: req.params.id }))
+  "/projects/:owner/:projectId/remember/:id",
+  web(remember.rememberDelete, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, id: req.params.id }))
 );

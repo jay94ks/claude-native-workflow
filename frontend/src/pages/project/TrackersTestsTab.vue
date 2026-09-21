@@ -10,6 +10,7 @@
          (architect는 discard/전이를 못 함) - WEB UI(=architect)는 읽기 전용. -->
     <DocTypeWorkspace
       v-if="innerTab === 'tracker'"
+      :owner="owner"
       :project-id="projectId"
       type="tracker"
       :kinds="['TR']"
@@ -20,6 +21,7 @@
     />
     <DocTypeWorkspace
       v-else-if="innerTab === 'test'"
+      :owner="owner"
       :project-id="projectId"
       type="test"
       :kinds="['TC']"
@@ -28,7 +30,7 @@
       :open-code="innerTab === 'test' ? openCode : undefined"
       :highlight-code="innerTab === 'test' ? highlightCode : undefined"
     />
-    <RecentQaFeed v-else :project-id="projectId" />
+    <RecentQaFeed v-else :owner="owner" :project-id="projectId" />
   </div>
 </template>
 
@@ -38,7 +40,7 @@ import { useRoute } from "vue-router";
 import DocTypeWorkspace from "components/DocTypeWorkspace.vue";
 import RecentQaFeed from "components/RecentQaFeed.vue";
 
-defineProps<{ projectId: string }>();
+defineProps<{ owner: string; projectId: string }>();
 
 // 설계자 요청(2026-09-21) - RecentQaFeed에서 항목을 누르면 그 Q&A가 달린
 // 문서(여기서는 tracker/test)로 와서 그 문서를 자동 선택 + 스크롤해야

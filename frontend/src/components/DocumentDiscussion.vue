@@ -33,7 +33,7 @@
             round
             size="sm"
             icon="more_horiz"
-            :to="`/projects/${projectId}/thread/${item.code}`"
+            :to="`/${owner}/${projectId}/thread/${item.code}`"
           >
             <q-tooltip>자식 항목 {{ childCounts[item.code] }}개 보기</q-tooltip>
           </q-btn>
@@ -56,7 +56,7 @@
               round
               size="sm"
               icon="more_horiz"
-              :to="`/projects/${projectId}/thread/${item.answer.code}`"
+              :to="`/${owner}/${projectId}/thread/${item.answer.code}`"
             >
               <q-tooltip>자식 항목 {{ childCounts[item.answer.code] }}개 보기</q-tooltip>
             </q-btn>
@@ -156,7 +156,7 @@ function parseIdFromCode(code: string): string {
   return code.split("-")[1] ?? code;
 }
 
-const props = defineProps<{ projectId: string; parentCode: string; highlightCode?: string }>();
+const props = defineProps<{ owner: string; projectId: string; parentCode: string; highlightCode?: string }>();
 const auth = useAuthStore();
 
 const loading = ref(true);
@@ -185,12 +185,12 @@ function stateColor(state: string): string {
 // backend/src/core/documents.ts의 docsList가 payload.parentId를 Document.parentId
 // 컬럼(원문 id) 그대로 필터링해준다 - 추적 코드가 아니라 id를 넘겨야 한다.
 async function loadDocsByParent(type: string, parentId: string): Promise<DocFull[]> {
-  const listResult = await api.listDocuments(auth.apiKey!, props.projectId, { type, parentId });
+  const listResult = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { type, parentId });
   if (!listResult.ok) return [];
   const summaries = (listResult.data as { items: DocSummary[] }).items;
   const fulls = await Promise.all(
     summaries.map(async (s) => {
-      const r = await api.getDocument(auth.apiKey!, props.projectId, s.code);
+      const r = await api.getDocument(auth.apiKey!, props.owner, props.projectId, s.code);
       return r.ok ? (r.data as DocFull) : null;
     })
   );
@@ -215,12 +215,12 @@ async function load() {
 // answer의 parent_id는 "그 질문"의 id이지 이 문서의 id가 아니므로, 이 문서에
 // 달린 질문들의 id 목록에 매칭되는 answer만 전체 answer 중에서 걸러낸다.
 async function loadAllAnswers(): Promise<DocFull[]> {
-  const listResult = await api.listDocuments(auth.apiKey!, props.projectId, { type: "answer" });
+  const listResult = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { type: "answer" });
   if (!listResult.ok) return [];
   const summaries = (listResult.data as { items: DocSummary[] }).items;
   const fulls = await Promise.all(
     summaries.map(async (s) => {
-      const r = await api.getDocument(auth.apiKey!, props.projectId, s.code);
+      const r = await api.getDocument(auth.apiKey!, props.owner, props.projectId, s.code);
       return r.ok ? (r.data as DocFull) : null;
     })
   );
@@ -241,7 +241,7 @@ async function loadChildCounts() {
   await Promise.all(
     targets.map(async ({ code, excludeCode }) => {
       const rawId = parseIdFromCode(code);
-      const result = await api.listDocuments(auth.apiKey!, props.projectId, { parentId: rawId });
+      const result = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { parentId: rawId });
       if (!result.ok) return;
       const items = (result.data as { items: { code: string }[] }).items;
       childCounts[code] = items.filter((c) => c.code !== excludeCode).length;
@@ -252,7 +252,7 @@ async function loadChildCounts() {
 async function markRead(item: ThreadItem) {
   busy.value = item.code;
   actionError[item.code] = "";
-  const result = await api.transitionDocument(auth.apiKey!, props.projectId, item.code, "read", item.state);
+  const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, item.code, "read", item.state);
   busy.value = null;
   if (!result.ok) {
     actionError[item.code] = result.reason?.join(", ") ?? "실패했습니다.";
@@ -279,7 +279,7 @@ function closeAskComposer() {
 async function ask() {
   asking.value = true;
   askError.value = "";
-  const result = await api.createDocument(auth.apiKey!, props.projectId, {
+  const result = await api.createDocument(auth.apiKey!, props.owner, props.projectId, {
     type: "question",
     kind: "QU",
     parentId: props.parentCode,
@@ -315,7 +315,7 @@ async function submitAnswer() {
   if (!question) return;
   answering.value = true;
   answerError.value = "";
-  const result = await api.createDocument(auth.apiKey!, props.projectId, {
+  const result = await api.createDocument(auth.apiKey!, props.owner, props.projectId, {
     type: "answer",
     kind: "AN",
     parentId: question.code,
@@ -349,7 +349,7 @@ function closeOpinionComposer() {
 async function submitOpinion() {
   submittingOpinion.value = true;
   opinionError.value = "";
-  const result = await api.createDocument(auth.apiKey!, props.projectId, {
+  const result = await api.createDocument(auth.apiKey!, props.owner, props.projectId, {
     type: "opinion",
     kind: "OP",
     parentId: props.parentCode,
@@ -367,7 +367,7 @@ async function submitOpinion() {
 }
 
 async function discardOpinion(item: ThreadItem) {
-  const result = await api.transitionDocument(auth.apiKey!, props.projectId, item.code, "discard", item.state);
+  const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, item.code, "discard", item.state);
   if (result.ok) await load();
 }
 

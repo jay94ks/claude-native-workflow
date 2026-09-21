@@ -34,7 +34,7 @@ import { useProjectStore } from "stores/project";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
 import * as api from "src/api/client";
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();
 const project = useProjectStore();
 
@@ -84,7 +84,7 @@ async function deploy() {
   message.value = "";
   error.value = "";
   deployResult.value = null;
-  const result = await api.deployTemplate(auth.apiKey!, props.projectId);
+  const result = await api.deployTemplate(auth.apiKey!, props.owner, props.projectId);
   deploying.value = false;
   if (!result.ok) {
     error.value = result.reason?.join(", ") ?? "배포에 실패했습니다.";

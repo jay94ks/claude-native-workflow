@@ -1,11 +1,12 @@
 <template>
   <DocTypeWorkspace
+    :owner="owner"
     :project-id="projectId"
     type="doc"
     :kinds="['SP', 'RP', 'RM', 'QA', 'BT']"
     title="Documents"
     create-label="새 문서"
-    :create-route="`/projects/${projectId}/documents/new`"
+    :create-route="`/${owner}/${projectId}/documents/new`"
     :transitions-by-state="transitions"
     :open-code="openCode"
     :highlight-code="highlightCode"
@@ -17,7 +18,7 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 import DocTypeWorkspace from "components/DocTypeWorkspace.vue";
 
-defineProps<{ projectId: string }>();
+defineProps<{ owner: string; projectId: string }>();
 
 // 설계자 요청(2026-09-21) - RecentQaFeed에서 Q&A 항목을 누르면 그게 달린
 // 문서로 와서 자동 선택 + 스크롤돼야 한다(쿼리스트링으로 전달받음).

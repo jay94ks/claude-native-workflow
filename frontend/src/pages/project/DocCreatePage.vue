@@ -39,6 +39,7 @@ import * as api from "src/api/client";
 // DocumentsTab/PlansTab/IssuesTab가 각자의 type/kinds/제목만 다르게
 // 넘겨써서 재사용한다(DocTypeWorkspace의 List+Source View와는 별개 페이지).
 const props = defineProps<{
+  owner: string;
   projectId: string;
   type: string;
   kinds: string[];
@@ -66,7 +67,7 @@ const hasContent = computed(() => title.value.trim().length > 0);
 async function create() {
   creating.value = true;
   createError.value = "";
-  const result = await api.createDocument(auth.apiKey!, props.projectId, {
+  const result = await api.createDocument(auth.apiKey!, props.owner, props.projectId, {
     type: props.type,
     kind: kind.value,
     title: title.value,

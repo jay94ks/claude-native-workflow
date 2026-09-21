@@ -1,13 +1,13 @@
 <template>
   <div class="q-pa-md" style="max-width: 800px; margin: 0 auto">
     <div class="row items-center q-gutter-sm q-mb-md">
-      <q-btn flat dense round icon="arrow_back" :to="`/projects/${projectId}/code`" />
+      <q-btn flat dense round icon="arrow_back" :to="`/${owner}/${projectId}/code`" />
       <div class="text-h6">{{ branch }} 브랜치 최근 커밋</div>
     </div>
 
     <div v-if="loading" class="text-caption">불러오는 중...</div>
     <q-list v-else bordered separator>
-      <q-item v-for="c in commits" :key="c.id" clickable :to="`/projects/${projectId}/commit/${c.id}`">
+      <q-item v-for="c in commits" :key="c.id" clickable :to="`/${owner}/${projectId}/commit/${c.id}`">
         <q-item-section>
           <q-item-label>{{ c.message }}</q-item-label>
           <q-item-label caption>{{ c.id.slice(0, 8) }} · {{ c.author }} · {{ new Date(c.time).toLocaleString() }}</q-item-label>
@@ -34,7 +34,7 @@ interface CommitInfo {
   time: string;
 }
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();
 const route = useRoute();
 
@@ -50,7 +50,7 @@ async function load() {
     return;
   }
   loading.value = true;
-  const result = await api.listCommits(auth.apiKey!, props.projectId, branch.value, 50);
+  const result = await api.listCommits(auth.apiKey!, props.owner, props.projectId, branch.value, 50);
   if (result.ok) commits.value = (result.data as { items: CommitInfo[] }).items;
   loading.value = false;
 }

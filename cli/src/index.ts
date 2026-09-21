@@ -29,7 +29,8 @@ auth
   .requiredOption("--username <username>")
   .requiredOption("--password <password>")
   .option("--rest-url <url>", "server to log into (defaults to the linked project's, or the built-in default)")
-  .option("--project <projectId>", "project id to link this directory to, if not already linked")
+  .option("--project <projectId>", "project id (slug) to link this directory to, if not already linked")
+  .option("--owner <username>", "username of that project's creator - defaults to --username (i.e. your own project) if omitted")
   .action(async (opts) => {
     const cwd = process.cwd();
     const existingRoot = findProjectRoot(cwd);
@@ -37,6 +38,12 @@ auth
 
     const httpEndpoint = opts.restUrl ?? existing?.httpEndpoint ?? DEFAULT_ENDPOINT;
     const projectId = opts.project ?? existing?.projectId;
+    // 설계자 요청(2026-09-21 후속) - project id는 이제 그 생성자(owner)
+    // 범위에서만 유일해서, projectId만으로는 어느 프로젝트인지 특정할 수
+    // 없다 - --owner가 없으면 "자신의 프로젝트를 링크하는 것"이라는 가장
+    // 흔한 경우로 기본값을 잡는다(틀렸으면 첫 액션 호출에서 바로 "프로젝트를
+    // 찾을 수 없습니다"로 드러난다 - 조용히 잘못된 프로젝트에 연결되진 않는다).
+    const owner = opts.owner ?? existing?.owner ?? opts.username;
     if (!projectId) {
       console.error('no project linked here yet - pass --project <projectId> (or "docs" scaffold seeds a demo project id you can use).');
       process.exitCode = 1;
@@ -47,11 +54,11 @@ auth
     const { architectId, apiKey } = await client.login(opts.username, opts.password);
 
     const root = existingRoot ?? cwd;
-    writeProjectConfig(root, { httpEndpoint, projectId });
+    writeProjectConfig(root, { httpEndpoint, owner, projectId });
     writeSessionConfig(root, { architectId });
-    setDesignerCredentials(httpEndpoint, projectId, architectId, { endpoint: httpEndpoint, apiKey });
+    setDesignerCredentials(httpEndpoint, owner, projectId, architectId, { endpoint: httpEndpoint, apiKey });
 
-    console.log(`logged in as ${opts.username} (architectId ${architectId}) for project ${projectId} @ ${httpEndpoint}`);
+    console.log(`logged in as ${opts.username} (architectId ${architectId}) for project ${owner}/${projectId} @ ${httpEndpoint}`);
   });
 
 /** action 이름 하나당 서브커맨드 하나 - 전부 같은 apiclient.run()으로 위임하는 얇은 래퍼. */
@@ -84,7 +91,11 @@ function registerActionCommands(namespace: string, verbs: string[]) {
         }
       }
 
-      const action = { action: `${namespace}.${verb}`, projectId: config.projectId, ...payload };
+      // 설계자 요청(2026-09-21 후속) - project id는 이제 그 생성자(owner)
+      // 범위에서만 유일하므로 owner도 항상 같이 보낸다 - project.create/
+      // list처럼 이 값이 필요 없는 액션은 서버가 그냥 무시한다(핸들러가
+      // payload.projectId를 안 읽으므로 무해함).
+      const action = { action: `${namespace}.${verb}`, owner: config.owner, projectId: config.projectId, ...payload };
 
       // Phase 8 "로컬 스테이징": 바로 보내는 대신 파일에 쌓아두고 "docs push"에서 한 번에 전송.
       if (opts.stage) {
@@ -138,7 +149,7 @@ registerActionCommands("repo", ["push", "branches", "tree", "file", "commits", "
 registerActionCommands("project", ["create", "get", "list", "update", "invite", "acceptInvite", "transfer", "destroy", "members", "invitesForMe"]);
 registerActionCommands("template", ["set", "get", "delete", "deploy"]);
 registerActionCommands("webhook", ["add", "list", "delete"]);
-registerActionCommands("pr", ["create", "list", "get", "merge", "close"]);
+registerActionCommands("pr", ["create", "list", "get", "update", "merge", "close"]);
 
 // Phase 8 "로컬 스테이징": 쌓인 액션을 한 번에 bulk 전송.
 program

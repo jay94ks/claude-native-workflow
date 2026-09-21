@@ -11,29 +11,38 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: "", redirect: "/projects" },
       { path: "projects", component: () => import("pages/ProjectListPage.vue") },
+      // 설계자 요청(2026-09-21 후속) - 프로젝트별 웹 접속 path를
+      // /{생성자 login명}/{project id} 형태로 바꿨다(GitHub의 /{owner}/{repo}
+      // 스타일 참고) - `owner`는 URL 표시용일 뿐 실제 조회는 항상
+      // `projectId`(Project.id, 그 자체로 이미 고유)로만 한다. 즉 owner
+      // 세그먼트가 그 프로젝트의 실제 생성자 username과 다르게 들어와도
+      // 백엔드는 개의치 않고 그대로 응답한다 - "정확한 owner가 아니면
+      // 404/redirect" 같은 정합성 검증은 이번 라운드 스코프 밖으로
+      // 남겨둔다(docs/design-notes.md 기록).
       {
-        path: "projects/:projectId",
+        path: ":owner/:projectId",
         component: () => import("layouts/ProjectShell.vue"),
         props: true,
         children: [
-          { path: "", redirect: (to) => `/projects/${to.params.projectId}/code` },
+          { path: "", redirect: (to) => `/${to.params.owner}/${to.params.projectId}/code` },
           { path: "code", component: () => import("pages/project/CodeTab.vue"), props: true },
           { path: "pull-requests", component: () => import("pages/project/PullRequestsTab.vue"), props: true },
           {
             path: "pull-requests/new",
             component: () => import("pages/project/PrCreatePage.vue"),
-            props: (route) => ({ projectId: route.params.projectId }),
+            props: (route) => ({ owner: route.params.owner, projectId: route.params.projectId }),
           },
           { path: "issues", component: () => import("pages/project/IssuesTab.vue"), props: true },
           {
             path: "issues/new",
             component: () => import("pages/project/DocCreatePage.vue"),
             props: (route) => ({
+              owner: route.params.owner,
               projectId: route.params.projectId,
               type: "issue",
               kinds: ["IS"],
               createLabel: "새 이슈",
-              listRoute: `/projects/${route.params.projectId}/issues`,
+              listRoute: `/${route.params.owner}/${route.params.projectId}/issues`,
             }),
           },
           { path: "documents", component: () => import("pages/project/DocumentsTab.vue"), props: true },
@@ -41,11 +50,12 @@ const routes: RouteRecordRaw[] = [
             path: "documents/new",
             component: () => import("pages/project/DocCreatePage.vue"),
             props: (route) => ({
+              owner: route.params.owner,
               projectId: route.params.projectId,
               type: "doc",
               kinds: ["SP", "RP", "RM", "QA", "BT"],
               createLabel: "새 문서",
-              listRoute: `/projects/${route.params.projectId}/documents`,
+              listRoute: `/${route.params.owner}/${route.params.projectId}/documents`,
               allowChapter: true,
             }),
           },
@@ -54,11 +64,12 @@ const routes: RouteRecordRaw[] = [
             path: "plans/new",
             component: () => import("pages/project/DocCreatePage.vue"),
             props: (route) => ({
+              owner: route.params.owner,
               projectId: route.params.projectId,
               type: "plan",
               kinds: ["PL"],
               createLabel: "새 계획",
-              listRoute: `/projects/${route.params.projectId}/plans`,
+              listRoute: `/${route.params.owner}/${route.params.projectId}/plans`,
             }),
           },
           { path: "trackers-tests", component: () => import("pages/project/TrackersTestsTab.vue"), props: true },
@@ -70,7 +81,7 @@ const routes: RouteRecordRaw[] = [
             component: () => import("layouts/SettingsShell.vue"),
             props: true,
             children: [
-              { path: "", redirect: (to) => `/projects/${to.params.projectId}/settings/general` },
+              { path: "", redirect: (to) => `/${to.params.owner}/${to.params.projectId}/settings/general` },
               { path: "general", component: () => import("pages/project/settings/GeneralPage.vue"), props: true },
               { path: "collaborators", component: () => import("pages/project/settings/CollaboratorsPage.vue"), props: true },
               { path: "template", component: () => import("pages/project/settings/TemplatePage.vue"), props: true },

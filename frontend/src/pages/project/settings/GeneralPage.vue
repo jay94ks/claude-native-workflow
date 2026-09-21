@@ -89,7 +89,7 @@ import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
 import * as api from "src/api/client";
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();
 const project = useProjectStore();
 const router = useRouter();
@@ -122,7 +122,7 @@ async function save() {
   saving.value = true;
   message.value = "";
   error.value = "";
-  const result = await api.updateProject(auth.apiKey!, props.projectId, {
+  const result = await api.updateProject(auth.apiKey!, props.owner, props.projectId, {
     name: name.value,
     description: description.value,
     defaultBranch: defaultBranch.value,
@@ -136,7 +136,7 @@ async function save() {
     return;
   }
   message.value = "저장했습니다.";
-  await project.load(props.projectId);
+  await project.load(props.owner, props.projectId);
 }
 
 const transferTo = ref("");
@@ -146,13 +146,13 @@ const transferError = ref("");
 async function transfer() {
   transferring.value = true;
   transferError.value = "";
-  const result = await api.transferProject(auth.apiKey!, props.projectId, { toUsername: transferTo.value });
+  const result = await api.transferProject(auth.apiKey!, props.owner, props.projectId, { toUsername: transferTo.value });
   transferring.value = false;
   if (!result.ok) {
     transferError.value = result.reason?.join(", ") ?? "양도에 실패했습니다.";
     return;
   }
-  await project.load(props.projectId);
+  await project.load(props.owner, props.projectId);
 }
 
 interface WebhookSummary {
@@ -166,7 +166,7 @@ const webhookError = ref("");
 const newWebhookSecret = ref("");
 
 async function loadWebhooks() {
-  const result = await api.listWebhooks(auth.apiKey!, props.projectId);
+  const result = await api.listWebhooks(auth.apiKey!, props.owner, props.projectId);
   if (result.ok) webhookList.value = (result.data as { items: WebhookSummary[] }).items;
 }
 
@@ -174,7 +174,7 @@ async function addWebhook() {
   addingWebhook.value = true;
   webhookError.value = "";
   newWebhookSecret.value = "";
-  const result = await api.addWebhook(auth.apiKey!, props.projectId, newWebhookUrl.value);
+  const result = await api.addWebhook(auth.apiKey!, props.owner, props.projectId, newWebhookUrl.value);
   addingWebhook.value = false;
   if (!result.ok) {
     webhookError.value = result.reason?.join(", ") ?? "추가에 실패했습니다.";
@@ -187,7 +187,7 @@ async function addWebhook() {
 }
 
 async function deleteWebhook(id: string) {
-  const result = await api.deleteWebhook(auth.apiKey!, props.projectId, id);
+  const result = await api.deleteWebhook(auth.apiKey!, props.owner, props.projectId, id);
   if (result.ok) await loadWebhooks();
 }
 
@@ -203,7 +203,7 @@ const destroyError = ref("");
 async function destroy() {
   destroying.value = true;
   destroyError.value = "";
-  const result = await api.destroyProject(auth.apiKey!, props.projectId);
+  const result = await api.destroyProject(auth.apiKey!, props.owner, props.projectId);
   destroying.value = false;
   if (!result.ok) {
     destroyError.value = result.reason?.join(", ") ?? "파기에 실패했습니다.";

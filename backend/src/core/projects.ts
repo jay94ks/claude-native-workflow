@@ -11,8 +11,12 @@ function fail(reason: string | string[]): ActionResult {
   return { ok: false, reason: Array.isArray(reason) ? reason : [reason] };
 }
 
+// 설계자 요청(2026-09-21 후속) - 웹 접속 path가 /{생성자 login명}/{project id}
+// 형태라 모든 응답에 ownerUsername(=creator.username)이 실려야 프론트가 그
+// 링크를 만들 수 있다 - 아래 모든 조회 쿼리가 `creator: { select: { username: true } }`를
+// include해서 이 함수에 넘긴다.
 function toProjectResponse(p: {
-  id: string;
+  slug: string;
   name: string;
   description: string | null;
   visibility: string;
@@ -20,9 +24,10 @@ function toProjectResponse(p: {
   messageTtlDefault: number;
   pushMirrorUrl: string | null;
   createdAt: Date;
+  creator: { username: string };
 }) {
   return {
-    id: p.id,
+    id: p.slug,
     name: p.name,
     description: p.description,
     visibility: p.visibility,
@@ -30,16 +35,38 @@ function toProjectResponse(p: {
     messageTtlDefault: p.messageTtlDefault,
     pushMirrorUrl: p.pushMirrorUrl,
     createdAt: p.createdAt,
+    ownerUsername: p.creator.username,
   };
 }
 
-/** 누구나 프로젝트를 만들 수 있고, 만든 사람이 그 프로젝트의 유일한 Admin이 된다. */
+const SLUG_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+
+/**
+ * 누구나 프로젝트를 만들 수 있고, 만든 사람이 그 프로젝트의 유일한 Admin이
+ * 된다. `creatorAccountId`는 이후 project.transfer로 Admin이 넘어가도 안
+ * 바뀐다(웹 접속 path의 소유자 segment는 항상 실제 생성자를 가리킨다).
+ *
+ * `id`(설계자가 직접 고르는 slug, 웹 URL의 두 번째 segment이자 CLI/API가
+ * 부르는 "project id")는 설계자 요청(2026-09-21 후속) "프로젝트 id는
+ * 설계자별로 관리되어야 한다"에 따라 전역 유일이 아니라 이 호출자
+ * (creatorAccountId) 범위에서만 유일하면 된다 - 다른 설계자가 이미 같은
+ * id를 쓰고 있어도 문제없다.
+ */
 export async function projectCreate(payload: any, ctx: ActionContext): Promise<ActionResult> {
-  const { name, description, visibility, defaultBranch } = payload;
+  const { name, description, visibility, defaultBranch, id } = payload;
   if (typeof name !== "string" || !name) return fail("name이 필요합니다.");
+  if (typeof id !== "string" || !id) return fail("id가 필요합니다.");
+  if (!SLUG_PATTERN.test(id)) {
+    return fail("id는 영문/숫자로 시작하고 영문/숫자/-/_ 만 포함하는 1~64자여야 합니다.");
+  }
   if (visibility !== undefined && visibility !== "PUBLIC" && visibility !== "PRIVATE") {
     return fail('visibility는 "PUBLIC" 또는 "PRIVATE"여야 합니다.');
   }
+
+  const existing = await prisma.project.findUnique({
+    where: { creatorAccountId_slug: { creatorAccountId: ctx.architectId, slug: id } },
+  });
+  if (existing) return fail(`이미 "${id}"라는 id로 만든 프로젝트가 있습니다 - 다른 id를 골라주세요.`);
 
   const project = await prisma.project.create({
     data: {
@@ -47,11 +74,14 @@ export async function projectCreate(payload: any, ctx: ActionContext): Promise<A
       description: description ?? null,
       visibility: visibility ?? "PRIVATE",
       defaultBranch: defaultBranch ?? "main",
+      creatorAccountId: ctx.architectId,
+      slug: id,
     },
+    include: { creator: { select: { username: true } } },
   });
   await prisma.projectMembership.create({ data: { projectId: project.id, accountId: ctx.architectId, role: "ADMIN" } });
 
-  return { ok: true, data: { id: project.id } };
+  return { ok: true, data: toProjectResponse(project) };
 }
 
 export async function projectGet(payload: any, ctx: ActionContext): Promise<ActionResult> {
@@ -64,7 +94,10 @@ export async function projectGet(payload: any, ctx: ActionContext): Promise<Acti
     throw err;
   }
 
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: { creator: { select: { username: true } } },
+  });
   if (!project) return fail(`프로젝트 ${projectId}를 찾을 수 없습니다.`);
 
   // Phase 9 판단: WEB UI가 "이 사람이 지금 Admin/Write/Read 중 뭔지"를
@@ -119,7 +152,13 @@ export async function projectList(payload: any, ctx: ActionContext): Promise<Act
 
   const [total, items] = await Promise.all([
     prisma.project.count({ where }),
-    prisma.project.findMany({ where, orderBy: { createdAt: "desc" }, skip: (pageNumber - 1) * pageSize, take: pageSize }),
+    prisma.project.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (pageNumber - 1) * pageSize,
+      take: pageSize,
+      include: { creator: { select: { username: true } } },
+    }),
   ]);
 
   // Phase 9 판단: 목록 카드에서도 "내 역할"을 바로 보여줄 수 있게(예: public
@@ -169,6 +208,7 @@ export async function projectUpdate(payload: any, ctx: ActionContext): Promise<A
       visibility: visibility ?? project.visibility,
       pushMirrorUrl: pushMirrorUrl === undefined ? project.pushMirrorUrl : pushMirrorUrl,
     },
+    include: { creator: { select: { username: true } } },
   });
 
   return { ok: true, data: toProjectResponse(updated) };
@@ -212,13 +252,22 @@ export async function projectInvite(payload: any, ctx: ActionContext): Promise<A
 export async function projectInvitesForMe(_payload: unknown, ctx: ActionContext): Promise<ActionResult> {
   const invites = await prisma.projectInvite.findMany({
     where: { accountId: ctx.architectId, state: "PENDING" },
-    include: { project: true },
+    include: { project: { include: { creator: { select: { username: true } } } } },
   });
 
+  // 설계자 요청(2026-09-21 후속) - project id는 이제 생성자별로만 유일하므로
+  // 그 문자열(slug)만으로는 어느 프로젝트인지 알 수 없다 - owner(생성자
+  // username)를 같이 실어야 accept-invite 호출도, 사람이 읽는 목록도 뜻이
+  // 통한다(내부 cuid를 그대로 노출하던 예전 방식은 이제 의미가 없다).
   return {
     ok: true,
     data: {
-      items: invites.map((i) => ({ projectId: i.projectId, projectName: i.project.name, role: i.role })),
+      items: invites.map((i) => ({
+        owner: i.project.creator.username,
+        projectId: i.project.slug,
+        projectName: i.project.name,
+        role: i.role,
+      })),
     },
   };
 }

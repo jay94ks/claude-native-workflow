@@ -67,13 +67,17 @@ const mutationActions = [
   "webhook.add",
   "webhook.delete",
   "pr.create",
+  "pr.update",
   "pr.merge",
   "pr.close",
   "repo.writeFile",
 ];
 
 async function runAction(action: string, payload: Record<string, unknown> | undefined) {
-  const result = await client.runOne({ action, projectId: config.projectId, ...(payload ?? {}) } as Action);
+  // 설계자 요청(2026-09-21 후속) - project id는 이제 그 생성자(owner)
+  // 범위에서만 유일하므로 owner도 항상 같이 보낸다(project.create/list처럼
+  // 이 값이 필요 없는 액션은 서버가 무시한다).
+  const result = await client.runOne({ action, owner: config.owner, projectId: config.projectId, ...(payload ?? {}) } as Action);
   return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
 }
 

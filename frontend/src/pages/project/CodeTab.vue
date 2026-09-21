@@ -4,14 +4,14 @@
       <!-- 설계자 요청(2026-09-21) - Documents 탭 우측에 있던 About 카드를
            Code 탭 좌측 패널 맨 위로 옮겼다(다른 탭들과 달리 Code가 프로젝트
            진입 시 첫 화면이라 About이 가장 먼저 눈에 띄어야 한다는 판단). -->
-      <ProjectAboutSidebar :project-id="projectId" />
+      <ProjectAboutSidebar :owner="owner" :project-id="projectId" />
       <q-separator class="q-my-md" />
 
       <div class="row items-center q-gutter-sm q-mb-sm">
         <q-select v-model="branch" :options="branchNames" dense style="min-width: 140px" label="branch" @update:model-value="onBranchChange" />
         <!-- 설계자 요청(2026-09-21, 항목 9) - 좌측의 "최근 커밋" 목록은 없애고
              이 눈알 아이콘으로 그 브랜치의 커밋 목록을 별도 페이지에서 본다. -->
-        <q-btn v-if="branch" flat dense round icon="visibility" size="sm" :to="`/projects/${projectId}/commits?branch=${branch}`">
+        <q-btn v-if="branch" flat dense round icon="visibility" size="sm" :to="`/${owner}/${projectId}/commits?branch=${branch}`">
           <q-tooltip>{{ branch }} 브랜치 최근 커밋 보기</q-tooltip>
         </q-btn>
         <q-btn v-if="path" flat dense icon="arrow_upward" @click="goUp" />
@@ -57,7 +57,7 @@
           <div v-else>
             <div v-if="fileCommitsLoading" class="text-caption">불러오는 중...</div>
             <q-list v-else bordered separator>
-              <q-item v-for="c in fileCommits" :key="c.id" clickable :to="`/projects/${projectId}/commit/${c.id}`">
+              <q-item v-for="c in fileCommits" :key="c.id" clickable :to="`/${owner}/${projectId}/commit/${c.id}`">
                 <q-item-section>
                   <q-item-label>{{ c.message }}</q-item-label>
                   <q-item-label caption>{{ c.id.slice(0, 8) }} · {{ c.author }} · {{ new Date(c.time).toLocaleString() }}</q-item-label>
@@ -113,7 +113,7 @@ interface FileContent {
   size: number;
 }
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();
 const route = useRoute();
 
@@ -185,7 +185,7 @@ function sourceViewContent(file: FileContent): string {
 }
 
 async function loadBranches(): Promise<string[]> {
-  const result = await api.listBranches(auth.apiKey!, props.projectId);
+  const result = await api.listBranches(auth.apiKey!, props.owner, props.projectId);
   if (result.ok) {
     const items = (result.data as { items: BranchInfo[] }).items;
     branchNames.value = items.map((b) => b.name);
@@ -200,7 +200,7 @@ async function loadTree() {
     entries.value = [];
     return;
   }
-  const result = await api.listTree(auth.apiKey!, props.projectId, branch.value, path.value);
+  const result = await api.listTree(auth.apiKey!, props.owner, props.projectId, branch.value, path.value);
   if (result.ok) entries.value = (result.data as { items: TreeEntry[] }).items;
   await loadReadmeIfAtRoot();
 }
@@ -225,7 +225,7 @@ async function loadReadmeIfAtRoot() {
     readmeState.value = "missing";
     return;
   }
-  const result = await api.readRepoFile(auth.apiKey!, props.projectId, branch.value, "README.md");
+  const result = await api.readRepoFile(auth.apiKey!, props.owner, props.projectId, branch.value, "README.md");
   if (result.ok) {
     currentPath.value = "README.md";
     currentFile.value = { path: "README.md", ...(result.data as Omit<FileContent, "path">) };
@@ -237,7 +237,7 @@ async function loadReadmeIfAtRoot() {
 
 async function saveReadme(markdown: string) {
   if (!branch.value) return;
-  const result = await api.writeRepoFile(auth.apiKey!, props.projectId, {
+  const result = await api.writeRepoFile(auth.apiKey!, props.owner, props.projectId, {
     branch: branch.value,
     path: "README.md",
     content: markdown,
@@ -260,7 +260,7 @@ async function saveCurrentFile(markdown: string) {
   if (!isMarkdownPath(currentFile.value.path) && currentFile.value.content.endsWith("\n") && !raw.endsWith("\n")) {
     raw += "\n";
   }
-  const result = await api.writeRepoFile(auth.apiKey!, props.projectId, {
+  const result = await api.writeRepoFile(auth.apiKey!, props.owner, props.projectId, {
     branch: branch.value,
     path: currentFile.value.path,
     content: raw,
@@ -278,7 +278,7 @@ async function loadFileCommits() {
     return;
   }
   fileCommitsLoading.value = true;
-  const result = await api.getFileCommits(auth.apiKey!, props.projectId, branch.value, currentPath.value, 30);
+  const result = await api.getFileCommits(auth.apiKey!, props.owner, props.projectId, branch.value, currentPath.value, 30);
   if (result.ok) fileCommits.value = (result.data as { items: CommitInfo[] }).items;
   fileCommitsLoading.value = false;
 }
@@ -307,7 +307,7 @@ async function openEntry(entry: TreeEntry) {
     await loadTree();
     return;
   }
-  const result = await api.readRepoFile(auth.apiKey!, props.projectId, branch.value, entryPath);
+  const result = await api.readRepoFile(auth.apiKey!, props.owner, props.projectId, branch.value, entryPath);
   if (result.ok) {
     currentPath.value = entryPath;
     currentFile.value = { path: entryPath, ...(result.data as Omit<FileContent, "path">) };
@@ -335,7 +335,7 @@ async function openFromQuery() {
   parts.pop();
   path.value = parts.join("/");
   await loadTree();
-  const result = await api.readRepoFile(auth.apiKey!, props.projectId, qBranch, qPath);
+  const result = await api.readRepoFile(auth.apiKey!, props.owner, props.projectId, qBranch, qPath);
   if (result.ok) {
     currentPath.value = qPath;
     currentFile.value = { path: qPath, ...(result.data as Omit<FileContent, "path">) };

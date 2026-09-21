@@ -6,7 +6,7 @@
           v-for="m in menu"
           :key="m.to"
           clickable
-          :to="`/projects/${projectId}/settings/${m.to}`"
+          :to="`/${owner}/${projectId}/settings/${m.to}`"
           active-class="bg-blue-1"
         >
           <q-item-section avatar><q-icon :name="m.icon" /></q-item-section>
@@ -31,7 +31,7 @@
 // children 참고).
 import ProjectSidebar from "components/ProjectSidebar.vue";
 
-defineProps<{ projectId: string }>();
+defineProps<{ owner: string; projectId: string }>();
 
 const menu = [
   { to: "general", icon: "tune", label: "기본 설정" },

@@ -109,111 +109,117 @@ async function request<T = unknown>(apiKey: string, path: string, opts: RequestO
 
 // ---- Projects ----
 export const listProjects = (apiKey: string, params?: { page?: number }) => request(apiKey, "/projects", { query: params });
-export const createProject = (apiKey: string, body: { name: string; description?: string; visibility?: "PUBLIC" | "PRIVATE" }) =>
+export const createProject = (apiKey: string, body: { id: string; name: string; description?: string; visibility?: "PUBLIC" | "PRIVATE" }) =>
   request(apiKey, "/projects", { method: "POST", body });
 export const listMyInvites = (apiKey: string) => request(apiKey, "/projects/invites-for-me");
-export const getProject = (apiKey: string, projectId: string) => request(apiKey, `/projects/${projectId}`);
-export const updateProject = (apiKey: string, projectId: string, body: Record<string, unknown>) =>
-  request(apiKey, `/projects/${projectId}`, { method: "PATCH", body });
-export const destroyProject = (apiKey: string, projectId: string) => request(apiKey, `/projects/${projectId}`, { method: "DELETE" });
-export const getProjectMembers = (apiKey: string, projectId: string) => request(apiKey, `/projects/${projectId}/members`);
-export const inviteToProject = (apiKey: string, projectId: string, body: { username: string; role: "READ" | "WRITE" }) =>
-  request(apiKey, `/projects/${projectId}/invite`, { method: "POST", body });
-export const acceptInvite = (apiKey: string, projectId: string) => request(apiKey, `/projects/${projectId}/accept-invite`, { method: "POST" });
-export const transferProject = (apiKey: string, projectId: string, body: { toUsername: string }) =>
-  request(apiKey, `/projects/${projectId}/transfer`, { method: "POST", body });
+export const getProject = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}`);
+export const updateProject = (apiKey: string, owner: string, projectId: string, body: Record<string, unknown>) =>
+  request(apiKey, `/projects/${owner}/${projectId}`, { method: "PATCH", body });
+export const destroyProject = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}`, { method: "DELETE" });
+export const getProjectMembers = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/members`);
+export const inviteToProject = (apiKey: string, owner: string, projectId: string, body: { username: string; role: "READ" | "WRITE" }) =>
+  request(apiKey, `/projects/${owner}/${projectId}/invite`, { method: "POST", body });
+export const acceptInvite = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/accept-invite`, { method: "POST" });
+export const transferProject = (apiKey: string, owner: string, projectId: string, body: { toUsername: string }) =>
+  request(apiKey, `/projects/${owner}/${projectId}/transfer`, { method: "POST", body });
 
 // ---- Documents ----
 export const listDocuments = (
   apiKey: string,
+  owner: string,
   projectId: string,
   params?: { type?: string; kind?: string; state?: string; parentId?: string; page?: number; sort?: string }
-) => request(apiKey, `/projects/${projectId}/documents`, { query: params });
-export const createDocument = (apiKey: string, projectId: string, body: Record<string, unknown>) =>
-  request(apiKey, `/projects/${projectId}/documents`, { method: "POST", body });
-export const searchDocuments = (apiKey: string, projectId: string, params: Record<string, unknown>) =>
-  request(apiKey, `/projects/${projectId}/documents/search`, { query: params });
-export const getDocsStatus = (apiKey: string, projectId: string) => request(apiKey, `/projects/${projectId}/documents/status`);
-export const grepDocument = (apiKey: string, projectId: string, code: string, pattern: string) =>
-  request(apiKey, `/projects/${projectId}/documents/grep`, { query: { code, pattern } });
-export const getDocument = (apiKey: string, projectId: string, code: string) => request(apiKey, `/projects/${projectId}/documents/${code}`);
-export const updateDocument = (apiKey: string, projectId: string, code: string, body: Record<string, unknown>) =>
-  request(apiKey, `/projects/${projectId}/documents/${code}`, { method: "PATCH", body });
-export const deleteDocument = (apiKey: string, projectId: string, code: string, body: { etag: string }) =>
-  request(apiKey, `/projects/${projectId}/documents/${code}`, { method: "DELETE", body });
-export const transitionDocument = (apiKey: string, projectId: string, code: string, to: string, from: string) =>
-  request(apiKey, `/projects/${projectId}/documents/${code}/transition`, { method: "POST", body: { to, from } });
+) => request(apiKey, `/projects/${owner}/${projectId}/documents`, { query: params });
+export const createDocument = (apiKey: string, owner: string, projectId: string, body: Record<string, unknown>) =>
+  request(apiKey, `/projects/${owner}/${projectId}/documents`, { method: "POST", body });
+export const searchDocuments = (apiKey: string, owner: string, projectId: string, params: Record<string, unknown>) =>
+  request(apiKey, `/projects/${owner}/${projectId}/documents/search`, { query: params });
+export const getDocsStatus = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/documents/status`);
+export const grepDocument = (apiKey: string, owner: string, projectId: string, code: string, pattern: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/documents/grep`, { query: { code, pattern } });
+export const getDocument = (apiKey: string, owner: string, projectId: string, code: string) => request(apiKey, `/projects/${owner}/${projectId}/documents/${code}`);
+export const updateDocument = (apiKey: string, owner: string, projectId: string, code: string, body: Record<string, unknown>) =>
+  request(apiKey, `/projects/${owner}/${projectId}/documents/${code}`, { method: "PATCH", body });
+export const deleteDocument = (apiKey: string, owner: string, projectId: string, code: string, body: { etag: string }) =>
+  request(apiKey, `/projects/${owner}/${projectId}/documents/${code}`, { method: "DELETE", body });
+export const transitionDocument = (apiKey: string, owner: string, projectId: string, code: string, to: string, from: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/documents/${code}/transition`, { method: "POST", body: { to, from } });
 export const tagDocument = (
   apiKey: string,
+  owner: string,
   projectId: string,
   code: string,
   body: { etag: string; related?: { code: string; etag: string }[]; dependsOn?: { code: string; etag: string }[] }
-) => request(apiKey, `/projects/${projectId}/documents/${code}/tag`, { method: "POST", body });
+) => request(apiKey, `/projects/${owner}/${projectId}/documents/${code}/tag`, { method: "POST", body });
 
 // ---- Repo (Code 탭) ----
-export const listBranches = (apiKey: string, projectId: string) => request(apiKey, `/projects/${projectId}/repo/branches`);
-export const listTree = (apiKey: string, projectId: string, branch: string, path: string) =>
-  request(apiKey, `/projects/${projectId}/repo/tree`, { query: { branch, path } });
-export const readRepoFile = (apiKey: string, projectId: string, branch: string, path: string) =>
-  request(apiKey, `/projects/${projectId}/repo/file`, { query: { branch, path } });
+export const listBranches = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/repo/branches`);
+export const listTree = (apiKey: string, owner: string, projectId: string, branch: string, path: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/tree`, { query: { branch, path } });
+export const readRepoFile = (apiKey: string, owner: string, projectId: string, branch: string, path: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/file`, { query: { branch, path } });
 export const writeRepoFile = (
   apiKey: string,
+  owner: string,
   projectId: string,
   body: { branch: string; path: string; content: string; message?: string }
-) => request(apiKey, `/projects/${projectId}/repo/file`, { method: "PUT", body });
-export const listCommits = (apiKey: string, projectId: string, branch: string, limit?: number) =>
-  request(apiKey, `/projects/${projectId}/repo/commits`, { query: { branch, limit } });
-export const getCommitInfo = (apiKey: string, projectId: string, commitId: string) =>
-  request(apiKey, `/projects/${projectId}/repo/commit-info`, { query: { commitId } });
-export const getCommitDiff = (apiKey: string, projectId: string, commitId: string) =>
-  request(apiKey, `/projects/${projectId}/repo/commit-diff`, { query: { commitId } });
-export const getFileCommits = (apiKey: string, projectId: string, branch: string, path: string, limit?: number) =>
-  request(apiKey, `/projects/${projectId}/repo/file-commits`, { query: { branch, path, limit } });
-export const getFileDiff = (apiKey: string, projectId: string, base: string, head: string, path: string) =>
-  request(apiKey, `/projects/${projectId}/repo/diff`, { query: { base, head, path } });
-export const pushRepo = (apiKey: string, projectId: string, body?: Record<string, unknown>) =>
-  request(apiKey, `/projects/${projectId}/repo/push`, { method: "POST", body: body ?? {} });
+) => request(apiKey, `/projects/${owner}/${projectId}/repo/file`, { method: "PUT", body });
+export const listCommits = (apiKey: string, owner: string, projectId: string, branch: string, limit?: number) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/commits`, { query: { branch, limit } });
+export const getCommitInfo = (apiKey: string, owner: string, projectId: string, commitId: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/commit-info`, { query: { commitId } });
+export const getCommitDiff = (apiKey: string, owner: string, projectId: string, commitId: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/commit-diff`, { query: { commitId } });
+export const getFileCommits = (apiKey: string, owner: string, projectId: string, branch: string, path: string, limit?: number) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/file-commits`, { query: { branch, path, limit } });
+export const getFileDiff = (apiKey: string, owner: string, projectId: string, base: string, head: string, path: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/diff`, { query: { base, head, path } });
+export const pushRepo = (apiKey: string, owner: string, projectId: string, body?: Record<string, unknown>) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/push`, { method: "POST", body: body ?? {} });
 
 // ---- Pull requests ----
-export const listPullRequests = (apiKey: string, projectId: string, state?: string) =>
-  request(apiKey, `/projects/${projectId}/pull-requests`, { query: { state } });
+export const listPullRequests = (apiKey: string, owner: string, projectId: string, state?: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/pull-requests`, { query: { state } });
 export const createPullRequest = (
   apiKey: string,
+  owner: string,
   projectId: string,
   body: { title: string; description?: string; sourceBranch: string; targetBranch: string }
-) => request(apiKey, `/projects/${projectId}/pull-requests`, { method: "POST", body });
-export const getPullRequest = (apiKey: string, projectId: string, id: string) => request(apiKey, `/projects/${projectId}/pull-requests/${id}`);
-export const mergePullRequest = (apiKey: string, projectId: string, id: string) =>
-  request(apiKey, `/projects/${projectId}/pull-requests/${id}/merge`, { method: "POST" });
-export const closePullRequest = (apiKey: string, projectId: string, id: string) =>
-  request(apiKey, `/projects/${projectId}/pull-requests/${id}/close`, { method: "POST" });
+) => request(apiKey, `/projects/${owner}/${projectId}/pull-requests`, { method: "POST", body });
+export const getPullRequest = (apiKey: string, owner: string, projectId: string, id: string) => request(apiKey, `/projects/${owner}/${projectId}/pull-requests/${id}`);
+export const updatePullRequest = (apiKey: string, owner: string, projectId: string, id: string, body: { title?: string; description?: string }) =>
+  request(apiKey, `/projects/${owner}/${projectId}/pull-requests/${id}`, { method: "PATCH", body });
+export const mergePullRequest = (apiKey: string, owner: string, projectId: string, id: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/pull-requests/${id}/merge`, { method: "POST" });
+export const closePullRequest = (apiKey: string, owner: string, projectId: string, id: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/pull-requests/${id}/close`, { method: "POST" });
 
 // ---- Messages ----
-export const listMessages = (apiKey: string, projectId: string, params?: { state?: string; page?: number }) =>
-  request(apiKey, `/projects/${projectId}/messages`, { query: params });
-export const sendMessage = (apiKey: string, projectId: string, body: { from: string; to: string; body: string; ttl?: number }) =>
-  request(apiKey, `/projects/${projectId}/messages`, { method: "POST", body });
-export const transitionMessage = (apiKey: string, projectId: string, id: string, state: "done" | "canceled") =>
-  request(apiKey, `/projects/${projectId}/messages/${id}/transition`, { method: "POST", body: { state } });
+export const listMessages = (apiKey: string, owner: string, projectId: string, params?: { state?: string; page?: number }) =>
+  request(apiKey, `/projects/${owner}/${projectId}/messages`, { query: params });
+export const sendMessage = (apiKey: string, owner: string, projectId: string, body: { from: string; to: string; body: string; ttl?: number }) =>
+  request(apiKey, `/projects/${owner}/${projectId}/messages`, { method: "POST", body });
+export const transitionMessage = (apiKey: string, owner: string, projectId: string, id: string, state: "done" | "canceled") =>
+  request(apiKey, `/projects/${owner}/${projectId}/messages/${id}/transition`, { method: "POST", body: { state } });
 
 // ---- Webhooks ----
-export const listWebhooks = (apiKey: string, projectId: string) => request(apiKey, `/projects/${projectId}/webhooks`);
-export const addWebhook = (apiKey: string, projectId: string, url: string) =>
-  request(apiKey, `/projects/${projectId}/webhooks`, { method: "POST", body: { url } });
-export const deleteWebhook = (apiKey: string, projectId: string, id: string) =>
-  request(apiKey, `/projects/${projectId}/webhooks/${id}`, { method: "DELETE" });
+export const listWebhooks = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/webhooks`);
+export const addWebhook = (apiKey: string, owner: string, projectId: string, url: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/webhooks`, { method: "POST", body: { url } });
+export const deleteWebhook = (apiKey: string, owner: string, projectId: string, id: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/webhooks/${id}`, { method: "DELETE" });
 
 // ---- Template (architect 계정 스코프) ----
 export const getTemplate = (apiKey: string) => request(apiKey, "/template");
 export const setTemplate = (apiKey: string, body: { claudeMd: string; skillMd: string }) => request(apiKey, "/template", { method: "PUT", body });
-export const deployTemplate = (apiKey: string, projectId: string) => request(apiKey, `/projects/${projectId}/template/deploy`, { method: "POST" });
+export const deployTemplate = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/template/deploy`, { method: "POST" });
 
 // ---- Remember ----
-export const listRemember = (apiKey: string, projectId: string, params?: { category?: string; page?: number }) =>
-  request(apiKey, `/projects/${projectId}/remember`, { query: params });
-export const addRemember = (apiKey: string, projectId: string, body: Record<string, unknown>) =>
-  request(apiKey, `/projects/${projectId}/remember`, { method: "POST", body });
-export const updateRemember = (apiKey: string, projectId: string, id: string, body: Record<string, unknown>) =>
-  request(apiKey, `/projects/${projectId}/remember/${id}`, { method: "PATCH", body });
-export const deleteRemember = (apiKey: string, projectId: string, id: string) =>
-  request(apiKey, `/projects/${projectId}/remember/${id}`, { method: "DELETE" });
+export const listRemember = (apiKey: string, owner: string, projectId: string, params?: { category?: string; page?: number }) =>
+  request(apiKey, `/projects/${owner}/${projectId}/remember`, { query: params });
+export const addRemember = (apiKey: string, owner: string, projectId: string, body: Record<string, unknown>) =>
+  request(apiKey, `/projects/${owner}/${projectId}/remember`, { method: "POST", body });
+export const updateRemember = (apiKey: string, owner: string, projectId: string, id: string, body: Record<string, unknown>) =>
+  request(apiKey, `/projects/${owner}/${projectId}/remember/${id}`, { method: "PATCH", body });
+export const deleteRemember = (apiKey: string, owner: string, projectId: string, id: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/remember/${id}`, { method: "DELETE" });

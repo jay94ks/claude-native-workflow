@@ -48,7 +48,7 @@
       <router-view />
     </q-page-container>
 
-    <MessagesDialog v-if="currentProject" v-model="showMessages" :project-id="currentProject.id" />
+    <MessagesDialog v-if="currentProject" v-model="showMessages" :owner="currentProject.ownerUsername" :project-id="currentProject.id" />
   </q-layout>
 </template>
 
@@ -70,10 +70,14 @@ const showMessages = ref(false);
 const initial = computed(() => (auth.username ?? "?").charAt(0).toUpperCase());
 
 // project.current는 마지막으로 연 프로젝트가 남아있을 수 있으므로, 지금
-// 라우트의 projectId와 실제로 일치할 때만 "프로젝트 화면"으로 취급한다
-// (다른 프로젝트/목록 화면으로 넘어가는 순간 잠깐 옛 프로젝트 정보가
-// 깜빡이는 것을 막는다).
-const currentProject = computed(() => (route.params.projectId === project.current?.id ? project.current : null));
+// 라우트의 owner+projectId와 실제로 일치할 때만 "프로젝트 화면"으로
+// 취급한다(다른 프로젝트/목록 화면으로 넘어가는 순간 잠깐 옛 프로젝트
+// 정보가 깜빡이는 것을 막는다). 설계자 요청(2026-09-21 후속)으로 project
+// id가 이제 생성자별로만 유일해져서 owner까지 같이 맞아야 한다 - id만
+// 비교하면 서로 다른 두 설계자의 동일한 id를 같은 프로젝트로 착각할 수 있다.
+const currentProject = computed(() =>
+  route.params.owner === project.current?.ownerUsername && route.params.projectId === project.current?.id ? project.current : null
+);
 
 function logout() {
   auth.logout();

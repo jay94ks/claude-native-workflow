@@ -2742,3 +2742,251 @@ vue`의 `.doc-source`) 중 하나였다 - 실제로 표시되던 정보나 동�
 비용이 훨씬 적게 든다. 다음에 파일을 통째로 다시 쓰는 라운드에서는
 이 대조를 구현 직후 검증 단계에 기본으로 포함시킨다.
 
+### PR 설명 수정 기능 (pr.update) 추가 (2026-09-21, 같은 날 후속)
+
+이전 라운드에 "PR 설명 편집 기능은 아직 없다"고 다음 라운드 후보로
+남겨뒀던 것(위 절 참고)을 설계자가 실제로 지목해 구현했다 - `pr.update`
+액션이 없어서 PR 생성 시점 이후엔 설명이 읽기 전용이었던 제약을 없앴다.
+
+- `backend/src/core/pullRequests.ts`의 `prUpdate(payload, ctx)` - WRITE
+  멤버십 필요, `title`/`description` 중 하나 이상 필요, **PR이 `open`
+  상태일 때만 수정 가능**하다(머지/닫힘 이후엔 그 시점 내용과 달라
+  보이면 오해를 부른다는 기존 판단을 그대로 유지 - 다른 상태면 거절).
+  `backend/src/api/actions.ts`(`"pr.update"` 등록)/`backend/src/api/
+  rest.ts`(`PATCH /projects/:projectId/pull-requests/:id`, 자원
+  본문을 그대로 200 응답 - 다른 REST 엔드포인트와 동일 패턴)/`cli/src/
+  index.ts`(`registerActionCommands("pr", [...])`에 `"update"`
+  추가)/`mcp/src/server.ts`(`mutationActions`에 `"pr.update"` 추가)
+  네 경로 전부에 노출했다 - CLI/MCP는 `docs.*` 등과 동일하게 그 자리에
+  한 줄 추가하는 것만으로 자동 배선되는 기존 패턴(`registerActionCommands`/
+  `mutationActions` 배열) 덕에 변경이 아주 작았다.
+- 프론트엔드는 `PullRequestsTab.vue`의 설명 뷰어를 항상 `read-only`로
+  고정하던 것에서, **`selected.state !== 'open'`일 때만 `read-only`**로
+  바꿨다 - `MarkdownSourceView`가 이미 갖고 있던 view/edit 토글+저장
+  버튼(문서/README와 동일한 컴포넌트)을 그대로 재사용했을 뿐, 새
+  UI를 만들지 않았다.
+
+**검증**: `backend`/`cli`/`mcp`/`frontend` 4개 패키지 전부 `tsc
+--noEmit` 클린. REST(`PATCH`)로 open 상태 PR의 설명을 실제로 바꾸고
+그 응답에 반영되는 것 확인, 그 다음 PR을 닫고 다시 같은 요청을
+보내 `422` + "closed 상태인 PR은 수정할 수 없습니다" 메시지로
+거절되는 것 확인. `/api/actions` + `X-Cnw-Channel: agent`(CLI/MCP
+경로)로도 같은 액션이 그대로 동작하는 것 확인. 실제 브라우저에서
+PR 하나를 열어 "편집" 버튼 → 설명 수정 → "저장" → 뷰 모드로
+돌아오며 새 내용이 보이는 것, 그 다음 API로 직접 재조회해 서버에
+실제로 저장됐는지 확인, PR을 닫은 뒤 같은 화면에 "편집" 버튼 자체가
+사라지는 것까지 확인.
+
+### Admin-per-project를 DB 제약으로도 강제 (2026-09-21, 같은 날 후속)
+
+Phase 1 스캐폴딩 때부터 "Admin은 프로젝트당 1명은 애플리케이션
+레이어에서만 검증, Prisma로 부분 unique index를 표현하기 까다로워
+TODO로 남김"(`backend/src/core/membership.ts` 상단 주석)이라고 미뤄뒀던
+항목을 이번에 실제로 마무리했다.
+
+**먼저 실제로 이 불변식이 지금 코드에서 깨질 수 있는지부터 확인**했다
+(`backend/src/core/projects.ts` 전수 조사) - ADMIN role이 쓰이는
+자리는 딱 셋: (1) `projectCreate`가 생성자에게만 ADMIN을 부여(프로젝트당
+멤버십이 이거 하나뿐이니 항상 유일), (2) `projectInvite`가
+`role !== "READ" && role !== "WRITE"`면 명시적으로 거부해서 초대로는
+ADMIN을 절대 못 준다, (3) `projectTransfer`가 **한 `$transaction`
+안에서 기존 Admin을 WRITE로 내리고(먼저) 새 Admin을 올리는(그다음)**
+순서로 실행돼 두 행이 동시에 ADMIN인 순간이 없다 - 즉 **현재 코드
+경로만으로는 이 불변식이 실제로 깨질 수 없었다**. 그래도 DB 제약을
+추가하기로 한 이유: 코드 경로가 안전한 것과 "앞으로 새 코드가 실수로
+이 불변식을 깰 수 없다"는 것은 다른 얘기이고(예: 나중에 관리자 승급
+API를 하나 더 만들다가 실수하면), 애플리케이션 버그를 DB 에러로
+즉시 잡아내는 편이 훨씬 싸다.
+
+- **Prisma 스키마 DSL은 부분(partial) unique 인덱스를 표현할 수
+  없다** - `@@unique`는 항상 테이블 전체에 대해 걸리므로 "role이
+  ADMIN인 행만" 조건을 못 넣는다. `npx prisma migrate dev
+  --create-only`로 빈 마이그레이션을 만들고 그 `migration.sql`에
+  직접 `CREATE UNIQUE INDEX ... ON "ProjectMembership" ("projectId")
+  WHERE ("role" = 'ADMIN')`를 써넣었다(`backend/prisma/migrations/
+  20260921025909_admin_per_project_unique/`) - READ/WRITE는 여전히
+  프로젝트당 여러 명 가능하고, 기존 `@@unique([projectId,
+  accountId])`도 그대로 유지된다.
+- 적용 전에 **기존 데이터에 이미 이 불변식을 어긴 행이 있는지부터
+  확인**했다(있으면 `CREATE UNIQUE INDEX`가 그 자리에서 실패한다) -
+  `SELECT "projectId", COUNT(*) FROM "ProjectMembership" WHERE
+  role='ADMIN' GROUP BY "projectId" HAVING COUNT(*) > 1`로 위반 0건
+  확인 후 `prisma migrate deploy`로 적용.
+- **알려진 트레이드오프(다음에 이 스키마를 또 건드릴 사람을 위해
+  기록)**: 이 인덱스는 `schema.prisma`에는 전혀 선언돼 있지 않다
+  (DSL이 못 하므로) - 그래서 나중에 `prisma migrate dev`로 새
+  마이그레이션을 또 만들 때, Prisma가 "마이그레이션 히스토리를 전부
+  재생한 shadow DB"와 "schema.prisma"를 diff하면서 이 인덱스를
+  "schema.prisma엔 없는데 DB엔 있는" drift로 착각해 **그걸 지우는
+  `DROP INDEX`를 새 마이그레이션에 자동으로 끼워 넣을 수 있다** -
+  다음에 `prisma migrate dev`가 생성한 마이그레이션 SQL에 이
+  인덱스를 지우는 줄이 보이면 그 줄만 지우고 진행할 것(마이그레이션
+  자체를 취소하지 말 것 - 그 라운드의 실제 스키마 변경까지 같이
+  날아간다).
+
+**검증**: 마이그레이션 적용 후 애플리케이션 코드를 거치지 않고
+raw SQL로 이미 Admin이 있는 프로젝트(`demo-project`)에 두 번째
+ADMIN 행을 직접 INSERT 시도 → Postgres `23505`(unique_violation,
+`Key ("projectId")=(demo-project) already exists`)로 실제 거부되는
+것 확인. 그다음 **실제 `project.transfer` 흐름이 이 제약 아래서도
+정상 동작하는지** 임시 계정+임시 프로젝트로 실제 라운드트립 확인
+(가입 → 프로젝트 생성 → WRITE로 초대 → 수락 → `project.transfer`로
+Admin 양도 → `project.members`로 기존 Admin이 WRITE로, 대상이
+ADMIN으로 정확히 바뀐 것 확인 → 검증에 쓴 임시 프로젝트는
+`project.destroy`로 정리, 임시 계정은 계정 삭제 기능이 아직 없어
+프로젝트 없이 남겨둠).
+
+### 프로젝트별 웹 접속 path를 /{생성자}/{project id}로 전환 + project id를 생성자별 유일로 재정의 (2026-09-21, 같은 날 후속)
+
+설계자가 두 가지를 연달아 요청했다: (1) 프로젝트별 웹 접속 path를
+`/{프로젝트 생성자의 login명}/{프로젝트 id}`(및 그 아래 모든 경로)로
+바꿀 것(GitHub의 `/{owner}/{repo}` 스타일), (2) project id는 전역
+유일이 아니라 **설계자(생성자)별로 유일**해야 한다 - 설계자 A가 `pA`
+라는 프로젝트를 가졌어도 설계자 B가 똑같이 `pA`라는 id로 자기
+프로젝트를 만들 수 있어야 한다. 두 요청이 사실상 하나로 합쳐진다 -
+(1)의 두 번째 URL segment가 바로 (2)가 재정의하는 그 "project id"다.
+
+**이 라운드가 진행되던 도중 설계자가 (2)를 추가로 요청**했다(원래는
+(1)만 진행 중이었다) - 이미 URL scheme을 `/:owner/:projectId`로 바꾸는
+작업을 반쯤 마친 상태에서 받았는데, 다행히 뒤엎을 필요는 없었다(owner
+segment 자체는 그대로 필요했고, 그 안의 projectId가 "전역 유일"에서
+"owner 범위 유일"로 의미만 바뀌는 것이었기 때문). 다만 project id가
+더는 전역 유일이 아니게 되면서 그동안 `Project.id`(하나의 문자열)를
+그대로 CLI 설정 파일/`/api/actions` payload/REST 경로/DB FK 전부에서
+공유해 쓰던 설계 전체가 흔들리는 훨씬 큰 변경이 됐다.
+
+**판단 - 내부 surrogate PK를 그대로 두고, "owner+slug -> 내부 PK" 변환을
+진입점 한 곳에만 둔다**: `Project.id`(cuid)는 손대지 않고 여전히
+전역 유일한 내부 PK로 남겨 Document/PullRequest/Message/Webhook/
+RememberItem/ProjectMembership/ProjectInvite 등 **기존 관계 테이블은
+전혀 스키마를 안 건드렸다**. 대신 `Project.slug`(설계자가 직접 고르는
+문자열, `@@unique([creatorAccountId, slug])`)를 새로 추가해 "밖에서
+부르는 project id"로 삼았다. `backend/src/core/projectResolve.ts`의
+`resolveProjectId(owner, slug)`가 owner username -> creatorAccountId ->
+`(creatorAccountId, slug)` 조합으로 실제 내부 PK를 찾아주는 유일한
+통로이고, 이걸 `api/actions.ts`의 `dispatch()`와 `api/rest.ts`의
+`web()` - CLI/MCP와 WEB UI 각각의 유일한 진입점 - 딱 두 곳에서만
+호출해서, payload에 `owner`+`projectId`(slug)가 같이 오면 그 자리에서
+`projectId`를 실제 내부 PK로 바꿔치기한다. **이 판단 덕분에 지금까지
+있던 액션 핸들러(`core/documents.ts`/`repoBrowse.ts`/`pullRequests.ts`/
+`messages.ts`/`webhooks.ts`/`remember.ts`/`templates.ts` 전부)는
+단 한 줄도 안 고쳤다** - 그 핸들러들은 지금까지처럼 `payload.projectId`
+를 "이미 유일하게 식별된 값"으로 그대로 받는다, owner/slug 개념
+자체를 몰라도 된다. `project.create`만 예외로 실제로 고쳤다 - 이제
+호출자가 `id`(원하는 slug)를 직접 골라 보내야 하고, `creatorAccountId`
+범위에서 중복이면 거절한다(`SLUG_PATTERN`으로 영문/숫자 시작+영문/
+숫자/-/_ 1~64자 형식도 검증).
+
+**바뀐 곳**:
+- `backend/prisma/schema.prisma` - `Project.slug`(신규) +
+  `@@unique([creatorAccountId, slug])`. 마이그레이션
+  `20260921032000_project_slug_per_creator`가 기존 행(`demo-project`
+  하나뿐이었음)의 `slug`를 그 자체 `id` 값으로 백필했다(그 프로젝트의
+  기존 `id` 문자열이 이미 사람이 고른 값이었으므로 - `project.create`
+  가 지금까지 cuid를 자동 생성해왔지만 시드 스크립트가 만든
+  `demo-project`는 예외였다).
+- `backend/src/core/projectResolve.ts`(신규) - 위에서 설명한
+  `resolveProjectId`.
+- `backend/src/api/actions.ts`의 `dispatch()`, `backend/src/api/
+  rest.ts`의 `web()` - 위 변환 훅.
+- `backend/src/api/rest.ts` - 프로젝트가 걸린 모든 라우트 경로가
+  `/projects/:projectId/...`에서 `/projects/:owner/:projectId/...`로
+  바뀌었다(약 40개 라우트, sed로 일괄 변경 후 수동 검증).
+- `backend/src/core/projects.ts` - `toProjectResponse`가 `id`
+  자리에 이제 `p.slug`를 돌려주고(외부 응답 모양은 그대로 `id`
+  필드 하나), `ownerUsername`(=`creator.username`)도 항상 같이
+  싣는다. `projectCreate`가 `id`(slug) payload 필드를 받아 검증+
+  중복 확인. `projectInvitesForMe`도 내부 cuid를 그대로 노출하던
+  버그(이번에 발견 - owner 개념이 생기기 전엔 문제 없었지만 이제는
+  의미 없는 값이 된다)를 고쳐 `owner`+`projectId`(slug) 쌍으로
+  응답한다.
+- `shared/src/config.ts` - `.cnw/config.json`(`ProjectConfig`)에
+  `owner` 필드 추가, `$HOME/.cnw/credentials.json`(`HomeConfig`)
+  캐시 키를 `httpEndpoint -> projectId -> architectId`(3단)에서
+  `httpEndpoint -> owner -> projectId -> architectId`(4단)로 - owner
+  없이 projectId만으로 캐시 키를 만들면 서로 다른 두 설계자의 동일한
+  projectId가 같은 자리를 덮어쓸 수 있어서다(실제로는 같은
+  architectId면 그 값 자체는 동일해서 지금 당장 기능이 깨지진
+  않았겠지만, 개념적으로 맞지 않는 걸 그대로 두지 않았다).
+- `cli/src/index.ts` - `docs auth login`에 `--owner <username>`
+  옵션 추가(기본값은 `--username`, 즉 "내 프로젝트를 링크하는 것"이
+  가장 흔한 경우라는 판단 - 틀렸으면 첫 액션 호출에서 "프로젝트를
+  찾을 수 없습니다"로 바로 드러난다). `registerActionCommands`가
+  만드는 모든 action payload에 `owner: config.owner`를 추가로 실어
+  보낸다(`project.create`/`list`처럼 이 값이 필요 없는 액션은
+  핸들러가 안 읽으므로 무해).
+- `mcp/src/server.ts` - `runAction()`도 동일하게 `owner: config.owner`
+  추가.
+- `frontend/src/router/routes.ts` - 프로젝트 하위 전체 라우트를
+  `projects/:projectId`에서 `:owner/:projectId`로(최상위 세그먼트,
+  `/projects`는 목록 페이지로 여전히 살아있음 - 두 세그먼트를 요구하는
+  프로젝트 라우트와 한 세그먼트짜리 정적 라우트라 경로 길이가 달라
+  충돌하지 않는다).
+- `frontend/src/api/client.ts` - `projectId`를 받는 함수 전부(~35개)
+  가 `owner` 파라미터를 하나씩 더 받고 URL도 `/projects/${owner}/
+  ${projectId}/...`로 바뀌었다(sed 일괄 변경 후 여러 줄로 나뉜
+  4개 함수 시그니처만 수동 보정).
+- **owner를 실제로 쓰는 화면 컴포넌트 전부**(`ProjectShell.vue`/
+  `SettingsShell.vue`/`DocTypeWorkspace.vue`/`DocumentDiscussion.vue`/
+  `RecentQaFeed.vue`/`DiffViewer.vue`/`ProjectAboutSidebar.vue`/
+  `MessagesDialog.vue`/`CodeTab.vue`/`PullRequestsTab.vue`/
+  `PrCreatePage.vue`/`DocCreatePage.vue`/`DocumentThreadPage.vue`/
+  `BranchCommitsPage.vue`/`CommitDiffPage.vue`/`DocumentsTab.vue`/
+  `IssuesTab.vue`/`PlansTab.vue`/`TrackersTestsTab.vue`/
+  `settings/{General,Collaborators,Template}Page.vue`/
+  `ProjectListPage.vue`/`MainLayout.vue`, 총 20여 개) - `owner` prop을
+  추가로 받아 그대로 `api.*` 호출과 하위 라우트 링크에 실어 나른다.
+  `ProjectListPage.vue`의 "새 프로젝트" 다이얼로그엔 이제 `id` 입력
+  필드가 새로 생겼다(예전엔 서버가 cuid를 자동 생성했지만 이제
+  설계자가 URL에 쓰일 값을 직접 고른다).
+- **`MainLayout.vue`의 회귀 방지 수정**: `project.current`(마지막으로
+  로드된 프로젝트)가 지금 라우트와 같은 프로젝트인지 확인하던 기존
+  로직이 `route.params.projectId === project.current?.id`만 비교했다
+  - project id가 이제 생성자별로만 유일해지면서, **owner가 다른 두
+  프로젝트가 우연히 같은 id를 쓰면 이 비교가 잘못 "같은 프로젝트"로
+  오인**할 수 있게 됐다(예: `/ownerA/pA`를 보다가 `/ownerB/pA`로
+  이동해도 잠깐 ownerA 프로젝트 정보가 유지될 뻔함) - `route.params.owner
+  === project.current?.ownerUsername`도 같이 확인하도록 고쳤다. 이번
+  변경이 실제로 새로 만들어낸 버그를 구현 중에 미리 잡은 사례.
+- **`backend/src/core/membership.ts`의 에러 메시지 수정**: `requireMembership`
+  실패 메시지가 `projectId`를 그대로 문자열에 넣었는데, 이 시점의
+  `projectId`는 이미 owner/slug가 내부 PK로 바뀐 뒤라(전혀 사람이
+  알아볼 수 없는 cuid) 메시지에서 아예 뺐다 - 실기동 검증 중 실제로
+  이 문자열이 노출되는 걸 보고(설계자가 아니라 직접 발견) 고쳤다.
+
+**설계 시점에 판단해 기록해두는 것(다음 라운드 참고)**:
+- **URL의 owner segment는 "장식"일 뿐 검증하지 않는다** - `/{누구든}
+  /{projectId}`처럼 owner 문자열 자체는 그 프로젝트의 실제 생성자와
+  달라도 서버는 신경 쓰지 않고 owner+projectId 조합으로 조회해서
+  틀리면 그냥 404(프로젝트 없음)를 준다. GitHub처럼 "잘못된 owner로
+  접근하면 정확한 owner로 redirect"하는 정합성 기능은 이번 라운드
+  스코프 밖으로 남긴다(요청받은 건 "path를 이 형태로 바꿔라"였지
+  "잘못된 owner를 정정해라"가 아니었다).
+- **project.transfer 이후에도 owner segment는 안 바뀐다** - owner는
+  "생성자"(`creatorAccountId`, 영구)를 가리키지 Admin(양도로 바뀔 수
+  있음)을 가리키지 않는다 - "웹 URL이 Admin 양도 때마다 바뀌면
+  북마크/CI 설정이 깨진다"는 판단.
+- **CLI 홈 설정 캐시 키에 owner를 추가하면서 4단 중첩이 됐다** - 실제
+  로는 이 값(`{endpoint, apiKey}`)이 같은 architectId면 owner/projectId와
+  무관하게 항상 같은 값이라 이 중첩 자체가 (설계 처음부터) 다소
+  과한 정규화였다는 걸 이번에 알아챘지만, 이번 라운드 스코프(URL/project
+  id 변경)에 집중하려고 그 구조 자체를 단순화하는 건 손대지 않았다 -
+  필요해지면 다음 라운드에 architectId 하나로만 캐시하도록 단순화할 수 있다.
+
+**검증**: `backend`/`shared`/`cli`/`mcp`/`frontend` 5개 패키지 전부
+`tsc --noEmit`(프론트는 `vue-tsc`) 클린. 마이그레이션 적용 전 기존
+데이터에 백필 대상 문제가 없는지 확인 후 적용, `demo-project`가
+`admin` 소유로 정확히 조회되는 것 확인. **핵심 시나리오를 실제로
+재현**했다 - 계정 `admin`과 새로 만든 `designer-b` 둘 다 각자
+`pA`라는 id로 프로젝트를 생성(둘 다 성공, `POST /projects` 201),
+`admin`이 `pA`를 또 만들려 하면 거절(422, 같은 owner 안에서만
+중복 검사), `GET /projects/admin/pA`와 `GET /projects/designer-b/pA`가
+각각 다른 프로젝트를 정확히 돌려주는 것, `admin`이 `designer-b`의
+`pA`를 읽으려 하면 멤버십 없음으로 거절(422)되는 것, 존재하지 않는
+owner로 조회하면 404로 깔끔히 실패하는 것까지 curl로 직접 확인.
+실제 브라우저에서 `/admin/pA/code`로 진입해 About/Contributors/탭
+전부 정상 렌더링, `/admin/pA/documents/new`에서 실제로 문서를
+만들어 `POST /api/projects/admin/pA/documents`가 201로 성공하고
+목록 화면(`/admin/pA/documents`)에 반영되는 것까지 네트워크 탭으로
+확인. 검증에 쓴 두 `pA` 프로젝트는 `project.destroy`로 정리.
+

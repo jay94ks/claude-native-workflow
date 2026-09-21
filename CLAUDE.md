@@ -93,7 +93,18 @@ commit_id로 갱신한다.
   push-mirror - Admin만)/`invite`(Admin만, Read/Write만 부여)/
   `acceptInvite`/`transfer`(Admin 양도 - 대상은 이미 collaborator
   여야 함)/`destroy`(제한구역, cascade 삭제) - `backend/src/core/
-  projects.ts`. `visibility: PUBLIC`이면 비멤버도 READ 가능(WRITE는
+  projects.ts`. **"Admin은 프로젝트당 1명"은 애플리케이션 레이어
+  (create/invite/transfer 세 경로만 ADMIN을 건드리고 셋 다 이 불변식을
+  지킴)뿐 아니라 DB 부분 unique 인덱스로도 이중 강제**한다(설계자
+  요청, 2026-09-21 후속) - `CREATE UNIQUE INDEX ... ON
+  "ProjectMembership" ("projectId") WHERE ("role" = 'ADMIN')`,
+  Prisma 스키마 DSL이 부분 인덱스를 표현 못 해 마이그레이션 SQL에
+  직접 작성(`backend/prisma/migrations/
+  20260921025909_admin_per_project_unique/`) - **`schema.prisma`엔
+  선언돼 있지 않으므로 다음에 `prisma migrate dev`를 돌릴 때 이
+  인덱스를 drift로 오인해 `DROP INDEX`를 자동 생성할 수 있다는 점을
+  알아두고, 그런 줄이 보이면 그 줄만 지우고 진행할 것**(design-notes.md
+  참고). `visibility: PUBLIC`이면 비멤버도 READ 가능(WRITE는
   여전히 멤버십 필요) - `docs.*`/`remember.*`/`message.*`/`repo.*`가
   전부 공유하는 `membership.ts`의 `requireMembership`에 이 예외가
   들어있다. CLI에 `project` 서브커맨드 그룹이 있다.
@@ -290,9 +301,15 @@ commit_id로 갱신한다.
   marked→turndown 코드 블록 왕복에서 파일 끝 줄바꿈이 하나
   없어지는 경우가 있어(Node 스크립트로 직접 재현) 원본이 `\n`으로
   끝났으면 저장 직전에 되돌려준다.
-- **PR 설명도 Source View(읽기 전용)로 렌더**한다 - `pr.update`
-  액션이 아직 없어서 생성 시점 이후엔 수정할 수 없다(다음 라운드
-  후보로 남김).
+- **PR 설명도 Source View로 렌더**한다 - `pr.update` 액션(설계자
+  요청, 2026-09-21 후속)으로 **PR이 `open` 상태인 동안은 수정
+  가능**하다(WRITE 멤버십 필요) - `backend/src/core/pullRequests.ts`
+  의 `prUpdate`, REST `PATCH /projects/:owner/:projectId/pull-requests/:id`,
+  CLI `pr update`, MCP `docs_action`에 노출. merged/closed된 PR은
+  여전히 읽기 전용(그 시점 내용과 달라 보이면 오해를 부르므로) -
+  `PullRequestsTab.vue`가 `MarkdownSourceView`의 `read-only`를
+  `selected.state !== 'open'`으로 바꿔 기존 view/edit 토글+저장
+  버튼을 그대로 재사용한다.
 - **WEB REST API**(설계자 지시, 2026-09-21): "/api/actions 단일
   엔드포인트"는 CLI/MCP를 위한 설계였지 WEB UI까지 몰아넣을 필요는
   없다는 지적에 따라, `backend/src/api/rest.ts`(신규)에 프로젝트/
@@ -440,6 +457,32 @@ commit_id로 갱신한다.
   (=클로드) WEB UI를 통했는지(=architect)는 `X-Cnw-Channel: agent`
   헤더 유무로 판별한다(`shared/apiclient.ts`가 항상 이 헤더를 싣고,
   없으면 architect로 간주).
+- **project id는 전역 유일이 아니라 그 생성자(owner)별로만 유일**하다
+  (설계자 요청, 2026-09-21 후속 - "설계자 A가 pA를 가졌어도 설계자
+  B도 pA로 만들 수 있어야 한다") - `Project.slug`가
+  `@@unique([creatorAccountId, slug])`로 그 값을 저장하고, DB의
+  전역 유일 PK(`Project.id`, cuid)는 완전히 내부용으로만 남아
+  Document/PullRequest 등 기존 관계 테이블 스키마는 전혀 안 바뀌었다.
+  그래서 **모든 액션 payload는 `projectId`(slug) 옆에 `owner`(그
+  프로젝트 생성자의 username)도 같이 실어야 한다** - CLI는
+  `.cnw/config.json`의 `owner` 필드(`docs auth login --owner
+  <username>`, 생략 시 `--username`으로 기본값)로 자동 채우고,
+  REST는 `/projects/:owner/:projectId/...` URL 자체에 있다.
+  owner+projectId(slug) -> 실제 내부 PK 변환은 `backend/src/core/
+  projectResolve.ts`의 `resolveProjectId()` 하나뿐이고, 이걸 부르는
+  곳도 `api/actions.ts`의 `dispatch()`(CLI/MCP)와 `api/rest.ts`의
+  `web()`(WEB UI) 딱 두 진입점뿐이다 - 그 아래 `core/*.ts`의 기존
+  액션 핸들러는 이 owner/slug 개념을 전혀 몰라도 되고(`payload.projectId`
+  를 지금까지처럼 "이미 유일하게 식별된 값"으로 그대로 씀), `project.create`
+  만 예외로 호출자가 원하는 slug를 `id` payload 필드로 직접 골라
+  보낸다. **웹 접속 path도 이와 짝을 맞춰 `/{생성자 username}/
+  {project id}`**(및 그 아래 모든 경로) 형태다 - `frontend/src/router/
+  routes.ts`의 최상위 동적 라우트가 `:owner/:projectId`, `frontend/src/
+  api/client.ts`의 프로젝트 스코프 함수 전부가 `owner` 파라미터를
+  받는다. **owner segment는 검증하지 않는 장식**이다(틀린 owner로
+  접근하면 그냥 404) - "잘못된 owner를 정확한 값으로 redirect"하는
+  건 스코프 밖. owner는 **생성자**(`creatorAccountId`, 영구)를
+  가리키므로 `project.transfer`로 Admin이 넘어가도 URL은 안 바뀐다.
 
 ## 프론트엔드 컴포넌트 관례
 

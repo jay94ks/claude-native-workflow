@@ -14,7 +14,7 @@
     <div v-else-if="projects.length === 0" class="text-caption">아직 프로젝트가 없습니다.</div>
     <div class="row q-col-gutter-md">
       <div v-for="project in projects" :key="project.id" class="col-12 col-sm-4">
-        <router-link :to="`/projects/${project.id}`" style="text-decoration: none; color: inherit">
+        <router-link :to="`/${project.ownerUsername}/${project.id}`" style="text-decoration: none; color: inherit">
           <ProjectCard :name="project.name" :visibility="project.visibility" :description="project.description" :my-role="project.myRole" />
         </router-link>
       </div>
@@ -25,6 +25,10 @@
         <q-card-section class="text-h6">새 프로젝트</q-card-section>
         <q-card-section class="q-gutter-md">
           <q-input v-model="newName" label="이름" autofocus />
+          <!-- 설계자 요청(2026-09-21 후속) - "프로젝트 id는 설계자별로 관리되어야
+               한다" - 내 계정 범위에서만 유일하면 되므로 직접 고른다(다른
+               설계자가 이미 같은 id를 쓰고 있어도 상관없다). -->
+          <q-input v-model="newId" label="id (URL에 쓰일 값, 영문/숫자/-/_)" hint="예: my-app" />
           <q-input v-model="newDescription" label="설명 (선택)" />
           <q-toggle v-model="newIsPublic" label="공개(PUBLIC) - 비멤버도 읽기 가능" />
           <div v-if="createError" class="text-negative text-caption">{{ createError }}</div>
@@ -40,13 +44,19 @@
       <q-card style="width: 420px">
         <q-card-section class="text-h6">초대 수락</q-card-section>
         <q-list v-if="myInvites.length > 0" separator>
-          <q-item v-for="invite in myInvites" :key="invite.projectId">
+          <q-item v-for="invite in myInvites" :key="`${invite.owner}/${invite.projectId}`">
             <q-item-section>
               <q-item-label>{{ invite.projectName }}</q-item-label>
-              <q-item-label caption>{{ invite.projectId }} · {{ invite.role }}</q-item-label>
+              <q-item-label caption>{{ invite.owner }}/{{ invite.projectId }} · {{ invite.role }}</q-item-label>
             </q-item-section>
             <q-item-section side>
-              <q-btn size="sm" color="primary" label="수락" :loading="accepting === invite.projectId" @click="acceptInvite(invite.projectId)" />
+              <q-btn
+                size="sm"
+                color="primary"
+                label="수락"
+                :loading="accepting === `${invite.owner}/${invite.projectId}`"
+                @click="acceptInvite(invite.owner, invite.projectId)"
+              />
             </q-item-section>
           </q-item>
         </q-list>
@@ -68,6 +78,7 @@ import * as api from "src/api/client";
 
 interface ProjectSummary {
   id: string;
+  ownerUsername: string;
   name: string;
   description: string | null;
   visibility: "PUBLIC" | "PRIVATE";
@@ -80,6 +91,7 @@ const loading = ref(true);
 
 const showCreate = ref(false);
 const newName = ref("");
+const newId = ref("");
 const newDescription = ref("");
 const newIsPublic = ref(false);
 const creating = ref(false);
@@ -98,6 +110,7 @@ async function create() {
   creating.value = true;
   createError.value = "";
   const result = await api.createProject(auth.apiKey!, {
+    id: newId.value,
     name: newName.value,
     description: newDescription.value || undefined,
     visibility: newIsPublic.value ? "PUBLIC" : "PRIVATE",
@@ -109,12 +122,14 @@ async function create() {
   }
   showCreate.value = false;
   newName.value = "";
+  newId.value = "";
   newDescription.value = "";
   newIsPublic.value = false;
   await load();
 }
 
 interface MyInvite {
+  owner: string;
   projectId: string;
   projectName: string;
   role: "READ" | "WRITE" | "ADMIN";
@@ -135,10 +150,10 @@ function openAcceptDialog() {
   showAccept.value = true;
 }
 
-async function acceptInvite(projectId: string) {
-  accepting.value = projectId;
+async function acceptInvite(owner: string, projectId: string) {
+  accepting.value = `${owner}/${projectId}`;
   acceptError.value = "";
-  const result = await api.acceptInvite(auth.apiKey!, projectId);
+  const result = await api.acceptInvite(auth.apiKey!, owner, projectId);
   accepting.value = null;
   if (!result.ok) {
     acceptError.value = result.reason?.join(", ") ?? "수락에 실패했습니다.";

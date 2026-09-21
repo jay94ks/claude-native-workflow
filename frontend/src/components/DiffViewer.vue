@@ -66,7 +66,7 @@ interface FileDiff {
   newImage: string | null;
 }
 
-const props = defineProps<{ projectId: string; base: string; head: string; path: string }>();
+const props = defineProps<{ owner: string; projectId: string; base: string; head: string; path: string }>();
 const auth = useAuthStore();
 
 const loading = ref(true);
@@ -76,7 +76,7 @@ const expandedBlocks = ref<Set<number>>(new Set());
 // 설계자 요청(2026-09-21) - "원본 파일을 코드 트리에서 보는 기능": Code
 // 탭으로 이동해서 head 브랜치/커밋 기준으로 그 파일을 바로 열어준다
 // (CodeTab.vue가 branch/path 쿼리를 읽어 자동 선택한다).
-const treeLink = computed(() => `/projects/${props.projectId}/code?branch=${encodeURIComponent(props.head)}&path=${encodeURIComponent(props.path)}`);
+const treeLink = computed(() => `/${props.owner}/${props.projectId}/code?branch=${encodeURIComponent(props.head)}&path=${encodeURIComponent(props.path)}`);
 const canDownload = computed(() => !!diff.value && (diff.value.newExists || diff.value.oldExists) && !(diff.value.isBinary && !diff.value.isImage));
 
 const rawBlocks = ref<DiffBlock[]>([]);
@@ -106,7 +106,7 @@ function downloadRaw() {
 async function load() {
   loading.value = true;
   expandedBlocks.value = new Set();
-  const result = await api.getFileDiff(auth.apiKey!, props.projectId, props.base, props.head, props.path);
+  const result = await api.getFileDiff(auth.apiKey!, props.owner, props.projectId, props.base, props.head, props.path);
   if (result.ok) {
     diff.value = result.data as FileDiff;
     if (diff.value && !diff.value.isBinary) {
@@ -121,7 +121,7 @@ async function load() {
   loading.value = false;
 }
 
-watch(() => [props.projectId, props.base, props.head, props.path], load, { immediate: true });
+watch(() => [props.owner, props.projectId, props.base, props.head, props.path], load, { immediate: true });
 </script>
 
 <style scoped>

@@ -11,7 +11,7 @@
       no-caps
       dense
     >
-      <q-route-tab v-for="t in tabs" :key="t.to" :to="`/projects/${projectId}/${t.to}`" content-class="row items-center no-wrap">
+      <q-route-tab v-for="t in tabs" :key="t.to" :to="`/${owner}/${projectId}/${t.to}`" content-class="row items-center no-wrap">
         <q-icon :name="t.icon" size="16px" class="q-mr-xs" />
         <div>{{ t.label }}</div>
       </q-route-tab>
@@ -33,7 +33,7 @@
 import { onMounted, ref, watch } from "vue";
 import { useProjectStore } from "stores/project";
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const project = useProjectStore();
 const loadError = ref("");
 
@@ -55,12 +55,12 @@ const tabs = [
 ];
 
 async function load() {
-  const result = await project.load(props.projectId);
+  const result = await project.load(props.owner, props.projectId);
   if (!result.ok) loadError.value = result.reason?.join(", ") ?? "프로젝트를 불러올 수 없습니다.";
 }
 
 onMounted(load);
-watch(() => props.projectId, load);
+watch(() => [props.owner, props.projectId], load);
 </script>
 
 <style scoped>

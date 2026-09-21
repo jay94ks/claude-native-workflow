@@ -89,7 +89,7 @@
         <q-separator class="q-my-md" />
         <!-- design-notes.md "UI 설계" - question/answer/opinion은 별도 Q&A 탭이
              아니라 PR 리뷰 코멘트처럼 그 문서를 보는 화면 안에 통합된다. -->
-        <DocumentDiscussion ref="discussionRef" :project-id="projectId" :parent-code="selected.code" :highlight-code="highlightCode" />
+        <DocumentDiscussion ref="discussionRef" :owner="owner" :project-id="projectId" :parent-code="selected.code" :highlight-code="highlightCode" />
       </template>
       <div v-else class="text-caption">왼쪽에서 문서를 선택하세요.</div>
     </div>
@@ -147,6 +147,7 @@ interface TransitionOption {
 
 const props = withDefaults(
   defineProps<{
+    owner: string;
     projectId: string;
     type: string;
     kinds: string[];
@@ -180,7 +181,7 @@ function stateColor(state: string): string {
 const sortByDependency = ref(false);
 
 async function load() {
-  const result = await api.listDocuments(auth.apiKey!, props.projectId, {
+  const result = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, {
     type: props.type,
     sort: sortByDependency.value ? "dependency" : undefined,
   });
@@ -189,7 +190,7 @@ async function load() {
 
 async function select(code: string) {
   actionError.value = "";
-  const result = await api.getDocument(auth.apiKey!, props.projectId, code);
+  const result = await api.getDocument(auth.apiKey!, props.owner, props.projectId, code);
   if (result.ok) selected.value = result.data as DocFull;
 }
 
@@ -204,7 +205,7 @@ async function transition(to: string) {
   actionError.value = "";
   // docs.transition의 실제 계약: etag가 아니라 "지금 이 상태일 거라
   // 예상한다"는 현재 상태 문자열로 낙관적 동시성을 건다.
-  const result = await api.transitionDocument(auth.apiKey!, props.projectId, selected.value.code, to, selected.value.state);
+  const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, selected.value.code, to, selected.value.state);
   transitioning.value = null;
   if (!result.ok) {
     actionError.value = result.reason?.join(", ") ?? "전이에 실패했습니다.";
@@ -220,7 +221,7 @@ async function transition(to: string) {
 async function saveContent(markdown: string) {
   if (!selected.value) return;
   actionError.value = "";
-  const result = await api.updateDocument(auth.apiKey!, props.projectId, selected.value.code, { etag: selected.value.etag, content: markdown });
+  const result = await api.updateDocument(auth.apiKey!, props.owner, props.projectId, selected.value.code, { etag: selected.value.etag, content: markdown });
   if (!result.ok) {
     actionError.value = result.reason?.join(", ") ?? "저장에 실패했습니다.";
     return;
@@ -249,7 +250,7 @@ async function addTag() {
   tagging.value = true;
   tagError.value = "";
 
-  const targetResult = await api.getDocument(auth.apiKey!, props.projectId, tagCode.value);
+  const targetResult = await api.getDocument(auth.apiKey!, props.owner, props.projectId, tagCode.value);
   if (!targetResult.ok) {
     tagging.value = false;
     tagError.value = targetResult.reason?.join(", ") ?? "대상 문서를 찾을 수 없습니다.";
@@ -260,7 +261,7 @@ async function addTag() {
   const nextRelated = tagKind.value === "related" ? [...selected.value.related, { code: target.code, etag: target.etag }] : undefined;
   const nextDependsOn = tagKind.value === "dependsOn" ? [...selected.value.dependsOn, { code: target.code, etag: target.etag }] : undefined;
 
-  const result = await api.tagDocument(auth.apiKey!, props.projectId, selected.value.code, {
+  const result = await api.tagDocument(auth.apiKey!, props.owner, props.projectId, selected.value.code, {
     etag: selected.value.etag,
     related: nextRelated,
     dependsOn: nextDependsOn,
@@ -278,7 +279,7 @@ onMounted(async () => {
   await load();
   if (props.openCode) await select(props.openCode);
 });
-watch(() => props.projectId, load);
+watch(() => [props.owner, props.projectId], load);
 </script>
 
 <style scoped>

@@ -14,9 +14,18 @@ const CACHE_FILE = "cache.json";
 // 홈 디렉터리 바로 밑에 워크스페이스를 만들어보다가 실측으로 발견).
 const HOME_CONFIG_FILE = "credentials.json";
 
-/** `.cnw/config.json` - no personal identifiers, safe to commit to git. */
+/**
+ * `.cnw/config.json` - no personal identifiers, safe to commit to git.
+ *
+ * 설계자 요청(2026-09-21 후속) - "프로젝트 id는 설계자별로 관리되어야
+ * 한다"에 따라 `projectId`(=slug)만으로는 어느 프로젝트인지 전역에서
+ * 특정할 수 없어졌다 - 그 프로젝트를 만든 계정의 username인 `owner`가
+ * 항상 같이 있어야 한다(서버의 `resolveProjectId(owner, projectId)`가
+ * 실제 내부 PK로 바꾼다).
+ */
 export interface ProjectConfig {
   httpEndpoint: string;
+  owner: string;
   projectId: string;
 }
 
@@ -30,8 +39,14 @@ export interface DesignerCredentials {
   apiKey: string;
 }
 
-/** `$HOME/.cnw/credentials.json`, nested httpEndpoint -> projectId -> architectId. */
-export type HomeConfig = Record<string, Record<string, Record<string, DesignerCredentials>>>;
+/**
+ * `$HOME/.cnw/credentials.json`, nested httpEndpoint -> owner -> projectId ->
+ * architectId. `owner`가 추가된 이유(2026-09-21 후속): projectId(slug)가
+ * 이제 그 생성자 범위에서만 유일해서, owner 없이 projectId만으로 캐시
+ * 키를 만들면 서로 다른 두 설계자의 동일한 projectId가 같은 자리를
+ * 덮어쓸 수 있다.
+ */
+export type HomeConfig = Record<string, Record<string, Record<string, Record<string, DesignerCredentials>>>>;
 
 export interface ClientConfig extends ProjectConfig, SessionConfig, DesignerCredentials {}
 
@@ -78,10 +93,12 @@ export function readProjectConfig(startDir: string = process.cwd()): { root: str
     );
   }
   const config = readJson<Partial<ProjectConfig>>(projectConfigPath(root));
-  if (typeof config.httpEndpoint !== "string" || typeof config.projectId !== "string") {
-    throw new CnwConfigError(`${projectConfigPath(root)} must contain string fields "httpEndpoint" and "projectId".`);
+  if (typeof config.httpEndpoint !== "string" || typeof config.owner !== "string" || typeof config.projectId !== "string") {
+    throw new CnwConfigError(
+      `${projectConfigPath(root)} must contain string fields "httpEndpoint", "owner" and "projectId" - run "docs auth login" again if this was written by an older version.`
+    );
   }
-  return { root, config: { httpEndpoint: config.httpEndpoint, projectId: config.projectId } };
+  return { root, config: { httpEndpoint: config.httpEndpoint, owner: config.owner, projectId: config.projectId } };
 }
 
 export function writeProjectConfig(root: string, config: ProjectConfig): void {
@@ -165,22 +182,24 @@ export function writeHomeConfig(config: HomeConfig): void {
 
 export function setDesignerCredentials(
   httpEndpoint: string,
+  owner: string,
   projectId: string,
   architectId: string,
   creds: DesignerCredentials
 ): void {
   const home = readHomeConfig();
   home[httpEndpoint] ??= {};
-  home[httpEndpoint][projectId] ??= {};
-  home[httpEndpoint][projectId][architectId] = creds;
+  home[httpEndpoint][owner] ??= {};
+  home[httpEndpoint][owner][projectId] ??= {};
+  home[httpEndpoint][owner][projectId][architectId] = creds;
   writeHomeConfig(home);
 }
 
-function getDesignerCredentials(httpEndpoint: string, projectId: string, architectId: string): DesignerCredentials {
-  const creds = readHomeConfig()[httpEndpoint]?.[projectId]?.[architectId];
+function getDesignerCredentials(httpEndpoint: string, owner: string, projectId: string, architectId: string): DesignerCredentials {
+  const creds = readHomeConfig()[httpEndpoint]?.[owner]?.[projectId]?.[architectId];
   if (!creds) {
     throw new CnwConfigError(
-      `No credentials for ${httpEndpoint} / ${projectId} / ${architectId} in ${getHomeConfigPath()}. Run "docs auth login" first.`
+      `No credentials for ${httpEndpoint} / ${owner}/${projectId} / ${architectId} in ${getHomeConfigPath()}. Run "docs auth login" first.`
     );
   }
   return creds;
@@ -194,6 +213,6 @@ function getDesignerCredentials(httpEndpoint: string, projectId: string, archite
 export function resolveClientConfig(startDir: string = process.cwd()): ClientConfig {
   const { root, config: project } = readProjectConfig(startDir);
   const session = readSessionConfig(root);
-  const credentials = getDesignerCredentials(project.httpEndpoint, project.projectId, session.architectId);
+  const credentials = getDesignerCredentials(project.httpEndpoint, project.owner, project.projectId, session.architectId);
   return { ...project, ...session, ...credentials };
 }

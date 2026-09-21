@@ -3,7 +3,7 @@
     <ProjectSidebar>
       <div class="row items-center justify-between q-mb-sm">
         <div class="text-subtitle1">Pull requests ({{ items.length }})</div>
-        <q-btn size="sm" color="primary" icon="add" label="새 PR" :to="`/projects/${projectId}/pull-requests/new`" />
+        <q-btn size="sm" color="primary" icon="add" label="새 PR" :to="`/${owner}/${projectId}/pull-requests/new`" />
       </div>
       <!-- 설계자 요청(2026-09-21) - PR이 선택되면 목록은 500px로 고정(스크롤
            가능)하고 그 밑에 바뀐 파일을 트리로 보여준다. -->
@@ -57,9 +57,14 @@
           <q-badge :color="stateColor(selected.state)">{{ selected.state }}</q-badge>
         </div>
         <div class="text-caption q-mb-sm">{{ selected.sourceBranch }} → {{ selected.targetBranch }} · author: {{ selected.author }}</div>
-        <div v-if="selected.description" class="q-mb-md">
-          <MarkdownSourceView :key="selected.id" :content="selected.description" read-only />
+        <!-- 설계자 요청(2026-09-21 후속) - PR 설명은 open 상태일 때만 수정
+             가능하다(머지/닫힘 이후엔 실제 머지 당시 내용과 달라 보이면
+             오해를 부르므로 읽기 전용으로 고정) - MarkdownSourceView의
+             기본 view/edit 토글+저장 버튼을 그대로 쓴다. -->
+        <div v-if="selected.description || selected.state === 'open'" class="q-mb-md">
+          <MarkdownSourceView :key="selected.id" :content="selected.description" :read-only="selected.state !== 'open'" @save="saveDescription" />
         </div>
+        <div v-if="descriptionError" class="text-negative text-caption q-mb-sm">{{ descriptionError }}</div>
 
         <div v-if="selected.state === 'open'" class="q-gutter-sm q-mb-md">
           <q-btn size="sm" color="positive" label="Merge" :loading="merging" @click="merge" />
@@ -71,7 +76,7 @@
         <!-- 설계자 요청(2026-09-21) - 파일을 하나 고르면 여기(예전에 Diff 패치
              텍스트가 있던 자리)에 좌/우 분할 diff 뷰어를 보여준다. -->
         <div class="text-subtitle2 q-mb-xs">Diff</div>
-        <DiffViewer v-if="selectedPath" :project-id="projectId" :base="selected.targetBranch" :head="selected.sourceBranch" :path="selectedPath" />
+        <DiffViewer v-if="selectedPath" :owner="owner" :project-id="projectId" :base="selected.targetBranch" :head="selected.sourceBranch" :path="selectedPath" />
         <div v-else class="text-caption" style="color: var(--gh-fg-muted)">왼쪽 파일 트리에서 파일을 선택하세요.</div>
       </template>
       <div v-else class="text-caption">왼쪽에서 PR을 선택하세요.</div>
@@ -105,13 +110,14 @@ interface DiffFile {
 interface PrFull extends PrSummary {
   diff: { files: DiffFile[]; patch: string };
 }
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();
 
 const items = ref<PrSummary[]>([]);
 const selected = ref<PrFull | null>(null);
 const selectedPath = ref<string | null>(null);
 const actionError = ref("");
+const descriptionError = ref("");
 const merging = ref(false);
 const closing = ref(false);
 
@@ -172,22 +178,34 @@ function onTreeSelect(key: string | number | null) {
 }
 
 async function load() {
-  const result = await api.listPullRequests(auth.apiKey!, props.projectId);
+  const result = await api.listPullRequests(auth.apiKey!, props.owner, props.projectId);
   if (result.ok) items.value = (result.data as { items: PrSummary[] }).items;
 }
 
 async function select(id: string) {
   actionError.value = "";
+  descriptionError.value = "";
   selectedPath.value = null;
-  const result = await api.getPullRequest(auth.apiKey!, props.projectId, id);
+  const result = await api.getPullRequest(auth.apiKey!, props.owner, props.projectId, id);
   if (result.ok) selected.value = result.data as PrFull;
+}
+
+async function saveDescription(markdown: string) {
+  if (!selected.value) return;
+  descriptionError.value = "";
+  const result = await api.updatePullRequest(auth.apiKey!, props.owner, props.projectId, selected.value.id, { description: markdown });
+  if (!result.ok) {
+    descriptionError.value = result.reason?.join(", ") ?? "설명 수정에 실패했습니다.";
+    return;
+  }
+  selected.value = { ...selected.value, description: markdown };
 }
 
 async function merge() {
   if (!selected.value) return;
   merging.value = true;
   actionError.value = "";
-  const result = await api.mergePullRequest(auth.apiKey!, props.projectId, selected.value.id);
+  const result = await api.mergePullRequest(auth.apiKey!, props.owner, props.projectId, selected.value.id);
   merging.value = false;
   if (!result.ok) {
     actionError.value = result.reason?.join(", ") ?? "머지에 실패했습니다.";
@@ -201,7 +219,7 @@ async function close() {
   if (!selected.value) return;
   closing.value = true;
   actionError.value = "";
-  const result = await api.closePullRequest(auth.apiKey!, props.projectId, selected.value.id);
+  const result = await api.closePullRequest(auth.apiKey!, props.owner, props.projectId, selected.value.id);
   closing.value = false;
   if (!result.ok) {
     actionError.value = result.reason?.join(", ") ?? "닫기에 실패했습니다.";
@@ -212,5 +230,5 @@ async function close() {
 }
 
 onMounted(load);
-watch(() => props.projectId, load);
+watch(() => [props.owner, props.projectId], load);
 </script>

@@ -13,6 +13,11 @@ export class MembershipError extends Error {}
  * Phase 6 추가: "프로젝트 공개/비공개 스코프" - `public` 프로젝트는
  * collaborator가 아니어도 누구나 읽기(READ)는 가능하다. WRITE/ADMIN은
  * visibility와 무관하게 항상 실제 멤버십이 필요하다.
+ *
+ * "Admin은 프로젝트당 1명"은 `projects.ts`의 create/invite/transfer
+ * 세 경로가 애플리케이션 레이어에서 지키지만, DB 부분 unique
+ * 인덱스(`ProjectMembership_admin_per_project`, 2026-09-21 후속
+ * 마이그레이션)로도 이중 강제된다 - design-notes.md 참고.
  */
 export async function requireMembership(
   projectId: string,
@@ -29,5 +34,8 @@ export async function requireMembership(
     if (project?.visibility === "PUBLIC") return;
   }
 
-  throw new MembershipError(`${minRole} access to project "${projectId}" required`);
+  // 설계자 요청(2026-09-21 후속)으로 이 시점의 projectId는 이미 owner/slug가
+  // 내부 PK로 바꿔치기된 뒤라(api/actions.ts dispatch(), api/rest.ts web())
+  // 호출자가 알아볼 수 있는 값이 아니다 - 메시지에 더는 싣지 않는다.
+  throw new MembershipError(`${minRole} access to this project is required`);
 }
