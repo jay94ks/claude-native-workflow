@@ -16,7 +16,7 @@
       :kinds="['TR']"
       title="Trackers"
       read-only
-      :open-code="innerTab === 'tracker' ? openCode : undefined"
+      :code="innerTab === 'tracker' ? openCode : undefined"
       :highlight-code="innerTab === 'tracker' ? highlightCode : undefined"
     />
     <DocTypeWorkspace
@@ -27,7 +27,7 @@
       :kinds="['TC']"
       title="Tests"
       read-only
-      :open-code="innerTab === 'test' ? openCode : undefined"
+      :code="innerTab === 'test' ? openCode : undefined"
       :highlight-code="innerTab === 'test' ? highlightCode : undefined"
     />
     <RecentQaFeed v-else :owner="owner" :project-id="projectId" />

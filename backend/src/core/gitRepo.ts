@@ -402,6 +402,35 @@ export async function diffCommit(projectId: string, commitId: string): Promise<C
   return { files, patch, baseCommitId: parentId };
 }
 
+/**
+ * branch/커밋 id 어느 쪽이든(ref) 그 시점의 디렉터리 목록 - 설계자 요청
+ * (2026-09-21 후속) "Code 탭에서 특정 커밋 시점의 파일 원본을 봐야 한다"
+ * 를 위해 listTree와 같은 모양이지만 resolveTreeForRef로 커밋 id도
+ * 받는다. listTree/readFile은 여전히 branch 전용으로 남겨둔다 -
+ * "지금 이 브랜치에 실제로 커밋 가능한 상태"(repo.writeFile)와
+ * "과거 시점을 읽기 전용으로 보는 것"을 API 레벨에서부터 구분해서,
+ * 과거 커밋에 실수로 쓰기를 시도하는 경로 자체가 존재하지 않게 한다.
+ */
+export async function listTreeAtRef(projectId: string, ref: string, dirPath: string): Promise<TreeEntryInfo[] | null> {
+  const repo = await openRepoIfExists(projectId);
+  if (!repo) return null;
+  let tree = resolveTreeForRef(repo, ref);
+  if (!tree) return null;
+
+  if (dirPath) {
+    const entry = tree.getPath(dirPath);
+    if (!entry || entry.type() !== "Tree") return null;
+    tree = repo.getTree(entry.id());
+  }
+
+  const items: TreeEntryInfo[] = [];
+  for (const entry of drain<TreeEntry>(tree.iter())) {
+    const t = entry.type();
+    items.push({ name: entry.name(), type: t === "Blob" ? "blob" : t === "Tree" ? "tree" : "other", oid: entry.id() });
+  }
+  return items;
+}
+
 /** branch/커밋 id 어느 쪽이든(ref) 그 시점의 파일 내용 - diff 뷰어가 앞/뒤 내용을 각각 읽을 때 재사용. */
 export async function readFileAtRef(projectId: string, ref: string, filePath: string): Promise<BlobContent | null> {
   const repo = await openRepoIfExists(projectId);

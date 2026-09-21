@@ -86,6 +86,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import ProjectSidebar from "components/ProjectSidebar.vue";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
@@ -110,8 +111,9 @@ interface DiffFile {
 interface PrFull extends PrSummary {
   diff: { files: DiffFile[]; patch: string };
 }
-const props = defineProps<{ owner: string; projectId: string }>();
+const props = defineProps<{ owner: string; projectId: string; id?: string }>();
 const auth = useAuthStore();
+const router = useRouter();
 
 const items = ref<PrSummary[]>([]);
 const selected = ref<PrFull | null>(null);
@@ -182,12 +184,19 @@ async function load() {
   if (result.ok) items.value = (result.data as { items: PrSummary[] }).items;
 }
 
-async function select(id: string) {
+async function loadSelected(id: string) {
   actionError.value = "";
   descriptionError.value = "";
   selectedPath.value = null;
   const result = await api.getPullRequest(auth.apiKey!, props.owner, props.projectId, id);
   if (result.ok) selected.value = result.data as PrFull;
+}
+
+// 설계자 요청(2026-09-21 후속) - 지금 보고 있는 PR을 path segment
+// (/pull-requests/{id})에 반영해 Browser History/새로고침에서 유지한다.
+async function select(id: string) {
+  await loadSelected(id);
+  router.push(`/${props.owner}/${props.projectId}/pull-requests/${id}`);
 }
 
 async function saveDescription(markdown: string) {
@@ -212,7 +221,7 @@ async function merge() {
     return;
   }
   await load();
-  await select(selected.value.id);
+  await loadSelected(selected.value.id);
 }
 
 async function close() {
@@ -226,9 +235,23 @@ async function close() {
     return;
   }
   await load();
-  await select(selected.value.id);
+  await loadSelected(selected.value.id);
 }
 
-onMounted(load);
+onMounted(async () => {
+  await load();
+  if (props.id) await loadSelected(props.id);
+});
 watch(() => [props.owner, props.projectId], load);
+watch(
+  () => props.id,
+  (id) => {
+    if (!id) {
+      selected.value = null;
+      return;
+    }
+    if (selected.value?.id === id) return;
+    loadSelected(id);
+  }
+);
 </script>

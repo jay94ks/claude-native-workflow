@@ -28,7 +28,15 @@
     <div class="col q-pa-md" style="overflow-y: auto">
       <div v-if="loading" class="text-caption">불러오는 중...</div>
       <template v-else-if="commit">
-        <DiffViewer v-if="selectedPath" :owner="owner" :project-id="projectId" :base="baseCommitId ?? ''" :head="commitId" :path="selectedPath" />
+        <DiffViewer
+          v-if="selectedPath"
+          :owner="owner"
+          :project-id="projectId"
+          :base="baseCommitId ?? ''"
+          :head="commitId"
+          :branch="branch"
+          :path="selectedPath"
+        />
         <div v-else class="text-caption" style="color: var(--gh-fg-muted)">왼쪽 파일 트리에서 파일을 선택하세요.</div>
       </template>
       <div v-else class="text-negative text-caption">커밋을 찾을 수 없습니다.</div>
@@ -59,7 +67,7 @@ interface CommitInfo {
 // 설계자 요청(2026-09-21, 항목 10) - 코드 탭 파일별 "Recent Commits"
 // 탭이나 브랜치 커밋 목록에서 커밋 하나를 누르면 Pull Requests의 diff
 // 뷰어 페이지와 동일한 내용을 보여주는 별도 페이지.
-const props = defineProps<{ owner: string; projectId: string; commitId: string }>();
+const props = defineProps<{ owner: string; projectId: string; branch: string; commitId: string }>();
 const auth = useAuthStore();
 const router = useRouter();
 

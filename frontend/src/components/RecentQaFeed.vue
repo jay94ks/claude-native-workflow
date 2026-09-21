@@ -185,9 +185,15 @@ async function openItem(item: DocSummary) {
     return;
   }
 
-  const query: Record<string, string> = { open: current.code, highlight: item.code };
-  if (current.type === "tracker" || current.type === "test") query.inner = current.type;
-  router.push({ path: `/${props.owner}/${props.projectId}/${tabPath}`, query });
+  // 설계자 요청(2026-09-21 후속) - doc/plan/issue는 이제 그 문서의 추적
+  // 코드가 path segment다(/{tab}/{code}) - Browser History/새로고침에도
+  // "그 문서를 보고 있다"는 상태가 살아남는다. tracker/test는 이번
+  // URL 개편 스코프 밖이라 여전히 query(open=/inner=)로만 연다.
+  if (current.type === "tracker" || current.type === "test") {
+    router.push({ path: `/${props.owner}/${props.projectId}/${tabPath}`, query: { open: current.code, highlight: item.code, inner: current.type } });
+  } else {
+    router.push({ path: `/${props.owner}/${props.projectId}/${tabPath}/${current.code}`, query: { highlight: item.code } });
+  }
 }
 
 function goToThread(code: string) {

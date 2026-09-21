@@ -8,7 +8,7 @@
     create-label="새 문서"
     :create-route="`/${owner}/${projectId}/documents/new`"
     :transitions-by-state="transitions"
-    :open-code="openCode"
+    :code="code"
     :highlight-code="highlightCode"
   />
 </template>
@@ -18,12 +18,12 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 import DocTypeWorkspace from "components/DocTypeWorkspace.vue";
 
-defineProps<{ owner: string; projectId: string }>();
+defineProps<{ owner: string; projectId: string; code?: string }>();
 
-// 설계자 요청(2026-09-21) - RecentQaFeed에서 Q&A 항목을 누르면 그게 달린
-// 문서로 와서 자동 선택 + 스크롤돼야 한다(쿼리스트링으로 전달받음).
+// 설계자 요청(2026-09-21 후속) - 지금 보고 있는 문서는 이제 path segment
+// (:code)로 식별된다(Browser History/새로고침 유지) - RecentQaFeed에서
+// 넘어올 때 강조할 Q&A 항목만 여전히 쿼리(highlight)로 받는다.
 const route = useRoute();
-const openCode = computed(() => (typeof route.query.open === "string" ? route.query.open : undefined));
 const highlightCode = computed(() => (typeof route.query.highlight === "string" ? route.query.highlight : undefined));
 
 // doc의 상태 전이(backend/src/core/documentRules.ts checkTransition의

@@ -25,14 +25,27 @@ const routes: RouteRecordRaw[] = [
         props: true,
         children: [
           { path: "", redirect: (to) => `/${to.params.owner}/${to.params.projectId}/code` },
-          { path: "code", component: () => import("pages/project/CodeTab.vue"), props: true },
+          // 설계자 요청(2026-09-21 후속) - Code 탭 URL 체계:
+          //   /code?path=P            -> 기본 브랜치, 그 브랜치의 지금 시점
+          //   /code/:branch?path=P    -> 그 브랜치의 지금 시점
+          //   /code/:branch/:commitId?path=P -> 그 브랜치 위 특정 커밋 시점(읽기 전용)
+          // branch/commitId 둘 다 optional param이라 이 한 라우트가 셋 다 받는다.
+          { path: "code/:branch?/:commitId?", component: () => import("pages/project/CodeTab.vue"), props: true },
           { path: "pull-requests", component: () => import("pages/project/PullRequestsTab.vue"), props: true },
           {
             path: "pull-requests/new",
             component: () => import("pages/project/PrCreatePage.vue"),
             props: (route) => ({ owner: route.params.owner, projectId: route.params.projectId }),
           },
-          { path: "issues", component: () => import("pages/project/IssuesTab.vue"), props: true },
+          // 설계자 요청(2026-09-21 후속) - PR도 새로고침/북마크에서 그 PR을
+          // 계속 보고 있게 /pull-requests/{PR id}로 - PullRequestsTab 자신이
+          // 목록+상세를 같이 그리므로 같은 컴포넌트를 optional :id로 재사용.
+          { path: "pull-requests/:id", component: () => import("pages/project/PullRequestsTab.vue"), props: true },
+          // 설계자 요청(2026-09-21 후속) - Documents/Plans/Issues도 지금 보고
+          // 있는 항목의 추적 코드를 path에 실어 Browser History/새로고침에
+          // 그 상태가 살아남게 한다 - "new"는 완전히 정적인 경로라 vue-router가
+          // 항상 이 동적 :code보다 먼저(더 구체적으로) 매치한다.
+          { path: "issues/:code?", component: () => import("pages/project/IssuesTab.vue"), props: true },
           {
             path: "issues/new",
             component: () => import("pages/project/DocCreatePage.vue"),
@@ -45,7 +58,7 @@ const routes: RouteRecordRaw[] = [
               listRoute: `/${route.params.owner}/${route.params.projectId}/issues`,
             }),
           },
-          { path: "documents", component: () => import("pages/project/DocumentsTab.vue"), props: true },
+          { path: "documents/:code?", component: () => import("pages/project/DocumentsTab.vue"), props: true },
           {
             path: "documents/new",
             component: () => import("pages/project/DocCreatePage.vue"),
@@ -59,7 +72,7 @@ const routes: RouteRecordRaw[] = [
               allowChapter: true,
             }),
           },
-          { path: "plans", component: () => import("pages/project/PlansTab.vue"), props: true },
+          { path: "plans/:code?", component: () => import("pages/project/PlansTab.vue"), props: true },
           {
             path: "plans/new",
             component: () => import("pages/project/DocCreatePage.vue"),
@@ -75,7 +88,13 @@ const routes: RouteRecordRaw[] = [
           { path: "trackers-tests", component: () => import("pages/project/TrackersTestsTab.vue"), props: true },
           { path: "thread/:code", component: () => import("pages/project/DocumentThreadPage.vue"), props: true },
           { path: "commits", component: () => import("pages/project/BranchCommitsPage.vue"), props: true },
-          { path: "commit/:commitId", component: () => import("pages/project/CommitDiffPage.vue"), props: true },
+          // 설계자 요청(2026-09-21 후속) - 커밋 diff에서 "코드 트리에서 보기"가
+          // 그 커밋 시점(/code/:branch/:commitId)으로 이어지려면 이 페이지도
+          // 자신이 어느 브랜치 위의 커밋인지 알아야 한다 - branch를 필수
+          // 세그먼트로 추가(호출부인 BranchCommitsPage/CodeTab의 파일별
+          // Recent Commits 둘 다 이미 branch를 알고 있는 상태에서만 이
+          // 페이지로 링크한다).
+          { path: "commit/:branch/:commitId", component: () => import("pages/project/CommitDiffPage.vue"), props: true },
           {
             path: "settings",
             component: () => import("layouts/SettingsShell.vue"),

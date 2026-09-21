@@ -7,7 +7,15 @@
       아직 이 문서에 달린 질의/의견이 없습니다.
     </div>
 
-    <!-- PR 리뷰 코멘트처럼 - 이 문서(parentCode)에 달린 question(+answer)/opinion을 시간순으로 보여준다. -->
+    <!-- PR 리뷰 코멘트처럼 - 이 문서(parentCode)에 달린 question(+answer)/opinion을 시간순으로 보여준다.
+         설계자 요청(2026-09-21 후속, 세 번째 라운드) - 카드 레이아웃 재배치:
+         좌측 상단은 [question]/[opinion] 타입 뱃지 + 제목(지금까지 title
+         필드가 있는데도 화면에 전혀 안 보여줬다 - 실제 버그), 우측 상단은
+         왼쪽부터 상태 뱃지 -> 작성자 뱃지 -> more(⋮) 아이콘. 폐기/완료
+         처리/자식 항목 보기처럼 "동작"에 해당하는 건 전부 그 more 메뉴
+         안으로 모은다(각 상태별 조건은 documentRules.ts의 checkTransition
+         그대로 - 버튼을 안 보이게 하는 것도, 실제 허용 여부는 항상 서버가
+         최종 판단한다는 원칙을 유지). -->
     <div
       v-for="item in thread"
       :id="`qa-${item.code}`"
@@ -16,73 +24,80 @@
       :class="{ 'qa-highlighted': !!highlightCode && (item.code === highlightCode || item.answer?.code === highlightCode) }"
     >
       <div class="row items-center justify-between">
-        <div class="row items-center" style="gap: 6px">
-          <div class="gh-avatar" style="width: 22px; height: 22px; font-size: 11px">{{ item.author === "agent" ? "C" : "A" }}</div>
-          <span class="text-caption text-weight-medium">{{ item.author === "agent" ? "claude" : "architect" }}</span>
+        <div class="row items-center" style="gap: 6px; min-width: 0">
           <q-badge :color="item.kind === 'OP' ? 'teal' : 'primary'" outline dense>{{ item.kind === "OP" ? "opinion" : "question" }}</q-badge>
+          <span class="text-weight-medium ellipsis">{{ item.title }}</span>
         </div>
-        <div class="row items-center" style="gap: 2px">
+        <div class="row items-center" style="gap: 4px; flex-shrink: 0">
           <q-badge :color="stateColor(item.state)">{{ item.state }}</q-badge>
-          <!-- 설계자 요청(2026-09-21) - Q&A는 계층 구조(질문->답변->재질의->...)인데
-               이 스레드 카드는 딱 한 단계(질문+그 직접 답변)만 보여준다. 그 이상
-               자식이 있으면 more 아이콘으로 별도 페이지에서 계속 내려가며 본다. -->
-          <q-btn
-            v-if="(childCounts[item.code] ?? 0) > 0"
-            flat
-            dense
-            round
-            size="sm"
-            icon="more_horiz"
-            :to="`/${owner}/${projectId}/thread/${item.code}`"
-          >
-            <q-tooltip>자식 항목 {{ childCounts[item.code] }}개 보기</q-tooltip>
+          <div class="gh-avatar" style="width: 22px; height: 22px; font-size: 11px">{{ item.author === "agent" ? "C" : "A" }}</div>
+          <q-btn v-if="hasItemMenu(item)" flat dense round size="sm" icon="more_vert">
+            <q-menu auto-close>
+              <q-list style="min-width: 160px">
+                <q-item v-if="childCounts[item.code] > 0" clickable :to="`/${owner}/${projectId}/thread/${item.code}`">
+                  <q-item-section>자식 항목 보기 ({{ childCounts[item.code] }})</q-item-section>
+                </q-item>
+                <q-item v-if="canMarkRead(item)" clickable :disable="busy === item.code" @click="markRead(item)">
+                  <q-item-section>확인함</q-item-section>
+                </q-item>
+                <q-item v-if="canAnswer(item)" clickable @click="openAnswerComposer(item)">
+                  <q-item-section>답변 작성</q-item-section>
+                </q-item>
+                <q-item v-if="canDiscard(item)" clickable @click="discardItem(item)">
+                  <q-item-section class="text-negative">폐기</q-item-section>
+                </q-item>
+              </q-list>
+            </q-menu>
           </q-btn>
         </div>
       </div>
-      <div class="text-body2 q-mt-xs" style="white-space: pre-wrap">{{ item.content }}</div>
+      <!-- 설계자 요청(2026-09-21 후속) - 본문은 Markdown으로 작성될 수 있으니
+           원문 그대로가 아니라 렌더링해서 보여준다(marked -> DOMPurify로
+           한 번 걸러 v-html - marked 자체는 sanitize를 안 하므로 새 XSS
+           경로가 생기지 않게 직접 한 번 더 막는다). -->
+      <div class="text-body2 q-mt-xs markdown-body" v-html="renderMarkdownSafe(item.content)"></div>
 
-      <template v-if="item.kind !== 'OP'">
-        <div v-if="item.answer" class="gh-card q-pa-sm q-mt-sm" style="background: var(--gh-canvas-subtle)">
+      <template v-if="item.kind !== 'OP' && item.answer">
+        <div class="gh-card q-pa-sm q-mt-sm" style="background: var(--gh-canvas-subtle)">
           <div class="row items-center justify-between">
-            <div class="row items-center" style="gap: 6px">
-              <div class="gh-avatar" style="width: 20px; height: 20px; font-size: 10px">{{ item.answer.author === "agent" ? "C" : "A" }}</div>
-              <span class="text-caption text-weight-medium">{{ item.answer.author === "agent" ? "claude" : "architect" }}의 답변</span>
-              <q-badge :color="stateColor(item.answer.state)">{{ item.answer.state }}</q-badge>
+            <div class="row items-center" style="gap: 6px; min-width: 0">
+              <q-badge color="positive" outline dense>answer</q-badge>
+              <span class="text-weight-medium ellipsis">{{ item.answer.title }}</span>
             </div>
-            <q-btn
-              v-if="(childCounts[item.answer.code] ?? 0) > 0"
-              flat
-              dense
-              round
-              size="sm"
-              icon="more_horiz"
-              :to="`/${owner}/${projectId}/thread/${item.answer.code}`"
-            >
-              <q-tooltip>자식 항목 {{ childCounts[item.answer.code] }}개 보기</q-tooltip>
-            </q-btn>
+            <div class="row items-center" style="gap: 4px; flex-shrink: 0">
+              <q-badge :color="stateColor(item.answer.state)">{{ item.answer.state }}</q-badge>
+              <div class="gh-avatar" style="width: 20px; height: 20px; font-size: 10px">{{ item.answer.author === "agent" ? "C" : "A" }}</div>
+              <q-btn v-if="hasAnswerMenu(item.answer)" flat dense round size="sm" icon="more_vert">
+                <q-menu auto-close>
+                  <q-list style="min-width: 160px">
+                    <q-item v-if="childCounts[item.answer.code] > 0" clickable :to="`/${owner}/${projectId}/thread/${item.answer.code}`">
+                      <q-item-section>자식 항목 보기 ({{ childCounts[item.answer.code] }})</q-item-section>
+                    </q-item>
+                    <q-item v-if="canMarkAnswerRead(item.answer)" clickable :disable="busy === item.answer.code" @click="markAnswerRead(item.answer!)">
+                      <q-item-section>확인함</q-item-section>
+                    </q-item>
+                    <q-item v-if="canMarkAnswerDone(item.answer)" clickable :disable="busy === item.answer.code" @click="markAnswerDone(item.answer!)">
+                      <q-item-section>완료 처리</q-item-section>
+                    </q-item>
+                  </q-list>
+                </q-menu>
+              </q-btn>
+            </div>
           </div>
-          <div class="text-body2 q-mt-xs" style="white-space: pre-wrap">{{ item.answer.content }}</div>
-        </div>
-        <div class="q-mt-sm">
-          <q-btn v-if="item.author === 'agent' && item.state === 'added'" size="sm" color="primary" label="확인함" :loading="busy === item.code" @click="markRead(item)" />
-          <template v-else-if="item.author === 'agent' && item.state === 'read' && !item.answer">
-            <q-btn v-if="answeringCode !== item.code" size="sm" color="secondary" label="답변 작성" @click="openAnswerComposer(item)" />
-            <q-slide-transition v-else>
-              <div class="q-mt-sm">
-                <MarkdownSourceView ref="answerEditorRef" content="" start-in-edit hide-toolbar :edit-min-height="200" />
-                <div v-if="answerError" class="text-negative text-caption q-mt-xs">{{ answerError }}</div>
-                <div class="row justify-end q-gutter-sm q-mt-sm">
-                  <q-btn flat label="취소하기" @click="closeAnswerComposer" />
-                  <q-btn color="primary" label="등록하기" :loading="answering" @click="submitAnswer" />
-                </div>
-              </div>
-            </q-slide-transition>
-          </template>
+          <div class="text-body2 q-mt-xs markdown-body" v-html="renderMarkdownSafe(item.answer.content)"></div>
         </div>
       </template>
-      <div v-else-if="item.state === 'added' || item.state === 'read'" class="q-mt-sm">
-        <q-btn size="sm" color="negative" label="폐기" @click="discardOpinion(item)" />
-      </div>
+
+      <q-slide-transition>
+        <div v-if="answeringCode === item.code" class="q-mt-sm">
+          <MarkdownSourceView ref="answerEditorRef" content="" start-in-edit hide-toolbar :edit-min-height="200" />
+          <div v-if="answerError" class="text-negative text-caption q-mt-xs">{{ answerError }}</div>
+          <div class="row justify-end q-gutter-sm q-mt-sm">
+            <q-btn flat label="취소하기" @click="closeAnswerComposer" />
+            <q-btn color="primary" label="등록하기" :loading="answering" @click="submitAnswer" />
+          </div>
+        </div>
+      </q-slide-transition>
       <div v-if="actionError[item.code]" class="text-negative text-caption q-mt-xs">{{ actionError[item.code] }}</div>
     </div>
 
@@ -127,6 +142,7 @@ import { ref, reactive, computed, watch, onMounted, nextTick } from "vue";
 import { useAuthStore } from "stores/auth";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
 import * as api from "src/api/client";
+import { renderMarkdownSafe } from "src/utils/renderMarkdown";
 
 interface MarkdownSourceViewRef {
   getMarkdown(): string;
@@ -182,6 +198,48 @@ function stateColor(state: string): string {
   return "primary";
 }
 
+// 설계자 요청(2026-09-21 후속) - documentRules.ts의 checkTransition을
+// 그대로 옮긴 UI 힌트(실제 허용 여부는 언제나 서버가 최종 판단한다) -
+// more 메뉴에 뭘 보여줄지 여기 조건 하나로만 결정한다.
+function canMarkRead(item: ThreadItem): boolean {
+  return item.kind !== "OP" && item.author === "agent" && item.state === "added";
+}
+function canAnswer(item: ThreadItem): boolean {
+  return item.kind !== "OP" && item.author === "agent" && item.state === "read" && !item.answer;
+}
+// question의 discard는 "질의자 본인만, 미해소 상태에서만"(documentRules.ts) -
+// architect가 재질의하기로 만든 질문(author==='architect')만 여기서
+// architect가 스스로 거둘 수 있다. opinion의 discard는 늘 architect
+// 본인이 쓴 것이므로(opinion은 architect만 등록 가능) 조건이 더 단순하다.
+function canDiscard(item: ThreadItem): boolean {
+  if (item.state !== "added" && item.state !== "read") return false;
+  if (item.kind === "OP") return true;
+  return item.author === "architect";
+}
+// 설계자 요청(2026-09-21 후속) - "완료 처리"는 지금까지 웹 UI에 전혀
+// 없던 액션이었다(질문->답변 스레드가 done에 도달할 방법이 없었다) -
+// answer의 done 전이는 "질의자(=그 answer 작성자의 반대 채널)만" 가능
+// 하므로, WEB UI(=architect)가 누를 수 있는 경우는 answer.author==='agent'
+// 일 때뿐이다(architect가 재질의한 질문에 agent가 답한 경우).
+// 버그(2026-09-21 재발견) - "완료 처리"(read->done)만 넣고 그 앞 단계인
+// added->read를 빼먹었었다 - documentRules.ts상 이 read 전이도 마찬가지로
+// "질의자(=answer 작성자의 반대 채널)"만 할 수 있어서, answer.author==='agent'
+// 인 경우 architect(WEB UI)가 직접 눌러줘야만 상태가 read로 넘어가고,
+// 그래야 비로소 "완료 처리"가 나타난다 - 이 액션 없이는 "완료 처리" 자체가
+// 영원히 도달 불가능한 죽은 기능이었다.
+function canMarkAnswerRead(answer: DocFull): boolean {
+  return answer.author === "agent" && answer.state === "added";
+}
+function canMarkAnswerDone(answer: DocFull): boolean {
+  return answer.author === "agent" && answer.state === "read";
+}
+function hasItemMenu(item: ThreadItem): boolean {
+  return (childCounts[item.code] ?? 0) > 0 || canMarkRead(item) || canAnswer(item) || canDiscard(item);
+}
+function hasAnswerMenu(answer: DocFull): boolean {
+  return (childCounts[answer.code] ?? 0) > 0 || canMarkAnswerRead(answer) || canMarkAnswerDone(answer);
+}
+
 // backend/src/core/documents.ts의 docsList가 payload.parentId를 Document.parentId
 // 컬럼(원문 id) 그대로 필터링해준다 - 추적 코드가 아니라 id를 넘겨야 한다.
 async function loadDocsByParent(type: string, parentId: string): Promise<DocFull[]> {
@@ -230,8 +288,8 @@ async function loadAllAnswers(): Promise<DocFull[]> {
 // design-notes.md 후속 판단(설계자 요청, 2026-09-21) - Q&A는 실제로는
 // 계층 구조(질문->답변->그 답변에 대한 재질의->...)인데 이 스레드 카드는
 // 딱 한 단계(질문+직접 답변)만 보여준다. 카드마다(질문/답변 각각) 그
-// "표시된 것 이상의" 자식이 있는지 세어뒀다가 more 아이콘을 조건부로
-// 보여준다 - 질문 카드는 이미 보여준 직접 답변 자신은 자식 수에서 뺀다.
+// "표시된 것 이상의" 자식이 있는지 세어뒀다가 more 메뉴에 조건부로
+// 넣는다 - 질문 카드는 이미 보여준 직접 답변 자신은 자식 수에서 뺀다.
 async function loadChildCounts() {
   const targets: { code: string; excludeCode?: string }[] = [];
   for (const item of thread.value) {
@@ -256,6 +314,30 @@ async function markRead(item: ThreadItem) {
   busy.value = null;
   if (!result.ok) {
     actionError[item.code] = result.reason?.join(", ") ?? "실패했습니다.";
+    return;
+  }
+  await load();
+}
+
+async function markAnswerRead(answer: DocFull) {
+  busy.value = answer.code;
+  actionError[answer.code] = "";
+  const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, answer.code, "read", answer.state);
+  busy.value = null;
+  if (!result.ok) {
+    actionError[answer.code] = result.reason?.join(", ") ?? "실패했습니다.";
+    return;
+  }
+  await load();
+}
+
+async function markAnswerDone(answer: DocFull) {
+  busy.value = answer.code;
+  actionError[answer.code] = "";
+  const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, answer.code, "done", answer.state);
+  busy.value = null;
+  if (!result.ok) {
+    actionError[answer.code] = result.reason?.join(", ") ?? "실패했습니다.";
     return;
   }
   await load();
@@ -297,7 +379,19 @@ async function ask() {
 }
 
 const answeringCode = ref<string | null>(null);
-const answerEditorRef = ref<MarkdownSourceViewRef | null>(null);
+// 버그(2026-09-21 후속 발견) - 이 ref가 붙는 MarkdownSourceView는
+// `v-for="item in thread"` 루프 "안"에 있다 - Vue는 v-for 내부의
+// 같은 이름 ref를 항상 배열로 모은다(공식 문서에 명시된 동작인데
+// 이 컴포저를 작성할 때 놓쳤다). 그동안 `answerEditorRef.value`를
+// 단일 객체로 취급해 `.getMarkdown()`을 직접 불렀는데, 실제로는
+// 배열이라 그 호출이 항상 예외를 던졌다 - 즉 "답변 작성" 버튼을
+// 눌러 실제로 등록을 시도하면(이 컴포넌트를 쓰는 Documents/Plans/
+// Issues/Trackers/Tests 전부) 항상 조용히 실패했다(uncaught promise
+// rejection이라 화면에 에러 메시지도 안 뜨고 로딩 스피너만 영원히
+// 돌았다). `answeringCode`가 한 번에 최대 하나만 가리키므로 실제
+// DOM에는 이 ref를 가진 인스턴스가 0개 또는 1개만 존재한다 - 배열
+// 타입으로 바로잡고 `[0]`으로 접근한다.
+const answerEditorRef = ref<MarkdownSourceViewRef[]>([]);
 const answering = ref(false);
 const answerError = ref("");
 
@@ -320,7 +414,7 @@ async function submitAnswer() {
     kind: "AN",
     parentId: question.code,
     title: `Re: ${question.title}`,
-    content: answerEditorRef.value?.getMarkdown() ?? "",
+    content: answerEditorRef.value?.[0]?.getMarkdown() ?? "",
   });
   answering.value = false;
   if (!result.ok) {
@@ -366,9 +460,14 @@ async function submitOpinion() {
   await load();
 }
 
-async function discardOpinion(item: ThreadItem) {
+async function discardItem(item: ThreadItem) {
+  actionError[item.code] = "";
   const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, item.code, "discard", item.state);
-  if (result.ok) await load();
+  if (!result.ok) {
+    actionError[item.code] = result.reason?.join(", ") ?? "실패했습니다.";
+    return;
+  }
+  await load();
 }
 
 onMounted(async () => {
@@ -401,5 +500,20 @@ function scrollToHighlight() {
   to {
     background: transparent;
   }
+}
+.markdown-body :deep(p) {
+  margin: 0 0 0.5em;
+}
+.markdown-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+.markdown-body :deep(pre) {
+  background: var(--gh-canvas-subtle);
+  padding: 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+.markdown-body :deep(code) {
+  font-family: monospace;
 }
 </style>

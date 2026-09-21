@@ -66,17 +66,22 @@ interface FileDiff {
   newImage: string | null;
 }
 
-const props = defineProps<{ owner: string; projectId: string; base: string; head: string; path: string }>();
+// 설계자 요청(2026-09-21 후속) - `branch`가 주어지면 `head`는 사실
+// commit id다(CommitDiffPage 용법 - 그 브랜치 위 특정 커밋). 안 주어지면
+// PR 용법 그대로 `head`가 브랜치명이다 - "코드 트리에서 보기" 링크가
+// 둘을 구분해서 지금 브랜치의 최신 시점(/code/{head}) 또는 그 브랜치
+// 위 특정 커밋 시점(/code/{branch}/{head}, 읽기 전용)으로 각각 연결된다.
+const props = defineProps<{ owner: string; projectId: string; base: string; head: string; path: string; branch?: string }>();
 const auth = useAuthStore();
 
 const loading = ref(true);
 const diff = ref<FileDiff | null>(null);
 const expandedBlocks = ref<Set<number>>(new Set());
 
-// 설계자 요청(2026-09-21) - "원본 파일을 코드 트리에서 보는 기능": Code
-// 탭으로 이동해서 head 브랜치/커밋 기준으로 그 파일을 바로 열어준다
-// (CodeTab.vue가 branch/path 쿼리를 읽어 자동 선택한다).
-const treeLink = computed(() => `/${props.owner}/${props.projectId}/code?branch=${encodeURIComponent(props.head)}&path=${encodeURIComponent(props.path)}`);
+const treeLink = computed(() => {
+  const target = props.branch ? `code/${props.branch}/${props.head}` : `code/${props.head}`;
+  return `/${props.owner}/${props.projectId}/${target}?path=${encodeURIComponent(props.path)}`;
+});
 const canDownload = computed(() => !!diff.value && (diff.value.newExists || diff.value.oldExists) && !(diff.value.isBinary && !diff.value.isImage));
 
 const rawBlocks = ref<DiffBlock[]>([]);

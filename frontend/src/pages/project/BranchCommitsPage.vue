@@ -7,7 +7,7 @@
 
     <div v-if="loading" class="text-caption">불러오는 중...</div>
     <q-list v-else bordered separator>
-      <q-item v-for="c in commits" :key="c.id" clickable :to="`/${owner}/${projectId}/commit/${c.id}`">
+      <q-item v-for="c in commits" :key="c.id" clickable :to="`/${owner}/${projectId}/commit/${branch}/${c.id}`">
         <q-item-section>
           <q-item-label>{{ c.message }}</q-item-label>
           <q-item-label caption>{{ c.id.slice(0, 8) }} · {{ c.author }} · {{ new Date(c.time).toLocaleString() }}</q-item-label>

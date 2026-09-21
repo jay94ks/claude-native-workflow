@@ -142,11 +142,23 @@ restRouter.post(
 restRouter.get("/projects/:owner/:projectId/repo/branches", web(repoBrowse.repoBranches, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
 restRouter.get(
   "/projects/:owner/:projectId/repo/tree",
-  web(repoBrowse.repoTree, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, branch: req.query.branch, path: req.query.path ?? "" }))
+  web(repoBrowse.repoTree, (req) => ({
+    owner: req.params.owner,
+    projectId: req.params.projectId,
+    branch: req.query.branch,
+    commitId: req.query.commitId,
+    path: req.query.path ?? "",
+  }))
 );
 restRouter.get(
   "/projects/:owner/:projectId/repo/file",
-  web(repoBrowse.repoFile, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, branch: req.query.branch, path: req.query.path }))
+  web(repoBrowse.repoFile, (req) => ({
+    owner: req.params.owner,
+    projectId: req.params.projectId,
+    branch: req.query.branch,
+    commitId: req.query.commitId,
+    path: req.query.path,
+  }))
 );
 restRouter.put(
   "/projects/:owner/:projectId/repo/file",

@@ -12,6 +12,7 @@
     "@yiitap/vue": "^0.19.2",
     "@yiitap/vue-preset": "^0.19.2",
     "diff": "^5.2.2",
+    "dompurify": "^3.4.15",
     "marked": "^18.0.13",
     "pinia": "^2.2.0",
     "quasar": "^2.17.0",

@@ -113,6 +113,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import DocumentDiscussion from "components/DocumentDiscussion.vue";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
@@ -156,15 +157,28 @@ const props = withDefaults(
     createRoute?: string;
     readOnly?: boolean;
     transitionsByState?: Record<string, TransitionOption[]>;
-    // 설계자 요청(2026-09-21) - RecentQaFeed에서 Q&A 항목을 누르면 그게
-    // 달린 문서를 자동 선택(openCode)하고 그 Q&A 카드까지 스크롤한다
-    // (highlightCode, DocumentDiscussion에 그대로 전달).
-    openCode?: string;
+    // 설계자 요청(2026-09-21 후속) - 지금 선택된 문서의 추적 코드를
+    // /{owner}/{projectId}/{documents|plans|issues}/{code} path segment로
+    // 반영해 Browser History/새로고침에서 그 상태가 살아남게 한다.
+    // RecentQaFeed에서 넘어올 때도(예전엔 ?open=으로만 왔음) 이제 이
+    // prop이 곧 그 path segment 값이다 - trackers/tests는 이번 스코프
+    // 밖이라 여전히 query(open=)로만 넘어온다(URL_SYNCED_TYPES에
+    // "tracker"/"test"가 없어서 select()가 자동으로 push를 건너뛴다).
+    code?: string;
     highlightCode?: string;
   }>(),
   { readOnly: false, createLabel: "새로 만들기", createRoute: "", transitionsByState: () => ({}) }
 );
 
+// design-notes.md 참고 - "관련 문서"(related/dependsOn)는 타입이 달라도
+// 서로 참조할 수 있다(예: Plan에서 Document를 참조) - select()가 그
+// 대상의 실제 type을 보고 맞는 tab의 URL로 이동시킨다(지금 보고 있는
+// tab의 URL을 그대로 쓰면 다른 타입인데 documents/plans/issues 셋
+// 다 이 컴포넌트를 그대로 재사용하므로, 실제로 화면이 바뀌는 게 아니라
+// "잘못된 탭의 URL에 다른 타입 문서가 얹힌" 것처럼 보이는 버그가 된다).
+const URL_SYNCED_TYPES: Record<string, string> = { doc: "documents", plan: "plans", issue: "issues" };
+
+const router = useRouter();
 const auth = useAuthStore();
 const items = ref<DocSummary[]>([]);
 const selected = ref<DocFull | null>(null);
@@ -188,10 +202,17 @@ async function load() {
   if (result.ok) items.value = (result.data as { items: DocSummary[] }).items;
 }
 
-async function select(code: string) {
+async function loadSelected(code: string) {
   actionError.value = "";
   const result = await api.getDocument(auth.apiKey!, props.owner, props.projectId, code);
   if (result.ok) selected.value = result.data as DocFull;
+}
+
+async function select(code: string) {
+  await loadSelected(code);
+  if (!selected.value) return;
+  const segment = URL_SYNCED_TYPES[selected.value.type];
+  if (segment) router.push(`/${props.owner}/${props.projectId}/${segment}/${code}`);
 }
 
 const availableTransitions = ref<TransitionOption[]>([]);
@@ -212,7 +233,7 @@ async function transition(to: string) {
     return;
   }
   await load();
-  await select(selected.value.code);
+  await loadSelected(selected.value.code);
 }
 
 // design-notes.md 후속 판단(설계자 요청) - "Source View"는 view/edit 두
@@ -227,7 +248,7 @@ async function saveContent(markdown: string) {
     return;
   }
   await load();
-  await select(selected.value.code);
+  await loadSelected(selected.value.code);
 }
 
 const showTagDialog = ref(false);
@@ -272,14 +293,29 @@ async function addTag() {
     return;
   }
   showTagDialog.value = false;
-  await select(selected.value.code);
+  await loadSelected(selected.value.code);
 }
 
 onMounted(async () => {
   await load();
-  if (props.openCode) await select(props.openCode);
+  if (props.code) await loadSelected(props.code);
 });
 watch(() => [props.owner, props.projectId], load);
+// 브라우저 뒤로/앞으로 가기 - path의 :code가 바뀌면 그에 맞는 문서를
+// 다시 불러온다. select()가 이미 방금 반영해둔 경우(사용자가 방금
+// 클릭해서 router.push가 스스로 이 변화를 일으킨 경우)는 중복 조회를
+// 건너뛴다.
+watch(
+  () => props.code,
+  (code) => {
+    if (!code) {
+      selected.value = null;
+      return;
+    }
+    if (selected.value?.code === code) return;
+    loadSelected(code);
+  }
+);
 </script>
 
 <style scoped>

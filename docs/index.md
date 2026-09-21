@@ -12,3 +12,6 @@ frontmatter(`id`/`parent_id`/`type`/`kind`/`state`/`branch`/
 | 추적 코드 | 문서 | 설명 |
 | --- | --- | --- |
 | SP-XJQCTF6Y | [design-notes.md](design-notes.md) | 설계 논의 기록 (라운드별 챕터) |
+| SP-PSTRUCT01 | [project-structure.md](project-structure.md) | 지금 시점의 프로젝트 구조/구현 현황 요약 (CLAUDE.md에서 이관) |
+| PL-PLANURL01 | [plan-pr-code-url-scheme.md](plan-pr-code-url-scheme.md) | 완료: PR/Code URL 체계 개편 |
+| PL-PLANQA001 | [plan-qa-card-redesign.md](plan-qa-card-redesign.md) | 완료: Q&A/opinion 카드 UI 재설계 |

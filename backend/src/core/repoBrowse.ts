@@ -7,6 +7,7 @@ import { requireMembership, MembershipError } from "./membership";
 import {
   listBranches,
   listTree,
+  listTreeAtRef,
   readFile,
   listCommits,
   listCommitsForPath,
@@ -54,15 +55,29 @@ export async function repoBranches(payload: any, ctx: ActionContext): Promise<Ac
   return { ok: true, data: { items: branches } };
 }
 
+// 설계자 요청(2026-09-21 후속) - Code 탭에서 특정 커밋 시점을 읽기
+// 전용으로 볼 수 있어야 한다(/code/{branch}/{commitId}). `commitId`가
+// 오면 그 시점(listTreeAtRef/readFileAtRef, branch/커밋 id 둘 다 받는
+// resolveTreeForRef 기반)을 읽고, 없으면 지금까지처럼 branch 최신
+// 시점(listTree/readFile)을 읽는다 - branch 전용 경로는 `repo.writeFile`
+// (커밋)이 실제로 쓸 수 있는 "지금" 상태와 정확히 같은 함수를 공유해야
+// 하므로 그대로 남겨뒀다(과거 시점에 실수로 쓰기가 섞여 들어갈 여지를
+// API 레벨에서부터 없앤다).
 export async function repoTree(payload: any, ctx: ActionContext): Promise<ActionResult> {
   const guardFailure = await guardRead(payload.projectId, ctx);
   if (guardFailure) return guardFailure;
 
-  const { projectId, branch, path } = payload;
+  const { projectId, branch, commitId, path } = payload;
   if (typeof branch !== "string" || !branch) return fail("branch가 필요합니다.");
 
-  const entries = await listTree(projectId, branch, typeof path === "string" ? path : "");
-  if (entries === null) return fail(`"${branch}" 브랜치의 "${path ?? ""}" 경로를 찾을 수 없습니다(저장소가 비어있을 수도 있습니다).`);
+  const dirPath = typeof path === "string" ? path : "";
+  const entries =
+    typeof commitId === "string" && commitId
+      ? await listTreeAtRef(projectId, commitId, dirPath)
+      : await listTree(projectId, branch, dirPath);
+  if (entries === null) {
+    return fail(`"${commitId || branch}"의 "${path ?? ""}" 경로를 찾을 수 없습니다(저장소가 비어있을 수도 있습니다).`);
+  }
   return { ok: true, data: { path: path ?? "", items: entries } };
 }
 
@@ -70,12 +85,13 @@ export async function repoFile(payload: any, ctx: ActionContext): Promise<Action
   const guardFailure = await guardRead(payload.projectId, ctx);
   if (guardFailure) return guardFailure;
 
-  const { projectId, branch, path } = payload;
+  const { projectId, branch, commitId, path } = payload;
   if (typeof branch !== "string" || !branch) return fail("branch가 필요합니다.");
   if (typeof path !== "string" || !path) return fail("path가 필요합니다.");
 
-  const file = await readFile(projectId, branch, path);
-  if (file === null) return fail(`"${branch}"의 "${path}"를 찾을 수 없습니다.`);
+  const file =
+    typeof commitId === "string" && commitId ? await readFileAtRef(projectId, commitId, path) : await readFile(projectId, branch, path);
+  if (file === null) return fail(`"${commitId || branch}"의 "${path}"를 찾을 수 없습니다.`);
   return { ok: true, data: file };
 }
 

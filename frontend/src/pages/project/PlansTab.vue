@@ -8,7 +8,7 @@
     create-label="새 계획"
     :create-route="`/${owner}/${projectId}/plans/new`"
     :transitions-by-state="transitions"
-    :open-code="openCode"
+    :code="code"
     :highlight-code="highlightCode"
   />
 </template>
@@ -18,10 +18,9 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 import DocTypeWorkspace from "components/DocTypeWorkspace.vue";
 
-defineProps<{ owner: string; projectId: string }>();
+defineProps<{ owner: string; projectId: string; code?: string }>();
 
 const route = useRoute();
-const openCode = computed(() => (typeof route.query.open === "string" ? route.query.open : undefined));
 const highlightCode = computed(() => (typeof route.query.highlight === "string" ? route.query.highlight : undefined));
 
 // plan의 상태 전이(documentRules.ts "plan" 분기) - added->read->done/discard,

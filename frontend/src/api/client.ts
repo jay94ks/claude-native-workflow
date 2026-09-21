@@ -154,10 +154,10 @@ export const tagDocument = (
 
 // ---- Repo (Code 탭) ----
 export const listBranches = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/repo/branches`);
-export const listTree = (apiKey: string, owner: string, projectId: string, branch: string, path: string) =>
-  request(apiKey, `/projects/${owner}/${projectId}/repo/tree`, { query: { branch, path } });
-export const readRepoFile = (apiKey: string, owner: string, projectId: string, branch: string, path: string) =>
-  request(apiKey, `/projects/${owner}/${projectId}/repo/file`, { query: { branch, path } });
+export const listTree = (apiKey: string, owner: string, projectId: string, branch: string, path: string, commitId?: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/tree`, { query: { branch, path, commitId } });
+export const readRepoFile = (apiKey: string, owner: string, projectId: string, branch: string, path: string, commitId?: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/repo/file`, { query: { branch, path, commitId } });
 export const writeRepoFile = (
   apiKey: string,
   owner: string,

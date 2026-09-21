@@ -2990,3 +2990,150 @@ owner로 조회하면 404로 깔끔히 실패하는 것까지 curl로 직접 확
 목록 화면(`/admin/pA/documents`)에 반영되는 것까지 네트워크 탭으로
 확인. 검증에 쓴 두 `pA` 프로젝트는 `project.destroy`로 정리.
 
+### Q&A 계층 구조 - 표시는 있었지만 "만들 방법"이 아예 없었다 (2026-09-21, 같은 날 후속)
+
+설계자가 다시 지적했다: "Q&A와 opinion들은 분명 계층 구조라고 말했었는데,
+계층 구조가 빠져있네." 지난 라운드에 이미 more 아이콘 + `DocumentThreadPage.vue`
+(자식 항목 표시+재귀 드릴다운) + `RecentQaFeed.vue`(부모 배지+more 아이콘)
+까지 구현하고 실기동으로 검증까지 마쳤던 터라 "또 빠뜨렸나" 싶어 먼저
+**직접 재현**해봤다 - 놀랍게도 표시 자체는 여전히 정상 동작했다(RECENT
+Q&A 탭의 배지/more 아이콘, `/admin/demo-project/thread/QU-VWOBXD0M`
+드릴다운 전부 그대로 살아있음, 스크린샷으로 확인). 그런데 실제 진짜
+문제를 찾았다: **`DocumentThreadPage.vue`가 순수 읽기 전용이었다** -
+자식 항목을 보여주기만 할 뿐, 그 페이지 안에서 질문/의견을 새로
+남기거나 질문에 답할 방법이 전혀 없었다. 즉 **웹 UI만으로는 계층을
+단 한 단계도 스스로 늘릴 수 없었다** - 지금까지 존재하던 깊은 중첩
+(질문→답변→재질의)은 전부 이번 세션 검증 중에 curl로 직접 만든
+테스트 데이터였다. 설계자 입장에서는 "계층 구조를 보여준다"는 기능
+자체가 UI에 실질적으로 없는 것과 마찬가지였다 - 표시 코드가 있다는
+사실이 변명이 되지 않는다(이전 라운드의 RecentQaFeed.vue 교훈과
+같은 패턴: "구현했다"의 기준은 설계자가 실제로 써볼 수 있는가다).
+
+**먼저 확인한 것 - 백엔드는 이미 임의 깊이 중첩을 지원하고 있었다**:
+`backend/src/core/documentRules.ts`의 `checkChainConstraint`를 다시
+읽어보니 "question/plan/tracker/test/opinion/issue: 부모 타입 제한
+없음"이라고 이미 명시돼 있었다(Phase 1부터) - question이나 opinion은
+`parentId`가 doc/plan같은 "진짜 문서"든, 다른 question/answer/opinion
+이든 전혀 안 가린다. 즉 "질문의 답변에 재질의", "의견에 대한 재질의"
+같은 깊은 체인은 처음부터 데이터 모델과 검증 로직 양쪽 다 이미
+지원하고 있었다 - **막혀 있던 건 순전히 프론트엔드 UI뿐**이었다.
+
+**고친 것** - `DocumentThreadPage.vue`에 그 항목(`item`) 자신을
+대상으로 한 컴포저를 추가했다(`DocumentDiscussion.vue`와 동일한
+질문하기/답변 작성/의견 남기기 패턴을 그대로 재사용, `parentId`만
+`item.code`로):
+- **"재질의하기"/"의견 남기기"**: 항상 보이는 두 버튼 - 누르면
+  `q-slide-transition`으로 인라인 에디터가 펼쳐지고(`DocumentDiscussion`
+  과 동일한 UX), `parentId: item.code`로 `docs.add`를 부른다.
+- **"답변 작성"**: `item.kind === 'QU'`이고 아직 답변이 없을 때만(자식
+  목록에 kind `AN`이 없는지로 판단) + `DocumentDiscussion.vue`와 동일한
+  게이트(`item.author === 'agent' && item.state === 'read'`) - agent가
+  올린 질문을 architect가 "확인함" 처리한 뒤에만 웹에서 답할 수 있다는
+  기존 규칙과 그대로 맞췄다.
+- 자식 목록(`children`, `docs.list({parentId})`로 타입 무관하게 전부
+  조회)과 재귀 more 아이콘 로직은 그대로 유지했다 - 이게 있어야 방금
+  단 답변/재질의가 바로 "자식 항목" 목록에 나타난다.
+
+**처음에 시도했다가 되돌린 접근**: 처음엔 `DocumentThreadPage.vue`가
+`DocumentDiscussion.vue`를 `parent-code="item.code"`로 그대로 끼워
+넣으면 컴포저를 공짜로 얻을 수 있을 거라 생각했다 - 하지만 실제로
+껴보니 **item이 이미 답변을 가진 질문일 때, 그 답변이 화면에서 사라졌다**.
+`DocumentDiscussion.vue`의 데이터 모델은 "이 문서에 달린 question들 +
+각 question에 달린 answer 하나"를 한 카드로 묶어서 보여주는
+구조라(PR 리뷰 코멘트 스타일), `parentCode`로 넘긴 항목 자신의 답변
+(=parentCode 자신이 question이고 그 직접 answer)은 애초에 이 모델이
+표현하는 범위 밖이다(그 컴포넌트는 "parentCode에 달린 question/opinion
+목록"만 다루지 "parentCode 자신의 답변"은 안 다룬다) - 반면 기존
+`DocumentThreadPage.vue`의 손으로 짠 `docs.list({parentId})` 조회는
+타입을 안 가리므로 답변도 자연스럽게 "자식"으로 잡혔었다. 재사용으로
+코드는 줄일 수 있었지만 이 케이스에서 실제로 회귀가 생기는 걸 실기동
+확인 중에 발견하고, 컴포저 부분만 `DocumentDiscussion.vue`와 같은
+패턴으로 새로 작성하는 쪽으로 되돌렸다.
+
+**검증**: `vue-tsc` 클린. 실제 브라우저에서 `/admin/demo-project/
+thread/QU-VWOBXD0M`(agent가 만든 질문, 이미 답변 "ㄹㄹ" 있음) 진입 -
+"답변 작성" 버튼은 안 보이는데(이미 답변 있음, 올바름) "재질의하기"는
+보이는 것 확인 → 실제로 "재질의하기"로 새 질문("재질의 테스트")을
+등록 → 자식 항목이 1개에서 2개로 늘어나는 것, RECENT Q&A 탭에 그
+새 항목이 "↳ 질문: 디자인 관련 질문" 배지와 함께 나타나는 것까지
+확인 → 검증에 쓴 재질의는 `docs.transition`(discard)으로 정리.
+설계자가 요청 원문에 "Q&A와 opinion들"이라고 opinion을 명시적으로
+짚은 만큼, **opinion 자신에게 opinion을 중첩**하는 것도 별도로
+확인했다 - 기존 opinion(`OP-0S5XFT0B`, 자식 0개)의 스레드 페이지에서
+"의견 남기기"로 새 opinion을 등록 → 자식 항목이 0개에서 1개로
+늘어나는 것 확인 → 정리.
+
+### "모든 페이지에서" 검증하다가 발견한 진짜 버그 - answerEditorRef가 처음부터 배열이었다 (2026-09-21, 같은 날 후속)
+
+설계자가 이어서 요청했다: "Document 뿐만 아니라 Q&A와 opinion이
+달려있는 모든 페이지에서 이걸 적용해야해." `DocumentDiscussion.vue`는
+`DocTypeWorkspace.vue`에 무조건(타입 안 가리고) 끼워져 있어서
+Documents/Plans/Issues/Trackers/Tests 다섯 화면 전부가 이미 같은
+컴포넌트를 공유한다는 걸 코드로 먼저 확인했다 - 즉 위 수정
+(DocumentThreadPage.vue의 컴포저)은 이미 전부에 적용돼 있어야
+맞았다. 그래도 "이미 그렇다"고 말로만 답하지 않고 다섯 화면을
+전부 직접 열어 실기동으로 확인했다:
+
+- **Plans**(`UI 디자인 계획`의 opinion `OP-0S5XFT0B`) - 스레드
+  페이지의 재질의하기/의견 남기기 정상 동작.
+- **Issues**(`Test issue`의 question `QU-ZKD41M9S`) - 스레드
+  페이지에서 실제로 재질의 등록 → 자식 0→1 확인.
+- **Trackers**(기존 데이터에 tracker가 하나도 없어서 agent 채널로
+  검증용 tracker 하나를 직접 만들었다) - Discussion 패널에서
+  agent 질문에 "확인함"→"답변 작성" 흐름을 테스트하다가 **진짜
+  버그를 발견**했다: **"등록하기"를 눌러도 아무 일도 안 일어났다**
+  (로딩 스피너만 무한히 돔, 에러 메시지도 안 뜸). 콘솔을 열어보고서야
+  원인을 확인 - `Uncaught (in promise) TypeError:
+  answerEditorRef.value?.getMarkdown is not a function`.
+
+**근본 원인**: `DocumentDiscussion.vue`의 답변 작성 컴포저
+(`<MarkdownSourceView ref="answerEditorRef">`)가 `v-for="item in
+thread"` **루프 안**에 있었다 - Vue는 v-for 내부에서 같은 이름의
+`ref`를 항상 **배열**로 모은다(Vue 공식 문서에 명시된 동작). 그런데
+`submitAnswer()`는 `answerEditorRef.value?.getMarkdown()`처럼 단일
+객체인 것처럼 호출하고 있었다 - 실제로는 배열이라 `.getMarkdown`이
+없어서 항상 예외를 던졌고, 이게 async 함수 안에서 uncaught promise
+rejection으로 조용히 사라져 사용자에게는 그냥 "아무 반응 없음"으로만
+보였다. **질문하기/의견 남기기 컴포저는 v-for 밖(스레드 목록
+다음의 독립 블록)에 있어서 이 버그가 없었다** - 그래서 그동안의
+검증(이번 세션 포함 여러 라운드)에서 재질의하기/의견 남기기는
+매번 정상 동작했고 유독 "답변 작성"만 아무도 눈치 못 채고 있었다 -
+docs.get/list 응답을 봐서는 절대 알 수 없는, 순수 프론트엔드
+런타임 버그라 서버 로그에도 전혀 안 남는다.
+
+이 버그는 **이번 세션에서 처음 만들어진 게 아니라 훨씬 이전
+라운드("질문하기/답변 작성/의견 남기기를 다이얼로그에서 인라인
+컴포저로 바꾼 라운드")부터 있었을 가능성이 높다** - `DocumentDiscussion.vue`
+가 그 이후로 REST 전환/owner 리팩터 등 여러 번 다시 쓰였지만
+`answerEditorRef` 관련 로직 자체는 그대로 옮겨 다녔을 뿐이다. 즉
+"답변 작성" 버튼은 이 세션에서 실제로 클릭해서 등록까지 확인한 적이
+**단 한 번도 없었다** - 매번 "재질의하기"/"의견 남기기"만 확인하고
+"답변 작성 버튼이 보인다"까지만 확인한 뒤 넘어갔었다(버튼이
+보이는 것과 실제로 동작하는 것은 다르다는 걸 이번에 값비싸게
+배웠다).
+
+**고친 것**: `answerEditorRef`의 타입을 `ref<MarkdownSourceViewRef
+| null>(null)`에서 `ref<MarkdownSourceViewRef[]>([])`로 바꾸고
+`answerEditorRef.value?.[0]?.getMarkdown()`으로 접근한다 -
+`answeringCode`가 한 번에 최대 하나만 가리키므로 이 배열엔 항상
+0개 또는 1개만 들어있다.
+
+**검증**: `vue-tsc` 클린. 버그 재현 후(같은 Trackers 화면에서 같은
+조작 반복 - 콘솔에서 정확히 같은 에러 확인) 수정 → **같은 화면에서
+다시 시도해 실제로 답변이 등록되는 것**(`architect의 답변` 카드로
+표시)까지 확인. Documents/Plans/Issues 세 화면도 다시 열어 Discussion
+패널이 정상 렌더링되는 것(이 화면들은 애초에 답변 작성 흐름까지
+직접 재현하진 않았지만, 코드 경로가 100% 동일한 컴포넌트이므로
+Trackers에서의 수정이 그대로 적용된다) 확인. 검증에 쓴 tracker와
+그 Q&A는 이미 답변이 달려 "해소된" 상태라(질문자 본인만, 미해소
+상태에서만 discard 가능한 규칙과 안 맞음) 지우지 않고 다른 데모
+Q&A(디자인 관련 질문 등)와 같은 방식으로 남겨뒀다 - 다른 테스트로
+만든 이슈 질문(`QU-8MRRHMFB`)은 discard로 정리.
+
+**이번에 판단해 기록해두는 것**: "버튼이 보인다"는 "기능이 동작한다"의
+증거가 아니다 - 특히 `v-for` 안에 있는 템플릿 `ref`는 컴파일도
+타입체크도 통과하고 화면에도 정상적으로 그려지지만, 실제로 상호작용
+(누르기)해보기 전까지는 런타임 오류가 절대 드러나지 않는다. 이후
+컴포저류 UI를 검증할 땐 "버튼이 보인다"에서 멈추지 말고 반드시
+"실제로 눌러서 등록/저장까지 끝까지" 확인해야 한다.
+
