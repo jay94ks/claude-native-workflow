@@ -1,11 +1,8 @@
 <template>
-  <div class="q-pa-md" style="max-width: 900px; margin: 0 auto">
-    <div class="row items-center q-gutter-sm q-mb-md">
-      <q-btn flat dense round icon="arrow_back" :to="listRoute" />
-      <div class="text-h6">새 Pull request</div>
-    </div>
+  <div class="q-pa-md" style="max-width: var(--gh-page-width-wide); margin: 0 auto">
+    <PageHeader variant="detail" title="새 Pull request" :back-to="listRoute" />
 
-    <div class="q-gutter-md">
+    <q-form class="q-gutter-md" @submit.prevent="create">
       <q-input v-model="title" label="제목" />
       <div class="row q-gutter-md">
         <q-select v-model="source" :options="branchNames" label="source branch" style="min-width: 200px" />
@@ -21,9 +18,9 @@
 
       <div class="q-gutter-sm">
         <q-btn flat :to="listRoute" label="취소" />
-        <q-btn color="primary" label="만들기" :loading="creating" :disable="!canCreate" @click="create" />
+        <q-btn type="submit" color="primary" label="만들기" :loading="creating" :disable="!canCreate" />
       </div>
-    </div>
+    </q-form>
   </div>
 </template>
 
@@ -32,6 +29,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
+import PageHeader from "components/PageHeader.vue";
 import * as api from "src/api/client";
 
 const props = defineProps<{ owner: string; projectId: string }>();

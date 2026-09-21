@@ -41,7 +41,7 @@
         </q-item-section>
         <q-item-section v-if="opening === item.code" side><q-spinner size="20px" /></q-item-section>
       </q-item>
-      <q-item v-if="feed.length === 0"><q-item-section class="text-caption">최근 질의/의견이 없습니다.</q-item-section></q-item>
+      <EmptyState v-if="feed.length === 0" as="item" message="최근 질의/의견이 없습니다." />
     </q-list>
     <div v-if="openError" class="text-negative text-caption q-mt-sm">{{ openError }}</div>
   </div>
@@ -52,6 +52,7 @@ import { ref, reactive, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import * as api from "src/api/client";
+import EmptyState from "components/EmptyState.vue";
 
 interface DocSummary {
   code: string;

@@ -1,7 +1,10 @@
 <template>
-  <div style="max-width: 900px">
-    <div class="text-subtitle1">내 템플릿 (architect 계정 하나당 하나, 프로젝트와 무관)</div>
-    <div class="text-caption q-mb-md">여기서 편집한 템플릿은 이 프로젝트뿐 아니라 내가 관리하는 다른 프로젝트에도 배포할 수 있습니다.</div>
+  <div style="max-width: var(--gh-page-width-wide); margin: 0 auto">
+    <PageHeader
+      variant="settings"
+      title="내 템플릿 (architect 계정 하나당 하나, 프로젝트와 무관)"
+      caption="여기서 편집한 템플릿은 이 프로젝트뿐 아니라 내가 관리하는 다른 프로젝트에도 배포할 수 있습니다."
+    />
 
     <div class="q-mb-md">
       <div class="text-caption q-mb-xs" style="color: var(--gh-fg-muted)">CLAUDE.md</div>
@@ -32,6 +35,7 @@ import { ref, onMounted } from "vue";
 import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
+import PageHeader from "components/PageHeader.vue";
 import * as api from "src/api/client";
 
 const props = defineProps<{ owner: string; projectId: string }>();

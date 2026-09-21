@@ -1,13 +1,15 @@
 <template>
   <div class="row no-wrap" style="min-height: calc(100vh - 160px)">
     <ProjectSidebar>
-      <div class="row items-center justify-between q-mb-sm">
-        <div class="text-subtitle1">Pull requests ({{ items.length }})</div>
-        <q-btn size="sm" color="primary" icon="add" label="새 PR" :to="`/${owner}/${projectId}/pull-requests/new`" />
-      </div>
+      <PageHeader variant="section" title="Pull requests" :count="items.length">
+        <template #actions>
+          <q-btn size="sm" color="primary" icon="add" label="새 PR" :to="`/${owner}/${projectId}/pull-requests/new`" />
+        </template>
+      </PageHeader>
+      <div v-if="loading" class="text-caption">불러오는 중...</div>
       <!-- 설계자 요청(2026-09-21) - PR이 선택되면 목록은 500px로 고정(스크롤
            가능)하고 그 밑에 바뀐 파일을 트리로 보여준다. -->
-      <q-list bordered separator :style="selected ? 'max-height: 500px; overflow-y: auto' : ''">
+      <q-list v-else bordered separator :style="selected ? 'max-height: 500px; overflow-y: auto' : ''">
         <q-item
           v-for="pr in items"
           :key="pr.id"
@@ -24,7 +26,7 @@
             <q-badge :color="stateColor(pr.state)">{{ pr.state }}</q-badge>
           </q-item-section>
         </q-item>
-        <q-item v-if="items.length === 0"><q-item-section class="text-caption">Pull request가 없습니다.</q-item-section></q-item>
+        <EmptyState v-if="items.length === 0" as="item" message="Pull request가 없습니다." />
       </q-list>
 
       <template v-if="selected">
@@ -91,7 +93,10 @@ import { useAuthStore } from "stores/auth";
 import ProjectSidebar from "components/ProjectSidebar.vue";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
 import DiffViewer from "components/DiffViewer.vue";
+import PageHeader from "components/PageHeader.vue";
+import EmptyState from "components/EmptyState.vue";
 import * as api from "src/api/client";
+import { buildFileTree } from "src/utils/fileTree";
 
 interface PrSummary {
   id: string;
@@ -116,6 +121,7 @@ const auth = useAuthStore();
 const router = useRouter();
 
 const items = ref<PrSummary[]>([]);
+const loading = ref(true);
 const selected = ref<PrFull | null>(null);
 const selectedPath = ref<string | null>(null);
 const actionError = ref("");
@@ -129,46 +135,6 @@ function stateColor(state: string): string {
   return "primary";
 }
 
-interface TreeNode {
-  label: string;
-  nodeKey: string;
-  isFile: boolean;
-  status?: string;
-  children?: TreeNode[];
-}
-
-// 설계자 요청(2026-09-21) - 변경된 파일 목록을 평평한 경로 배열이 아니라
-// 디렉터리 구조를 살린 트리(q-tree)로 보여준다.
-function buildFileTree(files: DiffFile[]): TreeNode[] {
-  interface Draft {
-    label: string;
-    nodeKey: string;
-    isFile: boolean;
-    status?: string;
-    children: Map<string, Draft>;
-  }
-  const root: Draft = { label: "", nodeKey: "", isFile: false, children: new Map() };
-  for (const f of files) {
-    const parts = f.path.split("/");
-    let cur = root;
-    let acc = "";
-    parts.forEach((part, idx) => {
-      acc = acc ? `${acc}/${part}` : part;
-      const isFile = idx === parts.length - 1;
-      if (!cur.children.has(part)) {
-        cur.children.set(part, { label: part, nodeKey: acc, isFile, status: isFile ? f.status : undefined, children: new Map() });
-      }
-      cur = cur.children.get(part)!;
-    });
-  }
-  function toArray(draft: Draft): TreeNode[] {
-    return [...draft.children.values()]
-      .sort((a, b) => Number(a.isFile) - Number(b.isFile) || a.label.localeCompare(b.label))
-      .map((d) => ({ label: d.label, nodeKey: d.nodeKey, isFile: d.isFile, status: d.status, children: d.isFile ? undefined : toArray(d) }));
-  }
-  return toArray(root);
-}
-
 const fileTree = computed(() => (selected.value ? buildFileTree(selected.value.diff.files) : []));
 
 function onTreeSelect(key: string | number | null) {
@@ -180,7 +146,9 @@ function onTreeSelect(key: string | number | null) {
 }
 
 async function load() {
+  loading.value = true;
   const result = await api.listPullRequests(auth.apiKey!, props.owner, props.projectId);
+  loading.value = false;
   if (result.ok) items.value = (result.data as { items: PrSummary[] }).items;
 }
 

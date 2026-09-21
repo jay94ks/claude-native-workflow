@@ -1,12 +1,12 @@
 <template>
-  <div>
-    <div class="text-subtitle1 q-mb-sm">Collaborators</div>
+  <div style="max-width: var(--gh-page-width-narrow); margin: 0 auto">
+    <PageHeader variant="settings" title="Collaborators" />
     <q-list bordered separator class="q-mb-lg">
       <q-item v-for="m in members">
         <q-item-section>{{ m.username }}</q-item-section>
         <q-item-section side><q-badge color="primary" outline>{{ m.role }}</q-badge></q-item-section>
       </q-item>
-      <q-item v-if="members.length === 0"><q-item-section class="text-caption">멤버가 없습니다.</q-item-section></q-item>
+      <EmptyState v-if="members.length === 0" as="item" message="멤버가 없습니다." />
     </q-list>
 
     <template v-if="pendingInvites.length > 0">
@@ -37,6 +37,8 @@ import { ref, onMounted } from "vue";
 import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
 import * as api from "src/api/client";
+import PageHeader from "components/PageHeader.vue";
+import EmptyState from "components/EmptyState.vue";
 
 const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();

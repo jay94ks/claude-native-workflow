@@ -1,17 +1,16 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="row items-center justify-between q-mb-md">
-      <div class="text-h5">Projects</div>
-      <div class="q-gutter-sm">
+    <PageHeader variant="page" title="Projects">
+      <template #actions>
         <q-btn flat icon="mail" label="초대 수락" @click="openAcceptDialog">
           <q-badge v-if="myInvites.length > 0" color="red" floating>{{ myInvites.length }}</q-badge>
         </q-btn>
         <q-btn color="primary" icon="add" label="새 프로젝트" @click="showCreate = true" />
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div v-if="loading" class="text-caption">불러오는 중...</div>
-    <div v-else-if="projects.length === 0" class="text-caption">아직 프로젝트가 없습니다.</div>
+    <EmptyState v-else-if="projects.length === 0" message="아직 프로젝트가 없습니다." />
     <div class="row q-col-gutter-md">
       <div v-for="project in projects" :key="project.id" class="col-12 col-sm-4">
         <router-link :to="`/${project.ownerUsername}/${project.id}`" style="text-decoration: none; color: inherit">
@@ -21,7 +20,7 @@
     </div>
 
     <q-dialog v-model="showCreate">
-      <q-card style="width: 400px">
+      <q-card style="width: var(--gh-dialog-width-md)">
         <q-card-section class="text-h6">새 프로젝트</q-card-section>
         <q-card-section class="q-gutter-md">
           <q-input v-model="newName" label="이름" autofocus />
@@ -41,7 +40,7 @@
     </q-dialog>
 
     <q-dialog v-model="showAccept">
-      <q-card style="width: 420px">
+      <q-card style="width: var(--gh-dialog-width-md)">
         <q-card-section class="text-h6">초대 수락</q-card-section>
         <q-list v-if="myInvites.length > 0" separator>
           <q-item v-for="invite in myInvites" :key="`${invite.owner}/${invite.projectId}`">
@@ -60,10 +59,10 @@
             </q-item-section>
           </q-item>
         </q-list>
-        <q-card-section v-else class="text-caption">대기 중인 초대가 없습니다.</q-card-section>
+        <q-card-section v-else><EmptyState message="대기 중인 초대가 없습니다." /></q-card-section>
         <q-card-section v-if="acceptError" class="text-negative text-caption">{{ acceptError }}</q-card-section>
         <q-card-actions align="right">
-          <q-btn flat label="닫기" v-close-popup />
+          <q-btn flat label="취소" v-close-popup />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -73,6 +72,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import ProjectCard from "components/ProjectCard.vue";
+import PageHeader from "components/PageHeader.vue";
+import EmptyState from "components/EmptyState.vue";
 import { useAuthStore } from "stores/auth";
 import * as api from "src/api/client";
 

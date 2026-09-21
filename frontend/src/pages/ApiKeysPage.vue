@@ -1,6 +1,6 @@
 <template>
-  <q-page class="q-pa-md" style="max-width: 720px">
-    <div class="text-h5 q-mb-md">API 키 관리</div>
+  <q-page class="q-pa-md" style="max-width: var(--gh-page-width-narrow)">
+    <PageHeader variant="page" title="API 키 관리" />
     <div class="text-caption q-mb-md" style="color: var(--gh-fg-muted)">
       personal 키는 로그인과 동등하게 어디서든 쓸 수 있고, project 키는 그 프로젝트 안에서만 유효합니다 - 유출돼도 다른 프로젝트로는 새어나가지 않습니다.
     </div>
@@ -22,12 +22,12 @@
           <q-btn v-if="key.status === 'active'" dense flat color="negative" label="배제" @click="revoke(key.id)" />
         </q-item-section>
       </q-item>
-      <q-item v-if="keys.length === 0"><q-item-section class="text-caption">발급된 키가 없습니다.</q-item-section></q-item>
+      <EmptyState v-if="keys.length === 0" as="item" message="발급된 키가 없습니다." />
     </q-list>
 
     <q-card flat bordered class="q-pa-md">
       <div class="text-subtitle2 q-mb-sm">새 키 발급</div>
-      <div class="q-gutter-sm row items-center">
+      <q-form class="q-gutter-sm row items-center" @submit.prevent="create">
         <q-select v-model="newScope" :options="['personal', 'project']" label="scope" dense style="width: 140px" />
         <q-select
           v-if="newScope === 'project'"
@@ -39,8 +39,8 @@
           style="width: 260px"
         />
         <q-input v-model="newLabel" label="label (선택)" dense style="width: 200px" />
-        <q-btn color="primary" label="발급" :loading="creating" @click="create" />
-      </div>
+        <q-btn type="submit" color="primary" label="발급" :loading="creating" />
+      </q-form>
       <div v-if="createError" class="text-negative text-caption q-mt-sm">{{ createError }}</div>
     </q-card>
 
@@ -56,6 +56,8 @@
 import { ref, onMounted } from "vue";
 import { useAuthStore } from "stores/auth";
 import * as api from "src/api/client";
+import EmptyState from "components/EmptyState.vue";
+import PageHeader from "components/PageHeader.vue";
 
 interface ApiKeySummary {
   id: string;

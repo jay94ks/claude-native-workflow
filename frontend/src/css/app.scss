@@ -10,11 +10,34 @@
   --gh-fg-muted: #656d76;
   --gh-accent: #0969da;
   --gh-success: #1a7f37;
+  --gh-header-accent: #79c0ff;
+  --gh-attention: #fd8c73;
+  --gh-page-width-narrow: 720px;
+  --gh-page-width-wide: 900px;
+  --gh-dialog-width-sm: 360px;
+  --gh-dialog-width-md: 420px;
+  --gh-dialog-width-lg: 480px;
 }
 
 body {
   background: var(--gh-canvas-subtle);
   color: var(--gh-fg);
+}
+
+.markdown-body p {
+  margin: 0 0 0.5em;
+}
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+.markdown-body pre {
+  background: var(--gh-canvas-subtle);
+  padding: 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+.markdown-body code {
+  font-family: monospace;
 }
 
 .gh-pill {

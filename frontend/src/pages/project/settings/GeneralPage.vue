@@ -1,6 +1,6 @@
 <template>
-  <div style="max-width: 640px">
-    <div class="text-subtitle1 q-mb-sm">프로젝트 설정</div>
+  <div style="max-width: var(--gh-page-width-narrow); margin: 0 auto">
+    <PageHeader variant="settings" title="프로젝트 설정" />
     <q-form class="q-gutter-md" @submit.prevent="save">
       <q-input v-model="name" label="이름" :readonly="!project.isAdmin" />
       <q-input v-model="description" label="설명" :readonly="!project.isAdmin" />
@@ -38,7 +38,7 @@
             <q-btn flat dense round icon="delete" color="negative" @click="deleteWebhook(w.id)" />
           </q-item-section>
         </q-item>
-        <q-item v-if="webhookList.length === 0"><q-item-section class="text-caption">등록된 웹훅이 없습니다.</q-item-section></q-item>
+        <EmptyState v-if="webhookList.length === 0" as="item" message="등록된 웹훅이 없습니다." />
       </q-list>
       <q-form class="row q-gutter-sm items-center" @submit.prevent="addWebhook">
         <q-input v-model="newWebhookUrl" label="https://..." dense style="width: 320px" />
@@ -68,7 +68,7 @@
             <q-btn v-if="k.status === 'active'" dense flat color="negative" label="배제" @click="revokeProjectApiKey(k.id)" />
           </q-item-section>
         </q-item>
-        <q-item v-if="projectApiKeys.length === 0"><q-item-section class="text-caption">발급된 프로젝트 키가 없습니다.</q-item-section></q-item>
+        <EmptyState v-if="projectApiKeys.length === 0" as="item" message="발급된 프로젝트 키가 없습니다." />
       </q-list>
 
       <q-separator class="q-my-lg" />
@@ -77,10 +77,10 @@
       <q-card flat bordered class="q-pa-md q-mb-md">
         <div class="text-subtitle2">양도</div>
         <div class="text-caption q-mb-sm">이미 이 프로젝트의 collaborator인 계정에게만 Admin을 넘길 수 있습니다.</div>
-        <div class="row q-gutter-sm items-center">
+        <q-form class="row q-gutter-sm items-center" @submit.prevent="transfer">
           <q-input v-model="transferTo" label="username" dense style="width: 200px" />
-          <q-btn color="warning" label="양도" :loading="transferring" @click="transfer" />
-        </div>
+          <q-btn type="submit" color="warning" label="양도" :loading="transferring" />
+        </q-form>
         <div v-if="transferError" class="text-negative text-caption q-mt-sm">{{ transferError }}</div>
       </q-card>
 
@@ -90,10 +90,10 @@
           이미 이 프로젝트의 collaborator인 계정에게 URL의 소유자(/{{ owner }}/...)를 넘깁니다 - Admin 역할("양도")과는 별개이며, 두
           계정의 계정 삭제(docs/plan-account-management.md) 전에 프로젝트를 남겨두려면 이걸 먼저 해야 합니다. URL이 실제로 바뀝니다.
         </div>
-        <div class="row q-gutter-sm items-center">
+        <q-form class="row q-gutter-sm items-center" @submit.prevent="transferOwnership">
           <q-input v-model="transferOwnershipTo" label="username" dense style="width: 200px" />
-          <q-btn color="warning" label="소유자 변경" :loading="transferringOwnership" @click="transferOwnership" />
-        </div>
+          <q-btn type="submit" color="warning" label="소유자 변경" :loading="transferringOwnership" />
+        </q-form>
         <div v-if="transferOwnershipError" class="text-negative text-caption q-mt-sm">{{ transferOwnershipError }}</div>
       </q-card>
 
@@ -105,25 +105,16 @@
       </q-card>
     </template>
 
-    <q-dialog v-model="confirmDestroy">
-      <q-card style="width: 400px">
-        <q-card-section class="text-h6 text-negative">정말 파기하시겠습니까?</q-card-section>
-        <q-card-section>"{{ project.current?.name }}"를 되돌릴 수 없이 삭제합니다. 계속하려면 프로젝트 이름을 입력하세요.</q-card-section>
-        <q-card-section>
-          <q-input v-model="destroyConfirmText" :label="`프로젝트 이름 (${project.current?.name}) 입력`" />
-        </q-card-section>
-        <q-card-actions align="right">
-          <q-btn flat label="취소" v-close-popup />
-          <q-btn
-            color="negative"
-            label="영구 삭제"
-            :disable="destroyConfirmText !== project.current?.name"
-            :loading="destroying"
-            @click="destroy"
-          />
-        </q-card-actions>
-      </q-card>
-    </q-dialog>
+    <ConfirmDestroyDialog
+      v-model="confirmDestroy"
+      title="정말 파기하시겠습니까?"
+      :body-text="`&quot;${project.current?.name}&quot;를 되돌릴 수 없이 삭제합니다. 계속하려면 프로젝트 이름을 입력하세요.`"
+      :confirm-value="project.current?.name ?? ''"
+      :confirm-label="`프로젝트 이름 (${project.current?.name}) 입력`"
+      :loading="destroying"
+      :error="destroyError"
+      @confirm="destroy"
+    />
   </div>
 </template>
 
@@ -133,6 +124,9 @@ import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
 import * as api from "src/api/client";
+import ConfirmDestroyDialog from "components/ConfirmDestroyDialog.vue";
+import PageHeader from "components/PageHeader.vue";
+import EmptyState from "components/EmptyState.vue";
 
 const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();
@@ -301,7 +295,6 @@ onMounted(() => {
 });
 
 const confirmDestroy = ref(false);
-const destroyConfirmText = ref("");
 const destroying = ref(false);
 const destroyError = ref("");
 

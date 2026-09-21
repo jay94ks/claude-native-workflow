@@ -1,6 +1,6 @@
 <template>
   <q-dialog v-model="model">
-    <q-card style="width: 480px; max-width: 90vw">
+    <q-card style="width: var(--gh-dialog-width-lg); max-width: 90vw">
       <q-card-section class="text-h6">Messages</q-card-section>
 
       <q-list separator style="max-height: 320px; overflow-y: auto">
@@ -16,7 +16,7 @@
             </div>
           </q-item-section>
         </q-item>
-        <q-item v-if="!loading && messages.length === 0"><q-item-section class="text-caption">메시지가 없습니다.</q-item-section></q-item>
+        <EmptyState v-if="!loading && messages.length === 0" as="item" message="메시지가 없습니다." />
       </q-list>
 
       <q-separator />
@@ -30,7 +30,7 @@
         <div v-if="sendError" class="text-negative text-caption">{{ sendError }}</div>
       </q-card-section>
       <q-card-actions align="right">
-        <q-btn flat label="닫기" v-close-popup />
+        <q-btn flat label="취소" v-close-popup />
         <q-btn color="primary" label="보내기" :loading="sending" @click="send" />
       </q-card-actions>
     </q-card>
@@ -41,6 +41,7 @@
 import { ref, watch } from "vue";
 import { useAuthStore } from "stores/auth";
 import * as api from "src/api/client";
+import EmptyState from "components/EmptyState.vue";
 
 interface Message {
   id: string;

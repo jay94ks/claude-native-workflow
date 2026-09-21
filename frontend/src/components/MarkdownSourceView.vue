@@ -214,6 +214,6 @@ defineExpose({ enterEdit, getMarkdown });
    커지는 최소 높이(min-height, 문서는 300px/Q&A 컴포저는 200px). */
 .sv-edit :deep(.ProseMirror) {
   min-height: var(--sv-edit-min-height, 300px);
-  background: #fff;
+  background: var(--gh-canvas);
 }
 </style>

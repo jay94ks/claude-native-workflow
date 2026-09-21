@@ -74,7 +74,7 @@
           </div>
         </div>
       </template>
-      <div v-else class="text-caption" style="color: var(--gh-fg-muted)">아직 문서가 없습니다.</div>
+      <EmptyState v-else message="아직 문서가 없습니다." />
     </div>
   </div>
 </template>
@@ -82,6 +82,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useAuthStore } from "stores/auth";
+import EmptyState from "components/EmptyState.vue";
 import { useProjectStore } from "stores/project";
 import * as api from "src/api/client";
 

@@ -1,6 +1,6 @@
 <template>
   <q-dialog v-model="show">
-    <q-card style="width: 360px">
+    <q-card style="width: var(--gh-dialog-width-sm)">
       <q-card-section class="text-h6">비밀번호 변경</q-card-section>
       <q-card-section class="q-gutter-sm">
         <q-input v-model="currentPassword" type="password" label="현재 비밀번호" dense />
@@ -9,7 +9,7 @@
       <div v-if="error" class="text-negative text-caption q-px-md">{{ error }}</div>
       <div v-if="message" class="text-positive text-caption q-px-md">{{ message }}</div>
       <q-card-actions align="right">
-        <q-btn flat label="닫기" v-close-popup />
+        <q-btn flat label="취소" v-close-popup />
         <q-btn color="primary" label="변경" :loading="saving" @click="submit" />
       </q-card-actions>
     </q-card>

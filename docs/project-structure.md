@@ -688,6 +688,49 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   에러가 그대로 다시 나옴)을 실증 - 다음 세션이 오래된 로그를 새
   버그로 오인하지 않도록 기록해둔다.
 
+## 프론트엔드 UI 일관성 정리 (PL-PLANFEUI, 2026-09-22)
+
+설계자 피드백("탑바/탭은 좋은데 그 외엔 땜빵식") 이후 실제 코드
+감사 결과를 바탕으로 여러 화면에 흩어져 있던 헤더/다이얼로그/폼/
+빈 상태/색 패턴을 공용 컴포넌트로 정리했다. **새 화면을 추가할 때는
+아래 컴포넌트를 재사용한다 - 각 페이지가 헤더/빈 상태를 직접
+마크업하지 않는다**:
+
+- **`components/PageHeader.vue`**: 페이지 최상단 제목 영역.
+  `variant="page"`(단독 페이지, `text-h5` - 예: Projects/Accounts/
+  API 키), `variant="section"`(탭 콘텐츠 제목+카운트+액션 슬롯 -
+  예: Documents/Plans/Issues/Trackers/PR 목록), `variant="detail"`
+  (뒤로가기 화살표+`text-h6` - `backTo`(고정 라우트) 또는
+  `onBack`(핸들러, 예: `router.back()`) 중 하나만 지정 - 예: 문서
+  작성/PR 작성/Q&A 스레드/브랜치 커밋 목록), `variant="settings"`
+  (`text-subtitle1` 단독 라벨 + 선택적 `caption` - 예: 프로젝트
+  설정 하위 페이지들) 네 가지.
+- **`components/EmptyState.vue`**: 빈 목록 안내 문구.
+  `as="item"`(q-list 안, `<q-item>`으로 렌더링)/`as="div"`(목록
+  밖) + `message` prop.
+- **`components/ConfirmDestroyDialog.vue`**: "이름을 직접 입력해야
+  확정되는" 삭제 확인 다이얼로그(계정 삭제/프로젝트 파기 등) -
+  `title`/`bodyText`/`confirmValue`/`confirmLabel`/`actionLabel`
+  prop + `confirm` emit.
+- **`frontend/src/utils/fileTree.ts`**: 평평한 파일 경로 배열을
+  `q-tree`용 트리 구조로 바꾸는 `buildFileTree()` - PR diff/커밋
+  diff 화면이 공유한다.
+- **`app.scss`의 페이지/다이얼로그 폭 토큰**: `--gh-page-width-narrow`
+  (720px, 계정/키 관리 등 리스트형), `--gh-page-width-wide`(900px,
+  문서 작성/스레드 등 에디터형), `--gh-dialog-width-sm/md/lg`
+  (360/420/480px) - 새 페이지/다이얼로그의 `max-width`/`width`는
+  이 토큰을 쓴다(리터럴 px 값을 새로 만들지 않는다).
+- 다이얼로그의 취소/닫기 버튼 라벨은 **"취소"로 통일**(모든
+  다이얼로그가 "확정 지을 동작" 옆에 있다고 보고 "닫기" 대신
+  "취소"를 쓰기로 결정).
+
+의도적으로 이번 라운드에서 손대지 않은 것(별도 계획으로 미룸,
+`docs/plan-frontend-consistency.md` 참고): `PullRequestsTab.vue`의
+목록+상세 분할 패널 구조를 `DocTypeWorkspace.vue`와 통합하는 것,
+`DocumentDiscussion.vue`/`DocumentThreadPage.vue`의 중복된 Q&A
+카드 렌더링을 공용 컴포넌트로 추출하는 것 - 둘 다 과거 회귀 이력이
+있는 민감한 영역이라 별도 검증 라운드가 필요하다고 판단했다.
+
 ## 프론트엔드 컴포넌트 관례
 
 `frontend/`의 모든 Vue 컴포넌트는 아래를 명시적으로 지킨다(예시:

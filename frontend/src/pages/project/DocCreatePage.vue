@@ -1,11 +1,8 @@
 <template>
-  <div class="q-pa-md" style="max-width: 900px; margin: 0 auto">
-    <div class="row items-center q-gutter-sm q-mb-md">
-      <q-btn flat dense round icon="arrow_back" :to="listRoute" />
-      <div class="text-h6">{{ createLabel }}</div>
-    </div>
+  <div class="q-pa-md" style="max-width: var(--gh-page-width-wide); margin: 0 auto">
+    <PageHeader variant="detail" :title="createLabel" :back-to="listRoute" />
 
-    <div class="q-gutter-md">
+    <q-form class="q-gutter-md" @submit.prevent="create">
       <q-select v-if="kinds.length > 1" v-model="kind" :options="kinds" label="kind" style="max-width: 240px" />
       <q-input v-model="title" label="제목" />
       <q-input v-if="allowChapter" v-model="chapter" label="chapter (선택)" />
@@ -19,9 +16,9 @@
 
       <div class="q-gutter-sm">
         <q-btn flat :to="listRoute" label="취소" />
-        <q-btn color="primary" label="만들기" :loading="creating" :disable="!hasContent" @click="create" />
+        <q-btn type="submit" color="primary" label="만들기" :loading="creating" :disable="!hasContent" />
       </div>
-    </div>
+    </q-form>
   </div>
 </template>
 
@@ -30,6 +27,7 @@ import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
+import PageHeader from "components/PageHeader.vue";
 import * as api from "src/api/client";
 
 // design-notes.md 후속 판단(설계자 요청, 2026-09-21) - "새 문서/새 계획 등

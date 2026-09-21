@@ -1,9 +1,6 @@
 <template>
-  <div class="q-pa-md" style="max-width: 800px; margin: 0 auto">
-    <div class="row items-center q-gutter-sm q-mb-md">
-      <q-btn flat dense round icon="arrow_back" :to="`/${owner}/${projectId}/code`" />
-      <div class="text-h6">{{ branch }} 브랜치 최근 커밋</div>
-    </div>
+  <div class="q-pa-md" style="max-width: var(--gh-page-width-wide); margin: 0 auto">
+    <PageHeader variant="detail" :title="`${branch} 브랜치 최근 커밋`" :back-to="`/${owner}/${projectId}/code`" />
 
     <div v-if="loading" class="text-caption">불러오는 중...</div>
     <q-list v-else bordered separator>
@@ -13,7 +10,7 @@
           <q-item-label caption>{{ c.id.slice(0, 8) }} · {{ c.author }} · {{ new Date(c.time).toLocaleString() }}</q-item-label>
         </q-item-section>
       </q-item>
-      <q-item v-if="commits.length === 0"><q-item-section class="text-caption">커밋이 없습니다.</q-item-section></q-item>
+      <EmptyState v-if="commits.length === 0" as="item" message="커밋이 없습니다." />
     </q-list>
   </div>
 </template>
@@ -25,6 +22,8 @@
 import { ref, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useAuthStore } from "stores/auth";
+import PageHeader from "components/PageHeader.vue";
+import EmptyState from "components/EmptyState.vue";
 import * as api from "src/api/client";
 
 interface CommitInfo {

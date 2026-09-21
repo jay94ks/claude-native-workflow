@@ -501,19 +501,4 @@ function scrollToHighlight() {
     background: transparent;
   }
 }
-.markdown-body :deep(p) {
-  margin: 0 0 0.5em;
-}
-.markdown-body :deep(p:last-child) {
-  margin-bottom: 0;
-}
-.markdown-body :deep(pre) {
-  background: var(--gh-canvas-subtle);
-  padding: 8px;
-  border-radius: 4px;
-  overflow-x: auto;
-}
-.markdown-body :deep(code) {
-  font-family: monospace;
-}
 </style>

@@ -84,7 +84,7 @@ watch(() => [props.owner, props.projectId], load);
   font-weight: 600;
 }
 .gh-tabs :deep(.q-tab__indicator) {
-  background: #fd8c73 !important;
+  background: var(--gh-attention) !important;
 }
 .gh-tabs :deep(.q-tab:hover) {
   color: var(--gh-fg);

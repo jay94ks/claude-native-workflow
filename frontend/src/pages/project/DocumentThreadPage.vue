@@ -1,9 +1,6 @@
 <template>
-  <div class="q-pa-md" style="max-width: 900px; margin: 0 auto">
-    <div class="row items-center q-gutter-sm q-mb-md">
-      <q-btn flat dense round icon="arrow_back" @click="goBack" />
-      <div class="text-h6">Q&A 스레드</div>
-    </div>
+  <div class="q-pa-md" style="max-width: var(--gh-page-width-wide); margin: 0 auto">
+    <PageHeader variant="detail" title="Q&A 스레드" :on-back="goBack" />
 
     <div v-if="loading" class="text-caption">불러오는 중...</div>
     <template v-else-if="item">
@@ -94,7 +91,7 @@
       </div>
 
       <div class="text-subtitle2 q-mb-sm">자식 항목 ({{ children.length }})</div>
-      <div v-if="children.length === 0" class="text-caption" style="color: var(--gh-fg-muted)">자식 항목이 없습니다.</div>
+      <EmptyState v-if="children.length === 0" message="자식 항목이 없습니다." />
       <div v-for="child in children" :key="child.code" class="gh-card q-pa-sm q-mb-sm">
         <div class="row items-center justify-between">
           <div class="row items-center" style="gap: 6px; min-width: 0">
@@ -137,6 +134,8 @@ import { ref, reactive, computed, watch, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
+import PageHeader from "components/PageHeader.vue";
+import EmptyState from "components/EmptyState.vue";
 import * as api from "src/api/client";
 import { renderMarkdownSafe } from "src/utils/renderMarkdown";
 
@@ -438,21 +437,3 @@ async function submitOpinion() {
 onMounted(load);
 watch(() => [props.owner, props.projectId, props.code], load);
 </script>
-
-<style scoped>
-.markdown-body :deep(p) {
-  margin: 0 0 0.5em;
-}
-.markdown-body :deep(p:last-child) {
-  margin-bottom: 0;
-}
-.markdown-body :deep(pre) {
-  background: var(--gh-canvas-subtle);
-  padding: 8px;
-  border-radius: 4px;
-  overflow-x: auto;
-}
-.markdown-body :deep(code) {
-  font-family: monospace;
-}
-</style>

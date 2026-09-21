@@ -2,7 +2,7 @@
   <div class="row no-wrap" style="min-height: calc(100vh - 160px)">
     <ProjectSidebar>
       <div class="row items-center q-gutter-sm q-mb-sm">
-        <q-btn flat dense round icon="arrow_back" @click="goBack" />
+        <q-btn flat dense round icon="arrow_back" :to="`/${owner}/${projectId}/commits?branch=${branch}`" />
         <div class="text-subtitle1">커밋</div>
       </div>
       <div v-if="commit" class="q-mb-md">
@@ -20,7 +20,7 @@
           </div>
         </template>
       </q-tree>
-      <div v-if="files.length === 0" class="text-caption" style="color: var(--gh-fg-muted)">변경된 파일이 없습니다.</div>
+      <EmptyState v-if="files.length === 0" message="변경된 파일이 없습니다." />
     </ProjectSidebar>
 
     <q-separator vertical />
@@ -46,11 +46,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
-import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import ProjectSidebar from "components/ProjectSidebar.vue";
 import DiffViewer from "components/DiffViewer.vue";
+import EmptyState from "components/EmptyState.vue";
 import * as api from "src/api/client";
+import { buildFileTree } from "src/utils/fileTree";
 
 interface DiffFile {
   path: string;
@@ -69,55 +70,12 @@ interface CommitInfo {
 // 뷰어 페이지와 동일한 내용을 보여주는 별도 페이지.
 const props = defineProps<{ owner: string; projectId: string; branch: string; commitId: string }>();
 const auth = useAuthStore();
-const router = useRouter();
 
 const loading = ref(true);
 const commit = ref<CommitInfo | null>(null);
 const files = ref<DiffFile[]>([]);
 const baseCommitId = ref<string | null>(null);
 const selectedPath = ref<string | null>(null);
-
-function goBack() {
-  router.back();
-}
-
-interface TreeNode {
-  label: string;
-  nodeKey: string;
-  isFile: boolean;
-  status?: string;
-  children?: TreeNode[];
-}
-
-function buildFileTree(list: DiffFile[]): TreeNode[] {
-  interface Draft {
-    label: string;
-    nodeKey: string;
-    isFile: boolean;
-    status?: string;
-    children: Map<string, Draft>;
-  }
-  const root: Draft = { label: "", nodeKey: "", isFile: false, children: new Map() };
-  for (const f of list) {
-    const parts = f.path.split("/");
-    let cur = root;
-    let acc = "";
-    parts.forEach((part, idx) => {
-      acc = acc ? `${acc}/${part}` : part;
-      const isFile = idx === parts.length - 1;
-      if (!cur.children.has(part)) {
-        cur.children.set(part, { label: part, nodeKey: acc, isFile, status: isFile ? f.status : undefined, children: new Map() });
-      }
-      cur = cur.children.get(part)!;
-    });
-  }
-  function toArray(draft: Draft): TreeNode[] {
-    return [...draft.children.values()]
-      .sort((a, b) => Number(a.isFile) - Number(b.isFile) || a.label.localeCompare(b.label))
-      .map((d) => ({ label: d.label, nodeKey: d.nodeKey, isFile: d.isFile, status: d.status, children: d.isFile ? undefined : toArray(d) }));
-  }
-  return toArray(root);
-}
 
 const fileTree = computed(() => buildFileTree(files.value));
 

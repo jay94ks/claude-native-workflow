@@ -25,7 +25,7 @@
             <span
               class="gh-pill"
               style="background: transparent"
-              :style="{ borderColor: currentProject.myRole ? 'var(--gh-accent)' : 'rgba(255,255,255,0.4)', color: currentProject.myRole ? '#79c0ff' : 'white' }"
+              :style="{ borderColor: currentProject.myRole ? 'var(--gh-accent)' : 'rgba(255,255,255,0.4)', color: currentProject.myRole ? 'var(--gh-header-accent)' : 'white' }"
             >
               <q-icon name="badge" size="12px" />
               {{ currentProject.myRole ?? "viewer" }}

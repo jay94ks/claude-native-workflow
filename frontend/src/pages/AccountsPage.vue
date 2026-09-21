@@ -1,6 +1,6 @@
 <template>
-  <q-page class="q-pa-md" style="max-width: 720px">
-    <div class="text-h5 q-mb-md">계정 관리</div>
+  <q-page class="q-pa-md" style="max-width: var(--gh-page-width-narrow)">
+    <PageHeader variant="page" title="계정 관리" />
 
     <div v-if="loading" class="text-caption">불러오는 중...</div>
     <div v-else-if="forbidden" class="text-negative text-caption">
@@ -31,7 +31,7 @@
             </div>
           </q-item-section>
         </q-item>
-        <q-item v-if="accounts.length === 0"><q-item-section class="text-caption">계정이 없습니다.</q-item-section></q-item>
+        <EmptyState v-if="accounts.length === 0" as="item" message="계정이 없습니다." />
       </q-list>
       <div v-if="actionError" class="text-negative text-caption q-mt-sm">{{ actionError }}</div>
     </template>
@@ -42,28 +42,16 @@
       <div class="text-weight-bold">{{ resetResult.temporaryPassword }}</div>
     </q-banner>
 
-    <q-dialog v-model="showDeleteConfirm">
-      <q-card style="width: 420px">
-        <q-card-section class="text-h6 text-negative">계정을 삭제하시겠습니까?</q-card-section>
-        <q-card-section>
-          "{{ deleteTarget?.username }}" 계정을 되돌릴 수 없이 삭제합니다. 계속하려면 사용자명을 입력하세요.
-        </q-card-section>
-        <q-card-section>
-          <q-input v-model="deleteConfirmText" :label="`사용자명 (${deleteTarget?.username}) 입력`" />
-        </q-card-section>
-        <div v-if="deleteError" class="text-negative text-caption q-px-md">{{ deleteError }}</div>
-        <q-card-actions align="right">
-          <q-btn flat label="취소" v-close-popup />
-          <q-btn
-            color="negative"
-            label="영구 삭제"
-            :disable="deleteConfirmText !== deleteTarget?.username"
-            :loading="deleting"
-            @click="doDelete"
-          />
-        </q-card-actions>
-      </q-card>
-    </q-dialog>
+    <ConfirmDestroyDialog
+      v-model="showDeleteConfirm"
+      title="계정을 삭제하시겠습니까?"
+      :body-text="`&quot;${deleteTarget?.username}&quot; 계정을 되돌릴 수 없이 삭제합니다. 계속하려면 사용자명을 입력하세요.`"
+      :confirm-value="deleteTarget?.username ?? ''"
+      :confirm-label="`사용자명 (${deleteTarget?.username}) 입력`"
+      :loading="deleting"
+      :error="deleteError"
+      @confirm="doDelete"
+    />
   </q-page>
 </template>
 
@@ -71,6 +59,9 @@
 import { ref, onMounted } from "vue";
 import { useAuthStore } from "stores/auth";
 import * as api from "src/api/client";
+import ConfirmDestroyDialog from "components/ConfirmDestroyDialog.vue";
+import EmptyState from "components/EmptyState.vue";
+import PageHeader from "components/PageHeader.vue";
 
 interface AccountSummary {
   id: string;
@@ -132,13 +123,11 @@ async function enable(acc: AccountSummary) {
 
 const showDeleteConfirm = ref(false);
 const deleteTarget = ref<AccountSummary | null>(null);
-const deleteConfirmText = ref("");
 const deleting = ref(false);
 const deleteError = ref("");
 
 function confirmDelete(acc: AccountSummary) {
   deleteTarget.value = acc;
-  deleteConfirmText.value = "";
   deleteError.value = "";
   showDeleteConfirm.value = true;
 }

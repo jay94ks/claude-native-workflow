@@ -19,3 +19,4 @@ frontmatter(`id`/`parent_id`/`type`/`kind`/`state`/`branch`/
 | PL-PLANNICKN | [plan-nickname-apikey-policy.md](plan-nickname-apikey-policy.md) | 완료: 닉네임 정책 + 개인/프로젝트별 API 키 세분화 |
 | PL-PLANGITEA | [plan-gitea-provisioning.md](plan-gitea-provisioning.md) | 완료: Gitea 서버 실제 프로비저닝 |
 | PL-QAFULL01 | [plan-full-qa.md](plan-full-qa.md) | 완료: 전체 시스템 QA(액션 64개 + 프론트엔드 전 화면, 버그 4건 발견·수정) |
+| PL-PLANFEUI | [plan-frontend-consistency.md](plan-frontend-consistency.md) | 완료: 프론트엔드 UI 일관성 정리(헤더/다이얼로그/폼/여백/색 통일) |

@@ -7,29 +7,33 @@
       <ProjectAboutSidebar :owner="owner" :project-id="projectId" />
       <q-separator class="q-my-md" />
 
-      <div class="row items-center q-gutter-sm q-mb-sm">
-        <q-select v-model="branch" :options="branchNames" dense style="min-width: 140px" label="branch" @update:model-value="onBranchChange" />
-        <!-- 설계자 요청(2026-09-21, 항목 9) - 좌측의 "최근 커밋" 목록은 없애고
-             이 눈알 아이콘으로 그 브랜치의 커밋 목록을 별도 페이지에서 본다. -->
-        <q-btn v-if="branch" flat dense round icon="visibility" size="sm" :to="`/${owner}/${projectId}/commits?branch=${branch}`">
-          <q-tooltip>{{ branch }} 브랜치 최근 커밋 보기</q-tooltip>
-        </q-btn>
-        <q-btn v-if="path" flat dense icon="arrow_upward" @click="goUp" />
-        <div class="text-caption">/{{ path }}</div>
-      </div>
+      <PageHeader variant="section" title="Code" />
+      <div v-if="initialLoading" class="text-caption">불러오는 중...</div>
+      <template v-else>
+        <div class="row items-center q-gutter-sm q-mb-sm">
+          <q-select v-model="branch" :options="branchNames" dense style="min-width: 140px" label="branch" @update:model-value="onBranchChange" />
+          <!-- 설계자 요청(2026-09-21, 항목 9) - 좌측의 "최근 커밋" 목록은 없애고
+               이 눈알 아이콘으로 그 브랜치의 커밋 목록을 별도 페이지에서 본다. -->
+          <q-btn v-if="branch" flat dense round icon="visibility" size="sm" :to="`/${owner}/${projectId}/commits?branch=${branch}`">
+            <q-tooltip>{{ branch }} 브랜치 최근 커밋 보기</q-tooltip>
+          </q-btn>
+          <q-btn v-if="path" flat dense icon="arrow_upward" @click="goUp" />
+          <div class="text-caption">/{{ path }}</div>
+        </div>
 
-      <div v-if="branchNames.length === 0" class="text-caption" style="color: var(--gh-fg-muted)">
-        저장소가 비어있습니다(아직 커밋이 없습니다) - Settings의 Template 메뉴에서 배포하면 첫 커밋이 생깁니다.
-      </div>
-      <q-list v-else bordered separator>
-        <q-item v-for="entry in entries" :key="entry.name" clickable @click="openEntry(entry)">
-          <q-item-section avatar>
-            <q-icon :name="entry.type === 'tree' ? 'folder' : 'description'" :color="entry.type === 'tree' ? 'amber-8' : 'grey-7'" />
-          </q-item-section>
-          <q-item-section>{{ entry.name }}</q-item-section>
-        </q-item>
-        <q-item v-if="entries.length === 0"><q-item-section class="text-caption">비어있는 디렉터리입니다.</q-item-section></q-item>
-      </q-list>
+        <div v-if="branchNames.length === 0" class="text-caption" style="color: var(--gh-fg-muted)">
+          저장소가 비어있습니다(아직 커밋이 없습니다) - Settings의 Template 메뉴에서 배포하면 첫 커밋이 생깁니다.
+        </div>
+        <q-list v-else bordered separator>
+          <q-item v-for="entry in entries" :key="entry.name" clickable @click="openEntry(entry)">
+            <q-item-section avatar>
+              <q-icon :name="entry.type === 'tree' ? 'folder' : 'description'" :color="entry.type === 'tree' ? 'amber-8' : 'grey-7'" />
+            </q-item-section>
+            <q-item-section>{{ entry.name }}</q-item-section>
+          </q-item>
+          <q-item v-if="entries.length === 0"><q-item-section class="text-caption">비어있는 디렉터리입니다.</q-item-section></q-item>
+        </q-list>
+      </template>
     </ProjectSidebar>
 
     <q-separator vertical />
@@ -119,6 +123,7 @@ import { useProjectStore } from "stores/project";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
 import ProjectSidebar from "components/ProjectSidebar.vue";
 import ProjectAboutSidebar from "components/ProjectAboutSidebar.vue";
+import PageHeader from "components/PageHeader.vue";
 import * as api from "src/api/client";
 
 interface BranchInfo {
@@ -154,6 +159,7 @@ const route = useRoute();
 const router = useRouter();
 const project = useProjectStore();
 
+const initialLoading = ref(true);
 const branchNames = ref<string[]>([]);
 const branch = ref<string | null>(null);
 const commitId = computed(() => props.commitId ?? null);
@@ -423,6 +429,7 @@ async function applyRoute() {
 onMounted(async () => {
   await loadBranches();
   await applyRoute();
+  initialLoading.value = false;
 });
 watch(() => [props.branch, props.commitId, route.query.path], applyRoute);
 </script>

@@ -1,14 +1,16 @@
 <template>
   <div class="row no-wrap" style="min-height: calc(100vh - 160px)">
     <ProjectSidebar>
-      <div class="row items-center justify-between q-mb-sm">
-        <div class="text-subtitle1">{{ title }} ({{ items.length }})</div>
-        <q-btn v-if="!readOnly" size="sm" color="primary" icon="add" :label="createLabel" :to="createRoute" />
-      </div>
+      <PageHeader variant="section" :title="title" :count="items.length">
+        <template #actions>
+          <q-btn v-if="!readOnly" size="sm" color="primary" icon="add" :label="createLabel" :to="createRoute" />
+        </template>
+      </PageHeader>
       <!-- design-notes.md "문서 의존성" - dependsOn readiness(아직 해소되지
            않은 의존 개수) 오름차순 정렬을 docs.list의 sort 옵션으로 노출. -->
       <q-toggle v-model="sortByDependency" label="의존성 순 정렬" dense size="sm" class="q-mb-sm" @update:model-value="load" />
-      <q-list bordered separator>
+      <div v-if="loading" class="text-caption">불러오는 중...</div>
+      <q-list v-else bordered separator>
         <q-item
           v-for="doc in items"
           :key="doc.code"
@@ -25,9 +27,7 @@
             <q-badge :color="stateColor(doc.state)">{{ doc.state }}</q-badge>
           </q-item-section>
         </q-item>
-        <q-item v-if="items.length === 0">
-          <q-item-section class="text-caption">문서가 없습니다.</q-item-section>
-        </q-item>
+        <EmptyState v-if="items.length === 0" as="item" message="문서가 없습니다." />
       </q-list>
     </ProjectSidebar>
 
@@ -95,7 +95,7 @@
     </div>
 
     <q-dialog v-model="showTagDialog">
-      <q-card style="width: 420px">
+      <q-card style="width: var(--gh-dialog-width-md)">
         <q-card-section class="text-h6">태그 추가</q-card-section>
         <q-card-section class="q-gutter-md">
           <q-select v-model="tagKind" :options="['related', 'dependsOn']" label="종류" />
@@ -118,6 +118,8 @@ import { useAuthStore } from "stores/auth";
 import DocumentDiscussion from "components/DocumentDiscussion.vue";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
 import ProjectSidebar from "components/ProjectSidebar.vue";
+import PageHeader from "components/PageHeader.vue";
+import EmptyState from "components/EmptyState.vue";
 import * as api from "src/api/client";
 
 interface TaggedRef {
@@ -193,12 +195,15 @@ function stateColor(state: string): string {
 }
 
 const sortByDependency = ref(false);
+const loading = ref(true);
 
 async function load() {
+  loading.value = true;
   const result = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, {
     type: props.type,
     sort: sortByDependency.value ? "dependency" : undefined,
   });
+  loading.value = false;
   if (result.ok) items.value = (result.data as { items: DocSummary[] }).items;
 }
 
@@ -317,14 +322,3 @@ watch(
   }
 );
 </script>
-
-<style scoped>
-.doc-source {
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: rgba(0, 0, 0, 0.04);
-  padding: 12px;
-  border-radius: 4px;
-  font-family: monospace;
-}
-</style>
