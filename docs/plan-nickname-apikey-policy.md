@@ -138,6 +138,14 @@ REST 엔드포인트(`/api/api-keys`)는 `/api/`로 시작해 프록시 대상�
   재계산할 실익이 낮다고 판단).
 - project 키의 소유자가 자기 키를 스스로 배제하는 것과, 그 프로젝트
   Admin이 남의 project 키를 배제하는 것 둘 다 허용한다(v2의 "owner가
-  프로젝트 키 전체를 관리" 계승) - superAdmin이 남의 키를 강제로
-  배제하는 경로는 이번 라운드에 만들지 않았다(필요성이 확인되면
-  다음 라운드 후보).
+  프로젝트 키 전체를 관리" 계승).
+- **후속 처리(2026-09-21, 같은 날 후속) - superAdmin 강제 배제 추가**:
+  본인도 아니고 그 프로젝트 Admin도 아닌 경우를 위해(예: 키 소유
+  계정이 이미 잠겨서 본인이 못 지우거나, project 키인데 그 프로젝트에
+  Admin이 하나도 안 남은 상황) superAdmin이 아무 키나 강제로 배제할
+  수 있는 경로를 `apiKeyRevoke`에 추가했다 - `accounts.ts`의
+  `requireSuperAdmin`과 같은 원칙으로 project 스코프로 제한된 키
+  로는 이 경로 자체를 쓸 수 없다(`getActiveKeyScope().type ===
+  "unrestricted"`도 같이 확인). 실기동으로 계정 생성→personal 키
+  발급→superAdmin이 (소유자도 프로젝트 Admin도 아닌 채로) 강제
+  배제→그 키가 즉시 401로 막히는 것까지 확인했다.

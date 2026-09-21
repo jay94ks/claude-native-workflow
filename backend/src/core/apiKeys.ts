@@ -6,6 +6,8 @@
 import { prisma } from "./prisma";
 import { generateApiKey, hashApiKey, apiKeyPrefix } from "./crypto";
 import { requireMembership, MembershipError } from "./membership";
+import { isSuperAdmin } from "./auth";
+import { getActiveKeyScope } from "./requestScope";
 import type { ActionResult } from "./types";
 import type { ActionContext } from "./documents";
 
@@ -117,6 +119,14 @@ export async function apiKeyListForProject(payload: any, ctx: ActionContext): Pr
  * 판단 계승, 감사 기록 보존). 본인 소유 키는 스코프 무관하게 항상 revoke
  * 가능하고, project 스코프 키는 그 프로젝트의 Admin도 (남의 것이라도)
  * revoke할 수 있다(v2의 "owner가 project 키 전체를 관리" 계승).
+ *
+ * 후속 처리(2026-09-21, 같은 날 후속) - 위 두 경로 다 안 되는 경우(예:
+ * personal 키인데 그 소유 계정이 이미 비활성화/삭제 위기라 본인이
+ * 직접 못 지우는 상황, 또는 project 키인데 그 프로젝트에 Admin이
+ * 남아있지 않은 상황)를 위해 superAdmin도 강제로 배제할 수 있게
+ * 열었다 - `accounts.ts`의 `requireSuperAdmin`과 같은 원칙으로,
+ * 프로젝트 스코프로 제한된 키로는 이 경로 자체를 못 쓴다(유출된
+ * 프로젝트 키 하나가 시스템 전체 권한으로 번지면 안 됨).
  */
 export async function apiKeyRevoke(payload: any, ctx: ActionContext): Promise<ActionResult> {
   const { keyId } = payload ?? {};
@@ -136,7 +146,8 @@ export async function apiKeyRevoke(payload: any, ctx: ActionContext): Promise<Ac
       isProjectAdmin = false;
     }
   }
-  if (!isOwner && !isProjectAdmin) return fail("이 키를 배제할 권한이 없습니다.");
+  const isUnrestrictedSuperAdmin = getActiveKeyScope().type === "unrestricted" && (await isSuperAdmin(ctx.architectId));
+  if (!isOwner && !isProjectAdmin && !isUnrestrictedSuperAdmin) return fail("이 키를 배제할 권한이 없습니다.");
 
   const updated = await prisma.apiKey.update({ where: { id: keyId }, data: { revokedAt: new Date() } });
   return { ok: true, data: toSummary(updated) };

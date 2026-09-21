@@ -6,6 +6,7 @@
 import { prisma } from "./prisma";
 import { requireMembership, MembershipError } from "./membership";
 import { commitFile } from "./gitRepo";
+import { formatDisplayLabel } from "./auth";
 import type { ActionResult } from "./types";
 import type { ActionContext } from "./documents";
 
@@ -53,7 +54,19 @@ export async function templateDeploy(payload: any, ctx: ActionContext): Promise<
   const template = await prisma.template.findUnique({ where: { ownerAccountId: ctx.architectId } });
   if (!template) return fail("아직 템플릿을 만들지 않았습니다 - template.set으로 먼저 만드세요.");
 
-  const author = { name: ctx.channel, email: `${ctx.channel}@cnw.local` };
+  // design-notes.md("Phase 7 완료 기록") - 원래는 실제 계정 정보를 커밋
+  // 작성자에 노출하지 않기로 판단해 `ctx.channel`("agent"/"architect")만
+  // 썼다("이메일 등을 아직 노출 안 함, 원하면 다음 라운드에 옵션으로
+  // 설계"라고 남겨둠). docs/plan-nickname-apikey-policy.md 이후로는
+  // Account에 실제 개인 이메일 필드 자체가 없고(v2와 달리 username만
+  // 있음) username/닉네임은 이미 협업자 목록 등 UI 전반에 공개돼 있어
+  // 노출 우려가 사실상 사라졌다 - 그 계정의 표시 라벨(닉네임 정책)을
+  // 커밋 작성자 이름으로 쓴다(누가 실제로 배포를 눌렀는지 git log에서
+  // 바로 보이게).
+  const account = await prisma.account.findUnique({ where: { id: ctx.architectId } });
+  const author = account
+    ? { name: formatDisplayLabel(account.nickname, account.nicknameNumber), email: `${account.username}@cnw.local` }
+    : { name: ctx.channel, email: `${ctx.channel}@cnw.local` };
   const claudeCommit = await commitFile(projectId, "CLAUDE.md", template.claudeMd, "deploy CLAUDE.md template", author);
   const skillCommit = await commitFile(
     projectId,

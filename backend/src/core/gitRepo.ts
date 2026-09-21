@@ -351,7 +351,7 @@ export async function listCommitsForPath(projectId: string, branch: string, file
     scanned++;
     const commit = repo.getCommit(oid);
     const headTree = commit.tree();
-    const parentId = getApproxParentCommitId(repo, oid);
+    const parentId = getFirstParentCommitId(repo, oid);
     const baseTree = parentId ? resolveTreeForRef(repo, parentId) : null;
     const diff = repo.diffTreeToTree(baseTree ?? undefined, headTree);
     let touched = false;
@@ -408,17 +408,21 @@ function resolveTreeForRef(repo: Repository, ref: string): Tree | null {
 }
 
 /**
- * 커밋 하나의 직접 부모 id - es-git의 `Commit`엔 parent 접근자가 없어서
- * (design-notes.md "es-git 이터레이터" 기록과 같은 종류의 API 공백)
- * Revwalk로 그 커밋부터 시간순으로 훑어 바로 다음 것을 부모로 간주한다.
- * 머지 커밋(부모가 여럿)의 경우 "정확히 첫 부모"가 아니라 "시간순으로
- * 다음"이 될 수 있다는 근사임을 인지하고 있다 - 이 앱에서 만드는 머지
- * 커밋은 대부분 선형 히스토리라 실용적으로는 거의 항상 맞는다.
+ * 커밋 하나의 직접(첫) 부모 id - es-git의 `Commit`엔 parent 접근자가
+ * 없어서(design-notes.md "es-git 이터레이터" 기록과 같은 종류의 API
+ * 공백) 예전엔 Revwalk로 시간순으로 훑어 "바로 다음 것"을 부모로
+ * 근사했다 - 머지 커밋(부모가 여럿)에서 "정확히 첫 부모"가 아닐 수
+ * 있다는 한계가 있었다(design-notes.md에 기록됨). 후속 처리(2026-09-21,
+ * 같은 날 후속) - `Revwalk.simplifyFirstParent()`(첫 부모 아닌 조상은
+ * 아예 큐에 안 넣음)가 있다는 걸 재확인해서 실제 정확한 "첫 부모"로
+ * 고쳤다: 이 커밋 하나만 push하고 그 옵션을 걸면 `next()`가 항상
+ * [이 커밋 자신, 그다음 진짜 첫 부모] 순서로만 나온다(다른 부모/조상은
+ * 절대 안 끼어듦) - 시간순 근사가 필요 없어져 `setSorting`도 뺐다.
  */
-function getApproxParentCommitId(repo: Repository, commitId: string): string | null {
+function getFirstParentCommitId(repo: Repository, commitId: string): string | null {
   const revwalk = repo.revwalk();
+  revwalk.simplifyFirstParent();
   revwalk.push(commitId);
-  revwalk.setSorting(RevwalkSort.Time);
   const first = revwalk.next();
   if (first === null) return null;
   return revwalk.next();
@@ -440,7 +444,7 @@ export async function diffCommit(projectId: string, commitId: string): Promise<C
   } catch {
     return null;
   }
-  const parentId = getApproxParentCommitId(repo, commitId);
+  const parentId = getFirstParentCommitId(repo, commitId);
   const baseTree = parentId ? resolveTreeForRef(repo, parentId) : null; // 부모가 없으면(최초 커밋) 빈 트리 대비 diff.
 
   const diff = repo.diffTreeToTree(baseTree ?? undefined, headTree);

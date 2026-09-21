@@ -18,3 +18,4 @@ frontmatter(`id`/`parent_id`/`type`/`kind`/`state`/`branch`/
 | PL-PLANACCT1 | [plan-account-management.md](plan-account-management.md) | 완료: 계정 관리(임시 비밀번호 재설정, 비활성화/삭제) |
 | PL-PLANNICKN | [plan-nickname-apikey-policy.md](plan-nickname-apikey-policy.md) | 완료: 닉네임 정책 + 개인/프로젝트별 API 키 세분화 |
 | PL-PLANGITEA | [plan-gitea-provisioning.md](plan-gitea-provisioning.md) | 완료: Gitea 서버 실제 프로비저닝 |
+| PL-QAFULL01 | [plan-full-qa.md](plan-full-qa.md) | 완료: 전체 시스템 QA(액션 64개 + 프론트엔드 전 화면, 버그 4건 발견·수정) |

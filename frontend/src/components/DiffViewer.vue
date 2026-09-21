@@ -24,6 +24,11 @@
         </div>
       </div>
       <div v-else-if="diff.isBinary" class="text-caption">Raw Contents라서 미리 볼 수 없습니다.</div>
+      <!-- 파일이 512KB를 넘으면 서버가 내용을 아예 안 보내므로(gitRepo.ts의
+           BLOB_SIZE_LIMIT), 그 상태로 diffLines를 돌리면 "파일 전체가
+           삭제/추가됨"처럼 잘못 보인다 - isBinary와 같은 자리에서 먼저 걸러
+           안내 문구만 보여준다(Raw Content 다운로드는 그대로 가능). -->
+      <div v-else-if="diff.oldTooLarge || diff.newTooLarge" class="text-caption">파일이 너무 커서(512KB 초과) 미리 볼 수 없습니다 - Raw Content 다운로드를 이용하세요.</div>
       <div v-else class="diff-split">
         <template v-for="(block, bi) in blocks" :key="bi">
           <div v-if="block.kind === 'visible'" class="diff-rows">
@@ -62,6 +67,8 @@ interface FileDiff {
   newExists: boolean;
   oldContent: string;
   newContent: string;
+  oldTooLarge: boolean;
+  newTooLarge: boolean;
   oldImage: string | null;
   newImage: string | null;
 }
@@ -82,7 +89,18 @@ const treeLink = computed(() => {
   const target = props.branch ? `code/${props.branch}/${props.head}` : `code/${props.head}`;
   return `/${props.owner}/${props.projectId}/${target}?path=${encodeURIComponent(props.path)}`;
 });
-const canDownload = computed(() => !!diff.value && (diff.value.newExists || diff.value.oldExists) && !(diff.value.isBinary && !diff.value.isImage));
+// 파일이 너무 커서(oldTooLarge/newTooLarge) 서버가 content를 아예 안 준
+// 경우 다운로드 버튼을 눌러도 빈 파일만 받게 되므로(실제 원본을 다시
+// 가져오는 별도 raw 엔드포인트는 아직 없음 - 이 저장소엔 512KB 넘는
+// 파일 자체가 없어 검증할 방법도 없다) 그 상황만큼은 버튼을 비활성화한다.
+const canDownload = computed(
+  () =>
+    !!diff.value &&
+    (diff.value.newExists || diff.value.oldExists) &&
+    !(diff.value.isBinary && !diff.value.isImage) &&
+    !diff.value.oldTooLarge &&
+    !diff.value.newTooLarge
+);
 
 const rawBlocks = ref<DiffBlock[]>([]);
 const blocks = computed(() => {
@@ -114,7 +132,7 @@ async function load() {
   const result = await api.getFileDiff(auth.apiKey!, props.owner, props.projectId, props.base, props.head, props.path);
   if (result.ok) {
     diff.value = result.data as FileDiff;
-    if (diff.value && !diff.value.isBinary) {
+    if (diff.value && !diff.value.isBinary && !diff.value.oldTooLarge && !diff.value.newTooLarge) {
       rawBlocks.value = computeSplitDiffBlocks(diff.value.oldContent, diff.value.newContent, 6);
     } else {
       rawBlocks.value = [];

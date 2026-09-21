@@ -188,6 +188,17 @@ export async function repoDiffFile(payload: any, ctx: ActionContext): Promise<Ac
   ]);
   const isBinary = !!(oldFile?.isBinary || newFile?.isBinary);
   const isImage = isImagePath(path);
+  // docs/design-notes.md("WEB REST API/diff 뷰어" 절 판단해두는 것)에
+  // "파일이 아주 크면 클라이언트 diff 계산 비용이 걸릴 수 있다"고만
+  // 적어두고 실제 처리는 안 해뒀던 걸 실기동 관점에서 다시 보니 - 512KB를
+  // 넘는 텍스트 파일은 `readFileAtRef`가 이미 `content: ""`로 잘라
+  // 돌려주는데(gitRepo.ts의 BLOB_SIZE_LIMIT), 그동안 그 신호를 그냥
+  // 버리고 있었다 - 즉 "너무 커서 못 보여줌"이 아니라 "파일 전체가
+  // 삭제/추가됨"으로 잘못 보이는 게 실제 버그였다(단순 성능 우려가
+  // 아니라). `isBinary`와 같은 방식으로 "너무 큼" 신호를 넘겨서
+  // 프론트가 diff 계산 자체를 건너뛰고 안내 문구를 보여주게 한다.
+  const oldTooLarge = !!oldFile && !oldFile.isBinary && oldFile.size > 0 && oldFile.content === "";
+  const newTooLarge = !!newFile && !newFile.isBinary && newFile.size > 0 && newFile.content === "";
 
   let oldImage: string | null = null;
   let newImage: string | null = null;
@@ -210,6 +221,8 @@ export async function repoDiffFile(payload: any, ctx: ActionContext): Promise<Ac
       newExists: newFile !== null,
       oldContent: oldFile?.content ?? "",
       newContent: newFile?.content ?? "",
+      oldTooLarge,
+      newTooLarge,
       oldImage,
       newImage,
     },

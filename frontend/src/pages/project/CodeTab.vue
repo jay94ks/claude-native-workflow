@@ -58,6 +58,15 @@
         <div class="q-pa-md">
           <div v-if="rightTab === 'content'">
             <div v-if="currentFile.isBinary" class="text-caption">바이너리 파일이라 내용을 표시하지 않습니다({{ currentFile.size }} bytes).</div>
+            <!-- 전체 QA 점검(2026-09-21) 중 발견 - 512KB(BLOB_SIZE_LIMIT)를
+                 넘는 텍스트 파일은 서버가 content를 ""로 잘라 돌려주는데
+                 (readFile/readFileAtRef), 지금까지 isBinary만 걸러서 이
+                 경우 MarkdownSourceView에 빈 문자열이 들어가 "파일이
+                 비어있다"처럼 잘못 보였다(diff 뷰어에서 이미 고친 것과
+                 같은 종류의 버그 - 거긴 고쳤는데 Code 탭 자체는 놓쳤었다). -->
+            <div v-else-if="!currentFile.isBinary && currentFile.size > 0 && currentFile.content === ''" class="text-caption">
+              파일이 너무 커서(512KB 초과, {{ currentFile.size }} bytes) 표시할 수 없습니다.
+            </div>
             <!-- 설계자 요청(2026-09-21) - 코드 탭의 파일 뷰어/편집기도 다른 곳과
                  동일하게 yiitap 기반 Source View를 쓴다. yiitap은 근본적으로
                  마크다운 편집기라 임의의 소스 파일은 그대로 넣으면 들여쓰기/

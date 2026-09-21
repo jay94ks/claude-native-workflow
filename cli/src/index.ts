@@ -34,7 +34,22 @@ auth
   .action(async (opts) => {
     const cwd = process.cwd();
     const existingRoot = findProjectRoot(cwd);
-    const existing = existingRoot ? readProjectConfig(cwd).config : null;
+    // 전체 QA 점검(2026-09-21) 중 발견한 버그 - 예전 스키마로 쓰인(owner
+    // 필드가 없는) .cnw/config.json이 있으면 readProjectConfig()가 그
+    // 자리에서 던지는데, 이 login 핸들러가 그 호출을 무조건 거치다 보니
+    // "docs auth login을 다시 실행하라"는 그 에러 메시지 자체가 실행
+    // 불가능한 자기모순이었다(로그인 명령 자체가 매번 같은 이유로 죽음).
+    // "existing"은 원래 옵션을 생략했을 때 쓰는 편의 폴백일 뿐이라, 못
+    // 읽으면 그냥 없는 것으로 치고 넘어가야 한다(호출자가 --rest-url/
+    // --project/--owner를 명시하면 이 값 자체가 전혀 필요 없어짐).
+    let existing: { httpEndpoint: string; owner: string; projectId: string } | null = null;
+    if (existingRoot) {
+      try {
+        existing = readProjectConfig(cwd).config;
+      } catch {
+        existing = null;
+      }
+    }
 
     const httpEndpoint = opts.restUrl ?? existing?.httpEndpoint ?? DEFAULT_ENDPOINT;
     const projectId = opts.project ?? existing?.projectId;
@@ -145,7 +160,19 @@ function registerActionCommands(namespace: string, verbs: string[]) {
 registerActionCommands("docs", ["status", "list", "search", "get", "add", "update", "delete", "transition", "tag", "grep"]);
 registerActionCommands("remember", ["add", "update", "delete", "list"]);
 registerActionCommands("message", ["send", "list", "transition"]);
-registerActionCommands("repo", ["push", "connectGitea", "branches", "tree", "file", "commits", "writeFile"]);
+registerActionCommands("repo", [
+  "push",
+  "connectGitea",
+  "branches",
+  "tree",
+  "file",
+  "commits",
+  "writeFile",
+  "commitDiff",
+  "diffFile",
+  "fileCommits",
+  "commitInfo",
+]);
 registerActionCommands("project", ["create", "get", "list", "update", "invite", "acceptInvite", "transfer", "transferOwnership", "destroy", "members", "invitesForMe"]);
 registerActionCommands("template", ["set", "get", "delete", "deploy"]);
 registerActionCommands("webhook", ["add", "list", "delete"]);
