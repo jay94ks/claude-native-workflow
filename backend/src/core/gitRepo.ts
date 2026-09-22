@@ -21,6 +21,7 @@ import {
   type DiffDelta,
 } from "es-git";
 import { config as giteaConfig } from "./gitea";
+import { prisma } from "./prisma";
 
 const REPOS_ROOT = process.env.CNW_REPOS_ROOT ?? path.join(process.cwd(), "data", "repos");
 
@@ -148,17 +149,37 @@ function upsertMirrorRemoteUrl(repoDir: string, url: string): void {
  * 사용자가 직접 입력한 다른 외부 URL은 그대로 두고 credential도 안 준다
  * (이미 자기 자격증명을 스스로 URL에 심어뒀다고 가정 - 기존 동작 유지).
  */
-function pushCredentialFor(mirrorUrl: string): { type: "Plain"; username: string; password: string } | undefined {
+// 설계자 요청(2026-09-22 후속, "GitHub 로그인") - Gitea와 같은 원칙을
+// GitHub push-mirror에도 적용한다: 자격증명은 DB(Project.pushMirrorUrl)
+// 에 절대 안 심고 push 시점에만 얹는다. 다만 Gitea는 서버 전체가 공유하는
+// 서비스 계정 토큰(GITEA_API_TOKEN)이라 URL의 origin만 보면 됐지만,
+// GitHub는 그 프로젝트를 GitHub로 연결한 architect 개인의 토큰이라
+// projectId로 `Project.pushMirrorGithubAccountId`를 먼저 찾아야 한다.
+async function pushCredentialFor(mirrorUrl: string, projectId: string): Promise<{ type: "Plain"; username: string; password: string } | undefined> {
   const cfg = giteaConfig();
-  if (!cfg) return undefined;
+  if (cfg) {
+    try {
+      const target = new URL(mirrorUrl);
+      const giteaOrigin = new URL(cfg.apiUrl);
+      if (target.origin === giteaOrigin.origin) return { type: "Plain", username: cfg.token, password: "" };
+    } catch {
+      // mirrorUrl이 애초에 유효한 URL이 아니면 아래 GitHub 분기도 마찬가지로 실패할 것 - 그냥 undefined로 진행.
+    }
+  }
+
   try {
     const target = new URL(mirrorUrl);
-    const giteaOrigin = new URL(cfg.apiUrl);
-    if (target.origin !== giteaOrigin.origin) return undefined;
-    return { type: "Plain", username: cfg.token, password: "" };
+    if (target.origin !== "https://github.com") return undefined;
   } catch {
     return undefined;
   }
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { pushMirrorGithubAccountId: true } });
+  if (!project?.pushMirrorGithubAccountId) return undefined;
+  const cred = await prisma.githubCredential.findUnique({ where: { accountId: project.pushMirrorGithubAccountId } });
+  if (!cred) return undefined;
+  // GitHub HTTPS 인증 관례 - 토큰을 username으로, password는 임의 값("x-oauth-basic"은
+  // GitHub 공식 문서가 예시로 쓰는 관용구일 뿐 비밀값이 아니다).
+  return { type: "Plain", username: cred.accessToken, password: "x-oauth-basic" };
 }
 
 /**
@@ -176,7 +197,7 @@ export async function pushToMirror(projectId: string, mirrorUrl: string): Promis
   const remote = repo.findRemote("mirror")!;
 
   const branch = repo.head().name().replace(/^refs\/heads\//, "");
-  const credential = pushCredentialFor(mirrorUrl);
+  const credential = await pushCredentialFor(mirrorUrl, projectId);
   await remote.push([`refs/heads/${branch}:refs/heads/${branch}`], credential ? { credential } : undefined);
 }
 

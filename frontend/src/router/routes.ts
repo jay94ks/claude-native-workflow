@@ -116,6 +116,7 @@ const routes: RouteRecordRaw[] = [
               { path: "general", component: () => import("pages/project/settings/GeneralPage.vue"), props: true },
               { path: "collaborators", component: () => import("pages/project/settings/CollaboratorsPage.vue"), props: true },
               { path: "template", component: () => import("pages/project/settings/TemplatePage.vue"), props: true },
+              { path: "doc-kinds", component: () => import("pages/project/settings/DocKindsPage.vue"), props: true },
             ],
           },
         ],

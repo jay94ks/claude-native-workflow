@@ -160,8 +160,28 @@ export const listDocuments = (
   apiKey: string,
   owner: string,
   projectId: string,
-  params?: { type?: string; kind?: string; state?: string; parentId?: string; page?: number; sort?: string }
+  params?: { type?: string; kind?: string; state?: string; parentId?: string; page?: number; sort?: string; includeContent?: boolean }
 ) => request(apiKey, `/projects/${owner}/${projectId}/documents`, { query: params });
+// 설계자 지적(2026-09-22 후속, "레이턴시가 너무 높아") - 문서마다
+// docs.get을 따로 부르는 N+1을 없애려고 목록 조회 하나로 본문까지
+// 받아온다(위 includeContent: true).
+export const getChildCounts = (apiKey: string, owner: string, projectId: string, parentIds: string[]) =>
+  request<{ counts: Record<string, number> }>(apiKey, `/projects/${owner}/${projectId}/documents/child-counts`, { query: { parentIds: parentIds.join(",") } });
+// 설계자 지적(2026-09-22 후속, "더 최적화해") - id 목록으로 여러 문서를
+// 한 번에 받는다(RecentQaFeed.vue가 항목마다 docs.get을 개별 호출하던
+// N+1 제거용).
+export const getManyDocuments = (apiKey: string, owner: string, projectId: string, ids: string[]) =>
+  request<{ items: DocFullLike[] }>(apiKey, `/projects/${owner}/${projectId}/documents/many`, { query: { ids: ids.join(",") } });
+interface DocFullLike {
+  code: string;
+  parent_id: string | null;
+  type: string;
+  kind: string;
+  state: string;
+  title: string;
+  author: string;
+  content: string;
+}
 export const createDocument = (apiKey: string, owner: string, projectId: string, body: Record<string, unknown>) =>
   request(apiKey, `/projects/${owner}/${projectId}/documents`, { method: "POST", body });
 export const searchDocuments = (apiKey: string, owner: string, projectId: string, params: Record<string, unknown>) =>
@@ -189,6 +209,11 @@ export const getActivitySummary = (
   projectId: string,
   params: { type: string; kind?: string; state?: string; days?: number }
 ) => request(apiKey, `/projects/${owner}/${projectId}/activity`, { query: params });
+export const listDocKinds = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/doc-kinds`);
+export const setDocKind = (apiKey: string, owner: string, projectId: string, code: string, body: { label: string; guideline?: string }) =>
+  request(apiKey, `/projects/${owner}/${projectId}/doc-kinds/${code}`, { method: "PUT", body });
+export const deleteDocKind = (apiKey: string, owner: string, projectId: string, code: string) =>
+  request(apiKey, `/projects/${owner}/${projectId}/doc-kinds/${code}`, { method: "DELETE" });
 
 // ---- Repo (Code 탭) ----
 export const listBranches = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/repo/branches`);
@@ -216,6 +241,16 @@ export const pushRepo = (apiKey: string, owner: string, projectId: string, body?
   request(apiKey, `/projects/${owner}/${projectId}/repo/push`, { method: "POST", body: body ?? {} });
 export const connectGitea = (apiKey: string, owner: string, projectId: string) =>
   request<{ pushMirrorUrl: string }>(apiKey, `/projects/${owner}/${projectId}/repo/connect-gitea`, { method: "POST" });
+export const connectGithub = (apiKey: string, owner: string, projectId: string, cloneUrl: string) =>
+  request<{ pushMirrorUrl: string }>(apiKey, `/projects/${owner}/${projectId}/repo/connect-github`, { method: "POST", body: { cloneUrl } });
+
+// ---- GitHub OAuth 연결(push-mirror, 계정 단위 - 프로젝트 무관) ----
+export const getGithubStatus = (apiKey: string) => request<{ configured: boolean; connected: boolean; githubLogin: string | null }>(apiKey, "/github/status");
+export const startGithubOAuth = (apiKey: string) => request<{ authorizeUrl: string }>(apiKey, "/github/oauth/start", { method: "POST" });
+export const listGithubRepos = (apiKey: string, page?: number) =>
+  request<{ items: { fullName: string; cloneUrl: string; private: boolean; defaultBranch: string }[]; hasMore: boolean }>(apiKey, "/github/repos", {
+    query: { page },
+  });
 
 // ---- Pull requests ----
 export const listPullRequests = (apiKey: string, owner: string, projectId: string, state?: string) =>

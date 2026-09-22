@@ -21,3 +21,5 @@ frontmatter(`id`/`parent_id`/`type`/`kind`/`state`/`branch`/
 | PL-QAFULL01 | [plan-full-qa.md](plan-full-qa.md) | 완료: 전체 시스템 QA(액션 64개 + 프론트엔드 전 화면, 버그 4건 발견·수정) |
 | PL-PLANFEUI | [plan-frontend-consistency.md](plan-frontend-consistency.md) | 완료: 프론트엔드 UI 일관성 정리(헤더/다이얼로그/폼/여백/색 통일) |
 | PL-PLANACT01 | [plan-activity-heatmap.md](plan-activity-heatmap.md) | 완료: 문서 코드별 활동 히트맵/로그 - 종합 현황에 표시 |
+| PL-PLANDK01 | [plan-doc-kind-management.md](plan-doc-kind-management.md) | 완료: 문서 분류(kind) 추가/수정 + 분류별 지침 관리 |
+| PL-PLANGHOA | [plan-github-push-mirror-oauth.md](plan-github-push-mirror-oauth.md) | 완료: GitHub OAuth 연결 - push-mirror 설정 화면에 추가 |

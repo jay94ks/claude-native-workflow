@@ -19,9 +19,11 @@ import * as webhooks from "../core/webhooks";
 import * as repoBrowse from "../core/repoBrowse";
 import * as pullRequests from "../core/pullRequests";
 import * as activityLog from "../core/activityLog";
+import * as docKinds from "../core/docKinds";
+import * as githubOAuth from "../core/githubOAuth";
 import { collectAndDeliver } from "../core/messages";
 import { requireApiKey } from "./authMiddleware";
-import { resolveChannel } from "../core/channel";
+import { resolveChannel, resolveAgentId } from "../core/channel";
 import { resolveProjectId } from "../core/projectResolve";
 import { runWithKeyScope } from "../core/requestScope";
 import type { ActionResult } from "../core/types";
@@ -43,7 +45,12 @@ function numOr(v: unknown): number | undefined {
  */
 function web(fn: CoreFn, buildPayload: (req: Request) => Record<string, unknown>, successStatus = 200) {
   return async (req: Request, res: Response) => {
-    const ctx: ActionContext = { architectId: req.architectId!, channel: resolveChannel(req.header("x-cnw-channel")) };
+    const channel = resolveChannel(req.header("x-cnw-channel"));
+    const ctx: ActionContext = {
+      architectId: req.architectId!,
+      channel,
+      agentId: resolveAgentId(channel, req.apiKeyLabel, req.apiKeyId),
+    };
     let payload = buildPayload(req);
 
     // 설계자 요청(2026-09-21 후속) - project id는 이제 생성자(owner)별로만
@@ -115,6 +122,22 @@ restRouter.get(
 );
 restRouter.get("/projects/:owner/:projectId/documents/status", web(documents.docsStatus, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
 restRouter.get(
+  "/projects/:owner/:projectId/documents/child-counts",
+  web(documents.docsChildCounts, (req) => ({
+    owner: req.params.owner,
+    projectId: req.params.projectId,
+    parentIds: typeof req.query.parentIds === "string" ? req.query.parentIds.split(",").filter(Boolean) : [],
+  }))
+);
+restRouter.get(
+  "/projects/:owner/:projectId/documents/many",
+  web(documents.docsGetMany, (req) => ({
+    owner: req.params.owner,
+    projectId: req.params.projectId,
+    ids: typeof req.query.ids === "string" ? req.query.ids.split(",").filter(Boolean) : [],
+  }))
+);
+restRouter.get(
   "/projects/:owner/:projectId/documents/grep",
   web(documents.docsGrep, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, code: req.query.code, pattern: req.query.pattern }))
 );
@@ -155,6 +178,20 @@ restRouter.get(
     state: req.query.state,
     days: numOr(req.query.days),
   }))
+);
+// design-notes.md "문서 분류(kind) 추가/수정 + 분류별 지침 관리" -
+// doc 타입 전용(다른 타입은 kind가 하나뿐인 구조적 상수).
+restRouter.get(
+  "/projects/:owner/:projectId/doc-kinds",
+  web(docKinds.docKindList, (req) => ({ owner: req.params.owner, projectId: req.params.projectId }))
+);
+restRouter.put(
+  "/projects/:owner/:projectId/doc-kinds/:code",
+  web(docKinds.docKindSet, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, code: req.params.code, ...req.body }))
+);
+restRouter.delete(
+  "/projects/:owner/:projectId/doc-kinds/:code",
+  web(docKinds.docKindDelete, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, code: req.params.code }))
 );
 
 // ---- Repo (Code 탭) ----
@@ -211,6 +248,24 @@ restRouter.get(
 );
 restRouter.post("/projects/:owner/:projectId/repo/push", web(repo.repoPush, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, ...req.body })));
 restRouter.post("/projects/:owner/:projectId/repo/connect-gitea", web(repo.repoConnectGitea, (req) => ({ owner: req.params.owner, projectId: req.params.projectId })));
+restRouter.post(
+  "/projects/:owner/:projectId/repo/connect-github",
+  web(repo.repoConnectGithub, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, cloneUrl: req.body.cloneUrl }))
+);
+
+// ---- GitHub OAuth 연결(push-mirror, design-notes.md "GitHub OAuth 연결") ----
+// 계정 단위(프로젝트 무관)라 /projects 아래가 아니라 최상위에 둔다 -
+// template.get/set(architect별 개인 템플릿)과 같은 이유.
+restRouter.get("/github/status", web(githubOAuth.githubStatus, () => ({})));
+restRouter.post(
+  "/github/oauth/start",
+  // redirect_uri는 반드시 서버가 지금 이 요청을 실제로 받은 주소로 계산한다
+  // (프론트가 보낸 값을 신뢰하지 않음 - v2의 판단을 그대로 계승: 어떤
+  // 주소로 접속했든 콜백이 항상 그 주소로 돌아오게 하기 위함이자,
+  // 클라이언트가 임의의 redirect_uri를 주장하지 못하게 하기 위함).
+  web(githubOAuth.githubOAuthStart, (req) => ({ redirectBase: `${req.protocol}://${req.get("host")}` }))
+);
+restRouter.get("/github/repos", web(githubOAuth.githubListRepos, (req) => ({ page: numOr(req.query.page) })));
 
 // ---- Pull requests ----
 restRouter.get(

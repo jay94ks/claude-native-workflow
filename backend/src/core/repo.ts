@@ -69,10 +69,41 @@ export async function repoConnectGitea(payload: any, ctx: ActionContext): Promis
   try {
     await ensureOrgConfigured(org);
     const { cloneUrl } = await ensureRepoConfigured(org, CANONICAL_REPO_NAME);
-    await prisma.project.update({ where: { id: projectId }, data: { pushMirrorUrl: cloneUrl } });
+    // Gitea로 다시 연결하면 이전에 GitHub로 연결돼 있었을 수 있는
+    // pushMirrorGithubAccountId를 반드시 지운다 - 안 지우면 Gitea clone
+    // URL인데 GitHub 토큰을 credential로 주입하려 드는 상태가 남는다.
+    await prisma.project.update({ where: { id: projectId }, data: { pushMirrorUrl: cloneUrl, pushMirrorGithubAccountId: null } });
     return { ok: true, data: { pushMirrorUrl: cloneUrl } };
   } catch (err) {
     if (err instanceof GiteaError) return fail(err.message);
     throw err;
   }
+}
+
+/**
+ * design-notes.md "GitHub OAuth 연결(push-mirror)" - v2의 "GitHub 로그인
+ * + 저장소 선택"에서 저장소 선택 이후 부분만 가져온 것. GitHub는 Gitea와
+ * 달리 서버 공유 토큰이 아니라 이 요청을 보낸 architect 개인이 방금
+ * OAuth로 연결한 저장소이므로, pushMirrorUrl과 함께 "이 프로젝트의
+ * push는 이 architect의 GitHub 토큰을 쓴다"는 것도 같이 기록한다
+ * (pushMirrorGithubAccountId - gitRepo.ts의 pushCredentialFor가 push
+ * 시점에 이걸로 토큰을 찾는다). cloneUrl은 프론트가 github.listRepos로
+ * 받은 목록에서 고른 것을 그대로 받는다(자동 생성 없음 - v2와 동일).
+ */
+export async function repoConnectGithub(payload: any, ctx: ActionContext): Promise<ActionResult> {
+  const { projectId, cloneUrl } = payload;
+  if (typeof projectId !== "string" || !projectId) return fail("projectId가 필요합니다.");
+  if (typeof cloneUrl !== "string" || !cloneUrl) return fail("cloneUrl이 필요합니다.");
+  try {
+    await requireMembership(projectId, ctx.architectId, "ADMIN");
+  } catch (err) {
+    if (err instanceof MembershipError) return fail(err.message);
+    throw err;
+  }
+
+  const cred = await prisma.githubCredential.findUnique({ where: { accountId: ctx.architectId } });
+  if (!cred) return fail("먼저 GitHub 계정을 연결하세요.");
+
+  await prisma.project.update({ where: { id: projectId }, data: { pushMirrorUrl: cloneUrl, pushMirrorGithubAccountId: ctx.architectId } });
+  return { ok: true, data: { pushMirrorUrl: cloneUrl } };
 }

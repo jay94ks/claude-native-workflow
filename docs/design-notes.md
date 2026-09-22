@@ -3550,3 +3550,427 @@ DB가 어긋난다(drift)"며 **개발 DB 전체를 reset하겠다고 나와서*
 교훈**: 이 저장소에서 스키마를 바꿀 땐 `db push`가 아니라 처음부터
 `prisma migrate dev --name <slug>`를 써야 이 수동 정리가 필요 없다.
 
+### 질문/답변/의견 항목마다 "추가 질문"/"추가 의견" - `FollowUpComposer.vue` (2026-09-22, 같은 날 후속)
+
+설계자 요청: "질의/답변/의견 항목들의 우측 하단에 추가 질문, 추가
+의견을 달 수 있게 만들어야해." - 지금까지 `DocumentDiscussion.vue`
+(문서 상세 화면에 통합된 Q&A)는 "문서 전체"에 대한 질문하기/의견
+남기기만 있었고, `DocumentThreadPage.vue`(`/thread/:code`)는 focal
+항목에만 재질의하기/의견 남기기가 있었으며 그 자식 카드들과
+`DocumentDiscussion.vue`의 중첩 답변 카드엔 전혀 없었다 - "항목들의"
+라는 요청이 정확히 이 다섯 자리(문서 전체/메인 항목/중첩 답변/
+스레드 focal/스레드 child) 전부를 가리킨다고 판단.
+
+**구현**: 다섯 자리에 흩어질 뻔한 중복 마크업(제목 입력+마크다운
+에디터+취소/등록 버튼+에러 표시, 약 20줄씩)을 새 컴포넌트
+`components/FollowUpComposer.vue`로 추출 - `owner`/`projectId`/
+`parentCode` 세 props만 받아 스스로 `api.createDocument`를 호출하고
+성공하면 `created` 이벤트만 emit한다(부모는 `@created="load"`로
+목록만 새로고침). `askLabel`/`opinionLabel`(기본값 "추가 질문"/
+"추가 의견")로 라벨을 바꿔 문서 전체 레벨(라벨 "질문하기"/"의견
+남기기")과 항목 레벨을 하나의 컴포넌트로 구분해서 커버한다.
+
+**부수 효과로 고친 것**: 이 추출 덕분에 `DocumentThreadPage.vue`가
+갖고 있던 것과 동종의 잠재적 "v-for 안의 동일 이름 ref가 배열로
+묶이는" 버그 클래스(design-notes.md 앞선 라운드에서 실제로 걸렸던
+그 버그)가 애초에 발생할 수 없는 구조가 됐다 - `FollowUpComposer`
+인스턴스마다 자기 자신의 `editorRef`를 갖는 완전히 별도의 컴포넌트
+인스턴스이기 때문. `DocumentThreadPage.vue`/`DocumentDiscussion.vue`
+양쪽에서 거의 동일했던 재질의/의견 컴포저 코드(각 파일당 ~60줄)가
+전부 사라졌다.
+
+**검증**: `vue-tsc --noEmit` 통과. 브라우저로 실제 확인 - Documents
+탭에서 문서 하나를 열어 "질문하기"(문서 레벨)로 질문 등록 → 그
+항목 카드에 "추가 질문"/"추가 의견"이 우측 하단에 뜨는 것 확인 →
+"추가 질문" 클릭→등록까지 성공 → `/thread/:code`로 이동해 "자식
+항목 (1)"에 실제로 반영된 것 확인 → 그 자식 카드에도 "추가
+질문"/"추가 의견"이 있어 "추가 의견"으로 한 단계 더 중첩(자식 항목
+(2))까지 성공 확인. 문서 레벨 "질문하기"/"의견 남기기"와 항목 레벨
+"추가 질문"/"추가 의견"이 서로 완전히 독립된 컴포넌트 인스턴스임을
+(하나를 열어도 다른 하나가 안 닫힘) 확인. 중첩 답변 카드(`item.answer`)
+자리는 나머지 네 자리와 완전히 동일한 컴포넌트 사용 패턴이라 별도
+브라우저 확인 없이 코드 리뷰로 충분하다고 판단(위험이 낮음 - 로직
+차이가 없고 렌더 위치만 다름).
+
+### 문서 분류(kind) 추가/수정 + 분류별 지침 관리 - `PL-PLANDK01` (2026-09-22, 같은 날 후속)
+
+설계자 요청: "문서 분류도 추가/수정이 가능해야 하고, 문서 분류별
+지침 관리도 가능해야해." 착수 전 두 가지를 확인했다(계획/조사 전체는
+`docs/plan-doc-kind-management.md` 참고, 여기는 요약):
+1. **범위**: 프로젝트별(각 프로젝트가 자기 분류 체계를 가짐) - 채택.
+2. **지침 공개 범위**: 클로드(CLI/MCP)도 봐야 함 - 채택.
+
+**스코프를 doc 타입으로 한정한 이유**: `documentRules.ts`의
+`KINDS_BY_TYPE`을 보면 doc(SP/RP/RM/QA/BT)만 진짜 "자유 분류"고,
+나머지(plan/issue/tracker/test/question/answer/opinion)는 타입당
+kind가 정확히 하나뿐이라 추적 코드 스킴을 만족시키기 위한 구조적
+상수일 뿐이다 - "문서 분류"는 doc의 5개 kind를 가리키는 게 확실해서
+다른 타입은 건드리지 않았다.
+
+**데이터 모델**: `DocumentKind`(신규, projectId+code 유니크) - **오버레이
+방식**을 채택했다: 기본 5개는 하드코딩된 라벨(`DEFAULT_DOC_KIND_LABELS`,
+`core/docKinds.ts`)을 그대로 유지하고, 이 테이블에 그 code로 행이
+있으면 라벨/지침을 덮어쓴다(수정). 기본에 없는 code면 완전히 새
+분류(추가)다. 프로젝트 생성 시 5개 행을 미리 심을 필요가 없어
+오래된 프로젝트도 자동으로 기본값을 갖는다.
+
+**백엔드**: `core/docKinds.ts` - `docKindList`(기본 5개+오버라이드
+병합, `builtin` 플래그 포함)/`docKindSet`(upsert, code는
+`/^[A-Z]{2,3}$/`)/`docKindDelete`(기본 5개는 오버라이드만 지움 -
+"초기화" 의미로 항상 성공, 커스텀 code는 그 kind를 쓰는 문서가 있으면
+거부). `documents.ts`의 `docsAdd`는 `type==='doc'`일 때만 kind
+검증을 `isValidKindForType`(동기, 하드코딩)에서 `isValidDocKind`
+(비동기, DB 오버레이 포함)로 교체 - 다른 타입은 그대로.
+`actions.ts`/`rest.ts`(`GET/PUT/DELETE
+/projects/:owner/:projectId/doc-kinds[/:code]`) 양쪽에 등록해서
+CLI/MCP와 WEB UI 둘 다 지침을 보고 관리할 수 있다.
+
+**순환 참조 없음**: `docKinds.ts`는 `guardMembership`/`fail`을
+(activityLog.ts와 마찬가지로) `core/actionHelpers.ts`에서 가져오고,
+`documents.ts`가 `docKinds.ts`의 `isValidDocKind`를 값으로 가져오되
+`docKinds.ts`는 `documents.ts`의 `ActionContext`를 타입으로만
+가져온다(런타임 순환 없음) - activityLog 라운드에서 세운 패턴을 그대로
+재사용.
+
+**프론트엔드**: 새 설정 페이지 `pages/project/settings/DocKindsPage.vue`
+(`SettingsShell.vue`에 "문서 분류" 메뉴 추가) - 목록(기본 배지+지침
+미리보기)+추가 다이얼로그+수정 다이얼로그(code는 읽기 전용)+삭제/초기화
+버튼. `DocumentsTab.vue`는 하드코딩됐던 `kindLabels`/`:kinds`를
+`onMounted`에 `listDocKinds`로 채우는 반응형 상태로 바꿨다 - **실기동
+중 발견한 경합 조건**: `DocTypeWorkspace`는 마운트 시점의
+`props.kinds`로 `route.query.kind`를 딱 한 번만 검증해서 무효면
+"전체"로 되돌리는데, `kinds`가 빈 배열인 채로 비동기 로딩 중에
+마운트되면 이미 걸려 있던 `?kind=SP` 같은 필터가 그 순간 무효
+처리되고 다시 못 돌아온다 - `DocTypeWorkspace`를 건드리는 대신
+`DocumentsTab.vue`에서 `kindsLoaded` 가드(`v-if`)로 분류를 다 받아온
+뒤에만 마운트하도록 해서 경합 자체를 없앴다. `DocCreatePage.vue`
+("새 문서" 페이지)도 `type==='doc'`일 때만 같은 방식으로 동적
+분류를 덮어쓰고, kind 드롭다운에 "SP · 설계 명세"처럼 라벨을 같이
+보여주도록 개선했다(예전엔 코드만 보이던 기존 갭).
+
+**CLI/MCP 노출 관련 확인 사항**: 계획상 "CLAUDE.md/SKILL.md도 갱신"을
+적어뒀는데, 실제로 살펴보니 이 저장소엔 CLI/MCP에 배포되는 정적
+SKILL.md 파일 자체가 없다 - `Template` 모델(`claudeMd`/`skillMd`)이
+architect별로 완전히 런타임 데이터(빈 값에서 시작, `TemplatePage.vue`
+에서 직접 작성)라 이 저장소가 소스 관리하는 "기본 스킬 문서"가
+존재하지 않는다(cli/mcp 패키지에도 README/스킬 md가 전혀 없음). 따라서
+이번 라운드는 CLAUDE.md 편집 대신 이 design-notes.md와
+project-structure.md를 갱신하는 것으로 "다음 세션이 이 명령을 실제로
+어떻게 써야 하는지" 안내를 남긴다 - 실제 배포 환경에서 에이전트가
+`docKind.list`를 보게 하려면 각 architect가 자신의 SKILL.md에 그
+안내를 직접 적어야 한다(이 시스템의 설계상 의도된 동작).
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc --noEmit`(frontend) 둘 다
+통과. `prisma migrate dev --name add_document_kind`로 drift 없이
+마이그레이션(지난 라운드 교훈 반영 - 처음부터 `migrate dev` 사용).
+브라우저로 실제 확인: 설정 > 문서 분류에서 기본 5개 정상 표시 → 새
+분류(DG/디자인 가이드) 추가 → "새 문서" kind 드롭다운·필터 다이얼로그
+양쪽에 즉시 반영 확인 → 그 kind로 실제 문서 생성 성공(추적 코드
+`DG-SK8ATHLO`) → 활동 히트맵/로그(`PL-PLANACT01`)와 종합 현황 분류별
+집계에도 자동으로 잡히는 것까지 확인(두 기능이 서로 문제 없이
+연동됨) → DG를 쓰는 문서가 있는 상태에서 삭제 시도 → 정확히
+거부("이 분류(DG)를 쓰는 문서가 1건 있어 삭제할 수 없습니다") → 기본
+분류(SP) 라벨을 수정했다가 "초기화"로 원래 라벨로 되돌아가는 것 확인.
+(브라우저 자동화 중 Vite HMR이 다수의 연속 편집 후 일시적으로
+꼬여 콘솔에 대량 에러가 찍히며 자동 새로고침된 적이 있었는데, 새로고침
+후 정상 상태로 복구됐고 실제 코드 결함이 아니었음을 재확인 - 이
+세션에서 반복적으로 겪은 "빠른 연속 편집 뒤 HMR desync" 현상과 같은
+종류.)
+
+### 활동 로그 - 같은 대상에 연속되는 같은 액션은 마지막만 유지 (2026-09-22, 같은 날 후속)
+
+설계자 요청: "특정 액션이 같은 대상 연속되는 경우 마지막꺼만
+유지해." - 문서 하나를 화면에서 여러 번 클릭해서 보거나(전이/저장 뒤
+자동 재조회 포함) 하면 매번 `docs.get`이 찍혀서 활동 로그/히트맵이
+사실상 같은 조회 하나를 여러 줄로 부풀리고 있었다(실제로 지금까지
+쌓인 263건 중 228건이 이 케이스였음 - 아래 정리 참고).
+
+**구현**: `core/activityLog.ts`의 `recordActivity()` - 새 행을 넣기
+직전에 그 `(projectId, code)`의 가장 최근 행을 조회해서, action이
+지금 기록하려는 것과 **같으면 그 행을 지우고** 새로 하나만 남긴다
+(연속). 중간에 다른 action이 끼면(연속이 끊기면) 이전 기록은 그대로
+보존된다 - 실제 확인: `SP-IL0VRRO0`에 `docs.get`(12:45)→
+`docs.transition`(같은 분)→`docs.get`(1:48, 두 번 연속 조회했지만
+마지막 한 줄만 남음)이 정확히 이 순서로 유지됨.
+
+**기존 데이터 정리**: 이 정책은 새로 기록되는 행에만 적용되므로,
+이미 쌓여 있던 연속 중복은 별도 스크래치 스크립트(커밋 안 함 -
+일회성 정리라 마이그레이션 스크립트 규칙 대상이 아님 - 스키마/의미
+변경이 전혀 없는 순수 데이터 정리)로 한 번 정리했다: 263건 중
+228건(각 `(projectId, code)`별 시간순으로 인접한 두 행의 action이
+같은 경우)을 삭제.
+
+**검증**: `tsc --noEmit` 통과. 백엔드 재시작 후 브라우저로 같은 문서를
+연속 두 번 열람 → 활동 로그에 `docs.get` 한 줄만(가장 최근 시각으로)
+남는 것 확인.
+
+### 활동 로그 - 같은 계정을 쓰는 여러 에이전트 구별(`X-Cnw-Agent-Id`) (2026-09-22, 같은 날 후속)
+
+설계자 확인: "AI 에이전트 N개와 그 에이전트를 돌리는 설계자 1명은
+같은 계정으로 작업할거야" → 이어서 "활동 로그에 어떤 에이전트인지
+구별이 필요함"이라고 확정. API 키/`architectId`는 계정 하나를
+가리킬 뿐이라, 그 계정으로 동시에 여러 CLI/MCP 프로세스가 돌면
+활동 로그에서 서로 구별이 안 됐다(바로 위 "연속 dedup" 항목의
+`identity` 비교도 architectId만 썼다면 서로 다른 에이전트의 연속
+동작을 하나로 뭉개버렸을 것 - 이번 라운드가 그 조사에서 나온 두
+번째 발견).
+
+**구현**: 선택적 헤더 `X-Cnw-Agent-Id`를 새로 추가(있으면 CLI/MCP,
+없으면 architect - WEB UI는 이 헤더 자체를 안 보낸다):
+- `shared/src/apiclient.ts`의 `ApiClient` 생성자가 세 번째 인자
+  `agentId?`를 받아 `run()`에서 그 헤더를 실어 보낸다.
+- `cli/src/index.ts`/`mcp/src/server.ts`는 `process.env.CNW_AGENT_ID`
+  를 읽어 그대로 넘긴다 - 같은 계정을 쓰는 여러 CLI/MCP 프로세스를
+  구별하려면 프로세스마다(또는 MCP 서버 설정의 `env`마다) 이 값을
+  다르게 주면 된다.
+- `core/channel.ts`의 `resolveAgentId()`(신규, `resolveChannel()`과
+  같은 자리) - 헤더를 trim하고 64자로 자른다. `ActionContext`
+  (`documents.ts`)에 `agentId?: string` 필드 추가, `api/server.ts`
+  (`/api/actions`, CLI/MCP 경로)와 `api/rest.ts`(`web()`, WEB UI
+  경로) 양쪽에서 동일하게 읽어 ctx에 싣는다(channel과 완전히 같은
+  패턴).
+- `ActivityLog`에 `agentId String?` 컬럼 추가(architect는 항상
+  null). **바로 위 "연속 dedup" 로직도 같이 고쳤다** - 연속 판정
+  기준을 `action`만이 아니라 `(action, agentId ?? actorId)`로 넓혀서,
+  같은 계정이어도 서로 다른 에이전트가 같은 코드에 같은 액션을
+  연속으로 하면(agentId가 다르면) 더 이상 하나로 뭉개지 않고 둘 다
+  남긴다 - agentId를 안 쓰는 경우(architect, 또는 설정 안 한 에이전트)
+  는 지금까지처럼 architectId로 비교해 동작이 그대로 유지된다.
+- 프론트(`DocTypeWorkspace.vue`)의 최근 활동 로그가
+  `agentId`가 있으면 "Claude (agent-alpha)"처럼, 없으면 기존처럼
+  "Claude"/"architect"로 표시한다(`agentLabel()`).
+
+**검증**: `tsc --noEmit`(backend/shared/cli/mcp)/`vue-tsc --noEmit`
+(frontend) 전부 통과 - `shared`는 dist 빌드 산출물을 cli/mcp가
+참조해서, `npm run build`로 다시 빌드해야 cli/mcp의 타입체크가
+새 3번째 인자를 인식했다(빠뜨리기 쉬운 포인트로 기록). 실제
+CLI(`CNW_AGENT_ID=agent-alpha npx tsx cli/src/index.ts get ...`)로
+살아있는 백엔드에 직접 요청해 확인: (1) architect가 만든 이전
+`docs.get` 기록과 구별되는 별도 줄로 `Claude (agent-alpha)`가
+찍힘, (2) 같은 `agent-alpha`로 같은 문서를 다시 조회하면 시각만
+갱신되고 줄이 늘지 않음(연속 dedup 유지), (3) `agent-beta`로
+바꿔서 같은 문서를 조회하면 `agent-alpha` 줄과 합쳐지지 않고 완전히
+새 줄로 남음 - 세 가지 다 의도한 그대로 확인됨.
+
+### 정정: 에이전트 구별은 새 헤더가 아니라 API 키 단에서 (2026-09-22, 같은 날 후속)
+
+설계자 지적: "에이전트들이 설계자의 계정으로 모든 동작을 하기 때문에
+API 키 단에서 처리를 해야 할거 같은데. 추가로 뭘 더 설계하는게
+아니라." - 바로 위에서 만든 `X-Cnw-Agent-Id` 헤더 + `CNW_AGENT_ID`
+환경변수는 불필요한 새 메커니즘이었다는 정확한 지적. 이 시스템엔
+이미 라벨을 붙여 발급할 수 있는 `apiKey` 체계가 있고(`apiKey.create`
+의 `label`), 에이전트마다 별도 키를 발급하면 "어떤 API 키로
+인증됐는지"가 곧 "어느 에이전트인지"다 - 별도로 설계할 게 없었다.
+
+**되돌린 것**: `shared/src/apiclient.ts`의 `ApiClient` 생성자 3번째
+인자(`agentId`)와 `X-Cnw-Agent-Id` 헤더, `cli/src/index.ts`/
+`mcp/src/server.ts`의 `CNW_AGENT_ID` 환경변수 읽기 - 전부 제거.
+
+**대신 구현한 것**: `core/auth.ts`의 `resolveApiKey()`가 이제
+`apiKeyId`/`apiKeyLabel`도 함께 반환(이미 조회해둔 `key` row에서
+그냥 같이 꺼내는 것 - 추가 쿼리 없음). `authMiddleware.ts`가
+`req.apiKeyId`/`req.apiKeyLabel`로 실어 나른다. `core/channel.ts`의
+`resolveAgentId()`는 이제 헤더가 아니라 `(channel, apiKeyLabel,
+apiKeyId)`를 받아 channel이 agent일 때만 `apiKeyLabel ?? apiKeyId`
+를 돌려준다(라벨을 안 붙인 키면 id로 폴백). `ActionContext`/
+`ActivityLog.agentId`/프론트 `agentLabel()`/연속 dedup 로직은 이름과
+동작 전부 그대로 - **값을 어디서 가져오는지만 바뀌었다**(헤더 → 이미
+인증에 쓰인 API 키의 신원).
+
+**검증**: `tsc --noEmit`(backend/cli/mcp) 전부 통과(`shared`는
+다시 빌드해야 cli/mcp가 새 생성자 시그니처를 인식 - 지난 라운드와
+똑같은 함정, 이번엔 되돌리는 방향으로 다시 겪음). 살아있는 백엔드에
+`apiKey.create`로 "agent-alpha"/"agent-beta" 두 개의 개인 키를
+실제로 발급하고, `curl`로 그 두 키를 각각 `Authorization: Bearer`에
+써서 **커스텀 헤더 없이** `docs.get`을 호출 → 활동 로그에
+"Claude (agent-alpha)"/"Claude (agent-beta)"로 정확히 구별되어 찍힘
+확인. 검증에 쓴 두 키는 `apiKey.revoke`로 정리(soft-revoke, 발급
+이력은 감사 목적으로 보존).
+
+### GitHub OAuth 연결 - push-mirror 설정 화면에 추가 - `PL-PLANGHOA` (2026-09-22, 같은 날 후속)
+
+설계자 요청: "v2에서 구현했던 GitHub 로그인을 push-mirror 설정하는
+화면에 추가해줘." v2 브랜치를 조사(체크아웃 없이 `git show`)한 결과
+및 v3 적용 판단은 `docs/plan-github-push-mirror-oauth.md`
+(`PL-PLANGHOA`)에 자세히 기록 - 요약만 남긴다.
+
+**v2와 다르게 가져온 점**: v2의 "GitHub 로그인"은 로그인 대체가
+아니라 이미 로그인한 architect가 GitHub 계정을 연결해 저장소를
+고르는 기능이었고, 그 이후 mirror/work 저장소 이원화+웹훅 자동 등록
+으로 이어지는 무거운 구조였다 - v3는 **연결+저장소 선택까지만**
+가져오고, 고른 저장소의 clone URL은 기존 "Gitea에 자동 연결"과 완전히
+같은 자리(`Project.pushMirrorUrl`)에 그대로 넣는다.
+
+**핵심 설계 차이(Gitea 대비)**: Gitea는 서버 전체가 공유하는 서비스
+계정 토큰(`GITEA_API_TOKEN`)이라 URL의 origin만 보고 자동으로
+자격증명을 얹을 수 있었지만, GitHub OAuth 토큰은 그걸 연결한
+architect 개인 소유라 "이 프로젝트의 push가 누구 토큰을 쓸지"를
+프로젝트마다 알아야 한다 - `Project.pushMirrorGithubAccountId`(신규
+컬럼, GitHub로 연결될 때만 설정, Gitea로 (재)연결하면 다시 null로
+지움 - 실제 코드로 확인: `repoConnectGitea`가 이제 이 필드도 같이
+초기화한다)로 해결. `core/gitRepo.ts`의 `pushCredentialFor()`를
+동기→비동기로 바꿔 이 컬럼을 조회하고, 해당 architect의
+`GithubCredential.accessToken`을 push 시점에만 credential로 얹는다
+(Gitea 분기는 그대로 유지, 둘 다 URL/DB엔 자격증명을 절대 안 심음).
+
+**보안 트레이드오프(의도적, 정정 아님 - 처음부터 이렇게 판단)**:
+`GithubCredential.accessToken`은 평문 저장 - 이 저장소에 아직
+대칭키 암호화 유틸이 없고 push 시점에 다시 평문이 필요해 해시는
+못 쓴다. 기존 `Webhook.secret`과 같은 원칙(평문 저장 + API 응답에
+절대 재노출 안 함)으로 맞췄다 - GitHub 토큰이 웹훅 시크릿보다
+민감도가 높다는 건 인지하고 있고, 서버 전체 암호화 계층이 생기면
+재검토 대상으로 여기 남겨둔다.
+
+**OAuth 플로우(v2 계승)**: `github.oauthStart`가 state(메모리 Map,
+10분 TTL - 이 백엔드는 이미 단일 프로세스를 가정하는 곳이 여러
+곳 있음)와 `redirect_uri`(그 요청을 실제로 받은 `req.protocol`+
+`req.get("host")`로 서버가 계산 - 프론트가 주장하는 값을 안 믿음)를
+같이 저장하고 `authorizeUrl`을 돌려준다. 프론트가 팝업으로 열고,
+`GET /api/github/oauth/callback`(액션 시스템 밖의 원시 라우트 -
+`server.ts`에 직접 등록, `requireApiKey` 미들웨어 없음 - 브라우저
+리다이렉트라 Authorization 헤더를 못 실어서 state로만 본인 확인)이
+code→token 교환 후 `GithubCredential`을 upsert하고, `postMessage`
++`window.close()` 하는 HTML을 응답한다. 부모 창(`GeneralPage.vue`)이
+그 메시지를 받아 상태를 새로고침하고 저장소 선택 다이얼로그를 연다.
+
+**프론트엔드**: `GeneralPage.vue`의 push-mirror 영역에 "GitHub로
+로그인"(미연결)/"GitHub 저장소 선택 (연결된 계정)"(연결됨) 버튼을
+추가. 저장소 선택 다이얼로그는 목록+"더 보기" 페이지네이션, 고르면
+`repo.connectGithub`로 `pushMirrorUrl`을 채운다(Gitea 버튼과 동일한
+UX 패턴).
+
+**정정(같은 날 후속)**: 처음엔 `GITHUB_OAUTH_CLIENT_ID`/`SECRET`
+미설정이면 버튼 자체를 숨겼다(v2도 그랬다는 이유로) - 그런데 이
+설계 자체가 바로 다음 대화에서 "왜 버튼이 없어?"라는 실제 혼란을
+낳았다. 설계자 지적: "Gitea처럼 안 눌러도 에러로 보여주는 게 낫지
+않을까?" - 맞는 지적이라 즉시 Gitea와 동일한 패턴(버튼은
+`project.isAdmin`이면 항상 보이고, 미설정이면 눌렀을 때만 명확한
+에러 - 이미 백엔드 `githubOAuthStart`가 그 에러를 정확히 돌려주고
+있어서 프론트의 조건부 숨김 하나만 제거하면 됐다)으로 되돌렸다.
+**교훈**: v2의 선택을 그대로 따를 이유가 없을 땐(CLAUDE.md에도
+명시돼 있는 원칙) 이미 v3 안에 확립된 패턴(Gitea 버튼)과의 일관성이
+우선이다 - v2 참고가 오히려 v3 자체 일관성을 깨는 근거가 될 수도
+있다는 걸 이번에 실제로 겪었다.
+
+**검증(및 한계)**: 이 개발 환경엔 실제 GitHub OAuth App이 없어서
+authorize→callback 왕복 자체는 라이브로 검증 못 했다 - 대신:
+(1) `tsc`/`vue-tsc --noEmit` 통과, (2) `GITHUB_OAUTH_CLIENT_ID/SECRET`
+을 임시 더미 값으로 `.env`에 넣고 재기동 → 버튼이 나타나는 것,
+`github.oauthStart`가 올바른 `authorizeUrl`(client_id/redirect_uri=
+실제 백엔드 주소+`/api/github/oauth/callback`/scope=repo/state)을
+반환하는 것, 팝업이 실제로 github.com으로 열리려 시도하는 것(브라우저
+자동화 샌드박스가 사용자 클릭이 아니라며 차단 - 정상적인 보안 동작)
+확인, (3) 콜백 라우트에 존재하지 않는 state로 직접 요청 →
+"요청이 만료됐거나 유효하지 않습니다" 에러 HTML을 정확히 반환하는 것
+확인, (4) `GithubCredential`에 더미 토큰을 직접 심어 "연결된 상태"를
+흉내내고 저장소 선택 다이얼로그를 열어 실제 GitHub API가 401을
+정확히 돌려주고("GitHub 연결이 만료됐거나 취소됐습니다") 그게
+다이얼로그에 에러로 뜨는 것 확인, (5) `curl`로 `repo.connectGithub`
+직접 호출 → `pushMirrorUrl`/`pushMirrorGithubAccountId` 둘 다 정확히
+갱신 확인, (6) 이어서 `repo.connectGitea` 호출 →
+`pushMirrorGithubAccountId`가 정확히 null로 되돌아가는 것 확인(위
+"핵심 설계 차이" 절의 안전장치). 테스트에 쓴 `.env` 더미 값/
+`GithubCredential` 행은 검증 후 전부 제거해 배포 전 상태로 복구.
+
+### 실제 성능 버그 발견/수정 - Q&A 스레드 N+1 (2026-09-22, 같은 날 후속)
+
+설계자 지적: "레이턴시가 너무 높아" → "웹 UI 사용 중(페이지 이동/버튼
+반응)"이라고 확인. 처음엔 최근에 만든 기능(문서 분류 비동기 로딩,
+활동 로그 dedup 등)을 의심했지만 실측(curl로 백엔드 API 직접 호출)
+해보니 개별 응답은 25~30ms로 전혀 안 느렸다 - 설계자가 실제 브라우저
+DevTools Network 탭 스크린샷을 보내줘서 진짜 원인을 바로 특정할 수
+있었다: `DocumentDiscussion.vue`/`DocumentThreadPage.vue`가 문서 하나의
+Q&A 스레드를 열 때마다 **항목 수만큼** 개별 API를 호출하고 있었다
+(N+1) - 질문/답변/의견 항목 20여 개짜리 스레드 하나에 (1) 목록 조회
+후 항목마다 `docs.get`을 또 부르는 것(본문을 채우려고), (2) 항목마다
+또 `docs.list({parentId})`를 부르는 것(자식 개수만 세려고) 두 겹으로
+겹쳐서 실제로 30개 넘는 요청이 한 번에 나갔다. 개별 요청은 빠른데,
+브라우저의 호스트당 동시 연결 제한(보통 6개)에 걸려 뒤로 갈수록
+큐잉되면서 **응답 시간이 56ms→1.5초까지 눈덩이처럼 불어나는 것**을
+스크린샷으로 직접 확인했다 - 이 문제는 이번 세션 신규 기능 때문이
+아니라 원래 있던 구조적 버그였는데, 세션 내내 FollowUpComposer로
+테스트 데이터(중첩 질문/의견)를 계속 늘려온 탓에 스레드가 커져서
+처음으로 체감될 만큼 드러난 것.
+
+**수정(백엔드)**: (1) `docsList`에 `includeContent?: boolean` 추가 -
+켜면 `toDocSummary` 대신 `toDocResponse`를 써서 목록 응답에 본문까지
+바로 담는다(DB는 이미 본문까지 다 읽어온 상태라 추가 쿼리가 전혀
+없다 - 응답 모양만 바꾸는 것). REST 경로는 쿼리스트링이라 값이 항상
+문자열로 오므로("false"도 truthy라 그냥 boolean 캐스팅하면 안 됨)
+`includeContent === true || includeContent === "true"`로 두 경로
+(REST 쿼리스트링/CLI·MCP JSON) 다 받는다. (2) 새 액션
+`docs.childCounts`(`{projectId, parentIds: string[]}` → `{counts:
+{[parentId]: number}}`) - `prisma.document.groupBy({by: ["parentId"],
+where: {parentId: {in: parentIds}}, _count})`로 여러 부모의 자식 개수를
+쿼리 한 번에 그룹 집계한다.
+
+**수정(프론트엔드)**: `DocumentDiscussion.vue`의 `loadDocsByParent`/
+`loadAllAnswers`가 `includeContent: true`로 목록 조회 하나만 하고
+끝(항목별 `docs.get` 전부 제거). `loadChildCounts`는 대상 코드들을
+전부 모아 `docs.childCounts` 한 번만 부르고, "이미 보여준 직접 답변"
+제외는 그 답변이 존재하는지 자체로 이미 알고 있으니 별도 코드 비교
+없이 개수에서 빼는 것으로 단순화(`excludeCode` 문자열 비교 →
+`excludeCount` 정수). `DocumentThreadPage.vue`도 완전히 같은 패턴으로
+고쳤다(목록 1회+child-counts 1회). 결과: Q&A 스레드 하나를 여는 데
+필요한 요청이 항목 수와 무관하게 항상 정확히 **4개**(문서 자신+질문
+목록+답변 목록+의견 목록, `DocumentDiscussion`)/**3개**(항목+자식
+목록+child-counts, `DocumentThreadPage`) + child-counts 1개로
+고정됐다 - 스레드가 아무리 커져도 요청 수가 안 늘어난다.
+
+**검증**: `tsc`/`vue-tsc --noEmit` 통과. 브라우저 Network 탭으로
+실제 확인 - 이전엔 `QU-*`/`AN-*`/`OP-*` 코드마다 개별 `fetch`가
+줄줄이 찍히던 것이, 수정 후엔 `documents?type=question&...&
+includeContent=true` 등 타입당 1개 + `documents/child-counts?
+parentIds=D7M54461` 1개로 끝남(`DocumentThreadPage.vue`도 동일하게
+3개로 확인). 화면에 보이는 내용(질문/답변/의견 본문, "자식 항목 보기
+(N)" 배지 숫자)이 수정 전후로 정확히 같다는 것도 확인 - 응답 모양만
+바꿨을 뿐 실제 데이터/개수 계산 로직은 그대로임을 재확인.
+
+### 추가 최적화 - RecentQaFeed N+1 + Documents 탭 블로킹 게이트 제거 (2026-09-22, 같은 날 후속)
+
+설계자가 "1초 가까이 걸리는 게 맞냐"고 재확인을 요청해서, 주장만
+하지 않고 직접 검증했다: curl로 백엔드에 동시 요청 30개를 순수하게
+동시에 쏴봤더니 대부분 25~100ms(하나만 340ms)로 서버 자체는 부하가
+커져도 안 느려진다는 걸 확인 - 브라우저 Network 탭의 1초대 숫자는
+크롬의 호스트당 동시 연결 제한(기본 6개)에 걸린 대기 시간이 합산된
+것이었다는 걸 재확인해서 답했다. 그다음 "더 최적화해" 요청에 두 가지를
+더 고쳤다.
+
+**1) `RecentQaFeed.vue`도 같은 N+1이었다**: 방금 고친 Q&A 스레드와
+완전히 같은 패턴 - 피드 항목(최대 30개)마다 (a) 부모 문서 정보를
+`docs.get`으로 개별 조회(`resolveByRawId`), (b) 자식 개수를
+`docs.list({parentId})`로 개별 조회. 30개짜리 피드면 최대 60개
+추가 요청. 새 액션 `docs.getMany`(`{ids: string[]}` → id 목록으로
+여러 문서를 한 번에 조회, `docs.childCounts`와 같은 자리에
+`core/documents.ts`)를 만들어 `loadParents()`를 한 번 호출로,
+`loadChildCounts()`는 이미 있는 `docs.childCounts`로 교체 - 피드
+크기와 무관하게 항상 최대 5개 요청(질문/답변/의견 목록 3개+
+getMany 1개+childCounts 1개)으로 고정. 실기동 확인: 29개 항목짜리
+피드가 정확히 6개 요청(위 5개 + tracker 목록 1개)으로 로드되는 것,
+부모 배지("↳ 질문: ...")와 "더보기" 아이콘(자식 개수) 둘 다 수정
+전후로 표시가 똑같은 것 확인.
+
+**2) `DocumentsTab.vue`의 kinds 로딩이 페이지 렌더링을 막고 있었다**:
+이건 "레이턴시가 너무 높아"의 진짜 원인은 아니었지만(N+1이 훨씬
+컸음), 부가적으로 발견한 실제 낭비 - doc 분류를 서버(`docKind.list`)
+에서 비동기로 받아오게 되면서 그 fetch가 끝날 때까지
+`v-if="!kindsLoaded"`로 `DocTypeWorkspace` 자체를 마운트 안 시켰다
+(다른 4개 탭엔 없는, Documents 탭만의 불필요한 순차 대기). 근본
+원인은 `DocTypeWorkspace.vue`가 마운트 시점 `props.kinds`로
+`?kind=` 쿼리를 딱 한 번만 검증해서, 그 시점에 kinds가 비어 있으면
+이미 걸린 필터가 무효 처리되고 되돌릴 방법이 없었다는 것 - 그래서
+그 블로킹 게이트를 만들었었다. **수정**: `props.kinds`가 이미
+채워져 있으면(다른 4개 탭처럼 정적 배열) 기존처럼 그 자리에서 바로
+검증하고, 아직 비어 있으면(Documents 탭의 비동기 로딩 중) 일단 URL
+값을 그대로 받아들여 즉시 렌더링하고, `watch(() => props.kinds, ...)`
+로 나중에 실제로 없는 값이면 그때 되돌린다(URL도 같이 정리). 결과:
+Documents 탭도 다른 탭처럼 즉시 렌더링되고, `?kind=` 유효성 검증은
+정확히 같은 결과로 유지된다.
+
+**검증**: `tsc`/`vue-tsc --noEmit` 통과. 브라우저로 확인 - (1)
+RECENT Q&A 탭: Network 탭에 요청 6개만 찍히고 화면 내용 동일. (2)
+`?kind=SP`로 직접 진입 → 정상적으로 그 필터만 반영(회귀 없음).
+(3) `?kind=BOGUS`(존재하지 않는 분류)로 직접 진입 → 처음엔 그대로
+받아들였다가 kinds 로드 후 자동으로 "전체"로 되돌아가고 URL도
+`?kind=BOGUS`가 지워지는 것 확인 - 기존 방어 로직이 여전히 살아있음.
+

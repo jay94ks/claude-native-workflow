@@ -37,5 +37,6 @@ const menu = [
   { to: "general", icon: "tune", label: "기본 설정" },
   { to: "collaborators", icon: "group", label: "Collaborators" },
   { to: "template", icon: "integration_instructions", label: "Template" },
+  { to: "doc-kinds", icon: "category", label: "문서 분류" },
 ];
 </script>

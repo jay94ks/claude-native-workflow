@@ -69,6 +69,7 @@
             <q-item-section>완료 처리</q-item-section>
           </q-item>
         </template>
+        <FollowUpComposer :owner="owner" :project-id="projectId" :parent-code="item.answer.code" @created="load" />
       </DiscussionItemCard>
 
       <q-slide-transition>
@@ -81,41 +82,17 @@
           </div>
         </div>
       </q-slide-transition>
+
+      <!-- 설계자 요청(2026-09-22 후속) - 질문/답변/의견 항목 각각에 "추가
+           질문"/"추가 의견"을 달 수 있어야 한다(문서 전체가 아니라 그
+           항목 하나를 부모로) - question/opinion은 부모 타입 제한이 없어
+           (documentRules.ts) 이미 백엔드가 지원하던 걸 창구만 새로 연다. -->
+      <FollowUpComposer :owner="owner" :project-id="projectId" :parent-code="item.code" @created="load" />
     </DiscussionItemCard>
 
-    <!-- 설계자 요청(2026-09-21) - 질문하기/의견 남기기는 다이얼로그가 아니라
-         이 영역이 그대로 늘어나며 에디터를 보여주고, 에디터 하단 우측에
-         등록하기/취소하기 버튼을 둔다. -->
-    <div v-if="!showAskComposer && !showOpinionComposer" class="row q-gutter-sm q-mt-sm">
-      <q-btn size="sm" outline color="primary" icon="help" label="질문하기" @click="openAskComposer" />
-      <q-btn size="sm" outline color="teal" icon="chat" label="의견 남기기" @click="openOpinionComposer" />
-    </div>
-
-    <q-slide-transition>
-      <div v-if="showAskComposer" class="gh-card q-pa-sm q-mt-sm">
-        <div class="text-subtitle2 q-mb-sm">이 문서에 질문하기</div>
-        <q-input v-model="askTitle" label="제목" dense class="q-mb-sm" />
-        <MarkdownSourceView ref="askEditorRef" content="" start-in-edit hide-toolbar :edit-min-height="200" />
-        <div v-if="askError" class="text-negative text-caption q-mt-xs">{{ askError }}</div>
-        <div class="row justify-end q-gutter-sm q-mt-sm">
-          <q-btn flat label="취소하기" @click="closeAskComposer" />
-          <q-btn color="primary" label="등록하기" :loading="asking" @click="ask" />
-        </div>
-      </div>
-    </q-slide-transition>
-
-    <q-slide-transition>
-      <div v-if="showOpinionComposer" class="gh-card q-pa-sm q-mt-sm">
-        <div class="text-subtitle2 q-mb-sm">이 문서에 의견 남기기</div>
-        <q-input v-model="opinionTitle" label="제목" dense class="q-mb-sm" />
-        <MarkdownSourceView ref="opinionEditorRef" content="" start-in-edit hide-toolbar :edit-min-height="200" />
-        <div v-if="opinionError" class="text-negative text-caption q-mt-xs">{{ opinionError }}</div>
-        <div class="row justify-end q-gutter-sm q-mt-sm">
-          <q-btn flat label="취소하기" @click="closeOpinionComposer" />
-          <q-btn color="primary" label="등록하기" :loading="submittingOpinion" @click="submitOpinion" />
-        </div>
-      </div>
-    </q-slide-transition>
+    <!-- 설계자 요청(2026-09-21) - 문서 전체에 질문하기/의견 남기기(항목이
+         아니라 이 문서 자체가 부모). -->
+    <FollowUpComposer :owner="owner" :project-id="projectId" :parent-code="parentCode" ask-label="질문하기" opinion-label="의견 남기기" @created="load" />
   </div>
 </template>
 
@@ -124,6 +101,7 @@ import { ref, reactive, computed, watch, onMounted, nextTick } from "vue";
 import { useAuthStore } from "stores/auth";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
 import DiscussionItemCard from "components/DiscussionItemCard.vue";
+import FollowUpComposer from "components/FollowUpComposer.vue";
 import * as api from "src/api/client";
 
 interface MarkdownSourceViewRef {
@@ -218,17 +196,15 @@ function hasAnswerMenu(answer: DocFull): boolean {
 
 // backend/src/core/documents.ts의 docsList가 payload.parentId를 Document.parentId
 // 컬럼(원문 id) 그대로 필터링해준다 - 추적 코드가 아니라 id를 넘겨야 한다.
+// 설계자 지적(2026-09-22 후속, "레이턴시가 너무 높아") - 예전엔 목록을
+// 받은 뒤 항목마다 docs.get을 또 불러 본문을 채웠다(N+1 - 실기동으로
+// 스레드 하나에 항목 20개면 왕복 20번이 추가로 나가는 것 확인, 브라우저
+// 호스트당 동시 연결 제한에 걸려 체감 지연이 초 단위로 불어남).
+// includeContent: true로 목록 조회 한 번에 본문까지 받는다.
 async function loadDocsByParent(type: string, parentId: string): Promise<DocFull[]> {
-  const listResult = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { type, parentId });
+  const listResult = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { type, parentId, includeContent: true });
   if (!listResult.ok) return [];
-  const summaries = (listResult.data as { items: DocSummary[] }).items;
-  const fulls = await Promise.all(
-    summaries.map(async (s) => {
-      const r = await api.getDocument(auth.apiKey!, props.owner, props.projectId, s.code);
-      return r.ok ? (r.data as DocFull) : null;
-    })
-  );
-  return fulls.filter((d): d is DocFull => d !== null);
+  return (listResult.data as { items: DocFull[] }).items;
 }
 
 async function load() {
@@ -249,16 +225,9 @@ async function load() {
 // answer의 parent_id는 "그 질문"의 id이지 이 문서의 id가 아니므로, 이 문서에
 // 달린 질문들의 id 목록에 매칭되는 answer만 전체 answer 중에서 걸러낸다.
 async function loadAllAnswers(): Promise<DocFull[]> {
-  const listResult = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { type: "answer" });
+  const listResult = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { type: "answer", includeContent: true });
   if (!listResult.ok) return [];
-  const summaries = (listResult.data as { items: DocSummary[] }).items;
-  const fulls = await Promise.all(
-    summaries.map(async (s) => {
-      const r = await api.getDocument(auth.apiKey!, props.owner, props.projectId, s.code);
-      return r.ok ? (r.data as DocFull) : null;
-    })
-  );
-  return fulls.filter((d): d is DocFull => d !== null);
+  return (listResult.data as { items: DocFull[] }).items;
 }
 
 // design-notes.md 후속 판단(설계자 요청, 2026-09-21) - Q&A는 실제로는
@@ -266,21 +235,26 @@ async function loadAllAnswers(): Promise<DocFull[]> {
 // 딱 한 단계(질문+직접 답변)만 보여준다. 카드마다(질문/답변 각각) 그
 // "표시된 것 이상의" 자식이 있는지 세어뒀다가 more 메뉴에 조건부로
 // 넣는다 - 질문 카드는 이미 보여준 직접 답변 자신은 자식 수에서 뺀다.
+// 설계자 지적(2026-09-22 후속, "레이턴시가 너무 높아") - 항목 하나당
+// docs.list({parentId}) 호출을 따로 불렀다(N+1 - 스레드 하나에 항목
+// 20개면 왕복 20번, 브라우저 동시 연결 제한에 걸려 체감 지연이 초
+// 단위로 불어남). docs.childCounts로 한 번에 그룹 집계한다 - "이미
+// 보여준 직접 답변"은 그 답변이 있는지 자체로 이미 알고 있으니(별도
+// 코드 비교 없이) 개수에서 그만큼만 빼면 된다.
 async function loadChildCounts() {
-  const targets: { code: string; excludeCode?: string }[] = [];
+  const targets: { code: string; excludeCount: number }[] = [];
   for (const item of thread.value) {
-    targets.push({ code: item.code, excludeCode: item.answer?.code });
-    if (item.answer) targets.push({ code: item.answer.code });
+    targets.push({ code: item.code, excludeCount: item.answer ? 1 : 0 });
+    if (item.answer) targets.push({ code: item.answer.code, excludeCount: 0 });
   }
-  await Promise.all(
-    targets.map(async ({ code, excludeCode }) => {
-      const rawId = parseIdFromCode(code);
-      const result = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { parentId: rawId });
-      if (!result.ok) return;
-      const items = (result.data as { items: { code: string }[] }).items;
-      childCounts[code] = items.filter((c) => c.code !== excludeCode).length;
-    })
-  );
+  if (targets.length === 0) return;
+  const rawIds = targets.map((t) => parseIdFromCode(t.code));
+  const result = await api.getChildCounts(auth.apiKey!, props.owner, props.projectId, rawIds);
+  if (!result.ok) return;
+  const counts = (result.data as { counts: Record<string, number> }).counts;
+  for (const t of targets) {
+    childCounts[t.code] = Math.max(0, (counts[parseIdFromCode(t.code)] ?? 0) - t.excludeCount);
+  }
 }
 
 async function markRead(item: ThreadItem) {
@@ -316,41 +290,6 @@ async function markAnswerDone(answer: DocFull) {
     actionError[answer.code] = result.reason?.join(", ") ?? "실패했습니다.";
     return;
   }
-  await load();
-}
-
-const showAskComposer = ref(false);
-const askTitle = ref("");
-const askEditorRef = ref<MarkdownSourceViewRef | null>(null);
-const asking = ref(false);
-const askError = ref("");
-
-function openAskComposer() {
-  askTitle.value = "";
-  askError.value = "";
-  showAskComposer.value = true;
-}
-function closeAskComposer() {
-  showAskComposer.value = false;
-}
-
-async function ask() {
-  asking.value = true;
-  askError.value = "";
-  const result = await api.createDocument(auth.apiKey!, props.owner, props.projectId, {
-    type: "question",
-    kind: "QU",
-    parentId: props.parentCode,
-    title: askTitle.value,
-    content: askEditorRef.value?.getMarkdown() ?? "",
-  });
-  asking.value = false;
-  if (!result.ok) {
-    askError.value = result.reason?.join(", ") ?? "실패했습니다.";
-    return;
-  }
-  showAskComposer.value = false;
-  askTitle.value = "";
   await load();
 }
 
@@ -398,41 +337,6 @@ async function submitAnswer() {
     return;
   }
   answeringCode.value = null;
-  await load();
-}
-
-const showOpinionComposer = ref(false);
-const opinionTitle = ref("");
-const opinionEditorRef = ref<MarkdownSourceViewRef | null>(null);
-const submittingOpinion = ref(false);
-const opinionError = ref("");
-
-function openOpinionComposer() {
-  opinionTitle.value = "";
-  opinionError.value = "";
-  showOpinionComposer.value = true;
-}
-function closeOpinionComposer() {
-  showOpinionComposer.value = false;
-}
-
-async function submitOpinion() {
-  submittingOpinion.value = true;
-  opinionError.value = "";
-  const result = await api.createDocument(auth.apiKey!, props.owner, props.projectId, {
-    type: "opinion",
-    kind: "OP",
-    parentId: props.parentCode,
-    title: opinionTitle.value,
-    content: opinionEditorRef.value?.getMarkdown() ?? "",
-  });
-  submittingOpinion.value = false;
-  if (!result.ok) {
-    opinionError.value = result.reason?.join(", ") ?? "실패했습니다.";
-    return;
-  }
-  showOpinionComposer.value = false;
-  opinionTitle.value = "";
   await load();
 }
 

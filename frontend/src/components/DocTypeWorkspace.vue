@@ -167,7 +167,7 @@
             <q-item v-for="(entry, i) in activityRecent" :key="i">
               <q-item-section>
                 <q-item-label>{{ entry.code }} · {{ entry.action }}</q-item-label>
-                <q-item-label caption>{{ entry.channel === "agent" ? "Claude" : "architect" }} · {{ new Date(entry.createdAt).toLocaleString() }}</q-item-label>
+                <q-item-label caption>{{ agentLabel(entry) }} · {{ new Date(entry.createdAt).toLocaleString() }}</q-item-label>
               </q-item-section>
             </q-item>
           </q-list>
@@ -327,10 +327,28 @@ function stringFromRoute(key: "kind" | "state" | "q", validValues?: readonly str
   if (validValues && !validValues.includes(q)) return "";
   return q;
 }
-const selectedKind = ref(stringFromRoute("kind", props.kinds));
+// 설계자 지적(2026-09-22 후속, "더 최적화해") - Documents 탭은 kinds를
+// 서버(docKind.list)에서 비동기로 받아온다 - 여기서 마운트 시점에
+// props.kinds로 즉시 검증하려 들면, 그 fetch가 끝날 때까지 페이지
+// 렌더링 자체를 막아야 했다(예전엔 DocumentsTab.vue가 그렇게 했다 -
+// 매번 여분의 네트워크 왕복만큼 화면이 늦게 뜸). 그 블로킹을 없애려고
+// kind는 URL 값을 낙관적으로 그대로 받아들이고(검증 안 함), kinds가
+// 실제로 채워진 뒤 그 값이 없는 값이면 그때 되돌린다(아래 watch) -
+// state는 모든 탭이 항상 정적 배열을 넘겨 이 경합이 없어 그대로 둔다.
+const selectedKind = ref(props.kinds.length > 0 ? stringFromRoute("kind", props.kinds) : stringFromRoute("kind"));
 const selectedState = ref(stringFromRoute("state", props.states));
 const searchQuery = ref(stringFromRoute("q"));
 const hasActiveFilter = computed(() => !!(selectedKind.value || selectedState.value || searchQuery.value));
+
+watch(
+  () => props.kinds,
+  (kinds) => {
+    if (kinds.length > 0 && selectedKind.value && !kinds.includes(selectedKind.value)) {
+      selectedKind.value = "";
+      syncFilterQueryAndLoad();
+    }
+  }
+);
 
 // 설계자 요청(2026-09-22 후속) - 문서를 선택하지 않았을 때 지금 목록(필터
 // 적용 후 기준)의 상태별/분류별 개수를 보여준다 - props.states/kinds
@@ -363,6 +381,9 @@ interface ActivityEntry {
   code: string;
   action: string;
   channel: string;
+  // 설계자 요청(2026-09-22 후속) - 같은 계정을 쓰는 여러 에이전트를
+  // 구별하기 위한 선택 필드(architect 채널은 항상 null).
+  agentId: string | null;
   createdAt: string;
 }
 const activityHeatmap = ref<HeatmapDay[]>([]);
@@ -397,6 +418,14 @@ function heatColor(count: number): string {
   if (count <= 5) return "#40c463";
   if (count <= 10) return "#30a14e";
   return "#216e39";
+}
+
+// 설계자 요청(2026-09-22 후속) - "AI 에이전트 N개와 설계자 1명이 같은
+// 계정으로 작업한다" - agentId가 있으면 그 값으로, 없으면(architect
+// 이거나 agentId를 설정 안 한 에이전트) 기존처럼 "Claude"/"architect"로.
+function agentLabel(entry: ActivityEntry): string {
+  if (entry.channel !== "agent") return "architect";
+  return entry.agentId ? `Claude (${entry.agentId})` : "Claude";
 }
 
 async function loadActivity() {

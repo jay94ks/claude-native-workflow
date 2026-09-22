@@ -37,12 +37,16 @@ import { notify } from "./messages";
 import { publishDocEvent } from "./emqx";
 import { recordActivity } from "./activityLog";
 import { fail, guardMembership } from "./actionHelpers";
+import { isValidDocKind } from "./docKinds";
 
 const opposite = (c: Channel): Channel => (c === "agent" ? "architect" : "agent");
 
 export interface ActionContext {
   architectId: string;
   channel: Channel;
+  // channel.ts의 resolveAgentId() 참고 - 같은 계정을 공유하는 여러
+  // 에이전트 프로세스를 구별하기 위한 선택 필드(architect 채널은 항상 undefined).
+  agentId?: string;
 }
 
 function randomEtag(): string {
@@ -95,7 +99,14 @@ export async function docsAdd(payload: any, ctx: ActionContext): Promise<ActionR
   if (typeof type !== "string" || !isSupportedType(type)) {
     return fail(`type "${type}"은 지원하지 않습니다.`);
   }
-  if (typeof kind !== "string" || !isValidKindForType(type, kind)) {
+  if (typeof kind !== "string") {
+    return fail(`"${kind}"는 ${type}의 유효한 kind가 아닙니다.`);
+  }
+  // doc 타입만 프로젝트별로 분류를 추가/수정할 수 있다(docKinds.ts) -
+  // 그 외 타입은 타입당 kind가 하나뿐인 구조적 상수라 그대로
+  // isValidKindForType로 검증한다.
+  const kindOk = type === "doc" ? await isValidDocKind(projectId, kind) : isValidKindForType(type, kind);
+  if (!kindOk) {
     return fail(`"${kind}"는 ${type}의 유효한 kind가 아닙니다.`);
   }
   if (typeof title !== "string" || !title) return fail("title이 필요합니다.");
@@ -187,6 +198,34 @@ export async function docsGet(payload: any, ctx: ActionContext): Promise<ActionR
 }
 
 /**
+ * 설계자 지적(2026-09-22 후속, "더 최적화해") - `RecentQaFeed.vue`가
+ * 피드 항목(최대 30개)마다 "그 항목의 부모 문서가 뭔지"를 알아보려고
+ * `docs.get`을 개별 호출하고 있었다 - Q&A 스레드에서 고친 것과 완전히
+ * 같은 N+1(코드 대신 원문 id로 조회, 무슨 type인지 몰라도 되게 kind를
+ * "XX" 더미값으로 채우는 편법까지 써가며). id 목록 하나로 한 번에
+ * 받아온다 - docs.get 하나짜리와 달리 여러 type이 섞여 있을 수 있어
+ * `docs.list`처럼 type/kind/state 필터는 없다(순수 id 조회).
+ */
+export async function docsGetMany(payload: any, ctx: ActionContext): Promise<ActionResult> {
+  const membershipFailure = await guardMembership(payload.projectId, ctx, "READ");
+  if (membershipFailure) return membershipFailure;
+
+  const { projectId, ids } = payload;
+  if (!Array.isArray(ids) || ids.some((i) => typeof i !== "string")) return fail("ids는 문자열 배열이어야 합니다.");
+  if (ids.length === 0) return { ok: true, data: { items: [] } };
+
+  const docs = await prisma.document.findMany({ where: { projectId, id: { in: ids } } });
+  const [relatedByDoc, dependsOnByDoc] = await Promise.all([
+    loadRelatedBatch(docs.map((d) => d.id)),
+    loadDependsOnBatch(docs.map((d) => d.id)),
+  ]);
+  return {
+    ok: true,
+    data: { items: docs.map((doc) => toDocResponse({ ...doc, related: relatedByDoc.get(doc.id) ?? [], dependsOn: dependsOnByDoc.get(doc.id) ?? [] })) },
+  };
+}
+
+/**
  * 여러 문서의 dependsOn 중 아직 "해소"(isTerminalState)되지 않은 참조
  * 개수를 한 번에 센다 - DocumentDependsOn 테이블로 정규화된 덕에 문서
  * 하나당 쿼리 한 번(N+1)이 아니라 배치 하나로 끝난다(이전 Json 배열
@@ -212,9 +251,21 @@ export async function docsList(payload: any, ctx: ActionContext): Promise<Action
   const membershipFailure = await guardMembership(payload.projectId, ctx, "READ");
   if (membershipFailure) return membershipFailure;
 
-  const { projectId, type, kind, state, parentId, page, sort } = payload;
+  const { projectId, type, kind, state, parentId, page, sort, includeContent } = payload;
   const pageSize = 50;
   const pageNumber = typeof page === "number" && page > 0 ? page : 1;
+  // 설계자 지적(2026-09-22 후속, "레이턴시가 너무 높아") - Q&A 스레드
+  // 화면(DocumentDiscussion.vue/DocumentThreadPage.vue)이 이 목록을 받은
+  // 뒤 항목마다 다시 docs.get을 개별 호출해 본문을 채우고 있었다 - 문서
+  // 하나에 달린 질문/답변/의견이 20개면 추가 요청만 20개(N+1), 브라우저의
+  // 호스트당 동시 연결 제한(보통 6개)에 걸려 뒤로 갈수록 큐잉되며 체감
+  // 지연이 초 단위로 불어났다(실기동으로 확인). DB는 이미 본문까지 다
+  // 읽어온 상태라 응답 모양만 toDocSummary 대신 toDocResponse로 바꾸면
+  // 되므로, 추가 쿼리 없이 그 N번의 왕복 자체를 없앤다.
+  // REST 경로는 쿼리스트링이라 값이 항상 문자열로 온다("false"도 진리값
+  // 문자열이라 그냥 truthy 취급하면 안 됨) - CLI/MCP(actions.ts) 경로는
+  // JSON boolean을 그대로 보낼 수 있으니 둘 다 받아준다.
+  const toItem = includeContent === true || includeContent === "true" ? toDocResponse : toDocSummary;
 
   const where = {
     projectId,
@@ -245,7 +296,7 @@ export async function docsList(payload: any, ctx: ActionContext): Promise<Action
         page: pageNumber,
         total,
         items: page_.map(({ doc }) =>
-          toDocSummary({ ...doc, related: relatedByDoc.get(doc.id) ?? [], dependsOn: dependsOnByDoc.get(doc.id) ?? [] })
+          toItem({ ...doc, related: relatedByDoc.get(doc.id) ?? [], dependsOn: dependsOnByDoc.get(doc.id) ?? [] })
         ),
       },
     };
@@ -270,9 +321,39 @@ export async function docsList(payload: any, ctx: ActionContext): Promise<Action
     data: {
       page: pageNumber,
       total,
-      items: items.map((doc) => toDocSummary({ ...doc, related: relatedByDoc.get(doc.id) ?? [], dependsOn: dependsOnByDoc.get(doc.id) ?? [] })),
+      items: items.map((doc) => toItem({ ...doc, related: relatedByDoc.get(doc.id) ?? [], dependsOn: dependsOnByDoc.get(doc.id) ?? [] })),
     },
   };
+}
+
+/**
+ * 설계자 지적(2026-09-22 후속, "레이턴시가 너무 높아") - Q&A 스레드
+ * 카드마다 "더 보기 자식이 있는지" 배지를 달려고 항목 수만큼
+ * docs.list({parentId})를 각각 불렀다(N+1) - 브라우저 실측으로
+ * 항목 20개짜리 스레드 하나 여는데 그 카운트 조회만으로 초 단위
+ * 지연이 났다. `parentId in (...)`로 한 번에 그룹 집계해서 왕복을
+ * 하나로 줄인다.
+ */
+export async function docsChildCounts(payload: any, ctx: ActionContext): Promise<ActionResult> {
+  const membershipFailure = await guardMembership(payload.projectId, ctx, "READ");
+  if (membershipFailure) return membershipFailure;
+
+  const { projectId, parentIds } = payload;
+  if (!Array.isArray(parentIds) || parentIds.some((p) => typeof p !== "string")) {
+    return fail("parentIds는 문자열 배열이어야 합니다.");
+  }
+  if (parentIds.length === 0) return { ok: true, data: { counts: {} } };
+
+  const grouped = await prisma.document.groupBy({
+    by: ["parentId"],
+    where: { projectId, parentId: { in: parentIds } },
+    _count: { _all: true },
+  });
+  const counts: Record<string, number> = {};
+  for (const row of grouped) {
+    if (row.parentId) counts[row.parentId] = row._count._all;
+  }
+  return { ok: true, data: { counts } };
 }
 
 export async function docsUpdate(payload: any, ctx: ActionContext): Promise<ActionResult> {

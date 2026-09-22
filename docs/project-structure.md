@@ -264,9 +264,20 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   안 좌측 메뉴(기본 설정/Collaborators/Template)로 통합**됐다 -
   `layouts/SettingsShell.vue`(자체 270px `ProjectSidebar` +
   `router-view`)와 `pages/project/settings/{General,Collaborators,
-  Template}Page.vue` - `routes.ts`의 `settings` 라우트 아래
-  `general`/`collaborators`/`template` 세 자식 라우트로 재구성(빈
-  경로는 `general`로 리다이렉트). Documents 탭 우측에 있던 About
+  Template,DocKinds}Page.vue` - `routes.ts`의 `settings` 라우트 아래
+  `general`/`collaborators`/`template`/`doc-kinds` 네 자식 라우트로
+  재구성(빈 경로는 `general`로 리다이렉트). **`DocKindsPage.vue`**
+  (2026-09-22 후속, `PL-PLANDK01`)는 doc 타입(SP/RP/RM/QA/BT)의 분류를
+  이 프로젝트 안에서 추가/수정하고 분류별 지침을 관리한다 - 기본
+  5개는 하드코딩된 라벨 위에 프로젝트별 `DocumentKind` 오버레이(라벨/
+  지침 수정, 또는 기본에 없는 code로 완전히 새 분류 추가)를 얹는
+  구조(`core/docKinds.ts`). 지침은 웹 UI 전용이 아니라 `docKind.list`
+  액션으로 CLI/MCP도 그대로 볼 수 있다(설계자 확인 사항). `docsAdd`는
+  doc 타입일 때만 kind 검증을 이 오버레이까지 포함해서 하고, 다른
+  타입(kind가 하나뿐인 구조적 상수)은 그대로 하드코딩 검증을 쓴다.
+  `DocumentsTab.vue`/`DocCreatePage.vue`가 하드코딩 대신
+  `docKind.list`로 분류/라벨을 동적으로 받아온다. 자세한 판단 근거는
+  design-notes.md 참고. Documents 탭 우측에 있던 About
   카드(`ProjectAboutSidebar.vue`)는 Code 탭 좌측 패널 맨 위로
   옮겼다(프로젝트 진입 시 첫 화면이 Code라 About이 가장 먼저
   보여야 한다는 판단).
@@ -413,7 +424,20 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
 - 액션은 전부 payload에 **명시적 `projectId`**가 필요하다(CLI/MCP는
   `.cnw/config.json`에서 자동으로 채움). 요청이 CLI/MCP를 통했는지
   (=클로드) WEB UI를 통했는지(=architect)는 `X-Cnw-Channel: agent`
-  헤더 유무로 판별한다.
+  헤더 유무로 판별한다. **같은 계정을 여러 에이전트 프로세스가
+  공유할 수 있다**(설계자 확인, 2026-09-22) - 그래서 `X-Cnw-Channel`
+  만으로는 "에이전트인지"만 알 뿐 "어느 에이전트인지"는 못 구별한다.
+  이건 새 메커니즘이 아니라 **이미 있는 apiKey 체계(라벨 붙여서
+  발급, `apiKey.create`)로 해결한다** - 에이전트마다 라벨이 다른 개인
+  키를 발급하면 `core/auth.ts`의 `resolveApiKey()`가 돌려주는
+  `apiKeyLabel`/`apiKeyId`가 곧 "어느 에이전트인지"다
+  (`core/channel.ts`의 `resolveAgentId(channel, apiKeyLabel,
+  apiKeyId)`). `activity.summary`의 최근 활동 로그에 "Claude
+  (agent-alpha)"처럼 표시되고, 활동 로그의 "연속 dedup"도 이 값(없으면
+  architectId)까지 같아야 하나로 합친다. 처음엔 별도 헤더/환경변수
+  (`X-Cnw-Agent-Id`/`CNW_AGENT_ID`)를 새로 만들었다가 "추가로 뭘 더
+  설계하는게 아니라"는 지적을 받고 이 방식으로 되돌렸다 - 자세한
+  내용은 design-notes.md 참고.
 - **project id는 전역 유일이 아니라 그 생성자(owner)별로만 유일**
   하다("설계자 A가 pA를 가졌어도 설계자 B도 pA로 만들 수 있어야
   한다") - `Project.slug`가 `@@unique([creatorAccountId, slug])`로
@@ -623,6 +647,20 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   재연결(멱등)도 재확인. 프론트엔드는 `settings/GeneralPage.vue`에
   "Gitea에 자동 연결" 버튼 추가(Admin 전용, 성공 시 push-mirror
   URL 입력창이 즉시 채워짐).
+- **GitHub OAuth 연결도 같은 화면에 추가**(2026-09-22 후속,
+  `PL-PLANGHOA`, v2의 "GitHub 로그인" 중 연결+저장소 선택 부분만
+  이식) - Gitea는 서버 공유 토큰이라 자동이지만 GitHub는 그걸 연결한
+  architect 개인 소유라 `GithubCredential`(계정당 하나, 평문 토큰 -
+  `Webhook.secret`과 같은 트레이드오프)와 `Project.
+  pushMirrorGithubAccountId`(그 프로젝트 push가 누구 토큰을 쓸지)가
+  새로 생겼다. `core/githubOAuth.ts`(액션 3개 + `GET /api/github/
+  oauth/callback` 원시 라우트)+`core/repo.ts`의 `repoConnectGithub`+
+  `core/gitRepo.ts`의 `pushCredentialFor()`(동기→비동기, GitHub 분기
+  추가). 프론트 버튼은 Gitea 버튼과 동일하게 항상 보이고,
+  `GITHUB_OAUTH_CLIENT_ID`/`SECRET` 미설정이면 눌렀을 때만 에러로
+  알린다(처음엔 미설정 시 버튼을 숨겼다가, 그게 "기능이 아예 없는
+  줄 알았다"는 실제 혼란을 낳아 되돌림 - design-notes.md 참고).
+  자세한 내용/검증 한계는 design-notes.md 참고.
 - **후속 처리 두 가지**(설계자 지시, 2026-09-21 같은 날 후속, `docs/
   plan-gitea-provisioning.md`에 기록) - (1) `project.destroy`가
   DB 삭제 직후 그 프로젝트의 Gitea org도 정리한다(`gitea.ts`의
@@ -750,6 +788,32 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   판단 근거는 `docs/design-notes.md`의 "Q&A 카드 중복 제거" 라운드
   참고. `PullRequestsTab.vue`↔`DocTypeWorkspace.vue` 통합은 조사
   결과 리스크 대비 이득이 작아 보류하기로 결정(같은 라운드에 기록).
+- **`components/FollowUpComposer.vue`**(2026-09-22 후속): 어떤 항목
+  (문서 자신/질문/답변/의견)에든 "추가 질문"/"추가 의견"을 달 수 있는
+  자기완결형 위젯 - `owner`/`projectId`/`parentCode`만 받아 스스로
+  `api.createDocument`를 호출하고 성공하면 `created`만 emit한다.
+  `DocumentDiscussion.vue`(문서 전체 레벨 + 메인 항목 + 중첩 답변)와
+  `DocumentThreadPage.vue`(focal item + child) 다섯 자리 전부가 이
+  컴포넌트 하나를 재사용한다(라벨은 `askLabel`/`opinionLabel`로 문서
+  레벨은 "질문하기"/"의견 남기기", 항목 레벨은 기본값 "추가 질문"/
+  "추가 의견"로 구분). 자세한 판단 근거는 design-notes.md 참고.
+- **Q&A 스레드 조회는 N+1 없이 고정된 요청 수**(2026-09-22 후속,
+  "레이턴시가 너무 높아" 실기동 성능 버그 수정) - `docs.list`가
+  `includeContent: true`를 받으면 목록 하나로 본문까지 돌려주고(항목
+  마다 `docs.get`을 따로 부르던 것 제거), 새 액션 `docs.childCounts`
+  (`{parentIds: string[]}` → `groupBy`로 한 번에 집계)가 항목마다
+  `docs.list({parentId})`를 부르던 것을 대체한다. `DocumentDiscussion.
+  vue`/`DocumentThreadPage.vue` 둘 다 스레드 항목 수와 무관하게 항상
+  고정된 개수의 요청만 보낸다. **`RecentQaFeed.vue`도 같은 이유로
+  최대 60개 요청까지 갔던 걸 고쳤다**(후속 "더 최적화해") - 새 액션
+  `docs.getMany`(`{ids: string[]}` → id 목록으로 여러 문서를 한 번에)
+  로 항목별 부모 조회를, `docs.childCounts`로 항목별 자식 개수 조회를
+  대체 - 피드 크기와 무관하게 항상 최대 5개 요청. **`DocumentsTab.vue`
+  가 doc 분류를 비동기로 받아오는 동안 페이지 렌더링 자체를 막던
+  게이트도 제거**했다 - `DocTypeWorkspace.vue`가 `props.kinds`를
+  나중에 받아도 `?kind=` 쿼리 유효성을 스스로 재검증하도록(watch)
+  바꿔서, Documents 탭도 다른 탭처럼 즉시 렌더링된다. 자세한 내용은
+  design-notes.md 참고.
 - **`app.scss`의 페이지/다이얼로그 폭 토큰**: `--gh-page-width-narrow`
   (720px, 계정/키 관리 등 리스트형), `--gh-page-width-wide`(900px,
   문서 작성/스레드 등 에디터형), `--gh-dialog-width-sm/md/lg`

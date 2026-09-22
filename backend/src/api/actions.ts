@@ -10,6 +10,8 @@ import * as webhooks from "../core/webhooks";
 import * as repoBrowse from "../core/repoBrowse";
 import * as pullRequests from "../core/pullRequests";
 import * as activityLog from "../core/activityLog";
+import * as docKinds from "../core/docKinds";
+import * as githubOAuth from "../core/githubOAuth";
 import { resolveProjectId } from "../core/projectResolve";
 import type { ActionResult } from "../core/types";
 import type { ActionContext } from "../core/documents";
@@ -26,10 +28,15 @@ const registry: Record<string, Handler> = {
   "docs.tag": documents.docsTag,
   "docs.get": documents.docsGet,
   "docs.list": documents.docsList,
+  "docs.childCounts": documents.docsChildCounts,
+  "docs.getMany": documents.docsGetMany,
   "docs.search": documents.docsSearch,
   "docs.status": documents.docsStatus,
   "docs.grep": documents.docsGrep,
   "activity.summary": activityLog.activitySummary,
+  "docKind.list": docKinds.docKindList,
+  "docKind.set": docKinds.docKindSet,
+  "docKind.delete": docKinds.docKindDelete,
   "remember.add": remember.rememberAdd,
   "remember.update": remember.rememberUpdate,
   "remember.delete": remember.rememberDelete,
@@ -39,6 +46,10 @@ const registry: Record<string, Handler> = {
   "message.transition": messages.messageTransition,
   "repo.push": repo.repoPush,
   "repo.connectGitea": repo.repoConnectGitea,
+  "repo.connectGithub": repo.repoConnectGithub,
+  "github.status": githubOAuth.githubStatus,
+  "github.oauthStart": githubOAuth.githubOAuthStart,
+  "github.listRepos": githubOAuth.githubListRepos,
   "project.create": projects.projectCreate,
   "project.get": projects.projectGet,
   "project.list": projects.projectList,

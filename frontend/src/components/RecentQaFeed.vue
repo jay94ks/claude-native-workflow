@@ -120,26 +120,32 @@ async function load() {
   await Promise.all([loadParents(), loadChildCounts()]);
 }
 
+// 설계자 지적(2026-09-22 후속, "더 최적화해") - 피드 항목(최대 30개)마다
+// docs.get/docs.list를 개별 호출하던 N+1을 Q&A 스레드와 같은 방식으로
+// 없앤다 - 부모는 docs.getMany 한 번, 자식 개수는 docs.childCounts
+// 한 번으로 끝낸다(항목 수와 무관하게 요청이 항상 최대 2개).
 async function loadParents() {
-  await Promise.all(
-    feed.value.map(async (item) => {
-      if (!item.parent_id) {
-        parentInfo[item.code] = null;
-        return;
-      }
-      parentInfo[item.code] = await resolveByRawId(item.parent_id);
-    })
-  );
+  const rawIds = [...new Set(feed.value.map((item) => item.parent_id).filter((id): id is string => !!id))];
+  for (const item of feed.value) if (!item.parent_id) parentInfo[item.code] = null;
+  if (rawIds.length === 0) return;
+  const result = await api.getManyDocuments(auth.apiKey!, props.owner, props.projectId, rawIds);
+  if (!result.ok) return;
+  const items = (result.data as { items: ResolvedDoc[] }).items;
+  const byRawId = new Map(items.map((d) => [parseIdFromCode(d.code), d]));
+  for (const item of feed.value) {
+    if (item.parent_id) parentInfo[item.code] = byRawId.get(item.parent_id) ?? null;
+  }
 }
 
 async function loadChildCounts() {
-  await Promise.all(
-    feed.value.map(async (item) => {
-      const rawId = parseIdFromCode(item.code);
-      const result = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, { parentId: rawId });
-      if (result.ok) childCounts[item.code] = (result.data as { items: unknown[] }).items.length;
-    })
-  );
+  const rawIds = feed.value.map((item) => parseIdFromCode(item.code));
+  if (rawIds.length === 0) return;
+  const result = await api.getChildCounts(auth.apiKey!, props.owner, props.projectId, rawIds);
+  if (!result.ok) return;
+  const counts = (result.data as { counts: Record<string, number> }).counts;
+  for (const item of feed.value) {
+    childCounts[item.code] = counts[parseIdFromCode(item.code)] ?? 0;
+  }
 }
 
 const TAB_PATH_BY_TYPE: Record<string, string> = {

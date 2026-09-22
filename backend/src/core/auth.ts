@@ -87,6 +87,14 @@ export async function signup(username: string, password: string): Promise<{ arch
 export interface ResolvedApiKey {
   architectId: string;
   scope: KeyScope;
+  // 설계자 지적(2026-09-22 후속) - "에이전트들이 설계자의 계정으로
+  // 모든 동작을 하기 때문에 API 키 단에서 처리를 해야 할거 같은데.
+  // 추가로 뭘 더 설계하는게 아니라" - 같은 계정을 쓰는 여러 에이전트를
+  // 구별하는 건 이미 있는 apiKey 체계(라벨 붙여서 발급)로 되는 일이라,
+  // 별도 헤더/환경변수를 새로 만들지 않는다. 이 두 필드가 그 API 키
+  // 자체의 신원이다(activityLog.ts가 agentId로 그대로 쓴다).
+  apiKeyId: string;
+  apiKeyLabel: string | null;
 }
 
 export async function resolveApiKey(rawKey: string): Promise<ResolvedApiKey | null> {
@@ -100,5 +108,5 @@ export async function resolveApiKey(rawKey: string): Promise<ResolvedApiKey | nu
   prisma.apiKey.update({ where: { id: key.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
 
   const scope: KeyScope = key.scope === "project" && key.projectId ? { type: "project", projectId: key.projectId } : { type: "unrestricted" };
-  return { architectId: key.accountId, scope };
+  return { architectId: key.accountId, scope, apiKeyId: key.id, apiKeyLabel: key.label };
 }

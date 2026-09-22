@@ -14,11 +14,29 @@ import type { ActionResult } from "./types";
  * 한 추적 코드에 대한 기록 한 줄, docsTransition은 실제로 적용된 코드마다
  * 각각). 실패해도 원래 액션의 응답에 영향을 주면 안 되므로
  * fire-and-forget - await하지 않고 실패는 경고 로그만 남긴다.
+ *
+ * 설계자 요청(2026-09-22 후속) - "특정 액션이 같은 대상에 연속되는
+ * 경우 마지막꺼만 유지해" - 예를 들어 문서 하나를 화면에서 여러 번
+ * 클릭해서 볼 때마다(전이/저장 뒤 재조회 포함) 매번 `docs.get`이
+ * 찍혀 활동 로그/히트맵이 사실상 같은 조회 하나를 여러 줄로 부풀린다.
+ * 그 코드에 찍힌 가장 최근 행이 지금 기록하려는 것과 action **및
+ * 행위자**(agentId - 없으면 architectId)가 같으면(연속) 그 행을 지우고
+ * 새로 하나만 남긴다 - 중간에 다른 action이 끼거나, 같은 계정이어도
+ * 다른 에이전트(agentId)가 한 것이면 연속으로 안 치고 둘 다 남긴다
+ * (설계자 요청 - "에이전트 N개가 같은 계정을 쓴다"는 후속 확인에 따라
+ * actorId만으로는 서로 다른 에이전트를 구별할 수 없어서 추가한 조건).
  */
 export function recordActivity(projectId: string, code: string, action: string, ctx: ActionContext): void {
-  prisma.activityLog
-    .create({ data: { projectId, code, action, channel: ctx.channel, actorId: ctx.architectId } })
-    .catch((err) => console.warn(`[activityLog] "${action}" on ${code} 기록 실패(무시):`, (err as Error).message));
+  const identity = ctx.agentId ?? ctx.architectId;
+  (async () => {
+    const last = await prisma.activityLog.findFirst({ where: { projectId, code }, orderBy: { createdAt: "desc" } });
+    if (last && last.action === action && (last.agentId ?? last.actorId) === identity) {
+      await prisma.activityLog.delete({ where: { id: last.id } });
+    }
+    await prisma.activityLog.create({
+      data: { projectId, code, action, channel: ctx.channel, actorId: ctx.architectId, agentId: ctx.agentId ?? null },
+    });
+  })().catch((err) => console.warn(`[activityLog] "${action}" on ${code} 기록 실패(무시):`, (err as Error).message));
 }
 
 interface HeatmapDay {
@@ -76,7 +94,7 @@ export async function activitySummary(payload: any, ctx: ActionContext): Promise
       where: { projectId, code: { in: codes } },
       orderBy: { createdAt: "desc" },
       take: 30,
-      select: { code: true, action: true, channel: true, createdAt: true },
+      select: { code: true, action: true, channel: true, agentId: true, createdAt: true },
     }),
   ]);
 

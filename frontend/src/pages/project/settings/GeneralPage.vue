@@ -24,6 +24,46 @@
       <div v-if="connectGiteaMessage" class="text-positive text-caption q-mt-sm">{{ connectGiteaMessage }}</div>
     </template>
 
+    <!-- 설계자 요청(2026-09-22 후속) - v2의 "GitHub 로그인"(자기 GitHub
+         계정을 연결해 저장소를 고르는 기능)을 push-mirror 설정에 추가.
+         Gitea와 달리 서버 공유 토큰이 아니라 이 architect 개인의 OAuth
+         토큰이라 "로그인 여부"부터 따로 확인해야 한다 - 이미 연결
+         돼있으면 바로 저장소 선택, 아니면 팝업으로 로그인부터.
+         설계자 재지적(2026-09-22, 같은 날 후속) - GITHUB_OAUTH_CLIENT_ID
+         미설정이면 버튼 자체를 숨겼었는데, "Gitea처럼 안 눌러도 에러로
+         보여주는 게 낫지 않을까"라는 지적을 받아 Gitea와 동일한 패턴
+         (항상 보이고, 눌렀을 때 미설정이면 에러 메시지)으로 바꿨다 -
+         버튼이 안 보여서 기능 자체가 없는 줄 알았던 실제 혼란(바로 이
+         라운드에서 겪음)을 근거로 판단. -->
+    <template v-if="project.isAdmin">
+      <q-btn v-if="!githubConnected" outline color="primary" label="GitHub로 로그인" size="sm" class="q-mt-sm" :loading="githubOAuthLoading" @click="startGithubLogin" />
+      <q-btn v-else outline color="primary" :label="`GitHub 저장소 선택 (${githubLogin} 계정으로 연결됨)`" size="sm" class="q-mt-sm" @click="openGithubRepoPicker" />
+      <div v-if="githubError" class="text-negative text-caption q-mt-sm">{{ githubError }}</div>
+      <div v-if="githubMessage" class="text-positive text-caption q-mt-sm">{{ githubMessage }}</div>
+    </template>
+
+    <q-dialog v-model="githubRepoDialogOpen">
+      <q-card style="width: var(--gh-dialog-width-lg)">
+        <q-card-section class="text-h6">GitHub 저장소 선택</q-card-section>
+        <q-card-section>
+          <div v-if="githubReposLoading" class="text-caption">불러오는 중...</div>
+          <q-list v-else bordered separator>
+            <q-item v-for="r in githubRepos" :key="r.fullName" clickable @click="selectGithubRepo(r)">
+              <q-item-section>
+                <q-item-label>{{ r.fullName }} <q-badge v-if="r.private" color="grey-6">private</q-badge></q-item-label>
+                <q-item-label caption>기본 브랜치: {{ r.defaultBranch }}</q-item-label>
+              </q-item-section>
+            </q-item>
+            <EmptyState v-if="githubRepos.length === 0" as="item" message="저장소가 없습니다." />
+          </q-list>
+          <div v-if="githubReposError" class="text-negative text-caption q-mt-sm">{{ githubReposError }}</div>
+          <div class="row justify-end q-mt-sm">
+            <q-btn v-if="githubReposHasMore" flat label="더 보기" :loading="githubReposLoading" @click="loadGithubRepos(githubReposPage + 1)" />
+          </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
     <template v-if="project.isAdmin">
       <q-separator class="q-my-lg" />
       <div class="text-subtitle1 q-mb-sm">Webhooks</div>
@@ -119,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from "vue";
+import { ref, watch, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import { useProjectStore } from "stores/project";
@@ -194,6 +234,101 @@ async function connectGitea() {
   }
   pushMirrorUrl.value = (result.data as { pushMirrorUrl: string }).pushMirrorUrl;
   connectGiteaMessage.value = "Gitea 저장소를 연결했습니다 - push-mirror 대상이 자동으로 채워졌습니다(아래 저장 버튼은 이미 반영돼 있어 다시 누를 필요 없음).";
+  await project.load(props.owner, props.projectId);
+}
+
+// 설계자 요청(2026-09-22 후속, v2의 "GitHub 로그인") - Gitea와 달리
+// 서버 공유 토큰이 아니라 이 architect 개인의 OAuth 연결이라 먼저
+// "이미 연결돼 있는지"부터 확인한다(github.status). 미설정(GITHUB_
+// OAUTH_CLIENT_ID/SECRET 없음)이어도 Gitea처럼 버튼은 항상 보이고
+// connected===false로만 와서 "로그인" 버튼이 뜨며, 눌렀을 때 서버가
+// 명확한 에러로 알린다(처음엔 미설정 시 버튼 자체를 숨겼었는데,
+// 그 상태에서 기능이 아예 없는 줄 알았던 실제 혼란을 겪고 되돌림).
+const githubConnected = ref(false);
+const githubLogin = ref<string | null>(null);
+const githubOAuthLoading = ref(false);
+const githubError = ref("");
+const githubMessage = ref("");
+
+async function loadGithubStatus() {
+  const result = await api.getGithubStatus(auth.apiKey!);
+  if (!result.ok) return;
+  const data = result.data as { configured: boolean; connected: boolean; githubLogin: string | null };
+  githubConnected.value = data.connected;
+  githubLogin.value = data.githubLogin;
+}
+
+// 팝업으로 OAuth를 진행하고(v2와 동일한 패턴), 콜백 페이지가 보내는
+// postMessage로 완료를 알아챈다 - 팝업 자체가 GitHub 도메인으로
+// 이동하므로 그 창을 직접 폴링할 수 없고 이 방법뿐이다.
+async function startGithubLogin() {
+  githubOAuthLoading.value = true;
+  githubError.value = "";
+  githubMessage.value = "";
+  const result = await api.startGithubOAuth(auth.apiKey!);
+  githubOAuthLoading.value = false;
+  if (!result.ok) {
+    githubError.value = result.reason?.join(", ") ?? "GitHub 로그인 시작에 실패했습니다.";
+    return;
+  }
+  const { authorizeUrl } = result.data as { authorizeUrl: string };
+  window.open(authorizeUrl, "github-oauth", "width=640,height=720");
+}
+
+function onGithubOAuthMessage(event: MessageEvent) {
+  if (event.origin !== window.location.origin) return;
+  if (!event.data || event.data.type !== "github-oauth-done") return;
+  if (!event.data.ok) {
+    githubError.value = event.data.error ?? "GitHub 연결에 실패했습니다.";
+    return;
+  }
+  githubMessage.value = "GitHub 계정을 연결했습니다.";
+  loadGithubStatus().then(() => openGithubRepoPicker());
+}
+
+interface GithubRepoSummary {
+  fullName: string;
+  cloneUrl: string;
+  private: boolean;
+  defaultBranch: string;
+}
+const githubRepoDialogOpen = ref(false);
+const githubRepos = ref<GithubRepoSummary[]>([]);
+const githubReposPage = ref(1);
+const githubReposHasMore = ref(false);
+const githubReposLoading = ref(false);
+const githubReposError = ref("");
+
+function openGithubRepoPicker() {
+  githubRepoDialogOpen.value = true;
+  githubRepos.value = [];
+  loadGithubRepos(1);
+}
+
+async function loadGithubRepos(page: number) {
+  githubReposLoading.value = true;
+  githubReposError.value = "";
+  const result = await api.listGithubRepos(auth.apiKey!, page);
+  githubReposLoading.value = false;
+  if (!result.ok) {
+    githubReposError.value = result.reason?.join(", ") ?? "목록을 불러오지 못했습니다.";
+    return;
+  }
+  const data = result.data as { items: GithubRepoSummary[]; hasMore: boolean };
+  githubReposPage.value = page;
+  githubRepos.value = page === 1 ? data.items : [...githubRepos.value, ...data.items];
+  githubReposHasMore.value = data.hasMore;
+}
+
+async function selectGithubRepo(repo: GithubRepoSummary) {
+  const result = await api.connectGithub(auth.apiKey!, props.owner, props.projectId, repo.cloneUrl);
+  if (!result.ok) {
+    githubReposError.value = result.reason?.join(", ") ?? "연결에 실패했습니다.";
+    return;
+  }
+  pushMirrorUrl.value = (result.data as { pushMirrorUrl: string }).pushMirrorUrl;
+  githubRepoDialogOpen.value = false;
+  githubMessage.value = `GitHub 저장소(${repo.fullName})를 연결했습니다 - push-mirror 대상이 자동으로 채워졌습니다(아래 저장 버튼은 이미 반영돼 있어 다시 누를 필요 없음).`;
   await project.load(props.owner, props.projectId);
 }
 
@@ -291,7 +426,12 @@ onMounted(() => {
   if (project.isAdmin) {
     loadWebhooks();
     loadProjectApiKeys();
+    loadGithubStatus();
   }
+  window.addEventListener("message", onGithubOAuthMessage);
+});
+onUnmounted(() => {
+  window.removeEventListener("message", onGithubOAuthMessage);
 });
 
 const confirmDestroy = ref(false);
