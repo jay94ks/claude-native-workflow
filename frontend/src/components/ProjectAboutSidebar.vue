@@ -24,7 +24,7 @@
       <div class="q-gutter-xs">
         <router-link :to="`/${owner}/${projectId}/settings/collaborators`" class="row items-center gh-link" style="gap: 6px">
           <q-icon name="group" size="16px" />
-          <span>{{ members.length }} collaborators</span>
+          <span>{{ loading ? "…" : members.length }} collaborators</span>
         </router-link>
         <router-link :to="`/${owner}/${projectId}/settings/template`" class="row items-center gh-link" style="gap: 6px">
           <q-icon name="integration_instructions" size="16px" />
@@ -39,16 +39,16 @@
          라벨을 누르면 팝업(q-menu)으로 목록만 보여준다. -->
     <div>
       <div class="text-subtitle2 cursor-pointer gh-link" style="width: fit-content">
-        Contributors <span style="color: var(--gh-fg-muted)">{{ members.length }}</span>
+        Contributors <span style="color: var(--gh-fg-muted)">{{ loading ? "…" : members.length }}</span>
         <q-menu anchor="bottom left" self="top left">
           <q-list style="min-width: 180px">
             <q-item v-for="m in members" :key="m.username">
               <q-item-section avatar>
-                <div class="gh-avatar" style="width: 24px; height: 24px; font-size: 11px">{{ m.username.charAt(0).toUpperCase() }}</div>
+                <div class="gh-avatar" style="width: var(--gh-avatar-md); height: var(--gh-avatar-md); font-size: 11px">{{ m.username.charAt(0).toUpperCase() }}</div>
               </q-item-section>
               <q-item-section>{{ m.username }}</q-item-section>
             </q-item>
-            <q-item v-if="members.length === 0"><q-item-section class="text-caption">아직 없음</q-item-section></q-item>
+            <q-item v-if="!loading && members.length === 0"><q-item-section class="text-caption">아직 없음</q-item-section></q-item>
           </q-list>
         </q-menu>
       </div>
@@ -59,7 +59,8 @@
     <!-- Languages 자리 - 문서 타입 구성 비율로 대체 -->
     <div>
       <div class="text-subtitle2 q-mb-sm">문서 타입 구성</div>
-      <template v-if="typeBreakdown.length > 0">
+      <div v-if="loading" class="text-caption">불러오는 중...</div>
+      <template v-else-if="typeBreakdown.length > 0">
         <div class="row" style="height: 8px; border-radius: 4px; overflow: hidden">
           <div
             v-for="t in typeBreakdown"
@@ -127,6 +128,7 @@ interface KindStatus {
   byState: Record<string, { count: number }>;
 }
 const statusByKind = ref<Record<string, KindStatus>>({});
+const loading = ref(true);
 
 const typeBreakdown = computed(() => {
   const totalsByType: Record<string, number> = {};
@@ -145,12 +147,14 @@ const typeBreakdown = computed(() => {
 });
 
 async function load() {
+  loading.value = true;
   const [membersResult, statusResult] = await Promise.all([
     api.getProjectMembers(auth.apiKey!, props.owner, props.projectId),
     api.getDocsStatus(auth.apiKey!, props.owner, props.projectId),
   ]);
   if (membersResult.ok) members.value = (membersResult.data as { members: Member[] }).members;
   if (statusResult.ok) statusByKind.value = (statusResult.data as { byKind: Record<string, KindStatus> }).byKind;
+  loading.value = false;
 }
 
 onMounted(load);

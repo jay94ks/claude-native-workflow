@@ -38,7 +38,7 @@
 
         <div class="row items-center no-wrap" style="gap: 10px; cursor: pointer">
           <span class="text-white text-caption">{{ displayLabel || auth.username }}</span>
-          <div class="gh-avatar" style="width: 28px; height: 28px; font-size: 13px">{{ initial }}</div>
+          <div class="gh-avatar" style="width: var(--gh-avatar-lg); height: var(--gh-avatar-lg); font-size: 13px">{{ initial }}</div>
           <q-menu>
             <q-list style="min-width: 160px">
               <q-item clickable v-close-popup @click="showNickname = true">

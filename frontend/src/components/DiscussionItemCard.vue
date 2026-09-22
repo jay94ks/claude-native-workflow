@@ -2,11 +2,11 @@
   <div class="gh-card" :class="[paddingClass, { 'qa-highlighted': highlighted }]" :id="`qa-${code}`">
     <div class="row items-center justify-between">
       <div class="row items-center" style="gap: 6px; min-width: 0">
-        <q-badge :color="kindColor" outline dense>{{ kindLabel }}</q-badge>
+        <CategoryPill :color="kindColor">{{ kindLabel }}</CategoryPill>
         <span class="text-weight-medium ellipsis">{{ title }}</span>
       </div>
       <div class="row items-center" style="gap: 4px; flex-shrink: 0">
-        <q-badge :color="stateColor">{{ state }}</q-badge>
+        <q-badge :color="stateColorValue">{{ state }}</q-badge>
         <div class="gh-avatar" :style="{ width: avatarSize, height: avatarSize, fontSize: `calc(${avatarSize} * 0.5)` }">
           {{ author === "agent" ? "C" : "A" }}
         </div>
@@ -28,6 +28,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { renderMarkdownSafe } from "src/utils/renderMarkdown";
+import { stateColor } from "src/utils/stateColor";
+import CategoryPill from "components/CategoryPill.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -43,7 +45,7 @@ const props = withDefaults(
     avatarSize?: string;
     paddingClass?: string;
   }>(),
-  { avatarSize: "22px", paddingClass: "q-pa-sm q-mb-sm" }
+  { avatarSize: "var(--gh-avatar-md)", paddingClass: "q-pa-sm q-mb-sm" }
 );
 
 function kindLabelOf(kind: string): string {
@@ -57,15 +59,10 @@ function kindColorOf(kind: string): string {
   if (kind === "AN") return "positive";
   return "primary";
 }
-function stateColorOf(state: string): string {
-  if (state === "done") return "positive";
-  if (state === "discard") return "grey-6";
-  return "primary";
-}
 
 const kindLabel = computed(() => kindLabelOf(props.kind));
 const kindColor = computed(() => kindColorOf(props.kind));
-const stateColor = computed(() => stateColorOf(props.state));
+const stateColorValue = computed(() => stateColor(props.state));
 </script>
 
 <style scoped>

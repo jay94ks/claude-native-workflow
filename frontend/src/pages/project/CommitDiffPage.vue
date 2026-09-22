@@ -16,7 +16,7 @@
           <div class="row items-center" style="gap: 4px">
             <q-icon :name="scope.node.isFile ? 'description' : 'folder'" :color="scope.node.isFile ? 'grey-7' : 'amber-8'" size="16px" />
             <span>{{ scope.node.label }}</span>
-            <q-badge v-if="scope.node.status" outline dense>{{ scope.node.status }}</q-badge>
+            <CategoryPill v-if="scope.node.status">{{ scope.node.status }}</CategoryPill>
           </div>
         </template>
       </q-tree>
@@ -50,6 +50,7 @@ import { useAuthStore } from "stores/auth";
 import ProjectSidebar from "components/ProjectSidebar.vue";
 import DiffViewer from "components/DiffViewer.vue";
 import EmptyState from "components/EmptyState.vue";
+import CategoryPill from "components/CategoryPill.vue";
 import * as api from "src/api/client";
 import { buildFileTree } from "src/utils/fileTree";
 

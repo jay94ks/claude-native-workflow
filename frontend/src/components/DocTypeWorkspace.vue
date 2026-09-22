@@ -47,26 +47,24 @@
         <!-- design-notes.md "문서간 참조"/"의존성" - related/dependsOn을 태그
              배지로 보여주고, 클릭하면(다른 type이어도) 그 문서로 바로 이동한다. -->
         <div class="q-gutter-xs q-mb-sm">
-          <q-badge
+          <CategoryPill
             v-for="ref in selected.related"
             :key="'related-' + ref.code"
-            outline
             color="primary"
             class="cursor-pointer"
             @click="select(ref.code)"
           >
             related: {{ ref.code }}
-          </q-badge>
-          <q-badge
+          </CategoryPill>
+          <CategoryPill
             v-for="ref in selected.dependsOn"
             :key="'dependsOn-' + ref.code"
-            outline
             color="deep-orange"
             class="cursor-pointer"
             @click="select(ref.code)"
           >
             dependsOn: {{ ref.code }}
-          </q-badge>
+          </CategoryPill>
           <q-btn v-if="!readOnly" size="sm" dense flat icon="add_link" label="태그 추가" @click="openTagDialog" />
         </div>
 
@@ -120,6 +118,8 @@ import MarkdownSourceView from "components/MarkdownSourceView.vue";
 import ProjectSidebar from "components/ProjectSidebar.vue";
 import PageHeader from "components/PageHeader.vue";
 import EmptyState from "components/EmptyState.vue";
+import CategoryPill from "components/CategoryPill.vue";
+import { stateColor } from "src/utils/stateColor";
 import * as api from "src/api/client";
 
 interface TaggedRef {
@@ -186,13 +186,6 @@ const items = ref<DocSummary[]>([]);
 const selected = ref<DocFull | null>(null);
 const transitioning = ref<string | null>(null);
 const actionError = ref("");
-
-function stateColor(state: string): string {
-  if (state === "done" || state === "ended") return "positive";
-  if (state === "discard" || state === "canceled") return "grey-6";
-  if (state === "active" || state === "resumed") return "orange";
-  return "primary";
-}
 
 const sortByDependency = ref(false);
 const loading = ref(true);

@@ -1,6 +1,5 @@
 <template>
   <div>
-    <PageHeader variant="section" title="Trackers & Tests" class="q-mx-md" />
     <q-tabs v-model="innerTab" dense class="q-mx-md" align="left">
       <q-tab name="tracker" label="Trackers" />
       <q-tab name="test" label="Tests" />
@@ -40,7 +39,6 @@ import { ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import DocTypeWorkspace from "components/DocTypeWorkspace.vue";
 import RecentQaFeed from "components/RecentQaFeed.vue";
-import PageHeader from "components/PageHeader.vue";
 
 defineProps<{ owner: string; projectId: string }>();
 

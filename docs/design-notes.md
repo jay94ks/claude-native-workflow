@@ -3200,3 +3200,155 @@ DocumentThreadPage.vue | grep '^-'`로 삭제된 모든 줄이 카드/슬롯으�
 확인), RecentQaFeed 하이라이트 스크롤, ThreadPage의 재질의하기 컴포저,
 child 완료 처리까지 전부 실제 클릭으로 확인.
 
+### notices 토스트 mojibake 버그 수정 (2026-09-22, 같은 날 후속)
+
+위 라운드를 검증하던 중 우연히 발견한, 완전히 별개의 버그 - 액션 성공
+시 뜨는 notices 토스트(예: `[QU-xxxx]에 질의가 등록되었습니다.`)가
+한글 부분만 깨진 문자(mojibake)로 표시됐다. 설계자가 즉시 고쳐달라고
+요청해서 이 라운드에서 바로 처리.
+
+**근본 원인**: REST 경로(`api/rest.ts`)는 notices를 응답 바디가 아니라
+`X-Cnw-Notices` 헤더에 "JSON을 base64로 인코딩"해서 싣는데, 백엔드는
+`Buffer.from(JSON.stringify(notices), "utf-8").toString("base64")`로
+올바르게 UTF-8 인코딩하고 있었다. 문제는 프론트(`frontend/src/api/
+client.ts`의 `surfaceNoticesFromHeader`)가 이걸 그냥 `atob(header)`로
+디코딩한 것 - **`atob()`는 브라우저 표준 동작 그대로 "바이트 하나당
+문자 하나"인 바이너리 문자열만 돌려준다**(버그 아님, 원래 그런
+함수). 한글처럼 UTF-8에서 한 글자가 여러 바이트인 문자는 그 바이트들이
+그대로 각각 다른 UTF-16 코드유닛으로 취급돼 항상 깨졌다 - 순수 영문
+notices였다면 절대 안 드러났을 클래스의 버그.
+
+**수정**: `decodeBase64Utf8()` 헬퍼를 추가해 `atob()`의 바이너리
+문자열을 `Uint8Array`로 바꾼 뒤 `TextDecoder("utf-8").decode()`로
+다시 해석하도록 고쳤다(`frontend/src/api/client.ts`).
+
+**검증**: 브라우저에서 직접 `fetch()`로 실제 REST 엔드포인트를 호출해
+같은 헤더를 두 가지 방식(기존 `atob()` vs 새 `decodeBase64Utf8()`)으로
+나란히 디코딩해봐서 기존 방식이 정확히 그 mojibake 패턴을 재현하고
+새 방식이 올바른 한글을 내는 것을 직접 비교 확인. 이어서 `window.fetch`
+를 몽키패치해 앱이 실제로 사용하는 코드 경로(SPA 내 탭 클릭으로 트리거)
+로도 올바른 한글 notices(`[QU-8BXKR2W1]에 질의가 등록되었습니다.`)가
+나오는 것까지 재확인. 이 버그를 재현하려고 만든 질문 6개는 전부
+discard로 정리.
+
+grep으로 `atob(` 사용처가 이 한 곳뿐임을 확인 - CLI/MCP가 쓰는
+`shared/src/apiclient.ts`는 REST가 아니라 `/api/actions` 단일
+엔드포인트를 쓰고 notices를 응답 바디에 그대로(JSON, base64 아님)
+받으므로 이 버그와 무관하다.
+
+### 전체 화면 스크린샷 재점검 - ProjectAboutSidebar 로딩 깜빡임 발견·수정 (2026-09-22, 같은 날 후속)
+
+설계자가 "탑바/탭처럼 일관성 있게"를 다시 요청해서, 이미 끝난 두
+라운드(PL-PLANFEUI, Q&A 카드 중복 제거)를 설명한 뒤 "그래도 전체를
+스크린샷으로 훑어봐달라"는 후속 요청을 받아 Projects/Accounts/API
+키/Code/PR 목록+상세/Issues/Documents/Plans/Trackers·Tests/Settings
+(General·Collaborators·Template) 전 화면을 데스크톱+모바일 폭으로
+다시 돌며 확인했다.
+
+**발견·수정한 버그**: `components/ProjectAboutSidebar.vue`(Code 탭
+좌측 About 패널)는 `members`/`statusByKind`를 불러오는 동안 로딩
+표시가 전혀 없어서, 페이지를 열 때마다 아주 잠깐 "0 collaborators"/
+"Contributors 0"/"아직 문서가 없습니다"가 실제 값 대신 먼저 보였다가
+데이터가 도착하면 바뀌는 깜빡임이 있었다 - 이전 라운드에서
+`DocTypeWorkspace`/`PullRequestsTab`/`CodeTab`에 적용한 것과 정확히
+같은 클래스의 문제인데 이 컴포넌트는 그때 범위에 없었다. 같은 관례
+("불러오는 중..." 캡션, collaborators/Contributors 숫자는 로딩 중엔
+"…")로 맞췄다.
+
+**API 키 관리 화면의 데이터 정리(보류)**: `/keys` 화면이 이번 세션 내내
+반복한 `login()` 호출마다 새로 발급된 personal 키 79개로 도배돼 있어
+화면이 심하게 지저분해 보였다 - 이건 스타일 문제가 아니라 이 세션이
+만든 테스트 데이터 뭉치다. 지금 브라우저 세션이 실제로 쓰고 있는 키
+하나만 남기고 나머지를 일괄 배제(revoke)하려 했으나, Claude Code
+자동 모드의 안전장치("Secret-Store Writes")가 대량 키 배제 요청을
+막았다 - 의도적인 보호로 보여 우회하지 않았다. 설계자가 명시적으로
+승인하면 그때 정리한다(대상: `apiKey.list` 결과 중 `scope==='personal'`
+이고 `id !== 'cmubecjud000vlru0k8c48xl6'`인 활성 키 전부, admin
+계정 소유).
+
+**재확인**: 모바일 폭(375px)에서도 Documents 탭 사이드바 드로어가
+정상 동작. 스크롤 중 헤더가 이중으로 보이는 것처럼 보인 순간이
+있었으나 재현 안 됨(자동화 도구가 스크롤 직후 바로 스크린샷을 찍어서
+생긴 캡처 타이밍 문제로 판단 - 실제 앱 동작 아님, `wait` 후
+재스크린샷으로 정상 확인).
+
+### 프론트엔드 일관성 3라운드 - 버튼/뱃지/아바타 (2026-09-22, 같은 날 후속)
+
+설계자가 "버튼 및 각종 UI 요소들의 스타일을 맞춰줘"로 세 번째 일관성
+라운드를 요청. Explore 에이전트로 `q-btn`/`q-badge`/`.gh-avatar`/
+`q-banner`/`q-toggle` 전수 조사 후 아래를 고쳤다:
+
+- **`TemplatePage.vue`의 "이 프로젝트에 배포" 버튼**: `color="secondary"`
+  → `color="primary"` - 다른 모든 설정 화면의 주 액션 버튼(저장/초대/
+  발급/양도/소유자 변경/프로젝트 파기)이 예외 없이 의미 있는 색(primary/
+  warning/negative)을 쓰는데 이 버튼만 `secondary`였다(다른 곳엔
+  `secondary`가 아예 안 쓰임).
+- **상태→색상 매핑 중복 제거**: `DocTypeWorkspace.vue`/
+  `DiscussionItemCard.vue`/`RecentQaFeed.vue`/`PullRequestsTab.vue`
+  네 곳에 손으로 복제된 `stateColor()`가 서로 다른 부분집합(일부는
+  active/resumed→orange 분기가 없음)이었다 - `src/utils/stateColor.ts`
+  하나로 합치고(superset 기준) 네 곳 다 import로 교체. 새 상태 값이
+  생겨도 한 곳만 고치면 되게.
+- **아바타 크기 토큰화**: `.gh-avatar`가 20px/22px/24px/28px 네 가지
+  리터럴 값으로 흩어져 있었다 - `app.scss`에 `--gh-avatar-sm/md/lg`
+  (20/24/28px) 추가, `MainLayout.vue`(28→lg)/`ProjectAboutSidebar.vue`
+  (24→md)/`DiscussionItemCard.vue`(기본 22→md)/`DocumentDiscussion.vue`
+  의 중첩 답변 오버라이드(20→sm)를 전부 토큰으로 교체.
+- **다이얼로그 입력 밀도**: `ProjectListPage.vue`의 "새 프로젝트"
+  다이얼로그 입력 3개에 `dense` 추가 - `ChangePasswordDialog`/
+  `NicknameDialog`는 이미 dense였는데 이 다이얼로그만 빠져 있었다.
+- **웹훅 삭제 버튼**: `GeneralPage.vue`의 웹훅 삭제가 유일하게 아이콘
+  전용 버튼(`icon="delete"`)이었다 - 계정 삭제/API 키 배제 등 나머지
+  전부(3곳)가 텍스트 라벨 버튼이라 그 다수 관례에 맞춰 "삭제" 라벨
+  버튼으로 교체.
+
+**설계자 판단이 필요해서 미룬 것**: `.gh-pill`(탑바의 역할/공개여부
+뱃지 - 둥근 알약 모양, 무채색 외곽선)과 콘텐츠 영역의 `q-badge`
+(카테고리 태그 - 질문/답변/의견 종류, collaborator 역할, PR 파일 상태
+등)가 시각적으로 서로 다른 두 체계다 - 정확히 설계자가 원래 지적한
+"탑바만 다듬어져 있고 나머지는 다르다"의 마지막 남은 실체. 하지만
+`q-badge`쪽은 `color` prop으로 실제 의미를 구분하는 곳이 있다(예:
+`CollaboratorsPage.vue`가 수락됨=primary/대기중=grey-6로 상태를
+색으로 구분) - `.gh-pill`엔 색상 변형이 없어서 그대로 바꾸면 그 구분이
+사라진다. 기계적으로 교체할 수 없는 진짜 디자인 결정이라 이번엔
+건드리지 않고 남겨둠(에이전트 보고서에도 "설계자에게 물어볼 것"으로
+명시됨).
+
+**검증**: `vue-tsc --noEmit` 통과. 브라우저로 Documents(상태 뱃지 색
+그대로), Discussion 카드(아바타 크기 차이 그대로), PR 목록(merged/
+closed 색 그대로), Template 배포 버튼(파란색으로 바뀜), 웹훅
+삭제(텍스트 버튼으로 바뀜, 실제 삭제 동작) 전부 실제 클릭/스크린샷으로
+확인.
+
+### `.gh-pill` vs `q-badge` 결정 - `CategoryPill.vue` 도입 (2026-09-22, 같은 날 후속)
+
+위에서 설계자 판단이 필요하다고 미뤄뒀던 것 - 설계자가 "계속 진행해"로
+승인해서 바로 진행. `components/CategoryPill.vue`(신규)를 만들어
+`.gh-pill`의 모양(둥근 외곽선, app.scss)은 그대로 두고 `color` prop이
+있으면 Quasar named color 유틸리티 클래스(`text-<color>`)로 글자색을,
+`border-color: currentColor`로 테두리를 그 색에 맞춘다 - 기존
+`q-badge outline`이 색으로 의미를 구분하던 것(예: collaborator
+수락됨=primary/대기중=grey-6)을 그대로 유지하면서 모양만 탑바와
+맞춘다.
+
+적용한 곳(전부 "카테고리 태그" - 상태값이 아닌 것만, `stateColor()`가
+칠하는 상태 뱃지는 그대로 사각 `q-badge` 유지): `DiscussionItemCard.vue`
+의 질문/답변/의견 종류 뱃지, `DocTypeWorkspace.vue`의 related/dependsOn
+태그, `CollaboratorsPage.vue`의 역할 뱃지(수락됨/대기중 둘 다),
+`ProjectCard.vue`의 myRole 뱃지(visibility 뱃지는 filled라서 상태
+뱃지 취급 - 그대로 둠), `RecentQaFeed.vue`의 타입/부모 뱃지,
+`PullRequestsTab.vue`/`CommitDiffPage.vue`의 파일 상태 뱃지(색 지정이
+원래 없었어서 무채색 pill이 됨).
+
+**추가로 같은 라운드에서 설계자 지시로 고친 것**: `TrackersTestsTab.vue`
+상단의 `PageHeader variant="section" title="Trackers & Tests"`를
+제거 - 원래 "Code 탭처럼 헤더가 아예 없던 것"을 지난 일관성 라운드에서
+다른 탭들과 맞추려고 붙였는데, 설계자가 다시 보고 "탭 바로 위 텍스트
+없이 하위 탭(TRACKERS/TESTS/RECENT Q&A)이 바로 보이게" 요청 - 제거.
+`DocTypeWorkspace`가 내부적으로 자기 섹션 헤더("Trackers (2)" 등)를
+이미 보여주므로 컨텍스트 손실은 없다.
+
+**검증**: `vue-tsc --noEmit` 통과. 브라우저로 문서 상세 화면(related/
+dependsOn 태그가 둥근 pill로, 색은 그대로), Collaborators, Trackers &
+Tests(헤더 제거 확인) 전부 스크린샷으로 확인.
+

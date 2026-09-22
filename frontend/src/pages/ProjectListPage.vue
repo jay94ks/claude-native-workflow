@@ -23,12 +23,12 @@
       <q-card style="width: var(--gh-dialog-width-md)">
         <q-card-section class="text-h6">새 프로젝트</q-card-section>
         <q-card-section class="q-gutter-md">
-          <q-input v-model="newName" label="이름" autofocus />
+          <q-input v-model="newName" label="이름" dense autofocus />
           <!-- 설계자 요청(2026-09-21 후속) - "프로젝트 id는 설계자별로 관리되어야
                한다" - 내 계정 범위에서만 유일하면 되므로 직접 고른다(다른
                설계자가 이미 같은 id를 쓰고 있어도 상관없다). -->
-          <q-input v-model="newId" label="id (URL에 쓰일 값, 영문/숫자/-/_)" hint="예: my-app" />
-          <q-input v-model="newDescription" label="설명 (선택)" />
+          <q-input v-model="newId" label="id (URL에 쓰일 값, 영문/숫자/-/_)" hint="예: my-app" dense />
+          <q-input v-model="newDescription" label="설명 (선택)" dense />
           <q-toggle v-model="newIsPublic" label="공개(PUBLIC) - 비멤버도 읽기 가능" />
           <div v-if="createError" class="text-negative text-caption">{{ createError }}</div>
         </q-card-section>

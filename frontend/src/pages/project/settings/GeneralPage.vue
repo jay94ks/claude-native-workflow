@@ -35,7 +35,7 @@
             <q-item-label caption>{{ w.id }}</q-item-label>
           </q-item-section>
           <q-item-section side>
-            <q-btn flat dense round icon="delete" color="negative" @click="deleteWebhook(w.id)" />
+            <q-btn dense flat color="negative" label="삭제" @click="deleteWebhook(w.id)" />
           </q-item-section>
         </q-item>
         <EmptyState v-if="webhookList.length === 0" as="item" message="등록된 웹훅이 없습니다." />

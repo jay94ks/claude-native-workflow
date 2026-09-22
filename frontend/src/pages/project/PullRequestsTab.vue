@@ -42,7 +42,7 @@
             <div class="row items-center" style="gap: 4px">
               <q-icon :name="scope.node.isFile ? 'description' : 'folder'" :color="scope.node.isFile ? 'grey-7' : 'amber-8'" size="16px" />
               <span>{{ scope.node.label }}</span>
-              <q-badge v-if="scope.node.status" outline dense>{{ scope.node.status }}</q-badge>
+              <CategoryPill v-if="scope.node.status">{{ scope.node.status }}</CategoryPill>
             </div>
           </template>
         </q-tree>
@@ -97,6 +97,8 @@ import PageHeader from "components/PageHeader.vue";
 import EmptyState from "components/EmptyState.vue";
 import * as api from "src/api/client";
 import { buildFileTree } from "src/utils/fileTree";
+import { stateColor } from "src/utils/stateColor";
+import CategoryPill from "components/CategoryPill.vue";
 
 interface PrSummary {
   id: string;
@@ -128,12 +130,6 @@ const actionError = ref("");
 const descriptionError = ref("");
 const merging = ref(false);
 const closing = ref(false);
-
-function stateColor(state: string): string {
-  if (state === "merged") return "positive";
-  if (state === "closed") return "grey-6";
-  return "primary";
-}
 
 const fileTree = computed(() => (selected.value ? buildFileTree(selected.value.diff.files) : []));
 

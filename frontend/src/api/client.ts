@@ -58,11 +58,25 @@ export async function signup(username: string, password: string): Promise<{ arch
 // design-notes.md "메시지 시스템": notices는 예외 없이 모든 액션 응답에
 // 피기백되어 온다 - REST에서는 응답 바디 모양을 순수하게 유지하려고
 // `X-Cnw-Notices` 헤더(JSON을 base64로 인코딩)로 대신 싣는다.
+//
+// 버그(2026-09-22 발견) - `atob()`는 base64를 "바이트 하나당 문자 하나"인
+// 바이너리 문자열로만 디코딩한다(브라우저 표준 동작 그대로, 버그 아님) -
+// 한글처럼 UTF-8에서 한 글자가 여러 바이트인 경우 그 바이트들을 그대로
+// UTF-16 코드유닛으로 취급해버려 항상 깨진 글자(mojibake)가 됐다.
+// 백엔드(`api/rest.ts`)는 이미 `Buffer.from(json, "utf-8").toString("base64")`
+// 로 올바르게 인코딩하고 있었으니, 프론트 쪽 디코딩만 그 바이트를 실제로
+// UTF-8로 해석하도록 고치면 된다.
+function decodeBase64Utf8(base64: string): string {
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
 function surfaceNoticesFromHeader(res: Response): void {
   const header = res.headers.get("X-Cnw-Notices");
   if (!header) return;
   try {
-    const notices = JSON.parse(atob(header)) as unknown[];
+    const notices = JSON.parse(decodeBase64Utf8(header)) as unknown[];
     for (const notice of notices) {
       Notify.create({ type: "info", message: String(notice), position: "top-right", timeout: 6000 });
     }

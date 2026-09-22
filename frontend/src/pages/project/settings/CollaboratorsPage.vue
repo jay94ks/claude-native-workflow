@@ -4,7 +4,7 @@
     <q-list bordered separator class="q-mb-lg">
       <q-item v-for="m in members">
         <q-item-section>{{ m.username }}</q-item-section>
-        <q-item-section side><q-badge color="primary" outline>{{ m.role }}</q-badge></q-item-section>
+        <q-item-section side><CategoryPill color="primary">{{ m.role }}</CategoryPill></q-item-section>
       </q-item>
       <EmptyState v-if="members.length === 0" as="item" message="멤버가 없습니다." />
     </q-list>
@@ -14,7 +14,7 @@
       <q-list bordered separator class="q-mb-lg">
         <q-item v-for="i in pendingInvites">
           <q-item-section>{{ i.username }}</q-item-section>
-          <q-item-section side><q-badge color="grey-6" outline>{{ i.role }} (pending)</q-badge></q-item-section>
+          <q-item-section side><CategoryPill color="grey-6">{{ i.role }} (pending)</CategoryPill></q-item-section>
         </q-item>
       </q-list>
     </template>
@@ -39,6 +39,7 @@ import { useProjectStore } from "stores/project";
 import * as api from "src/api/client";
 import PageHeader from "components/PageHeader.vue";
 import EmptyState from "components/EmptyState.vue";
+import CategoryPill from "components/CategoryPill.vue";
 
 const props = defineProps<{ owner: string; projectId: string }>();
 const auth = useAuthStore();

@@ -54,7 +54,7 @@
         :content="item.answer.content"
         :error="actionError[item.answer.code]"
         :has-menu="hasAnswerMenu(item.answer)"
-        avatar-size="20px"
+        avatar-size="var(--gh-avatar-sm)"
         padding-class="q-pa-sm q-mt-sm"
         style="background: var(--gh-canvas-subtle)"
       >

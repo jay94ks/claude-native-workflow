@@ -16,7 +16,7 @@
     </div>
 
     <div class="row q-gutter-sm items-center">
-      <q-btn v-if="project.isAdmin" color="secondary" label="이 프로젝트에 배포" :loading="deploying" @click="deploy" />
+      <q-btn v-if="project.isAdmin" color="primary" label="이 프로젝트에 배포" :loading="deploying" @click="deploy" />
       <span v-else class="text-caption text-grey-7">배포는 이 프로젝트의 Admin만 할 수 있습니다.</span>
     </div>
 

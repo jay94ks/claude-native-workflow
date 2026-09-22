@@ -13,16 +13,16 @@
             <!-- 설계자 요청(2026-09-21) - Q&A는 계층 구조(질문->답변->재질의->...)인데
                  이 목록이 완전히 평평해서 그게 안 보인다는 지적 - 이 항목이 무엇에
                  대한 답/재질의인지(parent) 배지로 같이 보여준다. -->
-            <q-badge v-if="parentInfo[item.code]" outline color="grey-7" class="q-ml-xs cursor-pointer" @click.stop="goToCode(parentInfo[item.code]!.code)">
+            <CategoryPill v-if="parentInfo[item.code]" color="grey-7" class="q-ml-xs cursor-pointer" @click.stop="goToCode(parentInfo[item.code]!.code)">
               ↳ {{ kindLabel(parentInfo[item.code]!.type) }}: {{ parentInfo[item.code]!.title }}
-            </q-badge>
+            </CategoryPill>
           </q-item-label>
           <q-item-label caption>{{ item.code }} · author: {{ item.author }} · {{ new Date(item.createdAt).toLocaleString() }}</q-item-label>
         </q-item-section>
         <q-item-section side>
           <div class="column items-end" style="gap: 4px">
             <div class="row items-center" style="gap: 2px">
-              <q-badge :color="item.type === 'opinion' ? 'teal' : 'primary'" outline dense>{{ item.type }}</q-badge>
+              <CategoryPill :color="item.type === 'opinion' ? 'teal' : 'primary'">{{ item.type }}</CategoryPill>
               <q-badge :color="stateColor(item.state)">{{ item.state }}</q-badge>
               <!-- 설계자 요청(2026-09-21) - 자식이 있으면 more 아이콘 -> 별도 페이지(계층 드릴다운). -->
               <q-btn
@@ -53,6 +53,8 @@ import { useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import * as api from "src/api/client";
 import EmptyState from "components/EmptyState.vue";
+import { stateColor } from "src/utils/stateColor";
+import CategoryPill from "components/CategoryPill.vue";
 
 interface DocSummary {
   code: string;
@@ -80,11 +82,6 @@ const openError = ref("");
 const childCounts = reactive<Record<string, number>>({});
 const parentInfo = reactive<Record<string, ResolvedDoc | null>>({});
 
-function stateColor(state: string): string {
-  if (state === "done") return "positive";
-  if (state === "discard") return "grey-6";
-  return "primary";
-}
 function kindLabel(type: string): string {
   if (type === "question") return "질문";
   if (type === "answer") return "답변";
