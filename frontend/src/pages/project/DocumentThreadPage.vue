@@ -8,37 +8,31 @@
            DocumentDiscussion.vue와 동일하게: 좌측 상단 타입뱃지+제목,
            우측 상단 상태뱃지+작성자뱃지+more(⋮) 메뉴(확인함/답변작성/
            완료처리/폐기를 그 안에 모음), 본문은 Markdown 렌더링. -->
-      <div class="gh-card q-pa-md q-mb-md">
-        <div class="row items-center justify-between">
-          <div class="row items-center" style="gap: 6px; min-width: 0">
-            <q-badge :color="kindColor(item.kind)" outline dense>{{ kindLabel(item.kind) }}</q-badge>
-            <span class="text-weight-medium ellipsis">{{ item.title }}</span>
-          </div>
-          <div class="row items-center" style="gap: 4px; flex-shrink: 0">
-            <q-badge :color="stateColor(item.state)">{{ item.state }}</q-badge>
-            <div class="gh-avatar" style="width: 22px; height: 22px; font-size: 11px">{{ item.author === "agent" ? "C" : "A" }}</div>
-            <q-btn v-if="hasItemMenu" flat dense round size="sm" icon="more_vert">
-              <q-menu auto-close>
-                <q-list style="min-width: 160px">
-                  <q-item v-if="canMarkRead" clickable @click="markRead">
-                    <q-item-section>확인함</q-item-section>
-                  </q-item>
-                  <q-item v-if="canAnswer && !answeringHere" clickable @click="openAnswerComposer">
-                    <q-item-section>답변 작성</q-item-section>
-                  </q-item>
-                  <q-item v-if="canMarkDone" clickable @click="markDone">
-                    <q-item-section>완료 처리</q-item-section>
-                  </q-item>
-                  <q-item v-if="canDiscard" clickable @click="discardSelf">
-                    <q-item-section class="text-negative">폐기</q-item-section>
-                  </q-item>
-                </q-list>
-              </q-menu>
-            </q-btn>
-          </div>
-        </div>
-        <div class="text-body2 q-mt-xs markdown-body" v-html="renderMarkdownSafe(item.content)"></div>
-        <div v-if="itemActionError" class="text-negative text-caption q-mt-xs">{{ itemActionError }}</div>
+      <DiscussionItemCard
+        :code="item.code"
+        :kind="item.kind"
+        :title="item.title"
+        :state="item.state"
+        :author="item.author"
+        :content="item.content"
+        :error="itemActionError"
+        :has-menu="hasItemMenu"
+        padding-class="q-pa-md q-mb-md"
+      >
+        <template #menu>
+          <q-item v-if="canMarkRead" clickable :disable="busy === item.code" @click="markRead">
+            <q-item-section>확인함</q-item-section>
+          </q-item>
+          <q-item v-if="canAnswer && !answeringHere" clickable @click="openAnswerComposer">
+            <q-item-section>답변 작성</q-item-section>
+          </q-item>
+          <q-item v-if="canMarkDone" clickable :disable="busy === item.code" @click="markDone">
+            <q-item-section>완료 처리</q-item-section>
+          </q-item>
+          <q-item v-if="canDiscard" clickable :disable="busy === item.code" @click="discardSelf">
+            <q-item-section class="text-negative">폐기</q-item-section>
+          </q-item>
+        </template>
 
         <!-- 설계자 재지적(2026-09-21) - 이 항목 자체에 답하거나(질문일 때)
              재질의/의견을 남길 방법이 이 페이지엔 전혀 없었다 - 표시(더보기
@@ -88,42 +82,37 @@
             </div>
           </div>
         </q-slide-transition>
-      </div>
+      </DiscussionItemCard>
 
       <div class="text-subtitle2 q-mb-sm">자식 항목 ({{ children.length }})</div>
       <EmptyState v-if="children.length === 0" message="자식 항목이 없습니다." />
-      <div v-for="child in children" :key="child.code" class="gh-card q-pa-sm q-mb-sm">
-        <div class="row items-center justify-between">
-          <div class="row items-center" style="gap: 6px; min-width: 0">
-            <q-badge :color="kindColor(child.kind)" outline dense>{{ kindLabel(child.kind) }}</q-badge>
-            <span class="text-weight-medium ellipsis">{{ child.title }}</span>
-          </div>
-          <div class="row items-center" style="gap: 4px; flex-shrink: 0">
-            <q-badge :color="stateColor(child.state)">{{ child.state }}</q-badge>
-            <div class="gh-avatar" style="width: 20px; height: 20px; font-size: 10px">{{ child.author === "agent" ? "C" : "A" }}</div>
-            <q-btn v-if="hasChildMenu(child)" flat dense round size="sm" icon="more_vert">
-              <q-menu auto-close>
-                <q-list style="min-width: 160px">
-                  <q-item v-if="(childCounts[child.code] ?? 0) > 0" clickable :to="`/${owner}/${projectId}/thread/${child.code}`">
-                    <q-item-section>자식 항목 보기 ({{ childCounts[child.code] }})</q-item-section>
-                  </q-item>
-                  <q-item v-if="canMarkChildRead(child)" clickable @click="markChildRead(child)">
-                    <q-item-section>확인함</q-item-section>
-                  </q-item>
-                  <q-item v-if="canMarkChildDone(child)" clickable @click="markChildDone(child)">
-                    <q-item-section>완료 처리</q-item-section>
-                  </q-item>
-                  <q-item v-if="canDiscardChild(child)" clickable @click="discardChild(child)">
-                    <q-item-section class="text-negative">폐기</q-item-section>
-                  </q-item>
-                </q-list>
-              </q-menu>
-            </q-btn>
-          </div>
-        </div>
-        <div class="text-body2 q-mt-xs markdown-body" v-html="renderMarkdownSafe(child.content)"></div>
-        <div v-if="childActionError[child.code]" class="text-negative text-caption q-mt-xs">{{ childActionError[child.code] }}</div>
-      </div>
+      <DiscussionItemCard
+        v-for="child in children"
+        :key="child.code"
+        :code="child.code"
+        :kind="child.kind"
+        :title="child.title"
+        :state="child.state"
+        :author="child.author"
+        :content="child.content"
+        :error="childActionError[child.code]"
+        :has-menu="hasChildMenu(child)"
+      >
+        <template #menu>
+          <q-item v-if="(childCounts[child.code] ?? 0) > 0" clickable :to="`/${owner}/${projectId}/thread/${child.code}`">
+            <q-item-section>자식 항목 보기 ({{ childCounts[child.code] }})</q-item-section>
+          </q-item>
+          <q-item v-if="canMarkChildRead(child)" clickable :disable="busy === child.code" @click="markChildRead(child)">
+            <q-item-section>확인함</q-item-section>
+          </q-item>
+          <q-item v-if="canMarkChildDone(child)" clickable :disable="busy === child.code" @click="markChildDone(child)">
+            <q-item-section>완료 처리</q-item-section>
+          </q-item>
+          <q-item v-if="canDiscardChild(child)" clickable :disable="busy === child.code" @click="discardChild(child)">
+            <q-item-section class="text-negative">폐기</q-item-section>
+          </q-item>
+        </template>
+      </DiscussionItemCard>
     </template>
     <div v-else class="text-negative text-caption">문서를 찾을 수 없습니다.</div>
   </div>
@@ -136,8 +125,8 @@ import { useAuthStore } from "stores/auth";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
 import PageHeader from "components/PageHeader.vue";
 import EmptyState from "components/EmptyState.vue";
+import DiscussionItemCard from "components/DiscussionItemCard.vue";
 import * as api from "src/api/client";
-import { renderMarkdownSafe } from "src/utils/renderMarkdown";
 
 interface MarkdownSourceViewRef {
   getMarkdown(): string;
@@ -162,26 +151,13 @@ const children = ref<DocFull[]>([]);
 const childCounts = ref<Record<string, number>>({});
 const itemActionError = ref("");
 const childActionError = reactive<Record<string, string>>({});
+// DocumentDiscussion.vue와 동일한 중복 클릭 방지 가드 - 이 페이지엔
+// 지금까지 없었다(2026-09-22 후속 발견, 프론트엔드 UI 일관성 정리
+// 라운드에서 DiscussionItemCard로 추출하며 같이 추가).
+const busy = ref<string | null>(null);
 
 function parseIdFromCode(code: string): string {
   return code.split("-")[1] ?? code;
-}
-
-function kindLabel(kind: string): string {
-  if (kind === "QU") return "question";
-  if (kind === "AN") return "answer";
-  if (kind === "OP") return "opinion";
-  return kind;
-}
-function kindColor(kind: string): string {
-  if (kind === "OP") return "teal";
-  if (kind === "AN") return "positive";
-  return "primary";
-}
-function stateColor(state: string): string {
-  if (state === "done") return "positive";
-  if (state === "discard") return "grey-6";
-  return "primary";
 }
 
 function goBack() {
@@ -237,8 +213,10 @@ function hasChildMenu(child: DocFull): boolean {
 }
 
 async function markChildRead(child: DocFull) {
+  busy.value = child.code;
   childActionError[child.code] = "";
   const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, child.code, "read", child.state);
+  busy.value = null;
   if (!result.ok) {
     childActionError[child.code] = result.reason?.join(", ") ?? "실패했습니다.";
     return;
@@ -248,8 +226,10 @@ async function markChildRead(child: DocFull) {
 
 async function markRead() {
   if (!item.value) return;
+  busy.value = item.value.code;
   itemActionError.value = "";
   const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, item.value.code, "read", item.value.state);
+  busy.value = null;
   if (!result.ok) {
     itemActionError.value = result.reason?.join(", ") ?? "실패했습니다.";
     return;
@@ -259,8 +239,10 @@ async function markRead() {
 
 async function markDone() {
   if (!item.value) return;
+  busy.value = item.value.code;
   itemActionError.value = "";
   const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, item.value.code, "done", item.value.state);
+  busy.value = null;
   if (!result.ok) {
     itemActionError.value = result.reason?.join(", ") ?? "실패했습니다.";
     return;
@@ -270,8 +252,10 @@ async function markDone() {
 
 async function discardSelf() {
   if (!item.value) return;
+  busy.value = item.value.code;
   itemActionError.value = "";
   const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, item.value.code, "discard", item.value.state);
+  busy.value = null;
   if (!result.ok) {
     itemActionError.value = result.reason?.join(", ") ?? "실패했습니다.";
     return;
@@ -280,8 +264,10 @@ async function discardSelf() {
 }
 
 async function markChildDone(child: DocFull) {
+  busy.value = child.code;
   childActionError[child.code] = "";
   const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, child.code, "done", child.state);
+  busy.value = null;
   if (!result.ok) {
     childActionError[child.code] = result.reason?.join(", ") ?? "실패했습니다.";
     return;
@@ -290,8 +276,10 @@ async function markChildDone(child: DocFull) {
 }
 
 async function discardChild(child: DocFull) {
+  busy.value = child.code;
   childActionError[child.code] = "";
   const result = await api.transitionDocument(auth.apiKey!, props.owner, props.projectId, child.code, "discard", child.state);
+  busy.value = null;
   if (!result.ok) {
     childActionError[child.code] = result.reason?.join(", ") ?? "실패했습니다.";
     return;

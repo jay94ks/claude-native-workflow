@@ -715,6 +715,16 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
 - **`frontend/src/utils/fileTree.ts`**: 평평한 파일 경로 배열을
   `q-tree`용 트리 구조로 바꾸는 `buildFileTree()` - PR diff/커밋
   diff 화면이 공유한다.
+- **`components/DiscussionItemCard.vue`**(2026-09-22 후속 라운드):
+  질의/의견/답변 카드(타입뱃지+제목/상태뱃지+아바타+more메뉴 슬롯/
+  마크다운 본문/에러 줄) - `DocumentDiscussion.vue`(메인 항목+중첩
+  답변)와 `DocumentThreadPage.vue`(focal item+child)가 공유한다.
+  게이팅 로직(어떤 메뉴 항목을 보여줄지)과 데이터 계층(thread/children
+  계산)은 각 파일에 그대로 뒀다 - 카드는 순수 렌더링만 맡는다
+  (`#menu` 슬롯 + 기본 슬롯으로 컴포저/중첩 카드를 끼워 넣음). 자세한
+  판단 근거는 `docs/design-notes.md`의 "Q&A 카드 중복 제거" 라운드
+  참고. `PullRequestsTab.vue`↔`DocTypeWorkspace.vue` 통합은 조사
+  결과 리스크 대비 이득이 작아 보류하기로 결정(같은 라운드에 기록).
 - **`app.scss`의 페이지/다이얼로그 폭 토큰**: `--gh-page-width-narrow`
   (720px, 계정/키 관리 등 리스트형), `--gh-page-width-wide`(900px,
   문서 작성/스레드 등 에디터형), `--gh-dialog-width-sm/md/lg`

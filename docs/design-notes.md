@@ -3137,3 +3137,66 @@ Q&A(디자인 관련 질문 등)와 같은 방식으로 남겨뒀다 - 다른 �
 컴포저류 UI를 검증할 땐 "버튼이 보인다"에서 멈추지 말고 반드시
 "실제로 눌러서 등록/저장까지 끝까지" 확인해야 한다.
 
+### Q&A 카드 중복 제거(`DiscussionItemCard.vue`) + PR/DocTypeWorkspace 통합 여부 결정 (2026-09-22)
+
+지난 "프론트엔드 UI 일관성 정리" 라운드(PL-PLANFEUI)에서 두 항목을
+회귀 이력이 있는 민감한 영역이라며 별도 조사로 미뤘었다 - 이번 라운드가
+그 후속이다. Explore 에이전트 둘로 각각 조사하고, `DocumentDiscussion.vue`/
+`DocumentThreadPage.vue`는 내가 직접 전체를 다시 읽어 교차 확인했다.
+
+**결정 1 - `PullRequestsTab.vue` ↔ `DocTypeWorkspace.vue` 통합은 하지
+않는다.** 겉모습(리스트+상세 분할 패널)만 비슷하고 실제로는 API/데이터
+모델이 근본적으로 다르다 - `DocTypeWorkspace`는 `api.listDocuments`/
+`getDocument`/`transitionDocument`/`tagDocument`를 직접 호출하는
+`docs.*` 전용 컴포넌트인데, PR은 `api.listPullRequests`/`getPullRequest`/
+`mergePullRequest`/`closePullRequest`라는 별개 액션군을 쓰고 태그/의존성
+정렬 개념 자체가 없으며 우측 패널도 파일 트리+`DiffViewer`가 필요하다.
+억지로 합치려면 `DocTypeWorkspace` 내부의 하드코딩된 API 호출을 전부
+주입식 콜백/슬롯으로 바꿔야 하는데, 이는 지금 이 컴포넌트를 쓰는 4개
+탭(Documents/Plans/Issues/Trackers·Tests)의 검증된 동작(특히 `related`/
+`dependsOn` 교차 탭 이동, etag 태그 로직)을 건드리는 위험을 감수하는
+것 - 얻는 건 PR 탭 하나와 공유하는 약 60줄의 상용구뿐이라 리스크 대비
+이득이 작다. `PullRequestsTab.vue`는 지금 구조 그대로 유지한다.
+
+**결정 2 - `DiscussionItemCard.vue` 추출은 실행한다.** 네 곳의 카드
+렌더링(Discussion의 메인 항목/중첩 답변, ThreadPage의 focal item/child)
+은 공통 골격(타입뱃지+제목 | 상태뱃지+아바타+more메뉴, 마크다운 본문,
+에러 줄)은 동일하지만 more 메뉴 항목/게이팅 조건은 넷 다 다르므로,
+**렌더링 단위(카드)만 추출하고 게이팅 로직/데이터 계층(thread/children
+계산)은 각 파일에 그대로 뒀다** - 과거 `DocumentThreadPage`가
+`DocumentDiscussion` 전체를 통째로 재사용하려다 실패한 교훈(위 "표시는
+있었지만..." 라운드) 그대로. 컴포저(답변 작성/재질의하기/의견 남기기)도
+카드 밖(메인/focal 카드의 기본 슬롯 또는 페이지 레벨)에 그대로 둬서,
+`v-for` 안에서 `v-for`마다 중복 렌더링되는 실수를 피했다.
+
+`DocumentDiscussion.vue`의 `answerEditorRef`가 `v-for` 안에 있어
+배열로 수집된다는 것(위 "answerEditorRef가 처음부터 배열이었다" 라운드
+버그) - 컴포저를 슬롯으로 옮겨도 `v-for`는 여전히 부모 템플릿에 있으므로
+이 배열 처리는 그대로 뒀다. 실제로 "질문하기" → "답변 작성" → "등록하기"
+전체 경로를 브라우저로 직접 클릭해 새 답변이 실제로 생성/표시되는 것까지
+확인했다(과거 정확히 이 경로가 조용히 실패했던 자리).
+
+**발견·수정한 버그**: `DocumentDiscussion.vue`의 중첩 답변 카드는
+`markAnswerRead`/`markAnswerDone` 실패 시 `actionError[answer.code]`에
+에러를 쓰는데, 기존 템플릿의 에러 표시 줄은 `actionError[item.code]`
+(메인 항목 것)만 보여주고 있었다 - **중첩 답변 액션이 실패해도 화면에
+아무 표시가 안 되던 진짜 버그**. 각 카드 인스턴스가 자기 `error` prop만
+보도록 배선하면서 자연히 고쳐졌다.
+
+**의도적으로 같이 고친 것**: `DocumentThreadPage.vue`엔 중복 클릭 방지
+(`busy`) 가드가 아예 없었다(`DocumentDiscussion.vue`엔 있었음) - 정확히
+이번에 옮기는 그 클릭 핸들러들이라 위험이 거의 없어서 같이 추가했다.
+
+**의도적 UX 변화(기록)**: 메인/focal 항목의 에러 줄이 기존엔 카드 맨
+아래(중첩 답변/컴포저 다음)에 떴는데, 새 카드 구조에서는 본문 바로
+아래(중첩 답변/컴포저보다 위)로 옮겨졌다 - 항목 자신의 에러가 그 항목
+바로 밑에 뜨는 게 더 자연스럽다고 판단해 의도적으로 그렇게 뒀다.
+
+**검증**: `vue-tsc --noEmit` 통과. `git diff HEAD -- DocumentDiscussion.vue
+DocumentThreadPage.vue | grep '^-'`로 삭제된 모든 줄이 카드/슬롯으로
+이동했거나 의도적으로 삭제(죽은 `stateColor`/`kindLabel`/`kindColor`)/
+의도적으로 고친 것(에러 위치, busy 가드)임을 확인. 브라우저로 답변
+작성/등록, 중첩 답변 확인함/완료 처리(연쇄 전이로 질문도 done까지
+확인), RecentQaFeed 하이라이트 스크롤, ThreadPage의 재질의하기 컴포저,
+child 완료 처리까지 전부 실제 클릭으로 확인.
+

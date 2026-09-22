@@ -16,77 +16,60 @@
          안으로 모은다(각 상태별 조건은 documentRules.ts의 checkTransition
          그대로 - 버튼을 안 보이게 하는 것도, 실제 허용 여부는 항상 서버가
          최종 판단한다는 원칙을 유지). -->
-    <div
+    <DiscussionItemCard
       v-for="item in thread"
-      :id="`qa-${item.code}`"
       :key="item.code"
-      class="gh-card q-pa-sm q-mb-sm"
-      :class="{ 'qa-highlighted': !!highlightCode && (item.code === highlightCode || item.answer?.code === highlightCode) }"
+      :code="item.code"
+      :kind="item.kind"
+      :title="item.title"
+      :state="item.state"
+      :author="item.author"
+      :content="item.content"
+      :error="actionError[item.code]"
+      :has-menu="hasItemMenu(item)"
+      :highlighted="!!highlightCode && (item.code === highlightCode || item.answer?.code === highlightCode)"
     >
-      <div class="row items-center justify-between">
-        <div class="row items-center" style="gap: 6px; min-width: 0">
-          <q-badge :color="item.kind === 'OP' ? 'teal' : 'primary'" outline dense>{{ item.kind === "OP" ? "opinion" : "question" }}</q-badge>
-          <span class="text-weight-medium ellipsis">{{ item.title }}</span>
-        </div>
-        <div class="row items-center" style="gap: 4px; flex-shrink: 0">
-          <q-badge :color="stateColor(item.state)">{{ item.state }}</q-badge>
-          <div class="gh-avatar" style="width: 22px; height: 22px; font-size: 11px">{{ item.author === "agent" ? "C" : "A" }}</div>
-          <q-btn v-if="hasItemMenu(item)" flat dense round size="sm" icon="more_vert">
-            <q-menu auto-close>
-              <q-list style="min-width: 160px">
-                <q-item v-if="childCounts[item.code] > 0" clickable :to="`/${owner}/${projectId}/thread/${item.code}`">
-                  <q-item-section>자식 항목 보기 ({{ childCounts[item.code] }})</q-item-section>
-                </q-item>
-                <q-item v-if="canMarkRead(item)" clickable :disable="busy === item.code" @click="markRead(item)">
-                  <q-item-section>확인함</q-item-section>
-                </q-item>
-                <q-item v-if="canAnswer(item)" clickable @click="openAnswerComposer(item)">
-                  <q-item-section>답변 작성</q-item-section>
-                </q-item>
-                <q-item v-if="canDiscard(item)" clickable @click="discardItem(item)">
-                  <q-item-section class="text-negative">폐기</q-item-section>
-                </q-item>
-              </q-list>
-            </q-menu>
-          </q-btn>
-        </div>
-      </div>
-      <!-- 설계자 요청(2026-09-21 후속) - 본문은 Markdown으로 작성될 수 있으니
-           원문 그대로가 아니라 렌더링해서 보여준다(marked -> DOMPurify로
-           한 번 걸러 v-html - marked 자체는 sanitize를 안 하므로 새 XSS
-           경로가 생기지 않게 직접 한 번 더 막는다). -->
-      <div class="text-body2 q-mt-xs markdown-body" v-html="renderMarkdownSafe(item.content)"></div>
-
-      <template v-if="item.kind !== 'OP' && item.answer">
-        <div class="gh-card q-pa-sm q-mt-sm" style="background: var(--gh-canvas-subtle)">
-          <div class="row items-center justify-between">
-            <div class="row items-center" style="gap: 6px; min-width: 0">
-              <q-badge color="positive" outline dense>answer</q-badge>
-              <span class="text-weight-medium ellipsis">{{ item.answer.title }}</span>
-            </div>
-            <div class="row items-center" style="gap: 4px; flex-shrink: 0">
-              <q-badge :color="stateColor(item.answer.state)">{{ item.answer.state }}</q-badge>
-              <div class="gh-avatar" style="width: 20px; height: 20px; font-size: 10px">{{ item.answer.author === "agent" ? "C" : "A" }}</div>
-              <q-btn v-if="hasAnswerMenu(item.answer)" flat dense round size="sm" icon="more_vert">
-                <q-menu auto-close>
-                  <q-list style="min-width: 160px">
-                    <q-item v-if="childCounts[item.answer.code] > 0" clickable :to="`/${owner}/${projectId}/thread/${item.answer.code}`">
-                      <q-item-section>자식 항목 보기 ({{ childCounts[item.answer.code] }})</q-item-section>
-                    </q-item>
-                    <q-item v-if="canMarkAnswerRead(item.answer)" clickable :disable="busy === item.answer.code" @click="markAnswerRead(item.answer!)">
-                      <q-item-section>확인함</q-item-section>
-                    </q-item>
-                    <q-item v-if="canMarkAnswerDone(item.answer)" clickable :disable="busy === item.answer.code" @click="markAnswerDone(item.answer!)">
-                      <q-item-section>완료 처리</q-item-section>
-                    </q-item>
-                  </q-list>
-                </q-menu>
-              </q-btn>
-            </div>
-          </div>
-          <div class="text-body2 q-mt-xs markdown-body" v-html="renderMarkdownSafe(item.answer.content)"></div>
-        </div>
+      <template #menu>
+        <q-item v-if="childCounts[item.code] > 0" clickable :to="`/${owner}/${projectId}/thread/${item.code}`">
+          <q-item-section>자식 항목 보기 ({{ childCounts[item.code] }})</q-item-section>
+        </q-item>
+        <q-item v-if="canMarkRead(item)" clickable :disable="busy === item.code" @click="markRead(item)">
+          <q-item-section>확인함</q-item-section>
+        </q-item>
+        <q-item v-if="canAnswer(item)" clickable @click="openAnswerComposer(item)">
+          <q-item-section>답변 작성</q-item-section>
+        </q-item>
+        <q-item v-if="canDiscard(item)" clickable @click="discardItem(item)">
+          <q-item-section class="text-negative">폐기</q-item-section>
+        </q-item>
       </template>
+
+      <DiscussionItemCard
+        v-if="item.kind !== 'OP' && item.answer"
+        :code="item.answer.code"
+        kind="AN"
+        :title="item.answer.title"
+        :state="item.answer.state"
+        :author="item.answer.author"
+        :content="item.answer.content"
+        :error="actionError[item.answer.code]"
+        :has-menu="hasAnswerMenu(item.answer)"
+        avatar-size="20px"
+        padding-class="q-pa-sm q-mt-sm"
+        style="background: var(--gh-canvas-subtle)"
+      >
+        <template #menu>
+          <q-item v-if="childCounts[item.answer.code] > 0" clickable :to="`/${owner}/${projectId}/thread/${item.answer.code}`">
+            <q-item-section>자식 항목 보기 ({{ childCounts[item.answer.code] }})</q-item-section>
+          </q-item>
+          <q-item v-if="canMarkAnswerRead(item.answer)" clickable :disable="busy === item.answer.code" @click="markAnswerRead(item.answer!)">
+            <q-item-section>확인함</q-item-section>
+          </q-item>
+          <q-item v-if="canMarkAnswerDone(item.answer)" clickable :disable="busy === item.answer.code" @click="markAnswerDone(item.answer!)">
+            <q-item-section>완료 처리</q-item-section>
+          </q-item>
+        </template>
+      </DiscussionItemCard>
 
       <q-slide-transition>
         <div v-if="answeringCode === item.code" class="q-mt-sm">
@@ -98,8 +81,7 @@
           </div>
         </div>
       </q-slide-transition>
-      <div v-if="actionError[item.code]" class="text-negative text-caption q-mt-xs">{{ actionError[item.code] }}</div>
-    </div>
+    </DiscussionItemCard>
 
     <!-- 설계자 요청(2026-09-21) - 질문하기/의견 남기기는 다이얼로그가 아니라
          이 영역이 그대로 늘어나며 에디터를 보여주고, 에디터 하단 우측에
@@ -141,8 +123,8 @@
 import { ref, reactive, computed, watch, onMounted, nextTick } from "vue";
 import { useAuthStore } from "stores/auth";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
+import DiscussionItemCard from "components/DiscussionItemCard.vue";
 import * as api from "src/api/client";
-import { renderMarkdownSafe } from "src/utils/renderMarkdown";
 
 interface MarkdownSourceViewRef {
   getMarkdown(): string;
@@ -191,12 +173,6 @@ const thread = computed<ThreadItem[]>(() => {
   const oItems: ThreadItem[] = opinions.value.map((o) => ({ ...o, answer: null }));
   return [...qItems, ...oItems].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 });
-
-function stateColor(state: string): string {
-  if (state === "done") return "positive";
-  if (state === "discard") return "grey-6";
-  return "primary";
-}
 
 // 설계자 요청(2026-09-21 후속) - documentRules.ts의 checkTransition을
 // 그대로 옮긴 UI 힌트(실제 허용 여부는 언제나 서버가 최종 판단한다) -
@@ -487,18 +463,3 @@ function scrollToHighlight() {
   });
 }
 </script>
-
-<style scoped>
-.qa-highlighted {
-  outline: 2px solid var(--gh-accent);
-  animation: qa-highlight-fade 2.5s ease-out;
-}
-@keyframes qa-highlight-fade {
-  from {
-    background: rgba(9, 105, 218, 0.12);
-  }
-  to {
-    background: transparent;
-  }
-}
-</style>
