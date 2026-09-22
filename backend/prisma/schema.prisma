@@ -101,6 +101,7 @@ model Project {
   webhooks     Webhook[]
   pullRequests PullRequest[]
   apiKeys      ApiKey[]
+  activityLogs ActivityLog[]
 
   @@unique([creatorAccountId, slug])
 }
@@ -315,6 +316,26 @@ model Webhook {
 // 저장하지 않고 매번 es-git으로 그때그때 계산한다(gitRepo.ts
 // diffBranches) - 저장할 게 있다면 그건 정본이 아니라 캐시일 뿐이라
 // 이번 스코프에선 아예 안 둔다.
+// 설계자 요청(2026-09-22 후속) - "각 추적 코드별로 어떤 동작을 언제
+// 얼마나 했는지" 종합 현황에서 히트맵/활동 로그로 보여주기 위한 원천
+// 기록. code는 Document.id(8자 PK)가 아니라 완전한 추적 코드 문자열
+// (`${kind}-${id}`)을 그대로 저장한다 - 그 문서가 나중에 지워져도(예:
+// answer 철회) "그 코드에 그 시점에 그 동작이 있었다"는 이력 자체는
+// 남아야 하므로 FK가 아니라 평문 문자열로 둔다.
+model ActivityLog {
+  id        String   @id @default(cuid())
+  projectId String
+  code      String
+  action    String
+  channel   String
+  actorId   String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, code, createdAt])
+}
+
 model PullRequest {
   id            String   @id @default(cuid())
   projectId     String

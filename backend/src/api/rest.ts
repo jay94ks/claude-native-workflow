@@ -18,6 +18,7 @@ import * as apiKeys from "../core/apiKeys";
 import * as webhooks from "../core/webhooks";
 import * as repoBrowse from "../core/repoBrowse";
 import * as pullRequests from "../core/pullRequests";
+import * as activityLog from "../core/activityLog";
 import { collectAndDeliver } from "../core/messages";
 import { requireApiKey } from "./authMiddleware";
 import { resolveChannel } from "../core/channel";
@@ -140,6 +141,20 @@ restRouter.post(
 restRouter.post(
   "/projects/:owner/:projectId/documents/:code/tag",
   web(documents.docsTag, (req) => ({ owner: req.params.owner, projectId: req.params.projectId, code: req.params.code, ...req.body }))
+);
+// design-notes.md "문서 코드별 활동 히트맵/로그" - docs.list와 같은 필터
+// 모양(type 필수, kind/state 선택)으로 지금 화면에 걸린 필터를 그대로
+// 반영한다.
+restRouter.get(
+  "/projects/:owner/:projectId/activity",
+  web(activityLog.activitySummary, (req) => ({
+    owner: req.params.owner,
+    projectId: req.params.projectId,
+    type: req.query.type,
+    kind: req.query.kind,
+    state: req.query.state,
+    days: numOr(req.query.days),
+  }))
 );
 
 // ---- Repo (Code 탭) ----

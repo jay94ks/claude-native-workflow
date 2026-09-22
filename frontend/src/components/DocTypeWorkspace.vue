@@ -116,7 +116,63 @@
              아니라 PR 리뷰 코멘트처럼 그 문서를 보는 화면 안에 통합된다. -->
         <DocumentDiscussion ref="discussionRef" :owner="owner" :project-id="projectId" :parent-code="selected.code" :highlight-code="highlightCode" />
       </template>
-      <div v-else class="text-caption">왼쪽에서 문서를 선택하세요.</div>
+      <!-- 설계자 요청(2026-09-22 후속) - Documents/Plans/Issues에서 문서를
+           선택하지 않았을 때 빈 안내 문구 대신 지금 목록(필터 적용 후 기준)의
+           상태별/분류별 종합 현황을 보여준다. Trackers/Tests도 같은 컴포넌트를
+           쓰므로 자연히 상태별 현황을 같이 얻는다(분류는 kind가 1개뿐이라 그
+           블록만 안 뜬다). -->
+      <div v-else class="q-pa-sm">
+        <div class="text-subtitle1 q-mb-xs">{{ title }} 종합 현황</div>
+        <div class="text-caption text-grey-8 q-mb-md">왼쪽 목록에서 문서를 선택하면 상세 내용을 볼 수 있습니다.</div>
+        <template v-if="stateBreakdown.length > 0">
+          <div class="text-caption text-grey-8 q-mb-xs">상태별</div>
+          <div class="row q-gutter-md q-mb-md">
+            <div v-for="s in stateBreakdown" :key="s.state" class="row items-center q-gutter-xs">
+              <q-badge :color="stateColor(s.state)">{{ s.state }}</q-badge>
+              <span class="text-caption">{{ s.count }}</span>
+            </div>
+          </div>
+        </template>
+        <template v-if="kindBreakdown.length > 1">
+          <div class="text-caption text-grey-8 q-mb-xs">분류별</div>
+          <div class="row q-gutter-md q-mb-md">
+            <div v-for="k in kindBreakdown" :key="k.kind" class="row items-center q-gutter-xs">
+              <CategoryPill>{{ kindLabels[k.kind] ?? k.kind }}</CategoryPill>
+              <span class="text-caption">{{ k.count }}</span>
+            </div>
+          </div>
+        </template>
+
+        <!-- 설계자 요청(2026-09-22 후속) - REST API에서 각 추적 코드별로 어떤
+             동작이 언제 있었는지 activity.summary로 모아 최근 30일 히트맵 +
+             최근 활동 로그를 보여준다. 지금 걸린 분류/상태 필터를 그대로
+             반영한다(상태별/분류별 집계와 같은 판단). -->
+        <div v-if="heatmapWeeks.length > 0" class="q-mb-md">
+          <div class="text-caption text-grey-8 q-mb-xs">최근 {{ activityHeatmap.length }}일 활동</div>
+          <div class="row q-gutter-xs">
+            <div v-for="(week, wi) in heatmapWeeks" :key="wi" class="column q-gutter-xs">
+              <div
+                v-for="(day, di) in week"
+                :key="di"
+                class="activity-heatmap-cell"
+                :style="{ background: day ? heatColor(day.count) : 'transparent' }"
+                :title="day ? `${day.date}: ${day.count}건` : ''"
+              />
+            </div>
+          </div>
+        </div>
+        <template v-if="activityRecent.length > 0">
+          <div class="text-caption text-grey-8 q-mb-xs">최근 활동</div>
+          <q-list dense bordered separator style="max-width: 480px">
+            <q-item v-for="(entry, i) in activityRecent" :key="i">
+              <q-item-section>
+                <q-item-label>{{ entry.code }} · {{ entry.action }}</q-item-label>
+                <q-item-label caption>{{ entry.channel === "agent" ? "Claude" : "architect" }} · {{ new Date(entry.createdAt).toLocaleString() }}</q-item-label>
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </template>
+      </div>
     </div>
 
     <q-dialog v-model="showTagDialog">
@@ -276,6 +332,86 @@ const selectedState = ref(stringFromRoute("state", props.states));
 const searchQuery = ref(stringFromRoute("q"));
 const hasActiveFilter = computed(() => !!(selectedKind.value || selectedState.value || searchQuery.value));
 
+// 설계자 요청(2026-09-22 후속) - 문서를 선택하지 않았을 때 지금 목록(필터
+// 적용 후 기준)의 상태별/분류별 개수를 보여준다 - props.states/kinds
+// 순서대로 먼저 나열하고, 그 목록에 없는 값(예: 어휘에 없는 예전 값)은
+// 뒤에 덧붙인다.
+const stateBreakdown = computed(() => {
+  const counts = new Map<string, number>();
+  for (const doc of items.value) counts.set(doc.state, (counts.get(doc.state) ?? 0) + 1);
+  const known = props.states.filter((s) => counts.has(s));
+  const rest = [...counts.keys()].filter((s) => !props.states.includes(s));
+  return [...known, ...rest].map((state) => ({ state, count: counts.get(state)! }));
+});
+const kindBreakdown = computed(() => {
+  const counts = new Map<string, number>();
+  for (const doc of items.value) counts.set(doc.kind, (counts.get(doc.kind) ?? 0) + 1);
+  const known = props.kinds.filter((k) => counts.has(k));
+  const rest = [...counts.keys()].filter((k) => !props.kinds.includes(k));
+  return [...known, ...rest].map((kind) => ({ kind, count: counts.get(kind)! }));
+});
+
+// 설계자 요청(2026-09-22 후속) - "각 추적 코드별로 어떤 동작을 언제
+// 얼마나 했는지" 히트맵/활동 로그. 지금 걸린 분류/상태 필터를 그대로
+// 반영해 activity.summary를 부른다(상태별/분류별 집계와 같은 판단) -
+// load()가 문서 목록을 새로 불러올 때마다 같이 갱신한다.
+interface HeatmapDay {
+  date: string;
+  count: number;
+}
+interface ActivityEntry {
+  code: string;
+  action: string;
+  channel: string;
+  createdAt: string;
+}
+const activityHeatmap = ref<HeatmapDay[]>([]);
+const activityRecent = ref<ActivityEntry[]>([]);
+
+const heatmapWeeks = computed(() => {
+  const days = activityHeatmap.value;
+  if (days.length === 0) return [];
+  const weeks: (HeatmapDay | null)[][] = [];
+  let week: (HeatmapDay | null)[] = [];
+  const firstDow = new Date(`${days[0].date}T00:00:00`).getDay(); // 0=일요일
+  for (let i = 0; i < firstDow; i++) week.push(null);
+  for (const day of days) {
+    week.push(day);
+    if (week.length === 7) {
+      weeks.push(week);
+      week = [];
+    }
+  }
+  if (week.length > 0) {
+    while (week.length < 7) week.push(null);
+    weeks.push(week);
+  }
+  return weeks;
+});
+
+// GitHub 컨트리뷰션 그래프와 같은 5단계 팔레트 - 익숙한 배색이라 별도
+// 범례 없이도 "진할수록 활동이 많았다"는 걸 바로 알 수 있다.
+function heatColor(count: number): string {
+  if (count === 0) return "#ebedf0";
+  if (count <= 2) return "#9be9a8";
+  if (count <= 5) return "#40c463";
+  if (count <= 10) return "#30a14e";
+  return "#216e39";
+}
+
+async function loadActivity() {
+  const result = await api.getActivitySummary(auth.apiKey!, props.owner, props.projectId, {
+    type: props.type,
+    kind: selectedKind.value || undefined,
+    state: selectedState.value || undefined,
+  });
+  if (result.ok) {
+    const data = result.data as { heatmap: HeatmapDay[]; recent: ActivityEntry[] };
+    activityHeatmap.value = data.heatmap;
+    activityRecent.value = data.recent;
+  }
+}
+
 const kindOptions = computed(() => [
   { label: "전체", value: "" },
   ...props.kinds.map((k) => ({ label: props.kindLabels[k] ? `${k} · ${props.kindLabels[k]}` : k, value: k })),
@@ -299,6 +435,7 @@ async function load() {
       });
   loading.value = false;
   if (result.ok) items.value = (result.data as { items: DocSummary[] }).items;
+  loadActivity();
 }
 
 // 지금 적용된 필터(selectedKind/selectedState/searchQuery) 값 그대로
@@ -491,3 +628,11 @@ watch(
   }
 );
 </script>
+
+<style scoped>
+.activity-heatmap-cell {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+}
+</style>

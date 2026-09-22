@@ -9,6 +9,7 @@ import * as templates from "../core/templates";
 import * as webhooks from "../core/webhooks";
 import * as repoBrowse from "../core/repoBrowse";
 import * as pullRequests from "../core/pullRequests";
+import * as activityLog from "../core/activityLog";
 import { resolveProjectId } from "../core/projectResolve";
 import type { ActionResult } from "../core/types";
 import type { ActionContext } from "../core/documents";
@@ -28,6 +29,7 @@ const registry: Record<string, Handler> = {
   "docs.search": documents.docsSearch,
   "docs.status": documents.docsStatus,
   "docs.grep": documents.docsGrep,
+  "activity.summary": activityLog.activitySummary,
   "remember.add": remember.rememberAdd,
   "remember.update": remember.rememberUpdate,
   "remember.delete": remember.rememberDelete,

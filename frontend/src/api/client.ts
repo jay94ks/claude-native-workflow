@@ -183,6 +183,12 @@ export const tagDocument = (
   code: string,
   body: { etag: string; related?: { code: string; etag: string }[]; dependsOn?: { code: string; etag: string }[] }
 ) => request(apiKey, `/projects/${owner}/${projectId}/documents/${code}/tag`, { method: "POST", body });
+export const getActivitySummary = (
+  apiKey: string,
+  owner: string,
+  projectId: string,
+  params: { type: string; kind?: string; state?: string; days?: number }
+) => request(apiKey, `/projects/${owner}/${projectId}/activity`, { query: params });
 
 // ---- Repo (Code 탭) ----
 export const listBranches = (apiKey: string, owner: string, projectId: string) => request(apiKey, `/projects/${owner}/${projectId}/repo/branches`);

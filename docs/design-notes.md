@@ -3427,3 +3427,126 @@ Tests는 added/discard로 각 상태 어휘가 정확히 반영됨. 같은 타�
 `selected.value.type === props.type` 하나로만 게이팅되는 단순한
 조건이라 리뷰로 충분히 확인.
 
+### `DocTypeWorkspace` 미선택 상태 - 종합 현황 표시 (2026-09-22, 같은 날 후속)
+
+설계자 요청: "Issues와 Documents, Plans에서 선택된 문서가 없을 때
+종합 현황을 표시하도록 만들자." - 지금까지 `selected`가 없으면(초기
+진입, 새로고침 등) 오른쪽 패널에 "왼쪽에서 문서를 선택하세요." 안내
+문구 하나만 있었는데, 이를 지금 목록(필터 적용 후 기준 - `items`)의
+**상태별**/**분류별** 개수 집계로 바꿨다.
+
+**구현 (`DocTypeWorkspace.vue`)**: `stateBreakdown`/`kindBreakdown`
+computed 두 개를 추가 - `items.value`를 순회해 `state`/`kind`별
+개수를 세고, `props.states`/`props.kinds`에 정의된 순서대로 먼저
+나열한 뒤 그 어휘에 없는 값(있을 리 없지만 방어적으로)은 뒤에 붙인다.
+템플릿에서 `selected`가 없을 때 상태별 뱃지(`stateColor()` 그대로
+재사용)+개수, 분류별은 `kinds.length > 1`일 때만(=현재 Documents만)
+`CategoryPill`+개수로 표시. **필터가 걸려 있으면 그 필터가 적용된
+목록 기준으로 집계된다** - 별도 "전체 집계"를 다시 불러오지 않고
+이미 로드된 `items`를 그대로 재사용(추가 API 호출 없음).
+
+**설계자가 명시한 건 Documents/Plans/Issues 세 곳뿐이지만, 컴포넌트가
+공유되므로 Trackers/Tests(읽기 전용)에도 자연히 상태별 집계가
+같이 적용된다** - 분류별 블록은 `kinds.length > 1` 조건 때문에 이
+두 곳(kind가 1개뿐)에선 안 뜬다. 별도 prop으로 막지 않고 그대로
+둔 이유: 상태별 집계 자체는 Trackers/Tests에도 해롭지 않고 오히려
+"지금 진행 중인 tracker가 몇 개인지" 같은 정보를 그냥 얻는 것이라
+막을 이유가 없다고 판단.
+
+**검증**: `vue-tsc --noEmit` 통과. 브라우저로 확인 - Documents(필터
+없음): 상태별 review 1/done 1/discard 8, 분류별 설계 명세 8/결과
+보고 1/돌파구 1 - 사이드바 "Documents (10)"과 합이 일치. `?kind=SP`
+필터 적용 후: 상태별 review 1/done 1/discard 6("Documents (8)"과
+합 일치), 분류별 블록은 사라짐(SP 하나뿐이라 `kindBreakdown.length
+<= 1`). Plans: added 1(분류별 없음). Issues: closed 1(분류별 없음).
+
+### 문서 코드별 활동 히트맵/로그 - `PL-PLANACT01` (2026-09-22, 같은 날 후속)
+
+설계자 요청: "REST API들에서 각 추적 코드별로 어떤 동작을 언제 얼마나
+했는지 수집해서 히트맵이나, 활동 로그 같은걸 종합 현황에서 보여줄 수
+있도록 하자." - 바로 전 라운드에서 붙인 "종합 현황"(상태별/분류별
+개수)에 시간 축을 더하는 후속. 계획/조사/구현/검증 전체 과정은
+`docs/plan-activity-heatmap.md`(`PL-PLANACT01`)에 기록, 여기는 요약만.
+
+**핵심 설계 판단(조사로 확인)**: 모든 액션을 가로채는 범용 디스패치
+훅을 새로 만들 필요가 없었다 - CLI/MCP(`api/actions.ts`의 `dispatch()`)
+와 WEB UI(`api/rest.ts`의 `web()`) 둘 다 결국 같은 `core/documents.ts`
+핸들러를 그대로 호출하므로, 이미 있던 `syncAfterWrite()`/
+`publishDocEvent()`(EMQX 브로드캐스트) 패턴과 완전히 같은 자리에
+`recordActivity()` 호출 한 줄씩만 추가했다 - 각 핸들러가 이미 알고
+있는 정확한 추적 코드(들)를 그대로 쓸 수 있어 더 정확하고 더 간단하다.
+`docs.list`/`docs.search`/`docs.status`는 단일 코드 대상이 아니라
+기록 대상에서 제외(설계자 요청이 정확히 "추적 코드별"). `docs.get`
+(단순 조회)은 포함하기로 판단 - "조회 빈도" 자체가 유의미한 신호라고
+봄. **트레이드오프**: 문서 클릭마다 `docs.get`이 불려서 다른 액션보다
+기록량이 훨씬 많을 것 - 지금 규모에선 문제없지만 실사용 규모에서
+보존 기간(retention) 정책이 필요할 수 있음(스코프 밖으로 미룸).
+
+**스키마**: `ActivityLog`(신규, 순수 추가라 `db push`로 충분 -
+[[migration-scripts-for-major-schema-changes]] 기준에 해당 안 함) -
+`projectId`/`code`(완전한 추적 코드 문자열, `Document.id` FK 아님 -
+문서가 나중에 지워져도 "그 코드에 그 동작이 있었다"는 이력은 남아야
+하므로)/`action`/`channel`/`actorId`/`createdAt`.
+
+**백엔드**: `core/activityLog.ts`(신규) - `recordActivity()`는
+fire-and-forget(실패해도 원래 액션 응답에 영향 없음). `documents.ts`
+의 `docsAdd`/`docsGet`/`docsUpdate`/`docsDelete`/`docsTransition`
+(적용된 코드마다 각각)/`docsTag`/`docsGrep`에 호출 한 줄씩 추가.
+**순환 참조 회피**: `activityLog.ts`가 `documents.ts`의
+`guardMembership`/`fail`을 쓰고 `documents.ts`가 `activityLog.ts`의
+`recordActivity`를 쓰면 두 모듈이 서로를 값으로 import하는 런타임
+순환 참조가 생긴다 - `guardMembership`/`fail`을 `core/actionHelpers.ts`
+로 뽑아 두 파일 다 그쪽에서만 가져오게 해서 의존 방향을 한쪽으로만
+정리했다. 새 액션 `activity.summary`(입력이 `docs.list`와 같은 필터
+모양 - `type` 필수, `kind`/`state` 선택, 지금 화면 필터를 그대로
+반영) - `actions.ts`/`rest.ts`(`GET /projects/:owner/:projectId/
+activity`) 양쪽에 등록.
+
+**실기동 중 발견한 진짜 버그(타임존)**: 히트맵 날짜 경계를 처음엔
+`new Date(); setHours(0,0,0,0); setDate(...)`(로컬 타임존 기준)로
+계산하고 라벨은 `toISOString()`(UTC)으로 뽑았다 - 로컬 타임존이 UTC
+보다 앞서는 KST(+9) 환경에서, 방금 KST 낮 시간에 기록한 `docs.get`이
+히트맵 날짜 목록에서 통째로 빠지는 걸 실제 브라우저 확인으로 발견
+(히트맵 마지막 칸이 회색인데 "최근 활동"엔 오늘 항목이 떠 있었음).
+원인: 로컬 자정 기준으로 만든 Date를 UTC로 직렬화하면 하루 전
+날짜로 밀린다. **수정**: 시작점 계산과 라벨 생성 둘 다 `Date.UTC(...)`
+로만 하도록 통일 - 활동 기록의 `createdAt.toISOString().slice(0,10)`
+버킷팅과 완전히 같은 기준(UTC 달력일)이 되어 더 이상 안 어긋난다.
+
+**프론트엔드**: `api/client.ts`에 `getActivitySummary()` 추가.
+`DocTypeWorkspace.vue`의 종합 현황에 GitHub 컨트리뷰션 그래프 스타일
+히트맵(최근 30일, 일요일 시작 주 단위 격자, 5단계 초록 팔레트)과
+최근 활동 로그(코드·동작·채널·시각) 추가 - `load()`가 문서 목록을
+새로 불러올 때마다 `loadActivity()`도 같이 호출해서 항상 지금 필터를
+반영한다.
+
+**검증**: `tsc --noEmit`(backend)/`vue-tsc --noEmit`(frontend) 둘 다
+통과. 백엔드 dev 서버 재시작 필요(스키마 변경 후 `prisma generate`가
+실행 중인 프로세스의 네이티브 엔진 파일을 EPERM으로 못 바꿔치기했고,
+Node가 이미 메모리에 올린 구버전 Prisma Client도 새 모델을 몰라서
+재시작이 필요했음 - `taskkill` 후 `npm run dev`로 재기동, 헬스체크로
+확인). 브라우저로 실제 확인: 문서 열람(`docs.get`) → 상태 전이
+(`docs.transition`) → 종합 현황으로 돌아가서 히트맵에 초록 칸(오늘)이
+뜨고 "최근 활동"에 `docs.get`/`docs.transition`이 순서대로(최신 먼저)
+표시되는 것, 상태별 집계도 전이 결과(active: 1)로 갱신되는 것 확인.
+`?kind=RP` 필터 적용 시 활동이 전혀 없는 문서만 남아 히트맵 전부
+회색·"최근 활동" 섹션 자체가 안 뜨는 것도 확인(빈 배열이면
+`v-if="activityRecent.length > 0"`로 숨김). Trackers 탭(읽기 전용,
+같은 컴포넌트 재사용)에서도 상태별 집계+빈 히트맵이 정상 표시.
+
+**뒤늦게 발견: 이 프로젝트는 `prisma db push`가 아니라 버전 관리되는
+`prisma migrate dev`를 쓴다**(`prisma/migrations/` 아래 12개 기존
+마이그레이션 파일이 git에 커밋돼 있음) - 처음에 스키마를 `db push`로만
+반영해서 실제 DB엔 테이블이 생겼지만 마이그레이션 히스토리엔 기록이
+안 남는 상태였다. `migrate dev`를 그냥 실행하면 "히스토리와 실제
+DB가 어긋난다(drift)"며 **개발 DB 전체를 reset하겠다고 나와서**(지금
+브라우저로 계속 검증 중이던 시드 데이터가 전부 날아갈 뻔함) 그 경로는
+피했다. 대신 **수동 baseline 절차**로 정리: (1) 기존 마이그레이션
+파일 스타일 그대로 `migration.sql`을 직접 작성(`CreateTable`+
+`CreateIndex`+`AddForeignKey`), (2) `prisma migrate resolve --applied
+<폴더명>`으로 "이미 적용된 것으로 표시"만 하고 SQL은 다시 실행하지
+않음, (3) `prisma migrate status`로 drift 없음 확인. 데이터 손실 없이
+마이그레이션 히스토리와 실제 DB를 정합시켰다 - **다음 세션을 위한
+교훈**: 이 저장소에서 스키마를 바꿀 땐 `db push`가 아니라 처음부터
+`prisma migrate dev --name <slug>`를 써야 이 수동 정리가 필요 없다.
+

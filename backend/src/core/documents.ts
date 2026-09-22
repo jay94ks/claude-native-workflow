@@ -6,7 +6,6 @@
 // `docs.status` 집계, 백엔드 캐시.
 
 import { prisma } from "./prisma";
-import { requireMembership, MembershipError } from "./membership";
 import { generateDocumentId, trackingCode, parseTrackingCode } from "./trackingCode";
 import {
   verifyTaggedRefs,
@@ -36,6 +35,8 @@ import { grepDocument, grepProjectDocumentIds } from "./grep";
 import { getCached, setCached } from "./cache";
 import { notify } from "./messages";
 import { publishDocEvent } from "./emqx";
+import { recordActivity } from "./activityLog";
+import { fail, guardMembership } from "./actionHelpers";
 
 const opposite = (c: Channel): Channel => (c === "agent" ? "architect" : "agent");
 
@@ -61,10 +62,6 @@ async function insertWithFreshId(data: Record<string, unknown>) {
   throw new Error("unreachable");
 }
 
-function fail(reason: string | string[]): ActionResult {
-  return { ok: false, reason: Array.isArray(reason) ? reason : [reason] };
-}
-
 /**
  * 문서가 등록/수정/전이/태깅될 때마다 EMQX로 브로드캐스트한다 - 검색
  * 인덱싱/캐시 무효화는 이제 이 브로드캐스트를 구독하는 쪽
@@ -87,17 +84,6 @@ function syncAfterWrite(doc: {
 
 function removeAfterDelete(id: string, projectId: string): void {
   publishDocEvent({ op: "delete", projectId, id });
-}
-
-async function guardMembership(projectId: unknown, ctx: ActionContext, minRole: "READ" | "WRITE"): Promise<ActionResult | null> {
-  if (typeof projectId !== "string" || !projectId) return fail("projectId가 필요합니다.");
-  try {
-    await requireMembership(projectId, ctx.architectId, minRole);
-    return null;
-  } catch (err) {
-    if (err instanceof MembershipError) return fail(err.message);
-    throw err;
-  }
 }
 
 export async function docsAdd(payload: any, ctx: ActionContext): Promise<ActionResult> {
@@ -173,6 +159,7 @@ export async function docsAdd(payload: any, ctx: ActionContext): Promise<ActionR
 
   // design-notes.md "notice 예시" - 질의/답변/의견 등록은 상대 채널에게 자동으로 알린다.
   const code = trackingCode(doc.kind, doc.id);
+  recordActivity(projectId, code, "docs.add", ctx);
   if (type === "question") {
     await notify(projectId, opposite(ctx.channel), `[${code}]에 질의가 등록되었습니다.`);
   } else if (type === "answer" && parent) {
@@ -195,6 +182,7 @@ export async function docsGet(payload: any, ctx: ActionContext): Promise<ActionR
   if (!doc) return fail(`${payload.code} 문서를 찾을 수 없습니다.`);
 
   const [related, dependsOn] = await Promise.all([loadRelated(doc.id), loadDependsOn(doc.id)]);
+  recordActivity(payload.projectId, payload.code, "docs.get", ctx);
   return { ok: true, data: toDocResponse({ ...doc, related, dependsOn }) };
 }
 
@@ -323,6 +311,7 @@ export async function docsUpdate(payload: any, ctx: ActionContext): Promise<Acti
   if (dependsOn !== undefined) await replaceDependsOn(doc.id, dependsOn);
 
   await syncAfterWrite(updated);
+  recordActivity(projectId, code, "docs.update", ctx);
   return { ok: true, data: { code, etag: updated.etag } };
 }
 
@@ -347,6 +336,7 @@ export async function docsDelete(payload: any, ctx: ActionContext): Promise<Acti
 
   await prisma.document.delete({ where: { id: doc.id } });
   await removeAfterDelete(doc.id, projectId);
+  recordActivity(projectId, code, "docs.delete", ctx);
   return { ok: true };
 }
 
@@ -412,7 +402,10 @@ export async function docsTransition(payload: any, ctx: ActionContext): Promise<
     }
   });
 
-  for (const doc of touched) await syncAfterWrite(doc);
+  for (const doc of touched) {
+    await syncAfterWrite(doc);
+    recordActivity(projectId, trackingCode(doc.kind, doc.id), "docs.transition", ctx);
+  }
   return { ok: true, data };
 }
 
@@ -446,6 +439,7 @@ export async function docsTag(payload: any, ctx: ActionContext): Promise<ActionR
   if (dependsOn !== undefined) await replaceDependsOn(doc.id, dependsOn);
 
   await syncAfterWrite(updated);
+  recordActivity(projectId, code, "docs.tag", ctx);
   return { ok: true, data: { code, etag: updated.etag } };
 }
 
@@ -548,5 +542,6 @@ export async function docsGrep(payload: any, ctx: ActionContext): Promise<Action
   if (!doc) return fail(`${code} 문서를 찾을 수 없습니다.`);
 
   const matches = await grepDocument(doc.content, pattern);
+  recordActivity(projectId, code, "docs.grep", ctx);
   return { ok: true, data: { code, matches } };
 }

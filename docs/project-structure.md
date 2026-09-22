@@ -158,7 +158,22 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   않아 "의존성 순 정렬" 토글을 숨긴다. `states` prop(타입별
   `documentRules.ts` 상태 어휘)이 비어 있으면 상태 필터를, `kinds`가
   1개뿐이면 분류 필터를 다이얼로그에서 아예 숨긴다(Plans/Issues/
-  Trackers/Tests는 kind가 1개라 분류 선택 자체가 안 보임). 전역 상단바
+  Trackers/Tests는 kind가 1개라 분류 선택 자체가 안 보임). **문서를
+  선택하지 않았을 때는 안내 문구 대신 지금 목록(필터 적용 후 기준)의
+  상태별/분류별 개수 집계("종합 현황")를 보여준다**(design-notes.md
+  2026-09-22 "미선택 상태" 절) - 추가 API 호출 없이 이미 로드된
+  `items`를 그대로 집계, 분류별 블록은 kind가 2개 이상일 때만(현재
+  Documents만) 표시. **같은 종합 현황에 추적 코드별 활동 히트맵(최근
+  30일)과 최근 활동 로그도 있다**(`PL-PLANACT01`, design-notes.md
+  "문서 코드별 활동 히트맵/로그" 절) - `docsAdd`/`docsGet`/
+  `docsUpdate`/`docsDelete`/`docsTransition`/`docsTag`/`docsGrep`가
+  호출될 때마다 `core/activityLog.ts`의 `recordActivity()`가 `
+  ActivityLog` 테이블(신규)에 `{projectId, code, action, channel,
+  actorId, createdAt}`를 남기고(fire-and-forget), 새 액션
+  `activity.summary`(`docs.list`와 같은 필터 모양)가 그 필터에 해당
+  하는 코드들의 활동만 걸러 히트맵/최근 30건 로그로 돌려준다.
+  `docs.list`/`docs.search`/`docs.status`는 단일 코드 대상이 아니라
+  기록하지 않는다. 전역 상단바
   (`MainLayout.vue`)엔 메시지 아이콘(`components/MessagesDialog.vue`
   - `message.list`/`send`/`transition`)이 있고, 모든 액션 응답의
   `notices`는 Quasar `Notify` 토스트로 뜬다(`stores/auth.ts`가
