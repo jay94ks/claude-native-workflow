@@ -6,9 +6,36 @@
           <q-btn v-if="!readOnly" size="sm" color="primary" icon="add" :label="createLabel" :to="createRoute" />
         </template>
       </PageHeader>
+      <!-- 설계자 요청(2026-09-22 후속) - 분류/상태별로 걸러보거나 키워드로
+           검색할 수 있어야 한다. 처음엔 분류를 탭으로 뒀었는데, 상태
+           필터/키워드 검색까지 추가되면서 축이 여러 개가 돼 탭보단
+           다이얼로그로 한 번에 설정하는 편이 낫다는 지적을 받아 이 모양으로
+           바꿨다. 지금 적용된 필터는 쿼리 스트링(?kind=&state=&q=)에 반영해
+           뒤로가기/새로고침에도 유지되게 한다. -->
+      <div class="row items-center q-gutter-xs q-mb-sm">
+        <q-btn flat dense size="sm" icon="filter_list" label="필터" @click="openFilterDialog" />
+        <q-chip v-if="selectedKind" dense removable color="primary" text-color="white" @remove="clearFilter('kind')">
+          분류: {{ kindLabels[selectedKind] ?? selectedKind }}
+        </q-chip>
+        <q-chip v-if="selectedState" dense removable color="primary" text-color="white" @remove="clearFilter('state')">
+          상태: {{ selectedState }}
+        </q-chip>
+        <q-chip v-if="searchQuery" dense removable color="primary" text-color="white" @remove="clearFilter('q')">
+          검색: {{ searchQuery }}
+        </q-chip>
+      </div>
       <!-- design-notes.md "문서 의존성" - dependsOn readiness(아직 해소되지
-           않은 의존 개수) 오름차순 정렬을 docs.list의 sort 옵션으로 노출. -->
-      <q-toggle v-model="sortByDependency" label="의존성 순 정렬" dense size="sm" class="q-mb-sm" @update:model-value="load" />
+           않은 의존 개수) 오름차순 정렬을 docs.list의 sort 옵션으로 노출.
+           docs.search는 이 정렬을 지원하지 않으므로 키워드 검색 중엔 숨긴다. -->
+      <q-toggle
+        v-if="!searchQuery"
+        v-model="sortByDependency"
+        label="의존성 순 정렬"
+        dense
+        size="sm"
+        class="q-mb-sm"
+        @update:model-value="load"
+      />
       <div v-if="loading" class="text-caption">불러오는 중...</div>
       <q-list v-else bordered separator>
         <q-item
@@ -27,7 +54,7 @@
             <q-badge :color="stateColor(doc.state)">{{ doc.state }}</q-badge>
           </q-item-section>
         </q-item>
-        <EmptyState v-if="items.length === 0" as="item" message="문서가 없습니다." />
+        <EmptyState v-if="items.length === 0" as="item" :message="hasActiveFilter ? '조건에 맞는 문서가 없습니다.' : '문서가 없습니다.'" />
       </q-list>
     </ProjectSidebar>
 
@@ -106,12 +133,48 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <q-dialog v-model="filterDialogOpen">
+      <q-card style="width: var(--gh-dialog-width-md)">
+        <q-card-section class="text-h6">필터</q-card-section>
+        <q-card-section class="q-gutter-md">
+          <q-select
+            v-if="kinds.length > 1"
+            v-model="draftKind"
+            :options="kindOptions"
+            option-label="label"
+            option-value="value"
+            emit-value
+            map-options
+            dense
+            label="분류"
+          />
+          <q-select
+            v-if="states.length > 0"
+            v-model="draftState"
+            :options="stateOptions"
+            option-label="label"
+            option-value="value"
+            emit-value
+            map-options
+            dense
+            label="상태"
+          />
+          <q-input v-model="draftQuery" dense label="키워드 검색" @keyup.enter="applyFilters" />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="초기화" @click="resetFilterDraft" />
+          <q-btn flat label="취소" v-close-popup />
+          <q-btn color="primary" label="적용" @click="applyFilters" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
-import { useRouter } from "vue-router";
+import { ref, computed, onMounted, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "stores/auth";
 import DocumentDiscussion from "components/DocumentDiscussion.vue";
 import MarkdownSourceView from "components/MarkdownSourceView.vue";
@@ -168,8 +231,14 @@ const props = withDefaults(
     // "tracker"/"test"가 없어서 select()가 자동으로 push를 건너뛴다).
     code?: string;
     highlightCode?: string;
+    // 설계자 요청(2026-09-22 후속) - 필터 다이얼로그의 분류 선택지에
+    // 코드(SP/RP/...) 대신/같이 보여줄 한글 이름 - 안 넘기면 코드만 보인다.
+    kindLabels?: Record<string, string>;
+    // 상태 필터 선택지(documentRules.ts의 STATES_BY_TYPE과 맞춘 것) -
+    // 안 넘기거나 빈 배열이면 상태 필터 자체를 숨긴다.
+    states?: string[];
   }>(),
-  { readOnly: false, createLabel: "새로 만들기", createRoute: "", transitionsByState: () => ({}) }
+  { readOnly: false, createLabel: "새로 만들기", createRoute: "", transitionsByState: () => ({}), kindLabels: () => ({}), states: () => [] }
 );
 
 // design-notes.md 참고 - "관련 문서"(related/dependsOn)는 타입이 달라도
@@ -180,6 +249,7 @@ const props = withDefaults(
 // "잘못된 탭의 URL에 다른 타입 문서가 얹힌" 것처럼 보이는 버그가 된다).
 const URL_SYNCED_TYPES: Record<string, string> = { doc: "documents", plan: "plans", issue: "issues" };
 
+const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const items = ref<DocSummary[]>([]);
@@ -190,14 +260,93 @@ const actionError = ref("");
 const sortByDependency = ref(false);
 const loading = ref(true);
 
+// 설계자 요청(2026-09-22 후속) - 분류/상태/키워드 검색 세 축의 필터를
+// 쿼리 스트링(?kind=&state=&q=)에 반영한다 - "전체"/미검색은 그 쿼리
+// 키 자체를 생략해서 지금까지의 "필터 없이 전체 보기" 기본 동작과 URL
+// 모양이 그대로 호환된다. 오래된/잘못된 URL(kind가 이 탭의 kinds에
+// 없는 값 등)이면 조용히 "전체"로 되돌아간다.
+function stringFromRoute(key: "kind" | "state" | "q", validValues?: readonly string[]): string {
+  const q = route.query[key];
+  if (typeof q !== "string") return "";
+  if (validValues && !validValues.includes(q)) return "";
+  return q;
+}
+const selectedKind = ref(stringFromRoute("kind", props.kinds));
+const selectedState = ref(stringFromRoute("state", props.states));
+const searchQuery = ref(stringFromRoute("q"));
+const hasActiveFilter = computed(() => !!(selectedKind.value || selectedState.value || searchQuery.value));
+
+const kindOptions = computed(() => [
+  { label: "전체", value: "" },
+  ...props.kinds.map((k) => ({ label: props.kindLabels[k] ? `${k} · ${props.kindLabels[k]}` : k, value: k })),
+]);
+const stateOptions = computed(() => [{ label: "전체", value: "" }, ...props.states.map((s) => ({ label: s, value: s }))]);
+
 async function load() {
   loading.value = true;
-  const result = await api.listDocuments(auth.apiKey!, props.owner, props.projectId, {
-    type: props.type,
-    sort: sortByDependency.value ? "dependency" : undefined,
-  });
+  const result = searchQuery.value
+    ? await api.searchDocuments(auth.apiKey!, props.owner, props.projectId, {
+        q: searchQuery.value,
+        type: props.type,
+        kind: selectedKind.value || undefined,
+        state: selectedState.value || undefined,
+      })
+    : await api.listDocuments(auth.apiKey!, props.owner, props.projectId, {
+        type: props.type,
+        kind: selectedKind.value || undefined,
+        state: selectedState.value || undefined,
+        sort: sortByDependency.value ? "dependency" : undefined,
+      });
   loading.value = false;
   if (result.ok) items.value = (result.data as { items: DocSummary[] }).items;
+}
+
+// 지금 적용된 필터(selectedKind/selectedState/searchQuery) 값 그대로
+// 쿼리 스트링에 반영하고 목록을 다시 불러온다 - 다이얼로그의 "적용"과
+// 칩의 "x"(개별 필터 제거) 둘 다 이 함수 하나로 처리한다.
+function syncFilterQueryAndLoad() {
+  const next = { ...route.query } as Record<string, string>;
+  const entries: [string, string][] = [
+    ["kind", selectedKind.value],
+    ["state", selectedState.value],
+    ["q", searchQuery.value],
+  ];
+  for (const [key, value] of entries) {
+    if (value) next[key] = value;
+    else delete next[key];
+  }
+  router.push({ path: route.path, query: next });
+  load();
+}
+
+const filterDialogOpen = ref(false);
+const draftKind = ref("");
+const draftState = ref("");
+const draftQuery = ref("");
+
+function openFilterDialog() {
+  draftKind.value = selectedKind.value;
+  draftState.value = selectedState.value;
+  draftQuery.value = searchQuery.value;
+  filterDialogOpen.value = true;
+}
+function resetFilterDraft() {
+  draftKind.value = "";
+  draftState.value = "";
+  draftQuery.value = "";
+}
+function applyFilters() {
+  selectedKind.value = draftKind.value;
+  selectedState.value = draftState.value;
+  searchQuery.value = draftQuery.value.trim();
+  filterDialogOpen.value = false;
+  syncFilterQueryAndLoad();
+}
+function clearFilter(key: "kind" | "state" | "q") {
+  if (key === "kind") selectedKind.value = "";
+  if (key === "state") selectedState.value = "";
+  if (key === "q") searchQuery.value = "";
+  syncFilterQueryAndLoad();
 }
 
 async function loadSelected(code: string) {
@@ -210,7 +359,17 @@ async function select(code: string) {
   await loadSelected(code);
   if (!selected.value) return;
   const segment = URL_SYNCED_TYPES[selected.value.type];
-  if (segment) router.push(`/${props.owner}/${props.projectId}/${segment}/${code}`);
+  if (!segment) return;
+  // 같은 탭 안에서(=같은 type) 이동할 때만 지금 걸려있던 필터를 URL에
+  // 실어 보낸다 - related/dependsOn으로 다른 type 탭(예: plan)으로
+  // 건너뛸 땐 이 필터가 그쪽에서 의미가 없으므로 싣지 않는다.
+  const query: Record<string, string> = {};
+  if (selected.value.type === props.type) {
+    if (selectedKind.value) query.kind = selectedKind.value;
+    if (selectedState.value) query.state = selectedState.value;
+    if (searchQuery.value) query.q = searchQuery.value;
+  }
+  router.push({ path: `/${props.owner}/${props.projectId}/${segment}/${code}`, query });
 }
 
 const availableTransitions = ref<TransitionOption[]>([]);
@@ -299,6 +458,23 @@ onMounted(async () => {
   if (props.code) await loadSelected(props.code);
 });
 watch(() => [props.owner, props.projectId], load);
+// 브라우저 뒤로/앞으로 가기로 쿼리의 필터가 바뀐 경우 - syncFilterQueryAndLoad()가
+// 스스로 만든 변화는 이미 각 ref가 그 값이라 여기서 다시 안 걸림(무한
+// 루프/중복 조회 방지), 뒤로가기처럼 이 컴포넌트 바깥에서 URL이 바뀐
+// 경우만 세 필터 ref를 맞추고 다시 불러온다.
+watch(
+  () => [route.query.kind, route.query.state, route.query.q],
+  () => {
+    const nextKind = stringFromRoute("kind", props.kinds);
+    const nextState = stringFromRoute("state", props.states);
+    const nextQuery = stringFromRoute("q");
+    if (nextKind === selectedKind.value && nextState === selectedState.value && nextQuery === searchQuery.value) return;
+    selectedKind.value = nextKind;
+    selectedState.value = nextState;
+    searchQuery.value = nextQuery;
+    load();
+  }
+);
 // 브라우저 뒤로/앞으로 가기 - path의 :code가 바뀌면 그에 맞는 문서를
 // 다시 불러온다. select()가 이미 방금 반영해둔 경우(사용자가 방금
 // 클릭해서 router.push가 스스로 이 변화를 일으킨 경우)는 중복 조회를

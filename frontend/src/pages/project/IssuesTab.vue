@@ -4,6 +4,7 @@
     :project-id="projectId"
     type="issue"
     :kinds="['IS']"
+    :states="['open', 'closed']"
     title="Issues"
     create-label="새 이슈"
     :create-route="`/${owner}/${projectId}/issues/new`"

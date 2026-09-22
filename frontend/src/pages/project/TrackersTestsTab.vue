@@ -14,6 +14,7 @@
       :project-id="projectId"
       type="tracker"
       :kinds="['TR']"
+      :states="['added', 'resumed', 'ended', 'canceled']"
       title="Trackers"
       read-only
       :code="innerTab === 'tracker' ? openCode : undefined"
@@ -25,6 +26,7 @@
       :project-id="projectId"
       type="test"
       :kinds="['TC']"
+      :states="['added', 'discard']"
       title="Tests"
       read-only
       :code="innerTab === 'test' ? openCode : undefined"

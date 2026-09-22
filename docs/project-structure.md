@@ -148,7 +148,17 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   `DocTypeWorkspace.vue`엔 related/dependsOn 태그 배지(클릭하면
   타입이 달라도 그 문서로 바로 이동)+"태그 추가" 다이얼로그+
   "의존성 순 정렬" 토글도 있다(선택 동작은 항상 다이얼로그로
-  유지 - 아래 Source View/생성 페이지 절 참고). 전역 상단바
+  유지 - 아래 Source View/생성 페이지 절 참고). **분류(kind)/상태
+  (state)/키워드 검색 필터도 다이얼로그 하나로 통합**되어 있다
+  (design-notes.md 2026-09-22 "필터 다이얼로그" 절) - 세 축 모두
+  `route.query`(`kind`/`state`/`q`)로 영속화돼 새로고침/뒤로가기에도
+  유지되고, 값이 없으면 쿼리 키 자체를 지운다(리터럴 "전체" 값을
+  쓰지 않음). 키워드가 있으면 `docs.list` 대신 `docs.search`
+  (Meilisearch)로 분기하고, 검색 중엔 `sort=dependency`를 지원하지
+  않아 "의존성 순 정렬" 토글을 숨긴다. `states` prop(타입별
+  `documentRules.ts` 상태 어휘)이 비어 있으면 상태 필터를, `kinds`가
+  1개뿐이면 분류 필터를 다이얼로그에서 아예 숨긴다(Plans/Issues/
+  Trackers/Tests는 kind가 1개라 분류 선택 자체가 안 보임). 전역 상단바
   (`MainLayout.vue`)엔 메시지 아이콘(`components/MessagesDialog.vue`
   - `message.list`/`send`/`transition`)이 있고, 모든 액션 응답의
   `notices`는 Quasar `Notify` 토스트로 뜬다(`stores/auth.ts`가

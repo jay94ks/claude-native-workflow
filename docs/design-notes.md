@@ -3352,3 +3352,78 @@ closed 색 그대로), Template 배포 버튼(파란색으로 바뀜), 웹훅
 dependsOn 태그가 둥근 pill로, 색은 그대로), Collaborators, Trackers &
 Tests(헤더 제거 확인) 전부 스크린샷으로 확인.
 
+### `DocTypeWorkspace` 필터 다이얼로그 - 분류/상태/키워드 검색 통합, URL 영속화 (2026-09-22, 같은 날 후속)
+
+설계자 요청 두 건이 이어졌다: (1) "Documents에서 문서 분류별로 보는
+기능과, 전체 분류를 모아 보는 기능이 필요해. 분류를 바꿀 땐, router
+path에도 어떤 분류를 보고 있는지 반영되어야 뒤로가기 했을 때 혹은
+새로고침 했을 때 이전 분류로 돌아갈 수 있어." (2) 곧바로 이어서 "'상태별',
+'분류별' 보기 뿐만 아니라 키워드로 검색도 가능해야 하니, 탭 보단
+다이얼로그를 띄워서 필터를 설정할 수 있도록 만들어야해." - 처음엔
+`q-tabs`로 분류(kind)만 구현했었는데, 좁은 사이드바(~270px)에 6개
+탭(전체+SP/RP/RM/QA/BT)이 들어가며 Quasar 기본 스크롤 화살표가 뜨는
+문제가 있었고, 상태·키워드 두 축이 더 늘어나는 두 번째 요청 때문에
+탭 구조를 버리고 다이얼로그로 전면 교체했다.
+
+**구현 (`DocTypeWorkspace.vue`)**:
+- 새 props: `kindLabels?: Record<string,string>`(분류 코드→한글 라벨),
+  `states?: string[]`(그 타입이 가질 수 있는 상태 목록 - 빈 배열이면
+  상태 필터 자체를 다이얼로그에서 숨김).
+- `분류`/`상태`/`키워드 검색` 세 축을 각각 `route.query.kind`/
+  `.state`/`.q`에 매핑 - **값이 없으면 쿼리 키 자체를 지운다**("전체"를
+  리터럴 값으로 쓰지 않음, 기존 URL과의 하위 호환 유지).
+- 필터 버튼 + 활성 필터마다 removable `q-chip`(분류/상태/검색 각각)을
+  리스트 위에 표시. 다이얼로그는 draft 상태(`draftKind`/`draftState`/
+  `draftQuery`)를 따로 두고 "적용"을 눌러야 실제 필터에 반영 - 여는
+  순간 매 키 입력마다 재조회하지 않기 위해서다("초기화"는 draft만
+  비우고 적용 전까지 URL/조회에 영향 없음, "취소"는 draft를 버리고
+  닫기만 함 - 브라우저로 반복 확인, 실수로 다이얼로그를 닫아도 이미
+  걸린 필터가 사라지지 않음을 확인).
+- `load()`가 `searchQuery`가 있으면 `api.searchDocuments`(Meilisearch
+  `q` + `type`/`kind`/`state` 구조적 필터), 없으면 기존
+  `api.listDocuments`(+ `sort=dependency`)로 분기 - 백엔드
+  `docs.search`가 `sort`를 지원하지 않으므로 "의존성 순 정렬" 토글은
+  키워드 검색 중엔 숨긴다(`v-if="!searchQuery"`).
+- 브라우저 뒤로/앞으로가기 대응: `route.query`의 세 키를 감시하는
+  `watch`를 추가해 값이 실제로 바뀐 경우에만 내부 상태를 되돌리고
+  재조회 - 새로고침 시에도 초기 `ref` 값을 `route.query`에서 읽어와
+  복원.
+- `select(code)`(related/dependsOn 태그 클릭, 목록 항목 클릭)는 이동
+  대상 문서의 `type`이 지금 이 워크스페이스의 `type`과 같을 때만 현재
+  필터 세 축을 새 경로의 쿼리로 그대로 실어 보낸다 - 다른 type(예:
+  tracker에서 plan으로)으로 건너뛸 땐 그 필터가 그쪽에서 의미가 없으므로
+  싣지 않는다. 같은 type 안에서 분류가 다른 문서로 이동해도(예:
+  kind=SP 필터가 걸린 채 dependsOn으로 RP 문서로 이동) 필터는 유지된다
+  - 이건 의도적: `kind` 쿼리는 "목록에 뭘 보여줄지"이지 "지금 보고 있는
+  문서가 뭔지"가 아니므로, 상세 패널이 필터 밖의 문서를 보여줘도 목록
+  자체는 그대로 필터링된 채 있는 게 맞다(실제 클릭으로 확인:
+  `SP-R0FNGXX7?kind=SP` → dependsOn 태그 클릭 →
+  `RP-M4P3H2S7?kind=SP`, 목록은 SP만 보이는 채 유지, 상세는 RP 문서
+  정상 표시).
+- 호출부 5곳(`DocumentsTab`/`PlansTab`/`IssuesTab`/`TrackersTestsTab`
+  ×2)에 각 타입의 `documentRules.ts` 상태 어휘대로 `:states` prop 추가
+  (doc: draft/review/active/done/discard, plan: added/read/done/
+  discard, issue: open/closed, tracker: added/resumed/ended/canceled,
+  test: added/discard). `DocumentsTab`에만 `:kind-labels`도 추가(다른
+  4곳은 kind가 1개뿐이라 분류 선택 자체가 다이얼로그에서 숨겨짐 -
+  `v-if="kinds.length > 1"`).
+- `EmptyState` 메시지를 조건부로: 필터가 걸려 있으면 "조건에 맞는
+  문서가 없습니다.", 아니면 기존 "문서가 없습니다."
+
+**검증**: `vue-tsc --noEmit` 통과. 브라우저로 5개 탭 전부 확인 - (1)
+Documents: 분류=SP · 상태=discard 조합 URL 직접 진입 시 정확히 6건
+필터링 + 두 칩 표시, 분류 드롭다운이 "SP · 설계 명세" 등 한글 라벨로
+표시, 새로고침/뒤로가기 모두 상태 복원. (2) Plans: 분류 선택자가 아예
+안 보임(kinds.length===1) 확인, 상태=read + 키워드="디자인 계획"(한글
+2단어) 조합이 URL에 `q=디자인+계획`로 정확히 인코딩되고 0건(필터
+교집합이 실제로 비어서 정상) → 상태 칩만 제거하니 키워드 단독으로
+1건(원래 있던 유일한 plan) 정상 매치. (3) Issues: 상태 드롭다운이
+전체/open/closed로 정상. (4)(5) Trackers/Tests(읽기 전용 탭)도 필터
+다이얼로그가 그대로 동작 - Trackers는 added/resumed/ended/canceled,
+Tests는 added/discard로 각 상태 어휘가 정확히 반영됨. 같은 타입 안에서
+분류가 다른 문서로 건너뛸 때 필터 유지되는 것도 실제 클릭으로 확인(위
+"select(code)" 절 참고). 진짜 다른 type으로 건너뛰는 related/dependsOn
+태그는 시드 데이터에 없어서 라이브 클릭 확인은 못 했지만, 코드가
+`selected.value.type === props.type` 하나로만 게이팅되는 단순한
+조건이라 리뷰로 충분히 확인.
+

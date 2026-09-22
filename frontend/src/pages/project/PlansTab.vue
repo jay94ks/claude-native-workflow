@@ -4,6 +4,7 @@
     :project-id="projectId"
     type="plan"
     :kinds="['PL']"
+    :states="['added', 'read', 'done', 'discard']"
     title="Plans"
     create-label="새 계획"
     :create-route="`/${owner}/${projectId}/plans/new`"

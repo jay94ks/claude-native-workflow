@@ -4,6 +4,8 @@
     :project-id="projectId"
     type="doc"
     :kinds="['SP', 'RP', 'RM', 'QA', 'BT']"
+    :kind-labels="kindLabels"
+    :states="['draft', 'review', 'active', 'done', 'discard']"
     title="Documents"
     create-label="새 문서"
     :create-route="`/${owner}/${projectId}/documents/new`"
@@ -25,6 +27,15 @@ defineProps<{ owner: string; projectId: string; code?: string }>();
 // 넘어올 때 강조할 Q&A 항목만 여전히 쿼리(highlight)로 받는다.
 const route = useRoute();
 const highlightCode = computed(() => (typeof route.query.highlight === "string" ? route.query.highlight : undefined));
+
+// design-notes.md "구현 로드맵" Phase 1 - doc의 다섯 kind(SP/RP/RM/QA/BT).
+const kindLabels: Record<string, string> = {
+  SP: "설계 명세",
+  RP: "결과 보고",
+  RM: "지시/지침 사항",
+  QA: "QA 시나리오",
+  BT: "돌파구",
+};
 
 // doc의 상태 전이(backend/src/core/documentRules.ts checkTransition의
 // "doc" 분기와 맞춘 것 - 실제 허용 여부는 항상 서버가 최종 판단한다,
