@@ -23,3 +23,4 @@ frontmatter(`id`/`parent_id`/`type`/`kind`/`state`/`branch`/
 | PL-PLANACT01 | [plan-activity-heatmap.md](plan-activity-heatmap.md) | 완료: 문서 코드별 활동 히트맵/로그 - 종합 현황에 표시 |
 | PL-PLANDK01 | [plan-doc-kind-management.md](plan-doc-kind-management.md) | 완료: 문서 분류(kind) 추가/수정 + 분류별 지침 관리 |
 | PL-PLANGHOA | [plan-github-push-mirror-oauth.md](plan-github-push-mirror-oauth.md) | 완료: GitHub OAuth 연결 - push-mirror 설정 화면에 추가 |
+| PL-PLANUXQA1 | [plan-ux-qa-improvements.md](plan-ux-qa-improvements.md) | 완료: 사용자 편의성 관점 UI QA + 개선 계획(F1~F7 전부 처리 - 수정 4건, 결정 1건, 결론 2건) |

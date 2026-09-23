@@ -81,7 +81,26 @@
         <DiffViewer v-if="selectedPath" :owner="owner" :project-id="projectId" :base="selected.targetBranch" :head="selected.sourceBranch" :path="selectedPath" />
         <div v-else class="text-caption" style="color: var(--gh-fg-muted)">왼쪽 파일 트리에서 파일을 선택하세요.</div>
       </template>
-      <div v-else class="text-caption">왼쪽에서 PR을 선택하세요.</div>
+      <!-- 설계자 지적(2026-09-22, UX QA F5) - Documents/Plans/Issues/
+           Trackers는 DocTypeWorkspace를 공유해서 미선택 시 상태별 종합
+           현황을 보여주는데, PR 탭만 안내 문구 한 줄뿐이라 정보량 낙차가
+           있었다. PR ↔ DocTypeWorkspace 컴포넌트 통합은 이미 리스크 대비
+           이득이 작다고 판단해 보류했으므로(design-notes.md 참고),
+           컴포넌트를 합치는 대신 이 탭에도 독립적으로 가벼운 상태별 개수
+           요약만 추가한다. -->
+      <div v-else class="q-pa-sm">
+        <div class="text-subtitle1 q-mb-xs">Pull requests 종합 현황</div>
+        <div class="text-caption q-mb-md" style="color: var(--gh-fg-muted)">왼쪽 목록에서 PR을 선택하면 상세 내용을 볼 수 있습니다.</div>
+        <template v-if="stateBreakdown.length > 0">
+          <div class="text-caption text-grey-8 q-mb-xs">상태별</div>
+          <div class="row q-gutter-md q-mb-md">
+            <div v-for="s in stateBreakdown" :key="s.state" class="row items-center q-gutter-xs">
+              <q-badge :color="stateColor(s.state)">{{ s.state }}</q-badge>
+              <span class="text-caption">{{ s.count }}</span>
+            </div>
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 </template>
@@ -132,6 +151,17 @@ const merging = ref(false);
 const closing = ref(false);
 
 const fileTree = computed(() => (selected.value ? buildFileTree(selected.value.diff.files) : []));
+
+// UX QA F5 - DocTypeWorkspace의 stateBreakdown과 같은 방식(고정 순서
+// 우선, 그 외는 등장 순)이지만 PR은 kind 개념이 없어 상태별 집계만.
+const PR_STATE_ORDER = ["open", "merged", "closed"];
+const stateBreakdown = computed(() => {
+  const counts = new Map<string, number>();
+  for (const pr of items.value) counts.set(pr.state, (counts.get(pr.state) ?? 0) + 1);
+  const known = PR_STATE_ORDER.filter((s) => counts.has(s));
+  const rest = [...counts.keys()].filter((s) => !PR_STATE_ORDER.includes(s));
+  return [...known, ...rest].map((state) => ({ state, count: counts.get(state)! }));
+});
 
 function onTreeSelect(key: string | number | null) {
   if (typeof key !== "string") return;

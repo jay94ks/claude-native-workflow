@@ -53,6 +53,18 @@ function randomEtag(): string {
   return generateDocumentId() + generateDocumentId(); // 16 chars is plenty for a scaffold-stage etag
 }
 
+// 설계자 지적(2026-09-22, UX QA F3) - demo-project에서 title/content가
+// U+FFFD(replacement character)로 깨진 문서(SP-IL0VRRO0)를 발견해 원인을
+// 추적한 결과, UTF-8이 아닌 바이트를 보낸 클라이언트의 요청 본문을
+// Express의 기본 body-parser(`Buffer.toString('utf8')` 기반)가 에러 없이
+// 조용히 U+FFFD로 치환해서 통과시킨 것으로 확인됐다(원본 바이트는 이
+// 시점에 이미 유실돼 서버 쪽에서 복구 불가능 - design-notes.md 참고).
+// 저장 직전에 이 문자를 감지해 거부하면, "영구히 복구 불가능한 조용한
+// 데이터 손상"이 "그 자리에서 재시도 가능한 에러"로 바뀐다.
+function containsReplacementChar(...values: (string | undefined)[]): boolean {
+  return values.some((v) => typeof v === "string" && v.includes("�"));
+}
+
 async function insertWithFreshId(data: Record<string, unknown>) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const id = generateDocumentId();
@@ -110,6 +122,9 @@ export async function docsAdd(payload: any, ctx: ActionContext): Promise<ActionR
     return fail(`"${kind}"는 ${type}의 유효한 kind가 아닙니다.`);
   }
   if (typeof title !== "string" || !title) return fail("title이 필요합니다.");
+  if (containsReplacementChar(title, content)) {
+    return fail("title/content에 잘못된 인코딩(대체 문자 U+FFFD)이 포함되어 있습니다 - 요청 본문을 UTF-8로 인코딩해서 다시 보내세요.");
+  }
 
   // opinion은 방향이 고정돼 있다: architect가 클로드에게 쓰는 용도뿐.
   if (type === "opinion" && ctx.channel !== "architect") {
@@ -366,7 +381,30 @@ export async function docsUpdate(payload: any, ctx: ActionContext): Promise<Acti
 
   const doc = await prisma.document.findFirst({ where: { id: parsed.id, projectId } });
   if (!doc) return fail(`${code} 문서를 찾을 수 없습니다.`);
+
+  // 설계자 요청(2026-09-23) - "question이나 opinion들에서 아직 확인전인
+  // 것들은 수정을 할 수 있어야해" - question/opinion은 한 번 등록되면
+  // (지금까지) 누구도 다시 못 고치는 일방향 메시지였다. 상대가 아직
+  // 읽지 않은(added) 동안엔 작성자 본인이 오탈자/보충 설명을 고칠 수
+  // 있어야 하지만, 상대가 이미 읽은(read/done) 뒤에는 그 사람이 본
+  // 내용을 조용히 바꿔치기할 수 없어야 한다 - 그래서 이 두 타입만
+  // "본인 작성 + added 상태"로 좁혀서 막는다(doc/plan 등 다른 타입은
+  // 원래도 WRITE 멤버 전체가 자유롭게 고칠 수 있는 협업 문서라 그대로
+  // 둔다). doc.type이 여기 없는 다른 타입(doc/plan/tracker/test/issue)
+  // 이면 이 블록을 그냥 지나간다.
+  if (doc.type === "question" || doc.type === "opinion") {
+    if (doc.author !== ctx.channel) {
+      return fail(`${doc.type}은 작성자 본인만 수정할 수 있습니다.`);
+    }
+    if (doc.state !== "added") {
+      return fail(`상대방이 이미 확인한 뒤에는 ${doc.type}을 수정할 수 없습니다.`);
+    }
+  }
+
   if (doc.etag !== etag) return fail(`${code}의 etag가 일치하지 않습니다 - 최신 상태를 다시 읽어오세요.`);
+  if (containsReplacementChar(title, content)) {
+    return fail("title/content에 잘못된 인코딩(대체 문자 U+FFFD)이 포함되어 있습니다 - 요청 본문을 UTF-8로 인코딩해서 다시 보내세요.");
+  }
 
   if (related !== undefined) {
     const check = await verifyTaggedRefs(projectId, related);

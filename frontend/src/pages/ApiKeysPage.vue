@@ -6,6 +6,7 @@
     </div>
 
     <div v-if="loading" class="text-caption">불러오는 중...</div>
+    <div v-else-if="loadError" class="text-negative text-caption q-mb-md">{{ loadError }}</div>
     <q-list v-else bordered separator class="q-mb-md">
       <q-item v-for="key in keys" :key="key.id">
         <q-item-section>
@@ -83,12 +84,18 @@ const auth = useAuthStore();
 const loading = ref(true);
 const keys = ref<ApiKeySummary[]>([]);
 const projectOptions = ref<ProjectOption[]>([]);
+const loadError = ref("");
 
 async function load() {
   loading.value = true;
+  loadError.value = "";
   const result = await api.listMyApiKeys(auth.apiKey!);
   loading.value = false;
-  if (result.ok) keys.value = (result.data as { items: ApiKeySummary[] }).items;
+  if (result.ok) {
+    keys.value = (result.data as { items: ApiKeySummary[] }).items;
+  } else {
+    loadError.value = result.reason?.join(", ") ?? "키 목록을 불러오지 못했습니다.";
+  }
 }
 
 async function loadProjectOptions() {

@@ -18,6 +18,9 @@
         :error="itemActionError"
         :has-menu="hasItemMenu"
         padding-class="q-pa-md q-mb-md"
+        :editing="editingCode === item.code"
+        @update="saveEdit(item, $event)"
+        @cancel-edit="editingCode = null"
       >
         <template #menu>
           <q-item v-if="canMarkRead" clickable :disable="busy === item.code" @click="markRead">
@@ -25,6 +28,9 @@
           </q-item>
           <q-item v-if="canAnswer && !answeringHere" clickable @click="openAnswerComposer">
             <q-item-section>답변 작성</q-item-section>
+          </q-item>
+          <q-item v-if="canEditFocal" clickable @click="editingCode = item.code">
+            <q-item-section>수정</q-item-section>
           </q-item>
           <q-item v-if="canMarkDone" clickable :disable="busy === item.code" @click="markDone">
             <q-item-section>완료 처리</q-item-section>
@@ -61,6 +67,9 @@
         :content="child.content"
         :error="childActionError[child.code]"
         :has-menu="hasChildMenu(child)"
+        :editing="editingCode === child.code"
+        @update="saveEdit(child, $event)"
+        @cancel-edit="editingCode = null"
       >
         <template #menu>
           <q-item v-if="(childCounts[child.code] ?? 0) > 0" clickable :to="`/${owner}/${projectId}/thread/${child.code}`">
@@ -68,6 +77,9 @@
           </q-item>
           <q-item v-if="canMarkChildRead(child)" clickable :disable="busy === child.code" @click="markChildRead(child)">
             <q-item-section>확인함</q-item-section>
+          </q-item>
+          <q-item v-if="canEditChild(child)" clickable @click="editingCode = child.code">
+            <q-item-section>수정</q-item-section>
           </q-item>
           <q-item v-if="canMarkChildDone(child)" clickable :disable="busy === child.code" @click="markChildDone(child)">
             <q-item-section>완료 처리</q-item-section>
@@ -105,6 +117,7 @@ interface DocFull {
   title: string;
   content: string;
   author: string;
+  etag: string;
 }
 
 const props = defineProps<{ owner: string; projectId: string; code: string }>();
@@ -121,6 +134,8 @@ const childActionError = reactive<Record<string, string>>({});
 // 지금까지 없었다(2026-09-22 후속 발견, 프론트엔드 UI 일관성 정리
 // 라운드에서 DiscussionItemCard로 추출하며 같이 추가).
 const busy = ref<string | null>(null);
+// DocumentDiscussion.vue와 같은 패턴 - 한 번에 최대 하나의 카드만 편집 모드.
+const editingCode = ref<string | null>(null);
 
 function parseIdFromCode(code: string): string {
   return code.split("-")[1] ?? code;
@@ -161,7 +176,14 @@ const canDiscard = computed(() => {
   if (item.value.kind === "OP") return true;
   return item.value.kind === "QU" && item.value.author === "architect";
 });
-const hasItemMenu = computed(() => canMarkRead.value || canAnswer.value || canMarkDone.value || canDiscard.value);
+// 설계자 요청(2026-09-23) - "question이나 opinion들에서 아직 확인전인
+// 것들은 수정을 할 수 있어야해" - DocumentDiscussion.vue의 canEditItem과
+// 동일한 규칙(backend documents.ts의 docsUpdate가 강제하는 것 그대로):
+// architect가 쓴 QU/OP가 아직 added 상태일 때만.
+const canEditFocal = computed(
+  () => (item.value?.kind === "QU" || item.value?.kind === "OP") && item.value?.author === "architect" && item.value?.state === "added"
+);
+const hasItemMenu = computed(() => canMarkRead.value || canAnswer.value || canEditFocal.value || canMarkDone.value || canDiscard.value);
 
 function canMarkChildRead(child: DocFull): boolean {
   return (child.kind === "QU" || child.kind === "AN") && child.author === "agent" && child.state === "added";
@@ -174,8 +196,13 @@ function canDiscardChild(child: DocFull): boolean {
   if (child.kind === "OP") return true;
   return child.kind === "QU" && child.author === "architect";
 }
+function canEditChild(child: DocFull): boolean {
+  return (child.kind === "QU" || child.kind === "OP") && child.author === "architect" && child.state === "added";
+}
 function hasChildMenu(child: DocFull): boolean {
-  return (childCounts.value[child.code] ?? 0) > 0 || canMarkChildRead(child) || canMarkChildDone(child) || canDiscardChild(child);
+  return (
+    (childCounts.value[child.code] ?? 0) > 0 || canMarkChildRead(child) || canEditChild(child) || canMarkChildDone(child) || canDiscardChild(child)
+  );
 }
 
 async function markChildRead(child: DocFull) {
@@ -226,6 +253,21 @@ async function discardSelf() {
     itemActionError.value = result.reason?.join(", ") ?? "실패했습니다.";
     return;
   }
+  await load();
+}
+
+async function saveEdit(target: DocFull, markdown: string) {
+  const isChild = target.code !== item.value?.code;
+  if (isChild) childActionError[target.code] = "";
+  else itemActionError.value = "";
+  const result = await api.updateDocument(auth.apiKey!, props.owner, props.projectId, target.code, { etag: target.etag, content: markdown });
+  if (!result.ok) {
+    const message = result.reason?.join(", ") ?? "수정에 실패했습니다.";
+    if (isChild) childActionError[target.code] = message;
+    else itemActionError.value = message;
+    return;
+  }
+  editingCode.value = null;
   await load();
 }
 

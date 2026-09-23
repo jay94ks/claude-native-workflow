@@ -28,6 +28,9 @@
       :error="actionError[item.code]"
       :has-menu="hasItemMenu(item)"
       :highlighted="!!highlightCode && (item.code === highlightCode || item.answer?.code === highlightCode)"
+      :editing="editingCode === item.code"
+      @update="saveEdit(item, $event)"
+      @cancel-edit="editingCode = null"
     >
       <template #menu>
         <q-item v-if="childCounts[item.code] > 0" clickable :to="`/${owner}/${projectId}/thread/${item.code}`">
@@ -38,6 +41,9 @@
         </q-item>
         <q-item v-if="canAnswer(item)" clickable @click="openAnswerComposer(item)">
           <q-item-section>답변 작성</q-item-section>
+        </q-item>
+        <q-item v-if="canEditItem(item)" clickable @click="editingCode = item.code">
+          <q-item-section>수정</q-item-section>
         </q-item>
         <q-item v-if="canDiscard(item)" clickable @click="discardItem(item)">
           <q-item-section class="text-negative">폐기</q-item-section>
@@ -142,6 +148,8 @@ const opinions = ref<DocFull[]>([]);
 const busy = ref<string | null>(null);
 const actionError = reactive<Record<string, string>>({});
 const childCounts = reactive<Record<string, number>>({});
+// answeringCode와 같은 패턴 - 한 번에 최대 하나의 카드만 편집 모드로 켠다.
+const editingCode = ref<string | null>(null);
 
 const thread = computed<ThreadItem[]>(() => {
   const qItems: ThreadItem[] = questions.value.map((q) => ({
@@ -170,6 +178,15 @@ function canDiscard(item: ThreadItem): boolean {
   if (item.kind === "OP") return true;
   return item.author === "architect";
 }
+// 설계자 요청(2026-09-23) - "question이나 opinion들에서 아직 확인전인
+// 것들은 수정을 할 수 있어야해" - backend documents.ts의 docsUpdate가
+// 실제로 강제하는 규칙(작성자 본인 + added 상태)을 그대로 UI 힌트로
+// 반영한다(다른 게이트들과 같은 원칙 - 실제 허용 여부는 언제나 서버가
+// 최종 판단). 웹 UI는 항상 architect 채널이므로 architect가 쓴
+// question/opinion만 대상이다.
+function canEditItem(item: ThreadItem): boolean {
+  return (item.kind === "QU" || item.kind === "OP") && item.author === "architect" && item.state === "added";
+}
 // 설계자 요청(2026-09-21 후속) - "완료 처리"는 지금까지 웹 UI에 전혀
 // 없던 액션이었다(질문->답변 스레드가 done에 도달할 방법이 없었다) -
 // answer의 done 전이는 "질의자(=그 answer 작성자의 반대 채널)만" 가능
@@ -188,7 +205,7 @@ function canMarkAnswerDone(answer: DocFull): boolean {
   return answer.author === "agent" && answer.state === "read";
 }
 function hasItemMenu(item: ThreadItem): boolean {
-  return (childCounts[item.code] ?? 0) > 0 || canMarkRead(item) || canAnswer(item) || canDiscard(item);
+  return (childCounts[item.code] ?? 0) > 0 || canMarkRead(item) || canAnswer(item) || canEditItem(item) || canDiscard(item);
 }
 function hasAnswerMenu(answer: DocFull): boolean {
   return (childCounts[answer.code] ?? 0) > 0 || canMarkAnswerRead(answer) || canMarkAnswerDone(answer);
@@ -337,6 +354,17 @@ async function submitAnswer() {
     return;
   }
   answeringCode.value = null;
+  await load();
+}
+
+async function saveEdit(item: ThreadItem, markdown: string) {
+  actionError[item.code] = "";
+  const result = await api.updateDocument(auth.apiKey!, props.owner, props.projectId, item.code, { etag: item.etag, content: markdown });
+  if (!result.ok) {
+    actionError[item.code] = result.reason?.join(", ") ?? "수정에 실패했습니다.";
+    return;
+  }
+  editingCode.value = null;
   await load();
 }
 

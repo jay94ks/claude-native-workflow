@@ -788,6 +788,19 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   판단 근거는 `docs/design-notes.md`의 "Q&A 카드 중복 제거" 라운드
   참고. `PullRequestsTab.vue`↔`DocTypeWorkspace.vue` 통합은 조사
   결과 리스크 대비 이득이 작아 보류하기로 결정(같은 라운드에 기록).
+- **question/opinion 수정 - "아직 확인전"인 동안만**(2026-09-23
+  후속): 지금까지 question/answer/opinion은 한 번 등록되면 아무도
+  못 고치는 일방향 메시지였다. `backend/src/core/documents.ts`의
+  `docsUpdate`가 question/opinion에 한해 "작성자 본인 + `added`
+  상태(상대가 아직 안 읽음)"일 때만 수정을 허용하도록 좁혔다(answer는
+  이번 범위 밖 - 그대로 수정 불가). `DiscussionItemCard.vue`는
+  평소엔 가벼운 `v-html`로 본문을 보여주다가, 부모가 `editing` prop을
+  켠 카드 하나만 `MarkdownSourceView`로 바꿔치기한다(스레드 하나에
+  항목이 많을 수 있어 전부 편집기로 띄우면 무겁다 - `answeringCode`와
+  같은 "한 번에 하나만" 패턴). `DocumentDiscussion.vue`/
+  `DocumentThreadPage.vue` 양쪽 다 `#menu` 슬롯에 "수정" 항목을
+  조건부로 추가했다(게이팅 로직은 documentRules.ts가 실제로 강제하는
+  규칙을 그대로 UI 힌트로 반영 - 다른 게이트들과 같은 원칙).
 - **`components/FollowUpComposer.vue`**(2026-09-22 후속): 어떤 항목
   (문서 자신/질문/답변/의견)에든 "추가 질문"/"추가 의견"을 달 수 있는
   자기완결형 위젯 - `owner`/`projectId`/`parentCode`만 받아 스스로

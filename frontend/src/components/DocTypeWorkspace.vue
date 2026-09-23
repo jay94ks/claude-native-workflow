@@ -166,7 +166,7 @@
           <q-list dense bordered separator style="max-width: 480px">
             <q-item v-for="(entry, i) in activityRecent" :key="i">
               <q-item-section>
-                <q-item-label>{{ entry.code }} · {{ entry.action }}</q-item-label>
+                <q-item-label>{{ entry.code }} · {{ actionLabel(entry.action) }}</q-item-label>
                 <q-item-label caption>{{ agentLabel(entry) }} · {{ new Date(entry.createdAt).toLocaleString() }}</q-item-label>
               </q-item-section>
             </q-item>
@@ -426,6 +426,24 @@ function heatColor(count: number): string {
 function agentLabel(entry: ActivityEntry): string {
   if (entry.channel !== "agent") return "architect";
   return entry.agentId ? `Claude (${entry.agentId})` : "Claude";
+}
+
+// 설계자 지적(2026-09-22 후속, UX QA F1) - activityLog.ts가 기록하는
+// action은 내부 API 액션 이름("docs.add" 등, backend/src/core/documents.ts
+// 참고 - docsAdd/Get/Update/Delete/Transition/Tag/Grep 7개뿐)이라
+// 화면에 그대로 찍으면 사용자에게 의미가 없다. 매핑에 없는 값은(향후
+// action이 늘어나도 화면이 깨지지 않게) 원래 문자열을 그대로 보여준다.
+const ACTION_LABELS: Record<string, string> = {
+  "docs.add": "생성",
+  "docs.get": "조회",
+  "docs.update": "수정",
+  "docs.delete": "삭제",
+  "docs.transition": "상태 전환",
+  "docs.tag": "태그 변경",
+  "docs.grep": "본문 검색",
+};
+function actionLabel(action: string): string {
+  return ACTION_LABELS[action] ?? action;
 }
 
 async function loadActivity() {

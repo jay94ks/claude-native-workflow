@@ -3974,3 +3974,227 @@ RECENT Q&A 탭: Network 탭에 요청 6개만 찍히고 화면 내용 동일. (2
 받아들였다가 kinds 로드 후 자동으로 "전체"로 되돌아가고 URL도
 `?kind=BOGUS`가 지워지는 것 확인 - 기존 방어 로직이 여전히 살아있음.
 
+### API 키 정리 작업 중 실제 사고 - stale 제외 id로 세션 자신의 키까지 revoke (2026-09-22, 같은 날 후속)
+
+설계자 승인("API 키 정리 진행해줘")으로 개인 키 80개 일괄 revoke를
+실행하는 과정에서 실수를 했다 - 제외해야 할 "지금 쓰는 키"의 id를
+이 문서의 훨씬 이전 라운드 기록에서 그대로 복사해 썼는데, 그 id는
+이미 stale했다(그 사이 여러 번 재로그인하며 실제 사용 중인 키가
+바뀌어 있었음). 결과: 80개 배치에 CLI/curl 테스트에 쓰던 키뿐 아니라
+**이 브라우저 세션 자신의 키까지** 포함돼버려, revoke 직후 CLI(`docs
+auth login` 갱신 필요)와 브라우저(재로그인 필요) 양쪽 인증이 동시에
+끊겼다. 증상은 `/keys` 페이지가 `401`을 받고도 에러 없이 "발급된
+키가 없습니다"라는 거짓 빈 상태를 보여준 것으로 처음 감지됐다(이
+증상 자체가 아래 UX QA 라운드의 F2로 기록됨).
+
+**교훈**: 메모/기록에 남은 "지금 값"은 시간이 지나면 stale해질 수
+있다는 일반 원칙(세션 전체에 걸쳐 여러 번 강조된 원칙)이 API
+키처럼 자주 재발급되는 값에도 예외 없이 적용된다 - 실행 직전에 항상
+현재 상태(`apiKey.list`)를 다시 조회해서 "제외 대상"을 그 자리에서
+새로 특정했어야 했다.
+
+**복구**: CLI는 `mcp/` 디렉토리에서 `npx tsx ../cli/src/index.ts auth
+login --username admin --password 12345678` 재실행으로 `~/.cnw/
+credentials.json`이 자동 갱신됨을 확인. 브라우저는 로그아웃 →
+admin/12345678로 재로그인 → `/keys` 페이지가 전체 85건(활성 3 +
+revoked 82, 원래 목표였던 80건 + 이전 라운드의 agent-alpha/beta 2건)을
+정상 표시하는 것까지 확인. 정리 자체(불필요한 개인 키 80개 revoke)는
+목표대로 완료됐다 - 사고는 그 실행 방식에서만 발생했다.
+
+### 사용자 편의성 관점 UI QA - `PL-PLANUXQA1` (2026-09-22, 같은 날 후속)
+
+설계자 요청("사용자 편의 관점에서 UI에 대해 QA를 진행하고 개선
+계획서 작성해")에 따라 [PL-QAFULL01](plan-full-qa.md)(정확성 QA)와는
+다른 관점 - "맞게 동작하지만 불편한 지점" - 으로 Demo Project의 전
+탭을 브라우저로 순회했다. 발견한 7개 항목(F1~F7)과 우선순위별 실행
+계획은 별도 문서 [plan-ux-qa-improvements.md](plan-ux-qa-improvements.md)
+(`PL-PLANUXQA1`)에 전부 기록했다 - 이 라운드에서는 코드를 고치지
+않고 발견·문서화까지만 진행(CLAUDE.md 작업 방식 1번 - 계획을 먼저
+문서로 남긴 뒤 순서대로 처리).
+
+가장 눈에 띄는 두 건만 요약하면: (1) `DocTypeWorkspace.vue`의 "최근
+활동" 목록이 `docs.get` 같은 내부 액션 이름을 가공 없이 그대로
+노출(F1), (2) `ApiKeysPage.vue`의 `load()`가 조회 실패를 조용히
+삼켜 거짓 빈 상태를 보여줌(F2, 바로 위 API 키 사고에서 실제로
+목격한 그 버그). F2는 원인/수정 방법이 이미 명확해 다음 라운드
+1순위로 지정했다. 나머지(인코딩 깨진 문서 발견, 영문/한글 라벨
+혼용 등)는 각각 조사 필요/설계자 결정 필요로 분류해뒀다 - 상세는
+계획 문서 참고.
+
+### F2 구현 - `/keys` 인증 실패 시 무음 실패 수정 (2026-09-22, 같은 날 후속)
+
+설계자 요청("F2부터 구현해줘")으로 [PL-PLANUXQA1](plan-ux-qa-improvements.md)
+의 1순위 항목을 구현했다. [ApiKeysPage.vue](../frontend/src/pages/ApiKeysPage.vue)
+의 `load()`가 `if (result.ok) keys.value = ...`만 하고 실패를 그냥
+버리던 것을, `create()`가 이미 쓰던 `createError` 패턴 그대로
+`loadError` ref를 추가해 고쳤다 - 실패 시 `result.reason`을 담고,
+템플릿은 `loading` → `loadError` → 목록/빈 상태 순으로 분기해 에러
+상황에서 "발급된 키가 없습니다"라는 거짓 빈 상태 대신 실제 에러
+메시지가 뜨게 했다.
+
+**검증**: `vue-tsc --noEmit` 통과. 살아있는 브라우저 세션의 키를
+다시 revoke해서 재현하는 건 바로 이전 라운드에 실제로 겪은 사고를
+반복하는 것이므로, 대신 `curl -H "Authorization: Bearer
+bogus-invalid-key-xyz" http://127.0.0.1:8388/api/api-keys`로 백엔드
+에러 응답 모양만 직접 확인(`{"error":"invalid apiKey"}`) - `client.ts`
+의 기존 파싱 로직이 이걸 `reason:["invalid apiKey"]`로 감싸므로
+화면엔 "invalid apiKey"가 뜨는 것까지 코드로 추적 확인했다. 정상
+경로 회귀는 브라우저에서 `/keys`를 재로드해 기존 85건 목록이 그대로
+표시되는 것으로 확인. F1(활동 로그 액션 이름 노출)/F3(인코딩 깨진
+문서)는 아직 남아있다 - `plan-ux-qa-improvements.md`의 우선순위대로
+다음 라운드에서 이어간다.
+
+### F1 구현 - 활동 로그 액션 이름을 한글 라벨로 매핑 (2026-09-22, 같은 날 후속)
+
+설계자 요청("F1도 이어서 구현해줘")으로 두 번째 항목을 구현했다.
+먼저 백엔드 [activityLog.ts](../backend/src/core/activityLog.ts)의
+`recordActivity()`가 [documents.ts](../backend/src/core/documents.ts)의
+docsAdd/Get/Update/Delete/Transition/Tag/Grep 7곳에서만 호출되는 걸
+확인했고, F1 계획 문서가 제시한 두 옵션(라벨 매핑 vs 조회성 액션을
+로그에서 아예 제외) 중 **후자는 채택하지 않기로 판단**했다 - 같은
+파일의 "같은 대상에 연속되는 같은 action은 마지막만 유지"하는 De-dup
+로직이 애초에 `docs.get`이 반복적으로 찍힐 것을 전제로 만들어진
+설계(활동 히트맵 라운드에서 이미 이 문제를 인지하고 넣어둔 것)라,
+`docs.get` 자체를 빼면 그 설계 의도와 충돌하고 히트맵도 "조회"까지
+포함해야 활동량을 제대로 보여준다고 봤다. 그래서 프론트
+[DocTypeWorkspace.vue](../frontend/src/components/DocTypeWorkspace.vue)
+에 `ACTION_LABELS` 사전 + `actionLabel()`만 추가해 "최근 활동"
+렌더링에 적용했다(`docs.add`→생성/`docs.get`→조회/`docs.update`→수정/
+`docs.delete`→삭제/`docs.transition`→상태 전환/`docs.tag`→태그 변경/
+`docs.grep`→본문 검색, 매핑에 없는 값은 원문 그대로 표시).
+
+**검증**: `vue-tsc --noEmit` 통과. 브라우저로 Documents 탭을 다시
+열어 "최근 활동"이 "SP-IL0VRRO0 · 조회", "DG-SK8ATHLO · 생성",
+"SP-IL0VRRO0 · 상태 전환"처럼 한글로 표시되는 것 확인 - 더 이상
+`docs.get` 같은 내부 액션 이름이 그대로 노출되지 않는다. F3(인코딩
+깨진 문서 조사)만 남았다.
+
+### F3 구현 - 인코딩 깨진 문서 원인 규명 + 재발 방지 검증 추가 (2026-09-23, 같은 날 후속)
+
+설계자 요청("F3도 이어서 조사해줘")으로 마지막 항목을 처리했다.
+`POST /api/actions`의 `docs.get`으로 `SP-IL0VRRO0`의 원문 JSON을 받아
+title/content를 코드포인트 단위로 분석한 결과, 문자열 안에 실제
+**U+FFFD(replacement character)**가 문자 그대로 들어 있는 것을
+확인했다 - 터미널 렌더링 문제가 아니라 **DB 저장 시점에 이미 원본
+바이트가 영구히 유실된 것**이었다.
+
+**원인**: Express의 기본 JSON body-parser는 요청 본문을
+`Buffer.toString('utf8')`로 디코딩하는데, 이 함수는 유효하지 않은
+UTF-8 바이트를 만나도 예외를 던지지 않고 **조용히 U+FFFD로
+치환**한다. 즉 UTF-8이 아닌 바이트(Windows 한글 코드페이지 cp949
+등)로 인코딩된 문자열을 보낸 클라이언트의 요청이 에러 없이 통과해서
+그대로 저장된 것. 정확히 어떤 명령에서 왔는지는 쉘 히스토리가 남아
+있지 않아 특정하지 못했지만, 앱의 실제 사용자 경로(웹 UI의 fetch,
+CLI/MCP의 Node HTTP 클라이언트)는 항상 JS 문자열을 올바르게 UTF-8로
+인코딩하므로 그 경로로는 재현 불가능하고, 이 세션 자체의 수동 curl
+QA 테스트처럼 원문 바이트를 직접 구성해 보내는 경우에만 발생할 수
+있다는 것까지 확인했다(계획 문서의 옵션 (3), "재현 안 됨").
+
+**그래도 코드를 고친 이유**: 이 조용한 치환 자체는 실제 사용자에게도
+열려 있는 위험이다 - non-UTF-8 로케일에서 돌아가는 서드파티 REST
+클라이언트가 실수로 잘못 인코딩한 요청을 보내면 지금까지는 서버가
+에러 없이 받아 영구 복구 불가능한 손상 데이터를 그대로 저장했다.
+[documents.ts](../backend/src/core/documents.ts)에
+`containsReplacementChar()`를 추가해 `docsAdd`/`docsUpdate`가
+title/content에 U+FFFD가 있으면 저장 직전에 거부하도록 고쳤다 -
+"조용한 영구 손상"을 "그 자리에서 재시도 가능한 에러"로 바꿨다.
+
+**검증**: `tsc --noEmit` 통과. 로컬 dev 백엔드를 재기동한 뒤 (1)
+U+FFFD가 포함된 `docs.add` curl 요청 → 정확히 새로 추가한 메시지로
+거부되는 것 확인, (2) 정상 UTF-8 한글 `docs.add`(`SP-PTZ026CE`)는
+회귀 없이 그대로 성공(검증 후 discard로 정리) - 새 검증이 정상
+한글 입력을 잘못 막지 않는 것까지 확인. 기존에 이미 손상된
+`SP-IL0VRRO0`은 코드로 복구할 방법이 없어(원본 바이트 자체가 유실됨)
+`docs.transition`으로 discard 처리해 목록에서 정리했다.
+
+이걸로 [PL-PLANUXQA1](plan-ux-qa-improvements.md)의 버그성 항목
+(F1/F2/F3) 전부 수정·검증 완료됐다. 남은 F4(영문/한글 라벨 정책)는
+설계자 결정이 필요해 임의로 진행하지 않고, F5~F7은 낮은 우선순위/
+재작업 불필요로 분류된 채 남겨둔다.
+
+### F5 구현 - Pull Requests 탭에 상태별 개요 추가 (2026-09-23, 같은 날 후속)
+
+설계자 요청("계속해")으로 남은 항목 중 결정이 필요 없는 F5를 마저
+구현했다. `PL-QAFULL01`/`sunny-exploring-raven` 계획에서 이미 "PR ↔
+DocTypeWorkspace 컴포넌트 통합은 하지 않는다"고 결정해뒀으므로, 그
+결정을 뒤집지 않고 [PullRequestsTab.vue](../frontend/src/pages/project/PullRequestsTab.vue)
+에 `DocTypeWorkspace`의 "상태별" 블록과 같은 시각 패턴(subtitle +
+안내 caption + 상태별 배지/개수)만 옮겨 PR 미선택 상태의 안내 문구
+한 줄을 대체했다 - PR은 kind 개념이 없어 상태별 집계만 넣었고, 정렬은
+`["open","merged","closed"]` 고정 순서 우선(DocTypeWorkspace의
+`stateBreakdown`과 같은 방식).
+
+**검증**: `vue-tsc --noEmit` 통과. 브라우저로 확인 - 미선택 상태에
+"Pull requests 종합 현황"과 "merged 2 / closed 6"(실제 목록 8건과
+일치)이 표시되고, PR 클릭 → 상세 진입은 회귀 없이 그대로 동작.
+
+`PL-PLANUXQA1`의 남은 항목은 F4(설계자 결정 필요, 임의 진행 안 함),
+F6(이미 재작업 불필요로 결정됨, 기록만), F7(코드 변경이 아닌 데이터
+정리, 우선순위 낮음)뿐이다.
+
+### F4 결정 + F6/F7 마무리 - `PL-PLANUXQA1` 완료 (2026-09-23, 같은 날 후속)
+
+F4(GitHub 클론 스타일 영문 라벨 vs 한글 UI)는 코드 문제가 아니라
+제품 방향 결정이라 임의로 진행하지 않고 `AskUserQuestion`으로
+설계자에게 직접 확인했다 - **"지금 패턴 유지"**를 선택(GitHub UI에
+익숙한 사용자에게 오히려 친숙할 수 있다는 근거) - 코드 변경 없음,
+`ProjectAboutSidebar.vue`와 상단 탭바의 영문 라벨은 그대로 둔다.
+
+F6(PR 목록+파일 트리가 좁은 사이드바를 공유)은 2026-09-21에 이미
+설계자 요청으로 의도된 레이아웃임을 재확인했을 뿐 재작업하지 않았고,
+F7(Documents 탭의 QA/테스트 잔여 문서)은 새 UI 기능 없이도 이미 있는
+상태/분류/키워드 `필터`로 충분하다는 결론으로 마무리했다 - 데이터
+자체 정리는 이 QA 라운드 범위 밖으로 남겨둔다.
+
+이걸로 [PL-PLANUXQA1](plan-ux-qa-improvements.md)(사용자 편의성
+관점 UI QA)가 완료됐다 - F1/F2/F3/F5는 코드 수정 + 실기동 검증,
+F4는 설계자 결정 반영, F6/F7은 결론만으로 마무리. 문서 `state`를
+`done`으로 갱신.
+
+### question/opinion 수정 기능 - "아직 확인전"인 동안만 (2026-09-23, 같은 날 후속)
+
+설계자 요청: "question이나 opinion들에서 아직 확인전인 것들은 수정을
+할 수 있어야해." 지금까지 question/answer/opinion은 한 번 등록되면
+아무도 못 고치는 일방향 메시지였다(오탈자가 있어도 폐기하고 새로
+등록하는 수밖에 없었음).
+
+**백엔드**: `backend/src/core/documents.ts`의 `docsUpdate`를 열어보니
+사실 지금까지 이 함수엔 type/author/state에 따른 제약이 전혀
+없었다(doc/plan처럼 WRITE 멤버 전원이 자유롭게 고칠 수 있는 협업
+문서를 위한 함수라 당연했던 설계) - question/opinion도 이론상 아무나
+아무 때나 고칠 수 있었던 셈(프론트에 편집 UI가 없어서 드러나지
+않았을 뿐). "아직 확인전인 것만" 고칠 수 있어야 한다는 요청은
+반대로 읽으면 "확인 후엔 못 고쳐야 한다"는 뜻이기도 해서, 단순히
+UI만 여는 게 아니라 `doc.type`이 question/opinion이면 `doc.author
+!== ctx.channel`(작성자 본인이 아니면 거부) 또는 `doc.state !==
+"added"`(상대가 이미 읽었으면 거부) 조건을 docsUpdate 자체에
+추가했다 - answer는 이번 요청 범위 밖이라 그대로 뒀다(doc/plan/
+tracker/test/issue도 기존 동작 그대로).
+
+**프론트**: 스레드 하나에 질문/답변/의견이 10~50개까지 있을 수 있어
+(실제 데모 데이터로 이미 확인된 규모) `DiscussionItemCard.vue`의
+본문을 전부 `MarkdownSourceView`(yiitap 기반, 무거움)로 바꾸면 카드
+수만큼 에디터 인스턴스가 동시에 뜬다 - 그래서 평소엔 가벼운 `v-html`
+그대로 두고, 부모가 `editing` prop을 켠 카드 **하나만** 편집기로
+바꿔치기하는 구조로 짰다(`answeringCode`가 "한 번에 답변 컴포저는
+하나만 열린다"를 보장하던 것과 완전히 같은 패턴 - `editingCode`도
+동일하게 하나만). 카드 자체는 여전히 순수 렌더링 컴포넌트로 남긴다
+(`editing`/`update`/`cancelEdit`만 추가) - "어느 카드가 편집 가능한지"
+판단과 "편집 시작/저장/취소" 상태는 전부 `DocumentDiscussion.vue`/
+`DocumentThreadPage.vue`(부모)가 소유한다. `canEditItem`/`canEditFocal`/
+`canEditChild` 게이트는 documentRules.ts가 실제로 강제하는 규칙
+(작성자 본인 + added 상태)을 그대로 UI 힌트로 옮긴 것 - 다른 게이트
+(`canMarkRead`/`canDiscard` 등)와 같은 원칙.
+
+**검증**: `tsc`/`vue-tsc --noEmit` 둘 다 통과. 브라우저로 실제
+질문/의견을 하나씩 새로 등록 → "⋮" 메뉴에 "수정"이 뜨는 것 확인 →
+클릭해 편집기로 바뀌고 내용을 바꿔 저장 → 카드에 새 내용이 반영되는
+것까지 확인(question/opinion 둘 다, `DocumentDiscussion.vue`의 메인
+스레드와 `DocumentThreadPage.vue`의 focal item 양쪽 모두). 그 다음
+`X-Cnw-Channel: agent` curl로 그 질문을 실제로 "확인함"(read) 처리한
+뒤 (1) 같은 etag로 `docs.update`를 다시 시도하면 정확히 "상대방이
+이미 확인한 뒤에는 question을 수정할 수 없습니다."로 거부되는 것,
+(2) 브라우저에서 "⋮" 메뉴를 다시 열면 "수정" 항목 자체가 사라지고
+"폐기"만 남는 것까지 확인. 테스트로 만든 질문/의견 3건은 전부
+discard로 정리했다.
+
