@@ -4198,3 +4198,40 @@ tracker/test/issue도 기존 동작 그대로).
 "폐기"만 남는 것까지 확인. 테스트로 만든 질문/의견 3건은 전부
 discard로 정리했다.
 
+### 실제 UI 불일치 발견 - 뮤트 텍스트 색이 두 가지 방식으로 갈라져 있었다 (2026-09-23, 같은 날 후속)
+
+설계자 지적: "UI가 고쳐지지 않은 부분들이 많네. UI 일관성도 안맞고."
+막연한 지적이라 먼저 코드 레벨 감사부터 다시 했다 - `ProjectSidebar.vue`
+(270px 고정폭, Code/PR/Issues/Documents/Trackers/Settings 전부 공유),
+`PageHeader.vue`(4개 variant), 하드코딩 hex 컬러 유무 등은 이미 잘
+통일돼 있는 것으로 재확인됐다. 대신 실제로 갈라져 있던 지점을 하나
+찾았다: **"흐린 보조 텍스트"를 표시하는 방법이 두 갈래로 쪼개져
+있었다** - 앱 전역 30곳 이상은 `style="color: var(--gh-fg-muted)"`
+(`#656d76`, GitHub 톤)를 쓰는데, `DocTypeWorkspace.vue`(Documents/
+Plans/Issues/Trackers 네 탭이 전부 공유하는 핵심 컴포넌트) 안 6곳과
+`PullRequestsTab.vue`(F5 라운드에서 내가 새로 추가한 자리)/
+`TemplatePage.vue` 일부는 Quasar의 `text-grey-8`/`text-grey-7`
+클래스(`#424242` 근처, 훨씬 더 어둡고 진한 회색)를 썼다.
+**`TemplatePage.vue`는 같은 파일 안에서 두 방식이 동시에 쓰이고
+있어서** 이 불일치가 우연이 아니라 실제로 존재한다는 걸 코드만으로도
+바로 확인할 수 있었다. `DocTypeWorkspace.vue`가 Documents/Plans/
+Issues/Trackers 네 개 메인 탭의 "종합 현황"/"Source View" 라벨을
+전부 담당하는 핵심 컴포넌트라, 이 한 군데의 색 오차가 앱 전체
+체감 일관성에 큰 영향을 줬을 것으로 보인다.
+
+**수정**: `DocTypeWorkspace.vue`(6곳)/`PullRequestsTab.vue`(1곳)/
+`TemplatePage.vue`(2곳)의 `text-grey-7`/`text-grey-8`를 전부
+`style="color: var(--gh-fg-muted)"`로 통일(앱의 압도적 다수 관례를
+따름 - CSS 커스텀 프로퍼티 기반 디자인 토큰이 이미 페이지 폭/아바타
+크기 등에도 쓰이고 있는 이 프로젝트의 일관된 방향과도 맞음).
+`DocKindsPage.vue`의 "지침 없음" 라벨에 붙어 있던 불필요한
+`text-grey-6` 오버라이드도 제거(형제 분기인 "지침 있음" 쪽은 애초에
+Quasar `q-item-label caption`의 기본 색을 그대로 쓰고 있었는데 이
+쪽만 별도로 오버라이드하고 있었다 - 제거하면 두 분기가 같은 색으로
+통일된다).
+
+**검증**: `vue-tsc --noEmit` 통과. 브라우저로 Documents/Pull requests
+"종합 현황" 패널, Settings의 Template/문서 분류 페이지를 다시 열어
+캡션 색이 전부 같은 톤(연한 회색)으로 통일된 것 확인 - 수정 전에는
+Documents 쪽 캡션이 PR 탭 쪽보다 눈에 띄게 더 진하고 어두웠다.
+

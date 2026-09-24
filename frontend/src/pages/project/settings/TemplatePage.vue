@@ -17,14 +17,14 @@
 
     <div class="row q-gutter-sm items-center">
       <q-btn v-if="project.isAdmin" color="primary" label="이 프로젝트에 배포" :loading="deploying" @click="deploy" />
-      <span v-else class="text-caption text-grey-7">배포는 이 프로젝트의 Admin만 할 수 있습니다.</span>
+      <span v-else class="text-caption" style="color: var(--gh-fg-muted)">배포는 이 프로젝트의 Admin만 할 수 있습니다.</span>
     </div>
 
     <div v-if="message" class="text-positive text-caption q-mt-sm">{{ message }}</div>
     <div v-if="error" class="text-negative text-caption q-mt-sm">{{ error }}</div>
 
     <div v-if="deployResult" class="q-mt-md">
-      <div class="text-caption text-grey-8">배포된 커밋</div>
+      <div class="text-caption" style="color: var(--gh-fg-muted)">배포된 커밋</div>
       <pre class="doc-source">{{ JSON.stringify(deployResult, null, 2) }}</pre>
     </div>
   </div>

@@ -827,6 +827,12 @@ CLAUDE.md는 새 세션이 매번 읽는 온보딩 문서라 짧게 유지해야
   나중에 받아도 `?kind=` 쿼리 유효성을 스스로 재검증하도록(watch)
   바꿔서, Documents 탭도 다른 탭처럼 즉시 렌더링된다. 자세한 내용은
   design-notes.md 참고.
+- **흐린 보조 텍스트는 항상 `style="color: var(--gh-fg-muted)"`**
+  (2026-09-23 후속) - `DocTypeWorkspace.vue`/`PullRequestsTab.vue`/
+  `TemplatePage.vue` 일부가 대신 Quasar `text-grey-7`/`text-grey-8`
+  클래스(훨씬 진한 회색)를 써서 Documents/Plans/Issues/Trackers 탭의
+  캡션이 다른 화면보다 눈에 띄게 어둡게 보이던 실제 불일치를 고쳤다 -
+  새 코드에서 이 클래스들을 다시 쓰지 않는다.
 - **`app.scss`의 페이지/다이얼로그 폭 토큰**: `--gh-page-width-narrow`
   (720px, 계정/키 관리 등 리스트형), `--gh-page-width-wide`(900px,
   문서 작성/스레드 등 에디터형), `--gh-dialog-width-sm/md/lg`

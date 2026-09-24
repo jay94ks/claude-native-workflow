@@ -15,7 +15,7 @@
             <q-badge v-if="k.builtin" color="grey-6" class="q-ml-xs">기본</q-badge>
           </q-item-label>
           <q-item-label caption v-if="k.guideline" class="ellipsis">{{ k.guideline }}</q-item-label>
-          <q-item-label caption v-else class="text-grey-6">지침 없음</q-item-label>
+          <q-item-label caption v-else>지침 없음</q-item-label>
         </q-item-section>
         <q-item-section side>
           <div class="row q-gutter-xs">

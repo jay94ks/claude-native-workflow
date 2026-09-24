@@ -92,7 +92,7 @@
         <div class="text-subtitle1 q-mb-xs">Pull requests 종합 현황</div>
         <div class="text-caption q-mb-md" style="color: var(--gh-fg-muted)">왼쪽 목록에서 PR을 선택하면 상세 내용을 볼 수 있습니다.</div>
         <template v-if="stateBreakdown.length > 0">
-          <div class="text-caption text-grey-8 q-mb-xs">상태별</div>
+          <div class="text-caption q-mb-xs" style="color: var(--gh-fg-muted)">상태별</div>
           <div class="row q-gutter-md q-mb-md">
             <div v-for="s in stateBreakdown" :key="s.state" class="row items-center q-gutter-xs">
               <q-badge :color="stateColor(s.state)">{{ s.state }}</q-badge>

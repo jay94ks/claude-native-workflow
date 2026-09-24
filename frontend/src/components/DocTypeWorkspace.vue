@@ -108,7 +108,7 @@
         </div>
         <div v-if="actionError" class="text-negative text-caption q-mb-sm">{{ actionError }}</div>
 
-        <div class="text-caption text-grey-8 q-mb-xs">Source View</div>
+        <div class="text-caption q-mb-xs" style="color: var(--gh-fg-muted)">Source View</div>
         <MarkdownSourceView :key="selected.code" :content="selected.content" :read-only="readOnly" @save="saveContent" />
 
         <q-separator class="q-my-md" />
@@ -123,9 +123,9 @@
            블록만 안 뜬다). -->
       <div v-else class="q-pa-sm">
         <div class="text-subtitle1 q-mb-xs">{{ title }} 종합 현황</div>
-        <div class="text-caption text-grey-8 q-mb-md">왼쪽 목록에서 문서를 선택하면 상세 내용을 볼 수 있습니다.</div>
+        <div class="text-caption q-mb-md" style="color: var(--gh-fg-muted)">왼쪽 목록에서 문서를 선택하면 상세 내용을 볼 수 있습니다.</div>
         <template v-if="stateBreakdown.length > 0">
-          <div class="text-caption text-grey-8 q-mb-xs">상태별</div>
+          <div class="text-caption q-mb-xs" style="color: var(--gh-fg-muted)">상태별</div>
           <div class="row q-gutter-md q-mb-md">
             <div v-for="s in stateBreakdown" :key="s.state" class="row items-center q-gutter-xs">
               <q-badge :color="stateColor(s.state)">{{ s.state }}</q-badge>
@@ -134,7 +134,7 @@
           </div>
         </template>
         <template v-if="kindBreakdown.length > 1">
-          <div class="text-caption text-grey-8 q-mb-xs">분류별</div>
+          <div class="text-caption q-mb-xs" style="color: var(--gh-fg-muted)">분류별</div>
           <div class="row q-gutter-md q-mb-md">
             <div v-for="k in kindBreakdown" :key="k.kind" class="row items-center q-gutter-xs">
               <CategoryPill>{{ kindLabels[k.kind] ?? k.kind }}</CategoryPill>
@@ -148,7 +148,7 @@
              최근 활동 로그를 보여준다. 지금 걸린 분류/상태 필터를 그대로
              반영한다(상태별/분류별 집계와 같은 판단). -->
         <div v-if="heatmapWeeks.length > 0" class="q-mb-md">
-          <div class="text-caption text-grey-8 q-mb-xs">최근 {{ activityHeatmap.length }}일 활동</div>
+          <div class="text-caption q-mb-xs" style="color: var(--gh-fg-muted)">최근 {{ activityHeatmap.length }}일 활동</div>
           <div class="row q-gutter-xs">
             <div v-for="(week, wi) in heatmapWeeks" :key="wi" class="column q-gutter-xs">
               <div
@@ -162,7 +162,7 @@
           </div>
         </div>
         <template v-if="activityRecent.length > 0">
-          <div class="text-caption text-grey-8 q-mb-xs">최근 활동</div>
+          <div class="text-caption q-mb-xs" style="color: var(--gh-fg-muted)">최근 활동</div>
           <q-list dense bordered separator style="max-width: 480px">
             <q-item v-for="(entry, i) in activityRecent" :key="i">
               <q-item-section>
